@@ -2,7 +2,7 @@
 pelo agente (ao longo das estimativas das linhas e no rosto), mede o deslocamento local por correlação de uma janela da
 referência 1 dentro da referência do desenho (busca limitada). Só move as ESTIMATIVAS do desenho 1 para perto das linhas
 do outro desenho; a geometria final continua vindo das medições de sempre (paquímetro, bordas).
-uso: python d218_campo.py desenho [--mapa saida.png] [--busca px]   → grava d218_campo_<desenho>.json"""
+uso: python d218_campo.py desenho [--mapa saida.png] [--busca px] [--tol px]   → grava d218_campo_<desenho>.json"""
 import json, os, sys
 import numpy as np
 from PIL import Image, ImageDraw
@@ -18,6 +18,8 @@ import d218_details as DT
 from d218 import FIRST
 
 k = int(sys.argv[1])
+STEP = int(sys.argv[sys.argv.index("--passo") + 1]) if "--passo" in sys.argv else 30
+TOL = float(sys.argv[sys.argv.index("--tol") + 1]) if "--tol" in sys.argv else 8.0
 HALF, SEARCH, MIN_NCC = 32, int(sys.argv[sys.argv.index("--busca") + 1]) if "--busca" in sys.argv else 26, 0.85
 P = r"C:\AnimeIAI\calibracao\ref\cut_218\frames\f_%04d.png"
 A = np.asarray(Image.open(P % 1).convert("L")).astype(float)
@@ -28,14 +30,14 @@ def control_points():
     pts = []
     shapes = [p for c, p, m in list(LO.SHAPES.values()) + list(DT.SHAPES.values())]
     for poly in list(H.HAIR.values()) + [p for p, w in H.DIRECT.values()] + list(RM.CENTERS.values()) + shapes:
-        pts += meas.densify(list(poly), 30)
+        pts += meas.densify(list(poly), STEP)
     for cx, cy, ro in [(772, 446, 117), (1288, 389, 112)]:  # anéis dos olhos
         pts += meas.circle(cx, cy, ro, n=12)
     out = []
     m = 20 + SEARCH  # perto da borda do quadro a janela encolhe (até 32 px)
     for x, y in pts:  # um ponto por célula de 40 px
         if m <= x < 1920 - m and m <= y < 1080 - m:
-            if all(abs(x - a) >= 30 or abs(y - b) >= 30 for a, b in out):
+            if all(abs(x - a) >= STEP or abs(y - b) >= STEP for a, b in out):
                 out.append((x, y))
     return out
 
@@ -74,7 +76,7 @@ for i, (x, y, dx, dy, c) in enumerate(arr):
     nb = (dd < 160) & (dd > 0)
     if nb.sum() >= 2:
         mx, my = np.median(arr[nb, 2]), np.median(arr[nb, 3])
-        if np.hypot(dx - mx, dy - my) > 8:
+        if np.hypot(dx - mx, dy - my) > TOL:
             continue
     keep.append(rows[i])
 out = os.path.join(os.path.dirname(__file__), f"d218_campo_{k}.json")

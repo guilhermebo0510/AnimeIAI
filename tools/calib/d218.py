@@ -26,6 +26,7 @@ def node(key, name, data, parent=None):
 
 
 _FIELD = None
+FIELD_SIGMA = {8: 45.0}  # o 8 deforma mais localmente (queixo sobe 33 px, laço 16)
 
 
 def W(pts):
@@ -41,7 +42,7 @@ def W(pts):
     for x, y in pts:
         ws = sx = sy = 0.0
         for cx, cy, dx, dy, _ in _FIELD:
-            w = 2.718281828 ** (-((x - cx) ** 2 + (y - cy) ** 2) / (2 * 60.0 ** 2)) + 1e-12
+            w = 2.718281828 ** (-((x - cx) ** 2 + (y - cy) ** 2) / (2 * FIELD_SIGMA.get(CEL, 60.0) ** 2)) + 1e-12
             ws += w; sx += w * dx; sy += w * dy
         nx, ny = x + sx / ws, y + sy / ws
         # pontos na borda do quadro (ou além) continuam nela: a forma não pode descolar da borda
@@ -152,7 +153,7 @@ def setup():
 
 # ordem canônica das camadas do corte (de baixo para cima); só as que existem são movidas
 ORDER = ["bg", "bg_dir", "bg_dir_luz", "cor", "sombra", "realce", "rim", "rim_r", "franja", "franja_luz", "pele", "pele_luz", "cor_rosto", "boca", "gota_r", "detalhe", "baixo", "linha_massa", "linha", "sobrancelha",
-         "brilho", "gota", "gota_r2", "fx", "foco", "foco_tras", "foco_no", "foco_mascara", "foco_tras_mascara", "foco_no_mascara", "franja_mascara", "fecho"]
+         "brilho", "gota", "gota_r2", "fx", "foco", "foco_tras", "foco_no", "foco_mascara", "foco_tras_mascara", "foco_no_mascara", "franja_mascara", "borda_quadro", "fecho"]
 
 
 def reorder():

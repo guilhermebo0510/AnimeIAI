@@ -115,6 +115,7 @@ DIRECT_DES = {7: {"alca": ([(1486, 947), (1480, 960), (1467, 980), (1452, 1000),
 TAPER_DES = {7: {"franja_h2", "franja_i1"}}
 DIRECT_W_DES = {8: {"queixo": 25.0}}  # no 8 o queixo engrossa (~25 px pela varredura por colunas, borda da pele igual)
 NO_ANCHOR_DES = {8: {"contorno_n2"}}
+FIELD_FIRST = {8}  # empate entre as estimativas: no 8 fica a do campo
 # larguras fixas por desenho (lidas por varredura): no alto do quadro a tinta clareia e o paquímetro de faixa estreita a linha
 FIXED_W.update({7: {"mecha_n": 20.0}, 8: {"mecha_n": 22.0, "mecha_yy": 23.0}}.get(CEL, {}))
 INK.update({7: {"alca": "#3e1d1c"}, 8: {"alca": "#3e1d1c"}}.get(CEL, {}))  # alça curta (sem trechos coloridos): cor medida no desenho
@@ -209,7 +210,7 @@ def measured_curves(table, step=3, closed=False, ref=None):
             # redesenho: mede a estimativa do desenho 1 e a do campo e fica com a que cai mais na tinta
             best = None
             raw = ref is not None or name in HAIR_RAW
-            for cand in ([[tuple(p) for p in poly]] if raw else candidates(poly, field_first=False)):  # empate: desenho 1 (medido melhor assim)  # ref dada: dados lidos no próprio desenho (d218_dyn)
+            for cand in ([[tuple(p) for p in poly]] if raw else candidates(poly, field_first=CEL in FIELD_FIRST)):  # empate: desenho 1 (medido melhor assim)  # ref dada: dados lidos no próprio desenho (d218_dyn)
                 cp, cw = meas.measure_band(d, REF, meas.densify(cand, step, closed=closed), "#5c2e2e", 0.09, closed=closed,
                                            passes=(16.0, 10.0), smooth=SMOOTH)
                 sc = color_score(cp, "#5c2e2e", 55) if CEL != 1 else 0

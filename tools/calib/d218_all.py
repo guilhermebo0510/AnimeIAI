@@ -17,7 +17,7 @@ def run(script, *args):
 
 
 steps = (["d218_face.py", "d218_hair.py"] if "--linhas" in sys.argv else ["d218_hair.py --so-fecho"]) + [
-    "d218_color.py", "d218_bg.py", "d218_shade.py", "d218_bangs.py", "d218_rim.py", "d218_low.py", "d218_details.py", "d218_focus.py", f"d218_dyn.py {des}"]
+    "d218_color.py", "d218_bg.py", "d218_shade.py", "d218_bangs.py", "d218_rim.py", "d218_low.py", "d218_details.py", "d218_focus.py", f"d218_dyn.py {des}"] + (["d218_border.py"] if des == "1" else [])
 for s in steps:
     name, *a = s.split()
     run(name, *a)
