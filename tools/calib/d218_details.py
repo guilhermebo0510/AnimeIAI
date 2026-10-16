@@ -47,9 +47,10 @@ def run():
     # gota de suor: traço branco grosso enrolado (centro cor de pele), lido no recorte ampliado 4×
     gw = {"type": "direct", "rgba": [0xf6 / 255, 0xf2 / 255, 0xf6 / 255, 1.0]}
     # gota: "U" grosso (braço esquerdo mais alto), lido no recorte 4× e conferido nas bordas
-    curves.append({"points": [[691, 707], [688, 725], [692, 744], [705, 755], [720, 755], [731, 746], [735, 734], [733, 722]],
-                   "width": 17.0, "tip": "marker", "geometry": "spline", "color": gw})
-    curves.append({"points": [[705, 729], [707, 735]], "width": 9.0, "tip": "marker", "geometry": "polyline", "color": gw})
+    # centros e larguras tirados dos trechos brancos medidos linha a linha na referência
+    curves.append({"points": [[692, 712], [689, 718], [687, 728], [688, 740], [695, 750], [705, 753], [715, 751], [722, 744], [724, 734],
+                              [723, 730]], "width": 17.0, "tip": "marker", "geometry": "spline", "color": gw})
+    curves.append({"points": [[702, 731], [702, 737]], "width": 8.0, "tip": "marker", "geometry": "polyline", "color": gw})
     return d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": 0, "layer": bri, "curves": curves})
 
 
