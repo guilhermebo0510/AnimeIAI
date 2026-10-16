@@ -4,10 +4,10 @@
 
 ## Agora
 
-- **Fase:** planejamento concluído em 2026-10-15; execução **não iniciada**, aguardando o "pode executar" do usuário.
-- **Sprint atual:** —
-- **Fatia atual:** —
-- **Próximo passo concreto:** iniciar a S00 (git init, workspace Cargo, perfis, guard de disco, janela egui).
+- **Fase:** execução autônoma iniciada em 2026-10-15 22:50 (usuário liberou).
+- **Sprint atual:** S02 (agente Sonnet: aiai-bridge + aiai-mcp), S04 (agente Sonnet: aiai-metrics + tools/ref) em paralelo; Opus no motor (S05/S07 em aiai-paint).
+- **Fatia atual:** motor de traço/preenchimento em aiai-paint.
+- **Próximo passo concreto:** quando o agente da S02 terminar: parte B (bridge dentro do aiai-studio + canvas real com render do aiai-render, painel de Camadas, abrir/salvar projeto, ação RENDER, harness de mouse).
 - **Bloqueios:** nenhum.
 - **Disco C: livre na última medição:** 43 GB (2026-10-15).
 
@@ -15,11 +15,11 @@
 
 | Sprint | Estado | Evidências | Observações |
 |---|---|---|---|
-| S00 Fundação | pendente | — | |
-| S01 Núcleo | pendente | — | |
-| S02 Bridge/MCP/harness | pendente | — | |
-| S03 Canvas e camadas | pendente | — | |
-| S04 Olho do agente | pendente | — | |
+| S00 Fundação | concluída (2026-10-15) | evidencias/S00 (4 capturas) | shell egui, tema, i18n, ícones, prefs; teste de mouse feito pelo agente |
+| S01 Núcleo | concluída (2026-10-15) | evidencias/S01/command_schema.json | 8 testes + proptest 10k; exemplo .aiai será gerado pela CLI da S02 |
+| S02 Bridge/MCP/harness | em andamento | — | parte A com agente; parte B (integração no app) depois |
+| S03 Canvas e camadas | em andamento | evidencias/S03/cena_basica.png | motor + compositor + golden prontos; falta canvas no app e painel de camadas |
+| S04 Olho do agente | em andamento | — | agente: métricas + catálogo de cortes |
 | S05 Vetorial | pendente | — | |
 | S06 Raster e texturas de pincel | pendente | — | |
 | S07 Preenchimento e paletas | pendente | — | |
