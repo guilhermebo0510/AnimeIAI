@@ -24,9 +24,10 @@ CENTERS = {
 }
 RIM = "#f4a097"
 TAPER_END = set()
-NO_TRIM = {"dir3"}
+NO_TRIM = set()
 # caudas finas (2–3 px) que a medição de faixa não acompanha: traço fixo lido por varredura (runs.py)
-TAILS = {"mecha_e_cauda": ([(394, 706), (392, 718), (390, 730), (388, 742), (386, 754), (384, 766)], 2.5, "#e47a74")}  # pontas finas e mais escuras: a cor da faixa muda e o corte comeria a ponta real
+TAILS = {"mecha_e_cauda": ([(394, 706), (392, 718), (390, 730), (388, 742), (386, 754), (384, 766)], 2.5, "#e47a74"),
+         "dir3_cauda": ([(1745, 456), (1742, 464), (1738, 472), (1735, 480), (1732, 488)], 4.0, "#e98a82")}  # pontas finas e mais escuras: a cor da faixa muda e o corte comeria a ponta real
 AS_SHAPE = "--formas" in sys.argv  # polígonos pelas bordas da faixa pioraram o F1 (0,904 × 0,9075)
 
 
