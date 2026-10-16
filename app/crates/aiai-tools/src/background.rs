@@ -7,6 +7,7 @@ use aiai_paint::blend::blend_pixel;
 use aiai_paint::select::{SelectShape, Selection};
 use aiai_paint::texture::{SkySpec, TextureParams};
 use aiai_paint::warp::Homography;
+use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -118,25 +119,55 @@ pub fn pattern_fill_command(p: &Project, blobs: &mut BlobStore, req: &PatternFil
             }
         }
     };
-    let ss = [(0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)];
-    for y in bounds[1]..bounds[3] {
-        for x in bounds[0]..bounds[2] {
-            let i = (y as u32 * w + x as u32) as usize;
-            let cov = sel.cov[i];
-            if cov <= 0.0 {
-                continue;
+    // Amostragem adaptativa: quantos texels um pixel cobre (derivada do mapeamento) → n×n amostras (2..8).
+    // Evita moiré do padrão ao longe sem custo onde o padrão é grande.
+    let tex_uv = |x: f32, y: f32| -> (f32, f32) {
+        match &map {
+            Map::Flat { inv_s, cos, sin, off } => {
+                let (dx, dy) = (x - off[0], y - off[1]);
+                ((dx * cos - dy * sin) * inv_s, (dx * sin + dy * cos) * inv_s)
             }
-            // supersampling 2×2 contra serrilhado do padrão ao longe
-            let mut acc = [0.0f32; 4];
-            for (ox, oy) in ss {
-                let c = tex_at(x as f32 + ox, y as f32 + oy);
-                acc[0] += c[0] * c[3];
-                acc[1] += c[1] * c[3];
-                acc[2] += c[2] * c[3];
-                acc[3] += c[3];
+            Map::Persp { inv, size } => {
+                let (u, v) = inv.apply(x, y);
+                (u * size[0], v * size[1])
             }
-            let src = [acc[0] / 4.0, acc[1] / 4.0, acc[2] / 4.0, acc[3] / 4.0];
-            blend_pixel(&mut img.data[i], src, req.blend, req.opacity * cov);
+        }
+    };
+    let rows: Vec<(i32, Vec<(usize, [f32; 4])>)> = (bounds[1]..bounds[3])
+        .collect::<Vec<_>>()
+        .into_par_iter()
+        .map(|y| {
+            let mut out = Vec::new();
+            for x in bounds[0]..bounds[2] {
+                let i = (y as u32 * w + x as u32) as usize;
+                if sel.cov[i] <= 0.0 {
+                    continue;
+                }
+                let (cx, cy) = (x as f32 + 0.5, y as f32 + 0.5);
+                let (u0, v0) = tex_uv(cx, cy);
+                let (u1, v1) = tex_uv(cx + 1.0, cy);
+                let (u2, v2) = tex_uv(cx, cy + 1.0);
+                let foot = ((u1 - u0).hypot(v1 - v0)).max((u2 - u0).hypot(v2 - v0));
+                let n = (foot / 1.5).ceil().clamp(2.0, 8.0) as usize;
+                let mut acc = [0.0f32; 4];
+                for sy in 0..n {
+                    for sx in 0..n {
+                        let c = tex_at(x as f32 + (sx as f32 + 0.5) / n as f32, y as f32 + (sy as f32 + 0.5) / n as f32);
+                        acc[0] += c[0] * c[3];
+                        acc[1] += c[1] * c[3];
+                        acc[2] += c[2] * c[3];
+                        acc[3] += c[3];
+                    }
+                }
+                let k = 1.0 / (n * n) as f32;
+                out.push((i, [acc[0] * k, acc[1] * k, acc[2] * k, acc[3] * k]));
+            }
+            (y, out)
+        })
+        .collect();
+    for (_, row) in rows {
+        for (i, src) in row {
+            blend_pixel(&mut img.data[i], src, req.blend, req.opacity * sel.cov[i]);
         }
     }
     Ok(Command::SetTiles { cel: node.id.clone(), tiles: tiles_for_region(blobs, &img, bounds) })

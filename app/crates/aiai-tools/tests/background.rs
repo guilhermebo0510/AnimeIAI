@@ -148,8 +148,8 @@ fn exterior_background_painted_with_tools() {
     };
     let c = paint_command(&s.project, &mut s.blobs, &r).unwrap();
     apply(&mut s, c);
-    let mut roses = get("Flores/pétalas");
-    roses.size = 16.0;
+    let mut roses = get("Rosas");
+    roses.size = 15.0;
     let r = PaintRequest {
         cut: cut.clone(), frame: 0, layer: book_l.clone(), preset: roses, color: ColorRef::Direct { rgba: Rgba::from_hex("#e0405a").unwrap() },
         strokes: vec![pts(&[[bl[0], bl[1] - 8.0, 1.0], [br[0], br[1] - 8.0, 1.0]])], seed: 22,

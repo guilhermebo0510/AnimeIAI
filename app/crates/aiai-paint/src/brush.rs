@@ -45,6 +45,8 @@ pub enum TipShape {
     CloudPuff,
     Star,
     Square,
+    /// Rosa em botão: disco com espiral de pétalas (vãos deixam ver o fundo escuro).
+    Rose,
 }
 
 /// Cobertura 0..1 de uma forma em coordenadas locais normalizadas (u, v ∈ [-1, 1]; v = -1 é a "ponta" superior).
@@ -82,6 +84,17 @@ fn shape_alpha(shape: TipShape, u: f32, v: f32, aa: f32) -> f32 {
             edge(r - rad)
         }
         TipShape::Square => edge(u.abs().max(v.abs()) - 0.9),
+        TipShape::Rose => {
+            let r = (u * u + v * v).sqrt();
+            if r > 1.0 { return 0.0 }
+            let th = v.atan2(u);
+            // espiral logarítmica de pétalas: vão fino onde sin(θ + k·ln r) ≈ 0
+            let phase = th + 9.0 * (r.max(0.05)).ln();
+            let gap = (phase * 1.5).sin().abs();
+            let outer = edge(r - 0.92);
+            let inner = ((gap - 0.12) / 0.1).clamp(0.0, 1.0);
+            outer * if r < 0.12 { 1.0 } else { inner.max(0.15) }
+        }
     }
 }
 
@@ -343,6 +356,15 @@ impl BrushPreset {
         grass.angle_jitter = 12.0;
         grass.value_jitter = 0.15;
         v.push(grass);
+        let mut rose = BrushPreset::round("Rosas", 18.0, 1.0);
+        rose.tip = BrushTip::Shape { shape: TipShape::Rose, aspect: 1.0 };
+        rose.spacing = 0.9;
+        rose.scatter = 0.8;
+        rose.count = 2;
+        rose.size_jitter = 0.35;
+        rose.angle_jitter = 180.0;
+        rose.value_jitter = 0.1;
+        v.push(rose);
         let mut petals = BrushPreset::round("Flores/pétalas", 14.0, 1.0);
         petals.tip = BrushTip::Shape { shape: TipShape::Petal, aspect: 0.8 };
         petals.spacing = 0.5;
