@@ -98,6 +98,7 @@ CLOSED = {}  # a boca virou anel medido na linha-massa (d218_face.py)
 
 
 SEGMENT_INK = True
+SMOOTH = 1
 INK_Q = 0.5
 BAND = "--meia-altura" not in sys.argv
 
@@ -140,7 +141,7 @@ def measured_curves(table, step=8, closed=False):
         if BAND:
             # paquímetro de faixa pela cor da tinta: separa a tinta do cabelo, do realce e da sombra sem viés de meia altura
             pts, ws = meas.measure_band(d, REF0, meas.densify(poly, step, closed=closed), "#5c2e2e", 0.09, closed=closed,
-                                        passes=(16.0, 10.0), smooth=3)
+                                        passes=(16.0, 10.0), smooth=SMOOTH)
         else:
             pts, ws = meas.measure_line(d, REF0, meas.densify(poly, step, closed=closed), closed=closed, line_color="#5c2e2e",
                                         passes=((14.0, 0.08), (9.0, 0.08)), smooth=3)

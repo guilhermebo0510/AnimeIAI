@@ -173,7 +173,7 @@ def anchor_line(d, ref, pts, widths, w_nom, closed=False, search=4.0, strong=0.0
     ox = _median_filter([q[0] - p[0] for q, p in zip(new_pts, pts)], closed)
     oy = _median_filter([q[1] - p[1] for q, p in zip(new_pts, pts)], closed)
     new_pts = [[p[0] + ox[i], p[1] + oy[i]] for i, p in enumerate(pts)]
-    return smooth_points(new_pts, closed, 2), _median_filter(new_w, closed)
+    return smooth_points(new_pts, closed, 1), _median_filter(new_w, closed)
 
 
 def edge_offset_line(d, ref, pts, side, half_w, search=10.0, passes=3):
