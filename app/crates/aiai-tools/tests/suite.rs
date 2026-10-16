@@ -88,3 +88,73 @@ fn draw_fill_lint_render() {
     s.undo().unwrap();
     assert!(!lint(&s.project, &s.blobs, &cut, 0, &fill_layer, 3.0, 30).unwrap().unpainted.is_empty());
 }
+
+#[test]
+fn paint_sky_study_with_brushes() {
+    use aiai_paint::brush::{BrushPreset, GradientKind};
+    use aiai_tools::paint::{GradientRequest, PaintRequest, PaintStrokeSpec, gradient_command, paint_command};
+    let mut s = CoreSession::for_tests("ceu");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 960, "height": 540}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = create(&mut s, Some(&sc), "C", NodeKind::Cut(CutData::new(24)));
+    let sky = create(&mut s, Some(&cut), "BG-ceu", NodeKind::Layer(LayerData::new(LayerType::Raster)));
+    create(&mut s, Some(&sky), "BG1", NodeKind::Cel(CelData::new(1)));
+    let clouds = create(&mut s, Some(&cut), "BG-nuvens", NodeKind::Layer(LayerData::new(LayerType::Raster)));
+    create(&mut s, Some(&clouds), "N1", NodeKind::Cel(CelData::new(1)));
+    // céu: degradê vertical azul profundo → azul claro perto do horizonte
+    let g = GradientRequest {
+        cut: cut.clone(), frame: 0, layer: sky.clone(), kind: GradientKind::Linear, from: [0.0, 0.0], to: [0.0, 540.0],
+        stops: vec![(0.0, "#3c7fd9ff".into()), (0.7, "#8ec5f2ff".into()), (1.0, "#d8ecfaff".into())], blend: BlendMode::Normal, opacity: 1.0,
+    };
+    { let c = gradient_command(&s.project, &mut s.blobs, &g).unwrap(); s.apply(c).unwrap(); }
+    // nuvens: massa macia branca + borda de aquarela + sombra azulada na base
+    let presets = BrushPreset::defaults();
+    let soft = presets.iter().find(|p| p.name == "Redondo macio").unwrap().clone();
+    let wc = presets.iter().find(|p| p.name == "Aquarela").unwrap().clone();
+    let mut big_soft = soft.clone();
+    big_soft.size = 110.0;
+    big_soft.flow = 0.25;
+    let white = ColorRef::Direct { rgba: Rgba::from_hex("#ffffff").unwrap() };
+    let shade = ColorRef::Direct { rgba: Rgba::from_hex("#b7c8e6").unwrap() };
+    let mass = |pts: &[[f32; 3]]| PaintStrokeSpec { points: pts.iter().map(|p| p.to_vec()).collect(), smooth: true };
+    let r = PaintRequest {
+        cut: cut.clone(), frame: 0, layer: clouds.clone(), preset: big_soft, color: white.clone(),
+        strokes: vec![
+            mass(&[[180.0, 300.0, 0.8], [260.0, 240.0, 1.0], [360.0, 230.0, 1.0], [460.0, 260.0, 0.9], [540.0, 300.0, 0.7]]),
+            mass(&[[600.0, 200.0, 0.6], [680.0, 160.0, 1.0], [780.0, 170.0, 0.8]]),
+        ],
+        seed: 1,
+    };
+    { let c = paint_command(&s.project, &mut s.blobs, &r).unwrap(); s.apply(c).unwrap(); }
+    let mut wc_white = wc.clone();
+    wc_white.size = 70.0;
+    let r2 = PaintRequest {
+        cut: cut.clone(), frame: 0, layer: clouds.clone(), preset: wc_white, color: white,
+        strokes: vec![mass(&[[220.0, 250.0, 1.0], [300.0, 205.0, 1.0], [380.0, 200.0, 1.0], [430.0, 225.0, 0.8]])], seed: 2,
+    };
+    { let c = paint_command(&s.project, &mut s.blobs, &r2).unwrap(); s.apply(c).unwrap(); }
+    let mut wc_shade = wc;
+    wc_shade.size = 60.0;
+    wc_shade.opacity = 0.5;
+    let r3 = PaintRequest {
+        cut: cut.clone(), frame: 0, layer: clouds, preset: wc_shade, color: shade,
+        strokes: vec![mass(&[[200.0, 320.0, 0.7], [320.0, 300.0, 1.0], [450.0, 305.0, 1.0], [530.0, 320.0, 0.6]])], seed: 3,
+    };
+    { let c = paint_command(&s.project, &mut s.blobs, &r3).unwrap(); s.apply(c).unwrap(); }
+    let out = render_frame(&s.project, &s.blobs, &cut, 0, &RenderOptions::default()).unwrap();
+    assert!(out.warnings.is_empty());
+    if let Ok(dir) = std::env::var("AIAI_EVIDENCE_DIR") {
+        out.image.save_png(&std::path::Path::new(&dir).join("estudo_ceu.png")).unwrap();
+    }
+    let top = out.image.get(480, 10);
+    let cloud = out.image.get(310, 236); // sobre a massa macia + aquarela
+    assert!(top[2] > top[0] + 0.3, "topo azul: {top:?}");
+    let sky_same_h = out.image.get(60, 236);
+    assert!(cloud[0] > sky_same_h[0] + 0.15, "nuvem clareia o céu na mesma altura: {cloud:?} vs {sky_same_h:?}");
+    // undo da última pincelada volta exatamente
+    let before = render_frame(&s.project, &s.blobs, &cut, 0, &RenderOptions::default()).unwrap().image.content_hash();
+    s.undo().unwrap();
+    s.redo().unwrap();
+    assert_eq!(render_frame(&s.project, &s.blobs, &cut, 0, &RenderOptions::default()).unwrap().image.content_hash(), before);
+}

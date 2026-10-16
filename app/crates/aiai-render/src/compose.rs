@@ -3,7 +3,7 @@
 //! Ordem dentro de um cel: imagem importada → tiles raster → regiões de preenchimento → traços.
 //! Camadas usadas como máscara são renderizadas mesmo invisíveis (convenção: deixe a camada-máscara oculta).
 
-use crate::blend::blend_pixel;
+use aiai_paint::blend::blend_pixel;
 use aiai_core::*;
 use aiai_paint::{Affine, Image, Mask, sample_stroke, rasterize_stroke, tile, transform_image};
 use rayon::prelude::*;

@@ -11,5 +11,7 @@ rayon = { workspace = true }
 lz4_flex = { version = "0.11", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
 image = { workspace = true }
 thiserror = { workspace = true }
+serde = { workspace = true }
+schemars = { workspace = true }
 
 [dev-dependencies]
