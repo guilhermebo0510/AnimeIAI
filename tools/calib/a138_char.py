@@ -13,6 +13,13 @@ INK = "#6a3533"  # núcleo da linha medido no queixo (linhas de ~2 px, halo clar
 TMP = r"C:\AnimeIAI\calibracao\tmp"
 CACHE_F = os.path.join(TMP, "a138_medidas.json")
 
+def arc(cx, cy, rx, ry, t0, t1, n=24):
+    """Arco de elipse (graus; 0 = direita, 90 = topo, sentido anti-horário na tela)."""
+    import math
+    return [(round(cx + rx * math.cos(math.radians(t0 + (t1 - t0) * k / n)), 1),
+             round(cy - ry * math.sin(math.radians(t0 + (t1 - t0) * k / n)), 1)) for k in range(n + 1)]
+
+
 # nome: (estimativa, largura nominal, fechada)
 LINES = {
     # contorno do rosto (queixo) e pescoço
@@ -128,6 +135,18 @@ LINES = {
     "c_contorno_d": ([(1099, 287), (1095, 330), (1095, 363), (1092, 397), (1083, 430), (1078, 447), (1073, 463), (1070, 477), (1063, 493), (1058, 502)], 2.5, False),
     "c_e22": ([(1082, 330), (1077, 352), (1072, 375)], 2.5, False),
     "c_e23": ([(1043, 352), (1047, 368), (1050, 383)], 2.0, False),
+    # olhos (recortes 4×: 510–700 e 780–970 × 360–500); íris com contorno só em cima e dos lados (embaixo degradê sem linha)
+    "olho_e_palpebra": ([(517, 440), (525, 425), (535, 414), (547, 406), (562, 401), (580, 397)], 11.0, False, {"raw": "#74502f"}),
+    "olho_e_iris": (arc(609, 438, 41, 38.5, -25, 205), 3.0, False, {"raw": "#6a4048"}),
+    "olho_e_pupila": (arc(609, 441, 7.5, 7.5, 0, 360, 16)[:-1], 2.0, True, {"raw": "#5a3a48"}),
+    "olho_e_cilio1": ([(567, 485), (575, 486)], 2.0, False, {"raw": INK}),
+    "olho_e_cilio2": ([(590, 490), (608, 490), (627, 490)], 2.0, False, {"raw": INK}),
+    "olho_d_palpebra": ([(792, 420), (797, 402), (810, 395), (830, 389), (855, 387), (880, 386), (905, 390), (925, 400), (940, 412), (950, 425)], 10.0, False, {"raw": "#6f5530"}),
+    "olho_d_dobra": ([(797, 386), (817, 377), (842, 371), (867, 371), (892, 377), (915, 385), (932, 392)], 2.0, False, {"raw": "#5b3025"}),
+    "olho_d_iris": (arc(862.5, 437.5, 40.5, 38.5, -25, 205), 3.0, False, {"raw": "#6a4048"}),
+    "olho_d_pupila": (arc(861.75, 441.25, 7, 7, 0, 360, 16)[:-1], 2.0, True, {"raw": "#5a3a48"}),
+    "olho_d_cilio1": ([(832, 489), (847, 490), (862, 490)], 2.0, False, {"raw": INK}),
+    "olho_d_cilio2": ([(892, 489), (901, 487), (910, 485)], 2.0, False, {"raw": INK}),
 }
 
 
@@ -149,7 +168,13 @@ def lines():
     cache = json.load(open(CACHE_F)) if os.path.exists(CACHE_F) else {}
     d.apply({"kind": "replace_data", "id": ids["linha_c1"], "data": {"type": "cel", "number": 1}})
     curves = []
-    for name, (poly, w, closed) in LINES.items():
+    for name, (poly, w, closed, *opt) in LINES.items():
+        o = opt[0] if opt else {}
+        if "raw" in o:  # geometria digitada sem medição (olhos: o miolo escuro da íris engana o paquímetro)
+            c = [int(o["raw"][i:i + 2], 16) / 255 for i in (1, 3, 5)]
+            curves.append({"points": [list(p) for p in poly], "width": float(w), "tip": "marker", "geometry": "spline",
+                           "color": {"type": "direct", "rgba": c + [1.0]}, "closed": closed})
+            continue
         key = json.dumps([name, poly, w, closed, F])
         if key not in cache:
             cache[key] = measured(poly, w, closed)
