@@ -130,7 +130,7 @@ def _normals(pts, closed=False):
     return out
 
 
-def anchor_line(d, ref, pts, widths, w_nom, closed=False, search=4.0, strong=0.08):
+def anchor_line(d, ref, pts, widths, w_nom, closed=False, search=4.0, strong=0.035, w_range=(8.0, 30.0), clear_side=0.08):
     """Ajusta centro/largura da linha pelas BORDAS medidas dos dois lados (MEASURE_EDGE em p ± n·w/2): com as duas bordas
     fortes, centro = ponto médio e largura = distância; com uma só, ancora nela com a largura nominal."""
     ns = _normals(pts, closed)
@@ -140,13 +140,26 @@ def anchor_line(d, ref, pts, widths, w_nom, closed=False, search=4.0, strong=0.0
     rp = first_list(d.call("MEASURE_EDGE", {"reference": ref, "points": plus, "search": search, "min_strength": 0.02}))
     rm = first_list(d.call("MEASURE_EDGE", {"reference": ref, "points": minus, "search": search, "min_strength": 0.02}))
     new_pts, new_w = [], []
-    for i, (p, n, w) in enumerate(zip(pts, ns, ws)):
+    proj, clear = [], []
+    for i, (p, n) in enumerate(zip(pts, ns)):
         ep, em = rp[i], rm[i]
         # projeção das bordas na normal (offset relativo ao centro atual)
         op = (ep["edge"][0] - p[0]) * n[0] + (ep["edge"][1] - p[1]) * n[1]
         om = (em["edge"][0] - p[0]) * n[0] + (em["edge"][1] - p[1]) * n[1]
-        sp, sm = ep["strength"] >= strong, em["strength"] >= strong
-        if sp and sm and op - om > 2:
+        proj.append((op, om, ep["strength"] >= strong, em["strength"] >= strong))
+        clear.append(max(ep["strength"], em["strength"]) >= clear_side)
+    # linha sem nenhum lado nítido (cabelo sobre cabelo, sombra): a borda medida não é confiável — fica como está
+    if sum(clear) < 0.3 * len(clear):
+        return pts, widths
+    # largura da própria curva onde as duas bordas são confiáveis: vale para os pontos com um lado só
+    ok = lambda op, om: w_range[0] <= op - om <= w_range[1]
+    both = sorted(op - om for op, om, sp, sm in proj if sp and sm and ok(op, om))
+    w_curve = both[len(both) // 2] if len(both) >= 5 else None
+    for i, (p, n, w) in enumerate(zip(pts, ns, ws)):
+        op, om, sp, sm = proj[i]
+        if w_curve:
+            w = w_curve
+        if sp and sm and ok(op, om):
             c, wi = (op + om) / 2, op - om
         elif sp:
             c, wi = op - w / 2, w

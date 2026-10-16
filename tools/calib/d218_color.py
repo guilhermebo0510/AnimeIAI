@@ -10,12 +10,12 @@ ROSTO = {"pele", "branco_olho", "boca", "laco"}  # não-cabelo: vão para `cor_r
 PALETTE = {
     "cabelo": "#a31f3c", "cabelo_franja": "#e15a5a", "cabelo_franja2": "#d94a4f", "cabelo_topo": "#b23a4c",
     "cabelo_rim": "#f49089", "cabelo_sombra": "#7b0922", "cabelo_tras": "#660821", "pele": "#f8d3cb",
-    "branco_olho": "#f6f3f6", "boca": "#ea7582", "laco": "#f4f5dc", "gola_laranja": "#973d1d", "vestido": "#eaf07c",
+    "branco_olho": "#f6f3f6", "boca": "#ea7582", "laco": "#f4f5dc",
 }
 BG = {"bg_bege": "#c1a083", "bg_escuro": "#4d2418", "bg_madeira": "#5e3619", "bg_topo": "#5a3423"}
 
 
-MANUAL = {(450, 400): "cabelo"}
+MANUAL = {(450, 400): "cabelo", (1500, 420): "cabelo", (1480, 640): "cabelo", (562, 650): "cabelo"}  # a roupa fica na camada `baixo`
 
 
 def rgb(h):
@@ -58,7 +58,7 @@ def fills(min_area=150, gap=6.0):
     for r, p in zip(regs, probes):
         name, hexc, dist = nearest(p["hex"])
         log.append((r["point"], r["area"], p["hex"], name, round(dist)))
-        if name in BG or dist > 45:
+        if name in BG or dist > 45 or (name in ROSTO and dist > 15):
             continue  # fundo, ou ambígua (fica para a leitura manual abaixo)
         seed = {"x": r["point"][0], "y": r["point"][1], "color": {"type": "direct", "rgba": [v / 255 for v in rgb(hexc)] + [1.0]}}
         (face if name in ROSTO else seeds).append(seed)

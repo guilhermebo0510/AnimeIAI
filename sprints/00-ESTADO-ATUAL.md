@@ -5,7 +5,8 @@
 ## Agora
 
 - **Fase:** execução autônoma iniciada em 2026-10-15 22:50 (usuário liberou).
-- **Sprint atual:** S21 calibração do corte C (#131) em andamento (projeto `calibracao/projetos/c131.aiai`, scripts `tools/calib/c131_*.py`); agentes: B2 (canvas interativo e painéis, aiai-studio) e B3 (todas as ferramentas na bridge/MCP).
+- **Sprint atual:** S21 calibração. Corte D (#218) primeiro para fechar o ciclo desenho→COMPARE (projeto `calibracao/projetos/d218.aiai`, pipeline `tools/calib/d218_all.py TAG [--linhas]`). Quadro 0 na tentativa t27: FLIP 0,206 (limite P5 0,187), SSIM 0,916 (≥0,95), F1 0,69 (≥0,95), ΔE plano 3,4 (ok), espessura ok. Corte C pausado com o letreiro pronto. Régua do FLIP revista na decisão 23. Agente B2 terminou (S03 editor por mouse: commits 7b45eaa, 2f4445c, 8d120fc).
+- **Pendências sugeridas pelo B2:** perfil dev com opt-level 3 para aiai-render/aiai-paint; escala em `RenderOptions` (reprodução); taper da G-pen contado no `gap` do balde; arrastar para reordenar camadas; edição de pontos.
 - **Fatia atual:** letreiro ゴン passada 1 feita (contorno + balde); aguardando MEASURE_EDGE/FILL_SHAPE no MCP (B3) para refinar bordas e começar as rosas com MEASURE_LINE.
 - **Próximo passo concreto:** quando o B3 entrar: refinar ゴン com MEASURE_EDGE + FILL_SHAPE (rugosidade), medir paleta das rosas (PROBE_COLOR), desenhar rosa a rosa no quadro 15, COMPARE com piso 0,0083, iterar; depois quadros 0–12.
 - **Bloqueios:** nenhum.
@@ -18,7 +19,7 @@
 | S00 Fundação | concluída (2026-10-15) | evidencias/S00 (4 capturas) | shell egui, tema, i18n, ícones, prefs; teste de mouse feito pelo agente |
 | S01 Núcleo | concluída (2026-10-15) | evidencias/S01/command_schema.json | 8 testes + proptest 10k; exemplo .aiai será gerado pela CLI da S02 |
 | S02 Bridge/MCP/harness | em andamento | evidencias/S02 (headless, ao vivo, mouse real) | A e B1 concluídas (21 ferramentas MCP, bridge no app, harness SendInput validado); B3 (demais ferramentas) em andamento |
-| S03 Canvas e camadas | em andamento | evidencias/S03/cena_basica.png | motor + compositor + golden prontos; falta canvas no app e painel de camadas |
+| S03 Canvas e camadas | feito (B2) | evidencias/S03/ui/ | editor por mouse: canvas pan/zoom/rotação, ferramentas, painéis Projeto/Camadas/Cores/Timeline/Propriedades; 60+1 testes; mouse real sem desalinhamento |
 | S04 Olho do agente | concluída (2026-10-16) | evidencias/S04 (catálogo, sanidade, candidatos) | 327 cortes; candidatos A#138 B#245 C#131 D#218 E#292; piso de ruído FLIP medido (decisão 20); falta ação COMPARE na bridge |
 | S05 Vetorial | em andamento | evidencias/S07/rosto_linha_balde.png | motor de traço + curvas por MCP prontos; falta edição de pontos/borracha vetorial e UI |
 | S06 Raster e texturas de pincel | em andamento | evidencias/S06/estudo_ceu.png | motor + 10 presets + operação; falta UI |
@@ -36,7 +37,7 @@
 | S18 Edição e entrega | em andamento | evidencias/S18 | edição (transições, legendas, créditos) + export MP4 prontos; falta UI |
 | S19 Produção e revisão | em andamento | evidencias/S19 | tracker, correções, retakes, relatório prontos; falta UI |
 | S20 UI/UX e identidade | pendente | — | |
-| S21 Calibração (A, B, C obrigatórios; D, E meta) | em andamento | registro/calibracao/C131 | corte C começou; piso C = 0,0065–0,0083 |
+| S21 Calibração (A, B, C obrigatórios; D, E meta) | em andamento | registro/calibracao/D218, C131 | D quadro 0: FLIP 0,206/0,187, SSIM 0,916, F1 0,69; C: letreiro pronto |
 | S22 Micro anime | pendente | — | |
 | S23 Endurecimento e apresentação | pendente | — | |
 

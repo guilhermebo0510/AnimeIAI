@@ -11,9 +11,7 @@ SHAPES = {
                              (462, 63), (442, 63)], True),
     "fita_dir": ("#f5e0c7", [(772, 0), (935, 0), (935, 22), (918, 25), (905, 36), (880, 30), (858, 22), (835, 25), (815, 30), (800, 40),
                              (790, 68), (780, 65)], True),
-    "gota": ("#f6f2f6", [(682, 712), (692, 705), (700, 712), (702, 725), (715, 722), (728, 728), (733, 742), (725, 755), (708, 760),
-                         (690, 755), (682, 742), (680, 725)], True),
-    "gota_sombra": ("#d77882", [(690, 757), (702, 762), (718, 762), (722, 757), (722, 762), (712, 770), (698, 770), (690, 764)], False),
+    "gota_sombra": ("#d77882", [(690, 752), (725, 752), (726, 760), (720, 768), (708, 771), (696, 769), (690, 762)], False),
 }
 HIGHLIGHTS = [
     [(747, 351), (755, 349), (762, 347)],
@@ -43,6 +41,11 @@ def run():
     w = [int(WHITE[i:i + 2], 16) / 255 for i in (1, 3, 5)]
     curves = [{"points": [list(p) for p in h], "width": 4.0, "tip": "marker", "geometry": "spline", "color": {"type": "direct", "rgba": w + [1.0]},
                "profile": [[0, 0.4], [0.5, 1.0], [1, 0.4]]} for h in HIGHLIGHTS]
+    # gota de suor: traço branco grosso enrolado (centro cor de pele), lido no recorte ampliado 4×
+    gw = {"type": "direct", "rgba": [0xf6 / 255, 0xf2 / 255, 0xf6 / 255, 1.0]}
+    curves.append({"points": [[692, 707], [689, 725], [692, 744], [704, 754], [719, 754], [729, 746], [733, 734], [731, 726]],
+                   "width": 15.0, "tip": "marker", "geometry": "spline", "color": gw, "profile": [[0, 1.0], [1, 1.0]]})
+    curves.append({"points": [[705, 730], [706, 735]], "width": 7.0, "tip": "marker", "geometry": "polyline", "color": gw})
     return d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": 0, "layer": bri, "curves": curves})
 
 

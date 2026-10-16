@@ -35,7 +35,7 @@ def setup():
 
 # ordem canônica das camadas do corte (de baixo para cima); só as que existem são movidas
 ORDER = ["bg", "bg_dir", "bg_dir_luz", "cor", "sombra", "realce", "franja", "franja_luz", "cor_rosto", "detalhe", "baixo", "linha_massa", "linha",
-         "brilho", "fx", "fecho"]
+         "brilho", "fx", "foco", "foco_mascara", "franja_mascara", "fecho"]
 
 
 def reorder():
