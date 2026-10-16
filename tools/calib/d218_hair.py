@@ -8,7 +8,7 @@ from d218 import d, ids, REF0, draw, render
 MIN_W = 11.0
 # larguras lidas nos perfis da referência onde um lado da linha funde numa massa escura (a medição não acha a 2ª borda)
 PIN_START = {"queixo"}
-FIXED_W = {"alca": 16.0, "queixo": 14.0, "tras_b": 13.0, "tras_c": 13.0, "tras_d1": 12.0, "tras_d2": 12.0, "tras_e": 12.0, "base_g": 14.0}
+FIXED_W = { "queixo": 14.0, "tras_b": 13.0, "tras_c": 13.0, "tras_d1": 12.0, "tras_d2": 12.0, "tras_e": 12.0, "base_g": 14.0}
 ANCHOR = "--sem-ancora" not in sys.argv
 _INK_F = os.path.join(os.path.dirname(__file__), "..", "..", "calibracao", "projetos", "d218_ink.json")
 INK = json.load(open(_INK_F)) if os.path.exists(_INK_F) else {}  # cor da tinta medida por linha (d218_inkcolors.py)
@@ -16,10 +16,10 @@ INK.update({"tras_c": "#451b1f", "tras_e": "#451b1f"})
 
 
 def ink_of(name, poly):
-    """Cor medida da linha, salvo na faixa desfocada do alto (lá o desfoque do próprio app já clareia a tinta)."""
+    """Cor medida da linha (no alto do quadro a tinta é mais clara de fato: menos contraste com o cabelo)."""
     ys = sorted(p[1] for p in poly)
     h = INK.get(name)
-    if not h or ys[len(ys) // 2] < 250:
+    if not h:
         return LINE
     return {"type": "direct", "rgba": [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)] + [1.0]}
 
@@ -86,7 +86,7 @@ DIRECT = {
     "contorno_n3a": ([(1720, 280), (1755, 325), (1790, 375), (1775, 425), (1760, 480), (1750, 500)], 16.0),
     "contorno_n4a": ([(1750, 495), (1800, 540), (1830, 570), (1835, 600), (1825, 640)], 16.0),
     "contorno_n5": ([(1830, 640), (1875, 685), (1915, 720)], 16.0),
-    "alca": ([(1506, 978), (1482, 1005), (1454, 1042), (1425, 1084)], 16.0),
+    "alca": ([(1503, 980), (1490, 990), (1476, 1005), (1462, 1020), (1450, 1035), (1437, 1050), (1425, 1065), (1413, 1084)], 20.0),
     "base_g": ([(546, 807), (590, 809), (632, 809)], 14.0),
           "queixo": ([(549, 560), (550, 602), (566, 655), (586, 703), (612, 752), (644, 804), (697, 858), (760, 898), (840, 937),
                        (960, 964), (1080, 957), (1190, 930), (1250, 906), (1300, 876), (1345, 841), (1380, 806), (1405, 775)], 14.0)}

@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from d218 import reorder, d, ids, node
 
 
-def run(radius=8.0, top=210, bottom=2000):
+def run(radius=8.0, top=110, bottom=2000):
     m = node("foco_mascara", "Máscara do foco", {"type": "layer", "kind": "raster"}, ids["cut"])
     node("foco_mascara_c1", "1", {"type": "cel", "number": 1}, m)
     f = node("foco", "Profundidade de campo", {"type": "layer", "kind": "effect"}, ids["cut"])
@@ -14,13 +14,10 @@ def run(radius=8.0, top=210, bottom=2000):
     d.apply({"kind": "set_props", "id": f, "data": {"mask": m, "params": {"effects": [{"effect": {"type": "gaussian_blur", "radius": radius}}]}}})
     reorder()
     d.apply({"kind": "replace_data", "id": ids["foco_mascara_c1"], "data": {"type": "cel", "number": 1}})
-    t0, b0 = top / 1080, bottom / 1080
-    stops = [(0.0, "#ffffff"), (max(0.0, t0 - 0.09), "#ffffff"), (t0, "#000000")]
-    if b0 < 1.0:  # base desfocada só se pedida (no quadro 0 a roupa embaixo está nítida)
-        stops += [(b0, "#000000"), (min(1.0, b0 + 0.15), "#ffffff"), (1.0, "#ffffff")]
-    else:
-        stops += [(1.0, "#000000")]
-    return d.call("GRADIENT", {"cut": ids["cut"], "frame": 0, "layer": m, "kind": "linear", "from": [0, 0], "to": [0, 1080], "stops": stops})
+    # o plano de foco é inclinado: o desfoque do alto desce até y≈190 na esquerda e só até y≈70 na direita (leitura das bordas
+    # que sobram/faltam). Degradê ao longo da normal dessa reta: branco 80 px acima dela, preto sobre ela.
+    return d.call("GRADIENT", {"cut": ids["cut"], "frame": 0, "layer": m, "kind": "linear", "from": [960, 50], "to": [965, 130],
+                               "stops": [(0.0, "#ffffff"), (1.0, "#000000")]})
 
 
 # cabelo de trás, sob o queixo à esquerda: camada de trás desfocada na referência (as linhas não dão borda nítida)

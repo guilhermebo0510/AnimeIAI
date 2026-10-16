@@ -21,6 +21,8 @@ SHAPES = {
     # massa escura entre as mechas, sob o queixo (fundo das peças)
     # sombra do queixo sobre o cabelo de trás: carmim escuro (a tinta só nas linhas), e o respiro rosado ao lado do queixo
     "sombra_queixo": ("#680922", [(615, 800), (660, 840), (720, 880), (800, 920), (880, 950), (945, 968), (940, 1080), (612, 1080)], False),
+    # cobre a fresta entre a mecha g e o queixo (duas linhas coladas deixam uma região fina de cabelo no balde)
+    "bochecha_fresta": ("#ce6f74", [(538, 660), (560, 690), (600, 745), (625, 780), (648, 805), (540, 805)], False),
     "tinta_gola": ("#42191c", [(945, 968), (1000, 968), (1150, 948), (1300, 885), (1360, 840), (1405, 800), (1420, 830), (1415, 900),
                                (1440, 960), (1430, 1080), (940, 1080)], False),
     "vestido": ("#eaf07c", [(1392, 1080), (1396, 1020), (1425, 995), (1450, 960), (1495, 925), (1530, 900), (1560, 860), (1600, 836),
