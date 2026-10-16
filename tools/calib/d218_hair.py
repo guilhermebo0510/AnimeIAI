@@ -113,23 +113,27 @@ DIRECT_DES = {7: {"alca": ([(1486, 947), (1480, 960), (1467, 980), (1452, 1000),
                   # fim do contorno direito: mais grosso no 7 (~24 px pela extensão vertical a 45°, runs.py) e desce até a borda
                   "contorno_n5": ([(1832, 640), (1850, 652), (1870, 672), (1890, 697), (1910, 722), (1925, 738)], 24.0)}}
 TAPER_DES = {7: {"franja_h2", "franja_i1"}}
-DIRECT_W_DES = {8: {"queixo": 25.0}}  # no 8 o queixo engrossa (~25 px pela varredura por colunas, borda da pele igual)
+DIRECT_W_DES = {8: {"queixo": 25.0}}
+NO_ANCHOR_DES = {8: {"contorno_n2"}}  # no 8 o queixo engrossa (~25 px pela varredura por colunas, borda da pele igual)
 # larguras fixas por desenho (lidas por varredura): no alto do quadro a tinta clareia e o paquímetro de faixa estreita a linha
-FIXED_W.update({7: {"mecha_n": 20.0}}.get(CEL, {}))
-INK.update({7: {"alca": "#3e1d1c"}}.get(CEL, {}))  # alça curta (sem trechos coloridos): cor medida no desenho
-DIRECT_DES[8] = {"alca": ([(1494, 952), (1486, 960), (1480, 970), (1469, 980), (1459, 990), (1449, 1000), (1441, 1010), (1433, 1020), (1424, 1030),
-                           (1417, 1040), (1411, 1050), (1404, 1060), (1400, 1070), (1395, 1082)], 27.0),  # borda direita da alça (runs.py) − 13,5
+FIXED_W.update({7: {"mecha_n": 20.0}, 8: {"mecha_n": 22.0}}.get(CEL, {}))
+INK.update({7: {"alca": "#3e1d1c"}, 8: {"alca": "#3e1d1c"}}.get(CEL, {}))  # alça curta (sem trechos coloridos): cor medida no desenho
+DIRECT_DES[8] = {"alca": ([(1491, 953), (1483, 960), (1476, 970), (1466, 980), (1456, 990), (1446, 1000), (1438, 1010), (1430, 1020), (1422, 1030),
+                           (1415, 1040), (1408, 1050), (1402, 1060), (1397, 1070), (1392, 1082)], 24.0),  # centros das varreduras de tinta (runs.py)
                  # contorno esquerdo do 8 (centros das varreduras; sem pontos de campo no alto à esquerda)
                  "contorno_esq": ([(298, 100), (288, 125), (277, 150), (273, 170), (270, 190), (265, 210), (259, 230), (249, 250), (237, 270),
                                    (223, 290), (206, 310), (194, 330), (199, 350), (209, 370), (221, 390), (236, 410), (244, 420), (240, 440),
                                    (235, 460), (227, 480), (218, 500), (209, 520), (201, 540), (195, 571), (205, 600), (220, 611), (250, 637),
                                    (270, 652), (300, 672), (330, 689), (360, 703), (372, 708)], 16.0),
                  # contorno do alto à direita: no 8 começa ~60 px mais alto (centros das varreduras), resto pelo campo
-                 "contorno_n2": ([(1605, 45), (1622, 60), (1636, 70), (1649, 80), (1665, 100), (1682, 120), (1697, 140), (1711, 160), (1724, 180),
-                                  (1734, 200), (1733, 220), (1728, 240), (1723, 255), (1703, 299), (1674, 354), (1635, 384)], 16.0)}
+                 "contorno_n2": ([(1603, 40), (1622, 60), (1636, 70), (1649, 80), (1665, 100), (1682, 120), (1697, 140), (1711, 160), (1724, 180),
+                                  (1734, 200), (1733, 220), (1728, 240), (1723, 260), (1717, 280), (1709, 300), (1700, 320), (1690, 340), (1677, 360),
+                                  (1662, 380), (1645, 392)], 20.0)}
 # linhas do cabelo relidas no próprio desenho (varreduras runs.py; coordenadas do desenho, sem campo)
 HAIR_DES = {8: {"laco": [(163, 0), (162, 15), (168, 28), (180, 40), (195, 52), (210, 64), (226, 75), (245, 86), (265, 94), (285, 99), (300, 104)],
                 "mecha_f": [(333, 0), (326, 20), (317, 40), (309, 60), (302, 80), (298, 100)],
+                "franja_i2": [(893, 203), (905, 219), (915, 233), (930, 250), (950, 283), (1002, 310), (1053, 336), (1084, 336)],
+                "franja_bico": [(1060, 302), (1070, 307), (1082, 312)],
                 "mecha_n": [(1585, 0), (1590, 20), (1597, 40), (1602, 60), (1606, 80), (1610, 100), (1615, 120), (1619, 140), (1622, 160),
                             (1626, 180), (1628, 200), (1631, 240), (1633, 261), (1635, 338), (1630, 439), (1606, 515), (1591, 565), (1574, 616),
                             (1559, 642)]}}
@@ -272,7 +276,11 @@ if __name__ == "__main__":
     for name, (poly, w) in DIRECT.items():
         w = DIRECT_W_DES.get(CEL, {}).get(name, w)
         best = None
-        for cand in ([[tuple(p) for p in poly]] if name in RAW else [W(poly)]):  # escolher pela tinta no centro piorou (F1 −0,002 a −0,005)
+        # (escolher entre desenho 1 e campo pela tinta no centro piorou: F1 −0,002 a −0,005; aqui só o campo ou a releitura)
+        for cand in ([[tuple(p) for p in poly]] if name in RAW else [W(poly)]):
+            if name in NO_ANCHOR_DES.get(CEL, set()):  # centros já lidos na tinta; a borda do fundo aqui é fraca (fundo escuro)
+                best = (0, meas.densify(cand, 4))
+                break
             cp = meas.densify(cand, 4)
             if name in SKIN_SIDE:  # encosta na pele: a borda da pele é nítida, ancora nela
                 cp = meas.edge_offset_line(d, REF0, cp, SKIN_SIDE[name], w / 2, search=16.0 if name == "queixo" else 10.0)

@@ -255,10 +255,21 @@ def draw_drawing(k, lay):
     draw_drops(k, lay, data, fr, ref)
 
 
+SHADOW_LIFT = {7: 6.0, 8: 6.0}  # sombra encosta na gota (sobe por baixo do branco): na referência a borda da gota emenda na da sombra
+
+
+def lifted(shadow, lift):
+    """Sobe a borda de cima da sombra (pontos acima da linha média) — fica escondida sob a gota e as duas bordas se tocam."""
+    if not lift:
+        return [list(p) for p in shadow]
+    my = sum(p[1] for p in shadow) / len(shadow)
+    return [[x, y - lift if y < my else y] for x, y in shadow]
+
+
 def draw_drops(k, lay, data, fr, ref):
     gc = []
     for drop in data["drops"]:
-        d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": fr, "layer": lay["gota_r"], "shapes": [{"points": [list(p) for p in drop["shadow"]],
+        d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": fr, "layer": lay["gota_r"], "shapes": [{"points": lifted(drop["shadow"], SHADOW_LIFT.get(k, 0)),
                                                                                                     "geometry": "polyline"}],
                               "color": {"type": "direct", "rgba": PINK_SHADOW}})
         if drop.get("u"):

@@ -21,7 +21,8 @@ MOUTH_IN = [(1003, 707), (1040, 698), (1090, 693), (1122, 692), (1130, 705), (11
 # anéis dos olhos: centro e raio da borda externa, centro e raio da borda interna (estimativas; MEASURE_EDGE ajusta)
 RINGS = [(772, 446, 117, 772, 446, 78), (1288, 389, 112, 1288, 389, 77)]
 # redesenhos: extremos do anel lidos por varredura (runs.py) — no 7 a fresta rosada dentro do anel cresce e puxaria a borda
-RING_DES = {7: [(770, 448, 120, 772, 438, 80), (1294, 395, 115, 1288, 386, 78)]}
+RING_DES = {7: [(770, 448, 120, 772, 438, 80), (1294, 395, 115, 1288, 386, 78)],
+            8: [(773, 442, 119, 771, 437, 81), (1294, 387, 113, 1287, 378, 77)]}
 
 
 def run():

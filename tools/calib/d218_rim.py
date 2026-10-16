@@ -31,6 +31,10 @@ TAILS = {"mecha_e_cauda": ([(394, 706), (392, 718), (390, 730), (388, 742), (386
          "mecha_e_meio": ([(398, 660), (397.5, 672), (396.5, 684), (395.5, 696), (394, 708)], 8.0, "#f18682")}  # pontas finas e mais escuras: a cor da faixa muda e o corte comeria a ponta real
 # redesenhos: quantos pontos de cada cauda existem (cor lida nos pontos levados pelo campo); 0 = não existe
 TAIL_KEEP = {7: {"mecha_e_cauda": 3, "dir3_cauda": 0}, 8: {"mecha_e_cauda": 0, "dir3_cauda": 0, "mecha_e_meio": 0}}
+# faixas relidas no próprio desenho (centros das varreduras por linha, runs.py)
+CENTERS_DES = {8: {"dir2": [(1615, 62), (1622, 70), (1627, 80), (1634, 90), (1642, 100), (1650, 110), (1657, 120), (1664, 130), (1672, 140), (1678, 150),
+                            (1685, 160), (1692, 170), (1699, 180), (1706, 190), (1712, 200), (1715, 210), (1714, 225), (1712, 240), (1709, 255),
+                            (1708, 265)]}}
 # caudas relidas por varredura no próprio desenho (runs.py): pontos já no desenho
 TAILS_DES = {7: {"mecha_e_cauda": ([(389, 690), (388, 705), (387, 718), (386, 730), (385, 740), (383, 750)], 3.5, "#e47a74")}}
 AS_SHAPE = "--formas" in sys.argv  # polígonos pelas bordas da faixa pioraram o F1 (0,904 × 0,9075)
@@ -43,10 +47,11 @@ def run():
     reorder()
     d.apply({"kind": "replace_data", "id": ids[ck("rim")], "data": {"type": "cel", "number": CEL}})
     curves, shapes, log = [], [], {}
-    for name, poly in CENTERS.items():
+    raw = CENTERS_DES.get(CEL, {})
+    for name, poly in {**CENTERS, **raw}.items():
         # paquímetro de faixa: a cor do realce varia por dentro (borda salmão, miolo mais claro)
         best = None
-        for cand in candidates(poly):  # redesenho: estimativa do desenho 1 ou do campo, a que cai mais no realce
+        for cand in ([[tuple(p) for p in poly]] if name in raw else candidates(poly)):  # redesenho: do desenho 1 ou do campo, a que cai mais no realce
             cp, cw = meas.measure_band(d, REF0, meas.densify(cand, 3), RIM, 0.09, smooth=1)
             sc = color_score(cp, RIM, 60) if CEL != 1 else 0
             if best is None or sc > best[0]:

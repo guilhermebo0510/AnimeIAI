@@ -19,7 +19,8 @@ MANUAL = {(450, 400): "cabelo", (1500, 420): "cabelo", (1480, 640): "cabelo", (5
 
 
 # sementes do agente por desenho (coordenadas já do desenho, sem campo)
-MANUAL_DES = {7: {(745, 70): "cabelo_franja2", (615, 240): "cabelo", (1100, 341): "pele", (1766, 829): "cabelo"}}
+MANUAL_DES = {7: {(745, 70): "cabelo_franja2", (615, 240): "cabelo", (1100, 341): "pele", (1766, 829): "cabelo"},
+              8: {(1100, 334): "pele"}}
 
 
 def rgb(h):
