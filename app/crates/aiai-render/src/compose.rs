@@ -14,7 +14,7 @@ pub struct RenderOptions {
     pub include_guides: bool,
     /// Inclui camadas de referência (mesa de luz).
     pub include_reference: bool,
-    /// Se definido, renderiza só estas camadas (e as pastas que as contêm).
+    /// Se definido, renderiza só estas camadas (e as pastas que as contêm) — mesmo as ocultas.
     pub only_layers: Option<Vec<Id>>,
     /// Achata sobre esta cor opaca (sRGB 0..1); `None` = fundo transparente.
     pub background: Option<[f32; 3]>,
@@ -182,7 +182,9 @@ impl<'a> Renderer<'a> {
             if allowed.is_some_and(|a| !a.contains(id)) {
                 continue;
             }
-            if !layer.visible {
+            // camada pedida explicitamente em `only_layers` entra mesmo oculta (ex.: linhas de fechamento do balde,
+            // que delimitam regiões mas não aparecem no quadro final)
+            if !layer.visible && allowed.is_none() {
                 if !layer.clip_to_below {
                     clip_base = None;
                 }

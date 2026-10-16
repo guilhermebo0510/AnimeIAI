@@ -65,7 +65,7 @@ const TRANSFORM_DESC: &str = r##"Transforma o conteúdo de uma camada (vetorial:
 
 const REPEAT_DESC: &str = r##"Repete traços vetoriais ao longo de um caminho (cerca, folhagem, janelas de prédio, fios de cabelo): copia os traços `strokes` (ids dos traços do cel; o motivo é centrado em `origin` [x,y]) em posições espaçadas de `spacing` px ao longo de `path` (pontos [x,y]), com `offset`, `follow` (gira o motivo seguindo a tangente do caminho) e `scale_range` [escala no início, escala no fim] (perspectiva simples). Coordenadas em pixels do canvas. Entra no undo. Confirme com aiai_render."##;
 
-const LINT_DESC: &str = r##"Confere o balde de tinta: lista as regiões fechadas pelas linhas (camadas em line_refs da camada de cor) que AINDA não têm cor. Devolve {regions_total, painted, unpainted:[{label, area, point:[x,y], bounds}]}; use `point` de cada região como semente de aiai_fill. Regiões que tocam a borda do quadro e menores que min_area são ignoradas. Se `unpainted` vier vazio, tudo está pintado. Se uma região sumiu ou virou uma só, há buraco na linha: aumente `gap` ou feche o traço."##;
+const LINT_DESC: &str = r##"Confere o balde de tinta: lista as regiões fechadas pelas linhas (camadas em line_refs da camada de cor) que AINDA não têm cor. Devolve {regions_total, painted, unpainted:[{label, area, point:[x,y], bounds}]}; use `point` de cada região como semente de aiai_fill. Regiões menores que min_area são ignoradas; as que tocam a borda do quadro também, salvo `include_border: true`. `point` é o pixel mais interno da região (bom para PROBE_COLOR na referência). Se `unpainted` vier vazio, tudo está pintado. Se uma região sumiu ou virou uma só, há buraco na linha: aumente `gap` ou feche o traço."##;
 
 pub(crate) fn schema_of<T: schemars::JsonSchema>() -> Value {
     serde_json::to_value(schemars::schema_for!(T)).unwrap_or_else(|_| json!({ "type": "object" }))
@@ -241,7 +241,8 @@ Só grava em pastas permitidas (AIAI_MCP_ALLOWED_DIRS; padrão producoes/, calib
                     "frame": { "type": "integer", "minimum": 0 },
                     "layer": { "type": "string", "description": "Id da camada de cor (fill) cujos line_refs delimitam as regiões." },
                     "gap": { "type": "number", "minimum": 0, "description": "Buraco na linha (px) ainda fechado. Padrão 3." },
-                    "min_area": { "type": "integer", "minimum": 0, "description": "Área mínima (px) para listar uma região. Padrão 30." }
+                    "min_area": { "type": "integer", "minimum": 0, "description": "Área mínima (px) para listar uma região. Padrão 30." },
+                    "include_border": { "type": "boolean", "description": "Também listar regiões que tocam a borda do quadro. Padrão false." }
                 },
                 "required": ["cut", "layer"],
                 "additionalProperties": false

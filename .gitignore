@@ -26,3 +26,6 @@ __pycache__/
 
 # Sobras do VOICEVOX engine
 /tools/voicevox/engine.*
+# mapas derivados do quadro de referência (FLIP/bordas mostram a estrutura do episódio): ficam fora do git
+sprints/registro/calibracao/**/*_flip.png
+sprints/registro/calibracao/**/*_bordas.png

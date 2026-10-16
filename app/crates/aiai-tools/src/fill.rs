@@ -132,6 +132,22 @@ pub struct LintReport {
 
 /// Regiões fechadas (que não tocam a borda e têm área ≥ `min_area`) sem preenchimento no cel exposto.
 pub fn lint(p: &Project, blobs: &BlobStore, cut_id: &Id, frame: u32, fill_layer: &Id, gap: f32, min_area: usize) -> ToolResult<LintReport> {
+    lint_with(p, blobs, cut_id, frame, fill_layer, gap, min_area, false)
+}
+
+/// Como [`lint`]; com `include_border` também lista as regiões que tocam a borda do quadro (cabelo cortado pelo
+/// enquadramento etc.). O ponto de cada região é o seu pixel mais interno (maior distância às bordas da região).
+#[allow(clippy::too_many_arguments)]
+pub fn lint_with(
+    p: &Project,
+    blobs: &BlobStore,
+    cut_id: &Id,
+    frame: u32,
+    fill_layer: &Id,
+    gap: f32,
+    min_area: usize,
+    include_border: bool,
+) -> ToolResult<LintReport> {
     let cut = cut_data(p, cut_id)?;
     let layer = layer_data(p, fill_layer)?;
     let params = FillParams { gap, expand: 0, line_threshold: 0.35 };
@@ -144,16 +160,58 @@ pub fn lint(p: &Project, blobs: &BlobStore, cut_id: &Id, frame: u32, fill_layer:
     let border = lr.regions.touches_border();
     let mut unpainted = Vec::new();
     let mut painted = 0;
-    // um ponto representativo por rótulo: o pixel de maior distância seria ideal; usamos o primeiro pixel interior
-    let w = lr.width as usize;
-    let mut first = vec![None; lr.regions.count as usize + 1];
-    for (i, &l) in lr.regions.labels.iter().enumerate() {
-        if l != 0 && first[l as usize].is_none() {
+    // um ponto representativo por rótulo: o pixel mais interno (distância de chanfro 3-4 até outro rótulo/linha)
+    let (w, h) = (lr.width as usize, lr.height as usize);
+    let labels = &lr.regions.labels;
+    let mut dist = vec![u32::MAX / 2; w * h];
+    let same = |i: usize, j: usize| labels[i] == labels[j];
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            if labels[i] == 0 {
+                dist[i] = 0;
+                continue;
+            }
+            let mut d = dist[i];
+            for (dx, dy, c) in [(-1i32, 0i32, 3u32), (0, -1, 3), (-1, -1, 4), (1, -1, 4)] {
+                let (xx, yy) = (x as i32 + dx, y as i32 + dy);
+                let v = if xx < 0 || yy < 0 || xx >= w as i32 { 0 } else {
+                    let j = yy as usize * w + xx as usize;
+                    if same(i, j) { dist[j] } else { 0 }
+                };
+                d = d.min(v + c);
+            }
+            dist[i] = d;
+        }
+    }
+    for y in (0..h).rev() {
+        for x in (0..w).rev() {
+            let i = y * w + x;
+            if labels[i] == 0 {
+                continue;
+            }
+            let mut d = dist[i];
+            for (dx, dy, c) in [(1i32, 0i32, 3u32), (0, 1, 3), (1, 1, 4), (-1, 1, 4)] {
+                let (xx, yy) = (x as i32 + dx, y as i32 + dy);
+                let v = if xx < 0 || xx >= w as i32 || yy >= h as i32 { 0 } else {
+                    let j = yy as usize * w + xx as usize;
+                    if same(i, j) { dist[j] } else { 0 }
+                };
+                d = d.min(v + c);
+            }
+            dist[i] = d;
+        }
+    }
+    let mut first: Vec<Option<(u32, u32)>> = vec![None; lr.regions.count as usize + 1];
+    let mut best = vec![0u32; lr.regions.count as usize + 1];
+    for (i, &l) in labels.iter().enumerate() {
+        if l != 0 && (first[l as usize].is_none() || dist[i] > best[l as usize]) {
             first[l as usize] = Some(((i % w) as u32, (i / w) as u32));
+            best[l as usize] = dist[i];
         }
     }
     for label in 1..=lr.regions.count {
-        if border[label as usize] || areas[label as usize] < min_area {
+        if (border[label as usize] && !include_border) || areas[label as usize] < min_area {
             continue;
         }
         let Some((x, y)) = first[label as usize] else { continue };

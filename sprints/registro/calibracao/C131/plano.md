@@ -23,3 +23,7 @@
 2. Quadro 15 (desenho final) completo → COMPARE → corrigir até passar.
 3. Desenhos 0, 3, 6, 9, 12 → COMPARE de todos os 17 quadros.
 4. Relatório final e lacunas.
+
+## Atualização 2026-10-16
+- Letreiro ゴン: passada 2 com MEASURE_EDGE em duas iterações (busca 16 → 6 px, mediana dos deslocamentos) — sobreposição sem fantasma visível.
+- Rosas: ~12 rosas com 6–10 linhas cada e espessura variável. A leitura da topologia por recortes é lenta; para validar primeiro o ciclo completo (desenho → COMPARE → aprovação) o corte D (#218, chibi, traço simples) passa a ser feito antes, conforme o protocolo §3 ("começar por cortes curtos e com pouca animação"). O corte C continua obrigatório e volta em seguida.

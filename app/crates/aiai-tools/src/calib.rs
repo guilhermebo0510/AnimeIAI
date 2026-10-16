@@ -81,6 +81,20 @@ pub struct LineMeasure {
 /// Para cada ponto do traço estimado, busca ao longo da normal (±`search` px) o vale de luminância mais forte
 /// (centro da linha) e mede sua largura. A normal vem dos vizinhos do próprio traço.
 pub fn measure_line(img: &Image, points: &[[f32; 2]], search: f32, min_contrast: f32) -> Vec<LineMeasure> {
+    measure_line_color(img, points, search, min_contrast, None)
+}
+
+/// Como [`measure_line`], mas com `line_color` (sRGB 0..1) o vale procurado é o da distância a essa cor de tinta em
+/// vez da luminância — para linhas escuras sobre massas também escuras (ex.: linha marrom sobre cabelo carmim).
+pub fn measure_line_color(img: &Image, points: &[[f32; 2]], search: f32, min_contrast: f32, line_color: Option<[f32; 3]>) -> Vec<LineMeasure> {
+    let value = |p: [f32; 4]| match line_color {
+        None => lum(p),
+        Some(c) if p[3] > 0.0 => {
+            let d: f32 = (0..3).map(|k| (p[k] / p[3] - c[k]).powi(2)).sum();
+            (d / 3.0).sqrt()
+        }
+        Some(_) => 1.0,
+    };
     let n = points.len();
     let mut out = Vec::with_capacity(n);
     for i in 0..n {
@@ -101,7 +115,7 @@ pub fn measure_line(img: &Image, points: &[[f32; 2]], search: f32, min_contrast:
                 // média de 3 amostras ao longo da tangente para reduzir ruído de compressão
                 let mut l = 0.0;
                 for s in [-1.0f32, 0.0, 1.0] {
-                    l += lum(sample(img, p[0] + nx * t + tx / tl * s, p[1] + ny * t + ty / tl * s));
+                    l += value(sample(img, p[0] + nx * t + tx / tl * s, p[1] + ny * t + ty / tl * s));
                 }
                 (t, l / 3.0)
             })
@@ -113,19 +127,23 @@ pub fn measure_line(img: &Image, points: &[[f32; 2]], search: f32, min_contrast:
             out.push(LineMeasure { given: p, center: p, moved: 0.0, width: 0.0, contrast: 0.0 });
             continue;
         }
-        // centro = centróide da escuridão abaixo da meia altura, em volta do mínimo; largura = extensão dessa região
-        let half = lmin + contrast * 0.5;
+        // meia altura medida de CADA lado contra o fundo daquele lado (uma massa escura colada à linha — cabelo, sombra —
+        // não conta como tinta); centro = centróide da escuridão dentro dessa região; largura = extensão dela
         let imin = prof.iter().position(|q| q.0 == tmin).unwrap_or(0);
+        let bg_lo = prof[..=imin].iter().map(|q| q.1).fold(f32::MIN, f32::max);
+        let bg_hi = prof[imin..].iter().map(|q| q.1).fold(f32::MIN, f32::max);
+        let (half_lo, half_hi) = (lmin + (bg_lo - lmin) * 0.5, lmin + (bg_hi - lmin) * 0.5);
         let (mut lo, mut hi) = (imin, imin);
-        while lo > 0 && prof[lo - 1].1 < half {
+        while lo > 0 && prof[lo - 1].1 < half_lo {
             lo -= 1;
         }
-        while hi + 1 < prof.len() && prof[hi + 1].1 < half {
+        while hi + 1 < prof.len() && prof[hi + 1].1 < half_hi {
             hi += 1;
         }
+        let half = half_lo.min(half_hi).max(lmin + 1e-4);
         let (mut wsum, mut tsum) = (0.0f32, 0.0f32);
         for q in &prof[lo..=hi] {
-            let w = (half - q.1).max(0.0);
+            let w = (half - q.1).max(0.0) + 1e-6;
             wsum += w;
             tsum += w * q.0;
         }
@@ -228,6 +246,29 @@ mod tests {
         let e = measure_edge(&m, &[[57.0, 5.0], [57.5, 20.0], [58.0, 35.0]], 6.0, 0.1);
         for r in &e {
             assert!((r.edge[0] - 60.0).abs() < 0.35, "borda {:?}", r.edge);
+        }
+        // linha marrom sobre massa carmim escura: por luminância quase não há vale; pela cor da tinta, sim
+        let mut h = Image::filled(100, 40, [0.63, 0.11, 0.23, 1.0]);
+        for y in 0..40 {
+            for x in 49..53 {
+                let i = h.idx(x, y);
+                h.data[i] = [0.36, 0.18, 0.18, 1.0];
+            }
+        }
+        assert!(measure_line(&h, &est, 8.0, 0.06).iter().all(|r| r.contrast == 0.0));
+        for r in measure_line_color(&h, &est, 8.0, 0.06, Some([0.36, 0.18, 0.18])) {
+            assert!((r.center[0] - 51.0).abs() < 0.5 && (r.width - 4.0).abs() < 1.0, "{r:?}");
+        }
+        // linha de 4 px colada à direita numa massa carmim (x >= 53) sobre fundo claro: a massa não entra na largura
+        let mut k = Image::filled(100, 40, [0.95, 0.9, 0.85, 1.0]);
+        for y in 0..40 {
+            for x in 49..100 {
+                let i = k.idx(x, y);
+                k.data[i] = if x < 53 { [0.36, 0.18, 0.18, 1.0] } else { [0.63, 0.11, 0.23, 1.0] };
+            }
+        }
+        for r in measure_line_color(&k, &est, 8.0, 0.06, Some([0.36, 0.18, 0.18])) {
+            assert!((r.width - 4.0).abs() < 1.0 && (r.center[0] - 51.0).abs() < 0.8, "{r:?}");
         }
         let c = probe_colors(&img, &[[10.0, 10.0]], 2);
         assert_eq!(c[0].hex, "#f2e6d9");

@@ -17,7 +17,7 @@ use aiai_paint::brush::BrushPreset;
 use aiai_render::{RenderOptions, render_frame};
 use aiai_tools::ToolError;
 use aiai_tools::draw::{DrawRequest, draw_command};
-use aiai_tools::fill::{FillRequest, fill_command, lint};
+use aiai_tools::fill::{FillRequest, fill_command, lint_with};
 use aiai_tools::paint::{GradientRequest, PaintRequest, gradient_command, paint_command};
 use aiai_tools::transform::{RepeatRequest, TransformRequest, repeat_command, transform_command};
 use base64::Engine as _;
@@ -185,7 +185,8 @@ fn lint_action(session: &mut CoreSession, params: &Value) -> Result<Value, Bridg
         Some(v) => v.as_f64().filter(|g| g.is_finite() && *g >= 0.0).ok_or_else(|| BridgeError::invalid_params("'gap' deve ser um número >= 0"))? as f32,
     };
     let min_area = opt_u64(&p, "min_area")?.unwrap_or(30) as usize;
-    let report = lint(&session.project, &session.blobs, &cut, frame, &layer, gap, min_area).map_err(tool_error)?;
+    let include_border = p.get("include_border").and_then(Value::as_bool).unwrap_or(false);
+    let report = lint_with(&session.project, &session.blobs, &cut, frame, &layer, gap, min_area, include_border).map_err(tool_error)?;
     serde_json::to_value(report).map_err(|e| BridgeError::failed(e.to_string()))
 }
 

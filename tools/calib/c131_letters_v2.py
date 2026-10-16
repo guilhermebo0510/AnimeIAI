@@ -12,6 +12,15 @@ ids = json.load(open(os.path.join(PROJ, "..", "c131_ids.json")))
 d = Drive(PROJ)
 
 
+def first_list(r):
+    if isinstance(r, list):
+        return r
+    for k in ("measures", "results", "probes", "colors", "samples"):
+        if isinstance(r.get(k), list):
+            return r[k]
+    raise ValueError(f"resposta sem lista: {list(r)}")
+
+
 def densify(poly, step=6.0):
     out = []
     n = len(poly)
@@ -25,16 +34,29 @@ def densify(poly, step=6.0):
     return out
 
 
-def measured(poly):
+def measured(poly, passes=((16.0, 0.03), (6.0, 0.03))):
     pts = densify(poly)
-    r = d.call("MEASURE_EDGE", {"reference": REF, "points": pts, "search": 10.0, "min_strength": 0.08})
-    res = r["results"] if isinstance(r, dict) and "results" in r else r
-    edges, moved, miss = [], [], 0
-    for m in res:
-        if m["strength"] > 0:
-            edges.append(m["edge"]); moved.append(m["moved"])
+    for search, ms in passes:
+        pts = measure_once(pts, search, ms)
+    return pts
+
+
+def measure_once(pts, search, ms):
+    r = d.call("MEASURE_EDGE", {"reference": REF, "points": pts, "search": search, "min_strength": ms})
+    res = first_list(r)
+    # deslocamentos medidos (0 onde não achou borda); filtro de mediana circular (janela 7) contra saltos para outra borda
+    offs = [((m["edge"][0] - m["given"][0]), (m["edge"][1] - m["given"][1])) if m["strength"] > 0 else None for m in res]
+    n = len(offs)
+    edges, moved, miss = [], [], sum(1 for o in offs if o is None)
+    for i in range(n):
+        win = [offs[(i + k) % n] for k in range(-3, 4) if offs[(i + k) % n] is not None]
+        if not win:
+            ox = oy = 0.0
         else:
-            edges.append(m["given"]); miss += 1
+            ox = sorted(o[0] for o in win)[len(win) // 2]
+            oy = sorted(o[1] for o in win)[len(win) // 2]
+        g = res[i]["given"]
+        edges.append([g[0] + ox, g[1] + oy]); moved.append(math.hypot(ox, oy))
     print(f"  {len(pts)} pontos, sem borda {miss}, deslocamento médio {sum(moved)/max(1,len(moved)):.2f} px, máx {max(moved or [0]):.1f}")
     return edges
 
@@ -47,7 +69,7 @@ if __name__ == "__main__":
         print(name)
         shapes.append({"points": measured(poly), "geometry": "polyline"})
     probe = d.call("PROBE_COLOR", {"reference": REF, "points": [[740, 600], [800, 650], [1300, 440], [1300, 750]], "radius": 6})
-    res = probe["results"] if isinstance(probe, dict) and "results" in probe else probe
+    res = first_list(probe)
     print("cores:", [p["hex"] for p in res])
     rgb = [sum(p["rgb"][k] for p in res) / len(res) for k in range(3)]
     color = {"type": "direct", "rgba": rgb + [1.0]}

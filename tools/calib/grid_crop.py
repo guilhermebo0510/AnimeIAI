@@ -11,11 +11,24 @@ ap.add_argument("frame"); ap.add_argument("x0", type=int); ap.add_argument("y0",
 ap.add_argument("x1", type=int); ap.add_argument("y1", type=int); ap.add_argument("out")
 ap.add_argument("--step", type=int, default=20); ap.add_argument("--scale", type=int, default=3)
 ap.add_argument("--overlay")
+ap.add_argument("--lines", type=float, default=0.0, help="alto contraste: pixels com luminância < valor ficam pretos, o resto branco (só para leitura)")
+ap.add_argument("--near", help="cor da linha (hex): pixels a até --tol dessa cor ficam pretos (só para leitura)")
+ap.add_argument("--tol", type=float, default=35.0)
 a = ap.parse_args()
 im = Image.open(a.frame).convert("RGB").crop((a.x0, a.y0, a.x1, a.y1))
 if a.overlay:
     ov = Image.open(a.overlay).convert("RGB").crop((a.x0, a.y0, a.x1, a.y1))
     im = Image.blend(im, ov, 0.5)
+if a.lines > 0:
+    g = im.convert("L")
+    im = g.point(lambda v: 0 if v < a.lines * 255 else 235).convert("RGB")
+if a.near:
+    c = tuple(int(a.near.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4))
+    px = im.load()
+    for yy in range(im.height):
+        for xx in range(im.width):
+            r, g, b = px[xx, yy]
+            px[xx, yy] = (0, 0, 0) if ((r - c[0]) ** 2 + (g - c[1]) ** 2 + (b - c[2]) ** 2) ** 0.5 < a.tol else (235, 235, 235)
 im = im.resize((im.width * a.scale, im.height * a.scale), Image.NEAREST)
 d = ImageDraw.Draw(im)
 try:

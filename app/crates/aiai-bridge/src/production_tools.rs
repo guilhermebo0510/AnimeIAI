@@ -26,7 +26,7 @@ use aiai_tools::ToolError;
 use aiai_tools::anim::{InbetweenRequest, PropagateFillsRequest, inbetween_command, propagate_fills};
 use aiai_tools::audio::{self, BgmRequest, KokoroLineRequest, LipsyncRequest, SfxRequest, TtsLineRequest, VoiceProfile, WavBits};
 use aiai_tools::background::{PatternFillRequest, SkyRequest, pattern_fill_command, sky_command};
-use aiai_tools::calib::{load_reference, measure_edge, measure_line, probe_colors};
+use aiai_tools::calib::{load_reference, measure_edge, measure_line_color, probe_colors};
 use aiai_tools::edit::{EditDoc, edit_command, load_edit, mix_edit, render_edit_frame};
 use aiai_tools::paint::{FillShapeRequest, fill_shape_command};
 use aiai_tools::character::{ConsistencyRequest, ModelSheetRequest, consistency, model_sheet};
@@ -493,6 +493,10 @@ pub struct MeasureLineRequest {
     /// Contraste mínimo (0..1) para considerar que há linha. Padrão 0,1.
     #[serde(default)]
     pub min_contrast: Option<f32>,
+    /// Cor da tinta "#rrggbb" (opcional): mede o vale de distância a essa cor em vez da luminância — use quando a
+    /// linha passa sobre massas escuras (cabelo, sombra) e o contraste de luminância some.
+    #[serde(default)]
+    pub line_color: Option<String>,
 }
 
 fn measure(params: &Value) -> Result<Value, BridgeError> {
@@ -510,9 +514,13 @@ fn measure(params: &Value) -> Result<Value, BridgeError> {
     if strokes.len() > 200 || strokes.iter().any(|s| s.len() < 2 || s.len() > 2000) {
         return Err(BridgeError::invalid_params("cada traço precisa de 2 a 2000 pontos (no máximo 200 traços)"));
     }
+    let line_color = match &r.line_color {
+        None => None,
+        Some(h) => Some(parse_hex_rgb(h, "line_color")?),
+    };
     let img = load_reference(&r.reference).map_err(tool_error)?;
     let summarize = |pts: &[[f32; 2]]| {
-        let m = measure_line(&img, pts, search, min_contrast);
+        let m = measure_line_color(&img, pts, search, min_contrast, line_color);
         let found: Vec<_> = m.iter().filter(|x| x.contrast > 0.0).collect();
         let n = found.len().max(1) as f32;
         json!({
