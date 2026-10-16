@@ -12,6 +12,8 @@ aiai-render = { workspace = true }
 aiai-anim = { workspace = true }
 aiai-metrics = { workspace = true }
 aiai-audio = { workspace = true }
+aiai-media = { workspace = true }
+ab_glyph = "0.2.32"
 aiai-guide3d = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

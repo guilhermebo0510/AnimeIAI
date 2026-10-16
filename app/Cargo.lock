@@ -83,7 +83,10 @@ dependencies = [
 name = "aiai-bridge"
 version = "0.1.0"
 dependencies = [
+ "aiai-anim",
+ "aiai-audio",
  "aiai-core",
+ "aiai-media",
  "aiai-paint",
  "aiai-render",
  "aiai-tools",
@@ -91,6 +94,7 @@ dependencies = [
  "crossbeam-channel",
  "getrandom 0.3.4",
  "image",
+ "schemars",
  "serde",
  "serde_json",
  "tempfile",
@@ -233,10 +237,12 @@ dependencies = [
 name = "aiai-tools"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
  "aiai-anim",
  "aiai-audio",
  "aiai-core",
  "aiai-guide3d",
+ "aiai-media",
  "aiai-metrics",
  "aiai-paint",
  "aiai-render",
