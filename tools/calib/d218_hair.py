@@ -10,13 +10,27 @@ MIN_W = 11.0
 PIN_START = {"queixo"}
 FIXED_W = {"alca": 16.0, "queixo": 14.0, "tras_b": 13.0, "tras_c": 13.0, "tras_d1": 12.0, "tras_d2": 12.0, "tras_e": 12.0, "base_g": 14.0}
 ANCHOR = "--sem-ancora" not in sys.argv
+_INK_F = os.path.join(os.path.dirname(__file__), "..", "..", "calibracao", "projetos", "d218_ink.json")
+INK = json.load(open(_INK_F)) if os.path.exists(_INK_F) else {}  # cor da tinta medida por linha (d218_inkcolors.py)
+INK.update({"tras_c": "#451b1f", "tras_e": "#451b1f"})
+
+
+def ink_of(name, poly):
+    """Cor medida da linha, salvo na faixa desfocada do alto (lá o desfoque do próprio app já clareia a tinta)."""
+    ys = sorted(p[1] for p in poly)
+    h = INK.get(name)
+    if not h or ys[len(ys) // 2] < 250:
+        return LINE
+    return {"type": "direct", "rgba": [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)] + [1.0]}
+
+
 LINE = {"type": "direct", "rgba": [0x5c / 255, 0x2e / 255, 0x2e / 255, 1.0]}
 
 HAIR = {
     "contorno_n3b": [(1750, 500), (1700, 540), (1640, 580), (1590, 605)],
     "contorno_n4b": [(1825, 640), (1800, 710), (1750, 780), (1675, 815), (1640, 800)],
     "cacho_esq": [(240, 660), (225, 710), (210, 750), (200, 790), (180, 805), (200, 830), (240, 855), (300, 880), (330, 895), (350, 905)],
-    "ramo_c": [(250, 455), (290, 490), (330, 515), (362, 535)],
+    "ramo_c": [(250, 462), (290, 497), (330, 522), (364, 545)],
     "ramo_d": [(300, 245), (315, 290), (335, 320), (355, 350), (360, 365)],
     "mecha_e": [(425, 0), (410, 60), (400, 110), (380, 200), (368, 275), (360, 350), (362, 450), (368, 500), (385, 550), (390, 625),
                 (390, 700), (375, 750), (360, 825), (350, 875), (335, 900), (325, 925)],
@@ -24,7 +38,6 @@ HAIR = {
     "mecha_g": [(585, 0), (565, 65), (555, 125), (545, 200), (537, 300), (535, 400), (537, 500), (545, 575), (545, 665), (535, 750),
                 (530, 800), (520, 825), (500, 860), (475, 890), (450, 915), (435, 940), (432, 960)],
     "ramo_g": [(620, 50), (610, 100), (585, 165), (565, 220), (550, 260)],
-    "base_g": [(550, 790), (575, 800), (625, 800)],
     "franja_h1": [(550, 465), (575, 425), (600, 390), (625, 345), (645, 300), (665, 250), (690, 200), (700, 170), (715, 110), (725, 70), (722, 0)],
     "franja_h2": [(725, 70), (750, 125), (775, 175), (800, 225), (850, 280), (900, 320), (942, 345)],
     "franja_h3": [(700, 170), (750, 147), (780, 132), (825, 136)],
@@ -73,7 +86,8 @@ DIRECT = {
     "contorno_n3a": ([(1720, 280), (1755, 325), (1790, 375), (1775, 425), (1760, 480), (1750, 500)], 16.0),
     "contorno_n4a": ([(1750, 495), (1800, 540), (1830, 570), (1835, 600), (1825, 640)], 16.0),
     "contorno_n5": ([(1830, 640), (1875, 685), (1915, 720)], 16.0),
-    "alca": ([(1500, 978), (1474, 1005), (1446, 1042), (1417, 1084)], 16.0),
+    "alca": ([(1506, 978), (1482, 1005), (1454, 1042), (1425, 1084)], 16.0),
+    "base_g": ([(546, 807), (590, 809), (632, 809)], 14.0),
           "queixo": ([(549, 560), (550, 602), (566, 655), (586, 703), (612, 752), (644, 804), (697, 858), (760, 898), (840, 937),
                        (960, 964), (1080, 957), (1190, 930), (1250, 906), (1300, 876), (1345, 841), (1380, 806), (1405, 775)], 14.0)}
 # lado da normal (−ty, tx) onde fica a pele: o queixo desce para a direita, a pele fica à esquerda da normal → −1
@@ -88,7 +102,7 @@ def measured_curves(table, step=8, closed=False):
                                     passes=((14.0, 0.08), (9.0, 0.08)), smooth=3)
         if name in PIN_START:  # emenda exata com o trecho desenhado direto
             pts[0] = list(poly[0])
-        c = meas.curve_from_measure(pts, ws, LINE, closed=closed)
+        c = meas.curve_from_measure(pts, ws, ink_of(name, poly), closed=closed)
         # linhas do chibi são quase uniformes (11–15 px); onde a tinta funde numa massa escura a meia altura subestima:
         # piso de 11 px e variação do perfil limitada (leitura do agente nos recortes ampliados)
         c["width"] = max(c["width"], MIN_W)
@@ -103,7 +117,7 @@ def measured_curves(table, step=8, closed=False):
                 ws = ws if name in FIXED_W else ws2
                 if name in PIN_START:
                     pts[0] = list(poly[0])
-            c = meas.curve_from_measure(pts, ws, LINE, closed=closed)
+            c = meas.curve_from_measure(pts, ws, ink_of(name, poly), closed=closed)
             c["width"] = max(c["width"], MIN_W - 1)
         c["profile"] = [[t, max(0.7, min(1.3, w))] for t, w in c["profile"]]
         curves.append(c)
@@ -145,7 +159,7 @@ if __name__ == "__main__":
         pts = meas.densify(poly, 8)
         if name in SKIN_SIDE:  # encosta na pele: a borda da pele é nítida, ancora nela
             pts = meas.edge_offset_line(d, REF0, pts, SKIN_SIDE[name], w / 2)
-        color = {"type": "direct", "rgba": [0x4e / 255, 0x25 / 255, 0x27 / 255, 1.0]} if name == "queixo" else LINE  # medido no queixo
+        color = ink_of(name, poly)
         c2.append({"points": pts, "width": w, "tip": "marker", "geometry": "spline", "color": color})
     curves += c2; log.update(l2)
     json.dump(curves, open(os.path.join(os.path.dirname(__file__), "..", "..", "calibracao", "projetos", "d218_hair_curves.json"), "w"))

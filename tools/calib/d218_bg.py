@@ -35,5 +35,15 @@ def run():
                                "stops": column_stops(1885, ys_r)})
 
 
+def ornamento():
+    """Aro dourado desfocado no canto inferior esquerdo (móvel do cenário): traço grosso na `bg`, desfocado depois pelo
+    efeito do fundo. Forma lida no recorte ampliado."""
+    return d.call("PAINT", {"cut": ids["cut"], "frame": 0, "layer": ids["bg"], "preset": "Redondo macio", "preset_overrides": {"size": 16}, "color": {"type": "direct",
+                            "rgba": [0x7a / 255, 0x55 / 255, 0x22 / 255, 1.0]},
+                            "strokes": [{"points": [[8, 1080, 1], [10, 1010, 1], [22, 955, 1], [42, 925, 1], [60, 940, 1], [72, 985, 1], [78, 1040, 1],
+                                                    [80, 1080, 1]], "smooth": True}]})
+
+
 if __name__ == "__main__":
     print(run().get("description"))
+    # ornamento(): o aro desfocado do canto ficou deslocado e piorou as bordas; fica de fora até ser relido

@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from d218 import reorder, d, ids, node
 
 
-def run(radius=8.0, top=130, bottom=2000):
+def run(radius=8.0, top=210, bottom=2000):
     m = node("foco_mascara", "Máscara do foco", {"type": "layer", "kind": "raster"}, ids["cut"])
     node("foco_mascara_c1", "1", {"type": "cel", "number": 1}, m)
     f = node("foco", "Profundidade de campo", {"type": "layer", "kind": "effect"}, ids["cut"])
@@ -27,7 +27,7 @@ def run(radius=8.0, top=130, bottom=2000):
 TRAS = [(450, 790), (545, 800), (600, 815), (650, 850), (700, 880), (760, 912), (840, 950), (930, 975), (942, 1082), (440, 1082)]
 
 
-def tras(radius=5.0):
+def tras(radius=12.0):
     m = node("foco_tras_mascara", "Máscara do foco de trás", {"type": "layer", "kind": "raster"}, ids["cut"])
     node("foco_tras_mascara_c1", "1", {"type": "cel", "number": 1}, m)
     f = node("foco_tras", "Desfoque do cabelo de trás", {"type": "layer", "kind": "effect"}, ids["cut"])
