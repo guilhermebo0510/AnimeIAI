@@ -238,6 +238,12 @@ impl Mannequin {
             let shape = Mat4::from_translation(Vec3::new(0.0, dir * len * 0.5, 0.0))
                 * Mat4::from_scale(Vec3::new(r * sx, (len * 0.5).max(r * 0.6), r * sz));
             m.append(&sphere.transformed(&(start * shape)));
+            if d.name == "head" {
+                // marcador do rosto (nariz) para a direção da cabeça aparecer nas vistas de 3/4 e perfil
+                let nose = Mesh::cuboid(Vec3::new(r * 0.22, r * 0.3, r * 0.35));
+                let at = Mat4::from_translation(Vec3::new(0.0, len * 0.42, r * 0.98));
+                m.append(&nose.transformed(&(start * at)));
+            }
         }
         m
     }

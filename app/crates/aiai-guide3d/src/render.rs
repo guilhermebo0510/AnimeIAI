@@ -97,7 +97,8 @@ impl ZBuf {
     /// Visível se não há superfície claramente à frente (vizinhança 3×3 → tolera bordas).
     fn visible(&self, x: f32, y: f32, depth: f32) -> bool {
         let (xi, yi) = (x as i32, y as i32);
-        let mut nearest = f32::INFINITY;
+        // o mais DISTANTE da vizinhança 3×3 (uma aresta de silhueta encosta no fundo e continua visível)
+        let mut nearest = f32::NEG_INFINITY;
         let mut any = false;
         for dy in -1..=1 {
             for dx in -1..=1 {
@@ -191,10 +192,13 @@ fn simplify(p: &[[f32; 2]], eps: f32) -> Polyline {
     }
     let (a, b) = (p[0], p[p.len() - 1]);
     let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
-    let l = (dx * dx + dy * dy).sqrt().max(1e-6);
+    let l2 = dx * dx + dy * dy;
     let (mut idx, mut dmax) = (0, 0.0f32);
     for (i, q) in p.iter().enumerate().take(p.len() - 1).skip(1) {
-        let d = ((q[0] - a[0]) * dy - (q[1] - a[1]) * dx).abs() / l;
+        // distância ao SEGMENTO (não à reta): polilinhas fechadas ou de ida e volta têm início ≈ fim
+        let t = if l2 > 1e-9 { (((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / l2).clamp(0.0, 1.0) } else { 0.0 };
+        let (px, py) = (a[0] + dx * t, a[1] + dy * t);
+        let d = ((q[0] - px).powi(2) + (q[1] - py).powi(2)).sqrt();
         if d > dmax {
             dmax = d;
             idx = i;
@@ -405,5 +409,32 @@ mod tests {
         let img = render_shaded(&scene, &cam, 480, 640, [-0.4, -1.0, -0.6]).unwrap();
         let covered = img.data.iter().filter(|p| p[3] > 0.0).count();
         assert!(covered > 5_000, "manequim ocupa área: {covered}");
+    }
+}
+
+
+#[cfg(test)]
+mod hidden_tests {
+    use super::*;
+    use crate::scene::{Object3d, Shape};
+
+    #[test]
+    fn box_behind_box_is_hidden() {
+        // caixa pequena atrás de uma grande, de frente: as arestas da pequena ficam ocultas
+        let scene = Scene3d {
+            objects: vec![
+                Object3d { name: "frente".into(), shape: Shape::Box { size: [2.0, 2.0, 0.2] }, position: [0.0, 1.0, 1.0], rotation: [0.0; 3], scale: [1.0; 3] },
+                Object3d { name: "atras".into(), shape: Shape::Box { size: [0.5, 0.5, 0.5] }, position: [0.0, 1.0, -1.0], rotation: [0.0; 3], scale: [1.0; 3] },
+            ],
+            mannequins: vec![],
+            floor_grid: None,
+        };
+        let cam = Camera3d { position: [0.0, 1.0, 8.0], target: [0.0, 1.0, 0.0], focal_mm: 50.0, roll: 0.0, ortho_height: None };
+        let vis = render_lines(&scene, &cam, 400, 400, &GuideStyle::default()).unwrap();
+        let with_hidden = render_lines(&scene, &cam, 400, 400, &GuideStyle { hidden_lines: true, ..Default::default() }).unwrap();
+        assert!(with_hidden.len() > vis.len(), "há linhas ocultas: {} vs {}", with_hidden.len(), vis.len());
+        // nenhuma linha visível no miolo da caixa da frente (onde só a de trás teria arestas)
+        let inner = vis.iter().flat_map(|s| s.points.iter()).filter(|p| (p.x - 200.0).abs() < 25.0 && (p.y - 200.0).abs() < 25.0).count();
+        assert_eq!(inner, 0, "arestas da caixa de trás não aparecem");
     }
 }

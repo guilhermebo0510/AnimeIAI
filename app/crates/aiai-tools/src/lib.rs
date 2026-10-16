@@ -3,6 +3,9 @@
 //! na UI, na bridge/MCP e no modo headless.
 
 pub mod anim;
+pub mod audio;
+pub mod background;
+pub mod character;
 pub mod context;
 pub mod draw;
 pub mod fill;
