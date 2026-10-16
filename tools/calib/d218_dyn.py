@@ -34,7 +34,12 @@ D1 = {
          "dot": [(702, 731), (702, 737)], "shadow": [(690, 752), (725, 752), (726, 760), (720, 768), (708, 771), (696, 769), (690, 762)]},
     ],
 }
-DATA = {k: D1 for k in FRAMES}  # placeholder: desenhos 2–8 ainda com os dados do 1 até serem relidos
+DATA = {k: D1 for k in FRAMES}  # desenhos ainda não relidos usam os dados do 1
+# desenho 2 (q6): só as sobrancelhas descem ~15–20 px (varredura de colunas da tinta, runs_cmp.py)
+DATA[2] = dict(D1, brows={"franja_h3": [(696, 191), (710, 186), (720, 182), (730, 178), (740, 173), (750, 169), (770, 161), (790, 155),
+                                         (800, 152), (810, 151), (820, 151), (832, 150)],
+                          "franja_l1": [(1122, 117), (1130, 114.5), (1150, 111.5), (1170, 111.5), (1190, 112.5), (1220, 118), (1240, 122.5),
+                                        (1258, 127)]})
 
 WHITE = [0xf6 / 255, 0xf2 / 255, 0xf6 / 255, 1.0]
 PINK_SHADOW = [0xd7 / 255, 0x78 / 255, 0x82 / 255, 1.0]
