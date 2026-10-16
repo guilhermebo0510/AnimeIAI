@@ -40,12 +40,20 @@ Começar por cortes curtos (1–3 s) e com pouca animação; subir a dificuldade
 
 Comparação sempre entre o **render CPU determinístico** do app e o frame de referência, em 1920×1080, por quadro, sobre todos os quadros do corte. "5%" é aplicado de forma consistente: cada métrica normalizada tem de ficar a no máximo 5% do ideal.
 
+**Régua por quadro (decisão 24, vigente):** os limites de FLIP, SSIM e F1 de bordas não são fixos; saem de uma perturbação
+imperceptível da própria referência ("P5T": brilho e saturação ×1,05 ou ×0,95, deslocamento de 1 px e deformação suave
+gaussiana σ = 40 px com 1 px RMS por eixo; média de 6 sementes por direção, vale a direção mais exigente por métrica). O
+limite de cada métrica é o valor que essa cópia perturbada obtém contra a referência; fica guardado em `<quadro>.p5t.json`
+e aparece no relatório (`flip_limit`, `ssim_limit`, `edge_f1_limit`). Valores típicos medidos: corte D F1 ≈ 0,927–0,933 /
+SSIM ≈ 0,96; corte C F1 ≈ 0,923 / SSIM ≈ 0,944 / FLIP ≈ 0,240; corte A F1 ≈ 0,956; corte B F1 ≈ 0,92 / SSIM ≈ 0,82; corte E
+F1 ≈ 0,94. A tabela abaixo (decisões 20/21) fica como histórico e para as métricas que não mudaram (ΔE, espessura, timing).
+
 | Métrica | Mede | Aprovação por quadro |
 |---|---|---|
-| **FLIP** (NVIDIA ꟻLIP, média, PPD 67) | Diferença perceptual geral | ≤ piso de ruído do corte + 0,05 (decisão 20) |
-| **SSIM** (luma, janela gaussiana 11 px) | Estrutura/forma | ≥ 0,95 |
+| **FLIP** (NVIDIA ꟻLIP, média, PPD 67) | Diferença perceptual geral | ≤ limite P5T do quadro (antes: piso + 0,05, decisão 20) |
+| **SSIM** (luma, janela gaussiana 11 px) | Estrutura/forma | ≥ limite P5T do quadro (antes: 0,95) |
 | **ΔE2000** médio nas regiões chapadas (máscara de cel) | Cor da pintura | ≤ 5,0; e cada cor do settei do corte casa com a da referência com ΔE ≤ 3 |
-| **F1 de bordas** (mapa de linha extraído dos dois, tolerância de 2 px) | Traço: posição e cobertura das linhas | ≥ 0,95 |
+| **F1 de bordas** (Canny com limiares da referência, tolerância de 2 px) | Traço: posição e cobertura das linhas | ≥ limite P5T do quadro (antes: 0,95) |
 | **Espessura de linha** (largura por transformada de distância) | Peso do traço | média dentro de ±5% ou ≤ 0,3 px de diferença (decisão 21) |
 | **Timing** | Quadros em que o desenho muda; posição da câmera | Mapa de exposição idêntico (0 quadros de erro); erro de câmera ≤ 0,5% da largura do quadro |
 
