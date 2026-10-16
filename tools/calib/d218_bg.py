@@ -32,7 +32,7 @@ def run():
                           "color": {"type": "direct", "rgba": [1, 1, 1, 1]}})
     ys_r = sorted(set(list(range(15, 700, 30)) + list(range(110, 160, 5)) + list(range(640, 700, 5))))
     return d.call("GRADIENT", {"cut": ids["cut"], "frame": 0, "layer": luz, "kind": "linear", "from": [0, 0], "to": [0, 1080],
-                               "stops": column_stops(1885, ys_r)})
+                               "stops": column_stops(1885, ys_r, x_low=1913, y_low=640)})
 
 
 def ornamento():
