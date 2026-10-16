@@ -260,6 +260,10 @@ FECHO = [
     [(1860, 748), (1867, 768), (1870, 792)],  # R2: ponta direita do crescente salmão
     [(1762, 893), (1784, 886)],  # R2: ponta de baixo do crescente salmão
     [(1546, 910), (1560, 890), (1576, 869), (1592, 855), (1602, 846)],  # R12: tampa salmão de cima ↔ anel vermelho
+    # folha do alto à esquerda: facetas claras (bordas da referência, sem tinta)
+    [(10, 0), (17, 15), (25, 30), (33, 47), (35, 50), (37, 47), (42, 30), (46, 15), (48, 0)],
+    [(80, 16), (78, 35), (75, 55), (68, 70), (58, 85), (53, 95), (55, 110), (57, 126), (62, 125), (75, 118), (85, 105), (92, 90), (97, 70),
+     (95, 55), (88, 35), (80, 16)],
 ]
 
 # estimativas que não caem na tinta (c131_check.py): repetidas de contornos ou nervuras que não existem
