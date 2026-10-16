@@ -53,3 +53,8 @@ Erros já pagos neste PC, nos projetos Smart Canvas e ANIGO do mesmo usuário. A
 29. Módulo com shader+struct+teste mas sem chamada no loop de render **não existe** para o usuário (auditoria do Smart Canvas achou dezenas). Toda feature visual precisa de evidência na tela.
 30. Quebras de linha mistas por arquivo: script em modo texto reescreve o arquivo inteiro e some com o diff real. Editar preservando CRLF/LF.
 31. Pesquisar antes de implementar, e de novo depois da primeira tentativa falha.
+
+## Trabalho com vários agentes
+
+32. **Nunca `git add -A` (nem `git add app/crates`) com outro agente trabalhando**: o commit leva o trabalho em andamento dele. Sempre `git add` com os caminhos exatos do próprio escopo. (2026-10-15: aconteceu e foi desfeito com `reset --soft`.)
+33. Dois agentes compilando no mesmo `target/` não quebram nada (o cargo serializa pelo lock), mas um espera o outro; tarefas sem build podem rodar em paralelo à vontade.
