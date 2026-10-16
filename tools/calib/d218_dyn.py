@@ -8,6 +8,9 @@ import meas
 from d218 import reorder, d, ids, node
 import d218_hair as H
 
+if "franja_h3" in H.INK:
+    H.INK.setdefault("franja_h3_r", H.INK["franja_h3"])
+
 FRAMES = {1: 0, 2: 6, 3: 9, 4: 14, 5: 54, 6: 57, 7: 60, 8: 63}  # desenho → primeiro quadro (0-based)
 # mudanças de exposição: quadro → desenho (ciclo 6/7/8 em 3s até o fim)
 EXPOSURE = {0: 1, 6: 2, 9: 3, 14: 4, 54: 5, 57: 6, 60: 7, 63: 8, 66: 6, 69: 7, 72: 8, 75: 6, 78: 7, 81: 8, 84: 6}
@@ -71,6 +74,28 @@ DATA[4] = dict(DATA[3],
               (1004, 724.5), (1003, 728.5), (1001, 732.5), (1001, 736.5), (1033, 737.5), (1069, 733.5), (1095, 729.5), (1122, 725.5),
               (1131, 721), (1131, 717), (1131, 713), (1129, 709), (1128, 705), (1126, 701)])
 
+# desenho 5 (q54–56): boca aberta (contorno sólido, palato #8f464c, língua rosa), sobrancelhas inclinadas; gotas como no 4
+DATA[5] = dict(DATA[4],
+    brow_w={"franja_h3": 11.0, "franja_h3_r": 16.0},  # a sobrancelha engrossa para a direita
+    brows={"franja_h3": [(706, 206), (720, 206), (740, 208), (760, 212), (780, 217), (795, 220)],
+           "franja_h3_r": [(790, 220), (805, 223), (820, 225), (835, 225.5), (850, 225), (865, 222.5), (880, 224.5), (895, 224)],
+           "franja_l1": [(1100, 183), (1112, 187), (1125, 186), (1140, 184), (1150, 181.5), (1160, 180), (1170, 174.5), (1185, 168), (1200, 163),
+                         (1210, 160), (1220, 155.5), (1230, 152), (1240, 148), (1250, 143.5), (1262, 137)]},
+    mouth_solid=True, mouth_in=None,
+    mouth_out=[(1050, 634), (1073, 634), (1084, 640), (1092, 645), (1098, 650), (1107, 660), (1114, 670), (1121, 680), (1127, 690), (1133, 700),
+               (1138, 710), (1143, 720), (1146, 730), (1149, 740), (1151, 750), (1153.5, 757), (1152, 765), (1149, 770), (1144, 775), (1135, 780),
+               (1126, 785), (1116, 790), (1108, 793), (1095, 796), (1086, 799), (1071, 802), (1039, 805), (1026, 805), (998, 802), (992, 799),
+               (989, 796), (985, 790), (983, 785), (982, 780), (981, 770), (981.5, 760), (983, 755), (984, 750), (986, 740), (988, 735), (990, 730),
+               (993, 720), (997, 710), (1001, 700), (1005, 690), (1009, 680), (1016, 670), (1023, 660), (1031, 650), (1042, 640)],
+    mouth_extra=[("#8f464c", [(1047, 651), (1075, 651), (1082, 655), (1087, 659), (1091, 663), (1095, 667), (1098, 671), (1099, 676), (1089, 676),
+                              (1070, 674), (1052, 676), (1036, 680), (1026, 684), (1029, 676), (1032, 672), (1034, 668), (1037, 664), (1040, 660),
+                              (1043, 656)]),
+                 ("#ea7582", [(1044, 699), (1075, 696), (1105, 699), (1117, 704), (1122, 709), (1124, 714), (1127, 719), (1130, 724), (1131, 729),
+                              (1133, 734), (1135, 739), (1136, 744), (1136.5, 750), (1135, 755), (1131, 760), (1125, 765), (1117, 770), (1104, 775),
+                              (1089, 780), (1074, 786), (1015, 786), (1005, 780), (1001, 775), (1000, 770), (1000, 765), (1001, 760), (1002, 755),
+                              (1002, 750), (1004, 745), (1005, 740), (1006, 735), (1008, 730), (1009, 725), (1011, 720), (1013, 715), (1016, 710),
+                              (1026, 705)])])
+
 WHITE = [0xf6 / 255, 0xf2 / 255, 0xf6 / 255, 1.0]
 PINK_SHADOW = [0xd7 / 255, 0x78 / 255, 0x82 / 255, 1.0]
 MOUTH_PINK = [0xea / 255, 0x75 / 255, 0x82 / 255, 1.0]
@@ -108,10 +133,17 @@ def draw_drawing(k, lay):
     for key in lay:
         d.apply({"kind": "replace_data", "id": ids[f"{key}_c{k}"], "data": {"type": "cel", "number": k}})
     # sobrancelhas: mesma medição das linhas do cabelo, na referência deste desenho
-    curves, _ = H.measured_curves(data["brows"], ref=ref)
+    saved = dict(H.FIXED_W)
+    H.FIXED_W.update(data.get("brow_w", {}))  # largura própria deste desenho (lida nos recortes)
+    try:
+        curves, _ = H.measured_curves(data["brows"], ref=ref)
+    finally:
+        H.FIXED_W.clear()
+        H.FIXED_W.update(saved)
     d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": fr, "layer": lay["sobrancelha"], "curves": curves})
     # boca: anel de tinta com furo + rosa por dentro (+ extras da boca aberta)
-    outer, inner = [list(p) for p in data["mouth_out"]], [list(p) for p in data["mouth_in"]]
+    outer = [list(p) for p in data["mouth_out"]]
+    inner = [list(p) for p in data.get("mouth_in") or []]
     # cor da tinta da boca: amostras 5 px para dentro do contorno externo (rumo ao centro), só as com cara de tinta
     cx = sum(p[0] for p in outer) / len(outer)
     cy = sum(p[1] for p in outer) / len(outer)
@@ -124,6 +156,16 @@ def draw_drawing(k, lay):
     pr = [p for p in pr if sum((p["rgb"][k] * 255 - (92, 46, 46)[k]) ** 2 for k in range(3)) ** 0.5 < 60] or pr
     rgb = sorted([p["rgb"] for p in pr], key=sum)
     ink = list(rgb[len(rgb) // 2]) + [1.0]
+    if data.get("mouth_solid"):
+        # boca aberta: forma externa inteira em tinta; palato e língua por cima (em "mouth_extra")
+        d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": fr, "layer": lay["boca"], "shapes": [{"points": outer, "geometry": "polyline"}],
+                              "color": {"type": "direct", "rgba": ink}})
+        for hexc, poly in data["mouth_extra"]:
+            d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": fr, "layer": lay["boca"],
+                                  "shapes": [{"points": [list(p) for p in poly], "geometry": "polyline"}],
+                                  "color": {"type": "direct", "rgba": [int(hexc[i:i + 2], 16) / 255 for i in (1, 3, 5)] + [1.0]}})
+        draw_drops(k, lay, data, fr, ref)
+        return
     d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": fr, "layer": lay["boca"], "shapes": [{"points": inner, "geometry": "polyline"}],
                           "color": {"type": "direct", "rgba": MOUTH_PINK}})
     for hexc, poly in data["mouth_extra"]:
@@ -134,7 +176,10 @@ def draw_drawing(k, lay):
     d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": fr, "layer": lay["boca"],
                           "shapes": [{"points": outer, "geometry": "polyline"}, {"points": hole, "geometry": "polyline"}],
                           "color": {"type": "direct", "rgba": ink}})
-    # gotas
+    draw_drops(k, lay, data, fr, ref)
+
+
+def draw_drops(k, lay, data, fr, ref):
     gc = []
     for drop in data["drops"]:
         d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": fr, "layer": lay["gota_r"], "shapes": [{"points": [list(p) for p in drop["shadow"]],
