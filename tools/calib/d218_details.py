@@ -10,6 +10,9 @@ SHAPES = {
     "fita_esq": ("#f5e0c7", [(468, 0), (556, 0), (552, 20), (546, 40), (520, 42), (495, 40), (485, 45), (480, 60), (470, 60)], True),
     "fita_dir": ("#f5e0c7", [(772, 0), (935, 0), (935, 22), (918, 25), (905, 36), (880, 30), (858, 22), (835, 25), (815, 30), (800, 40),
                              (790, 68), (780, 65)], True),
+    # respiro rosado ao lado do queixo: bordas medidas (rosa × tinta é nítido); cobre a fresta que o balde deixa
+    "bochecha": ("#ce6f74", [(558, 668), (565, 690), (580, 715), (597, 745), (612, 770), (628, 797), (600, 800), (570, 795), (552, 788),
+                             (551, 750), (553, 700)], True),
     "sombra_l2": ("#872637", [(1330, 92), (1355, 104), (1380, 116), (1392, 122), (1395, 145), (1375, 140), (1350, 125)], True),
     "gota_sombra": ("#d77882", [(690, 752), (725, 752), (726, 760), (720, 768), (708, 771), (696, 769), (690, 762)], False),
 }
@@ -43,8 +46,11 @@ def run():
                "profile": [[0, 0.4], [0.5, 1.0], [1, 0.4]]} for h in HIGHLIGHTS]
     # gota de suor: traço branco grosso enrolado (centro cor de pele), lido no recorte ampliado 4×
     gw = {"type": "direct", "rgba": [0xf6 / 255, 0xf2 / 255, 0xf6 / 255, 1.0]}
-    curves.append({"points": [[692, 707], [689, 725], [692, 744], [704, 754], [719, 754], [729, 746], [733, 734], [731, 726]],
-                   "width": 15.0, "tip": "marker", "geometry": "spline", "color": gw, "profile": [[0, 1.0], [1, 1.0]]})
+    gota = meas.densify([(692, 707), (689, 725), (692, 744), (704, 754), (719, 754), (729, 746), (733, 734), (731, 726)], 4)
+    gpts, gws = meas.measure_band(d, REF0, gota, "#f6f2f6", 0.06, passes=(8.0, 5.0), smooth=1)
+    gc = meas.curve_from_measure(gpts, gws, gw, every=1)
+    gc["profile"] = [[t, max(0.5, min(1.4, w))] for t, w in gc["profile"]]
+    curves.append(gc)
     curves.append({"points": [[705, 730], [706, 735]], "width": 7.0, "tip": "marker", "geometry": "polyline", "color": gw})
     return d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": 0, "layer": bri, "curves": curves})
 

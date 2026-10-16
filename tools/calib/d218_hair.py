@@ -10,7 +10,7 @@ MIN_W = 11.0
 PIN_START = {"queixo"}
 # linhas coladas a um realce: a borda realce→cabelo engana a ancoragem (pega a borda errada e alarga a linha)
 NO_ANCHOR = {"mecha_e", "mecha_n"}
-FIXED_W = {"mecha_e": 16.0, "mecha_n": 16.0, "mecha_g": 15.0,  "queixo": 14.0, "tras_b": 13.0, "tras_c": 13.0, "tras_d1": 12.0, "tras_d2": 12.0, "tras_e": 12.0, "base_g": 14.0}
+FIXED_W = { "queixo": 14.0, "tras_b": 13.0, "tras_c": 13.0, "tras_d1": 12.0, "tras_d2": 12.0, "tras_e": 12.0, "base_g": 14.0}
 ANCHOR = "--sem-ancora" not in sys.argv
 _INK_F = os.path.join(os.path.dirname(__file__), "..", "..", "calibracao", "projetos", "d218_ink.json")
 INK = json.load(open(_INK_F)) if os.path.exists(_INK_F) else {}  # cor da tinta medida por linha (d218_inkcolors.py)
@@ -73,6 +73,7 @@ HAIR = {
     "no_c3": [(332, 108), (353, 121), (375, 135)],
     "mecha_f": [(352, 0), (338, 60), (318, 115), (300, 138)],
     "borda_inf_esq": [(190, 800), (200, 860), (207, 930), (212, 1000), (216, 1078)],
+    "alca": [(1503, 980), (1490, 990), (1476, 1005), (1462, 1020), (1450, 1035), (1437, 1050), (1425, 1065), (1413, 1084)],
     "tras_b": [(600, 802), (650, 838), (695, 862)],
     "tras_c": [(616, 802), (615, 880), (614, 960), (612, 1080)],
     "tras_d1": [(460, 910), (510, 912), (560, 916), (600, 925)],
@@ -88,7 +89,6 @@ DIRECT = {
     "contorno_n3a": ([(1720, 280), (1755, 325), (1790, 375), (1775, 425), (1760, 480), (1750, 500)], 16.0),
     "contorno_n4a": ([(1750, 495), (1800, 540), (1830, 570), (1835, 600), (1825, 640)], 16.0),
     "contorno_n5": ([(1830, 640), (1875, 685), (1915, 720)], 16.0),
-    "alca": ([(1503, 980), (1490, 990), (1476, 1005), (1462, 1020), (1450, 1035), (1437, 1050), (1425, 1065), (1413, 1084)], 20.0),
     "base_g": ([(546, 807), (590, 809), (632, 809)], 14.0),
           "queixo": ([(549, 560), (550, 602), (566, 655), (586, 703), (612, 752), (644, 804), (697, 858), (760, 898), (840, 937),
                        (960, 964), (1080, 957), (1190, 930), (1250, 906), (1300, 876), (1345, 841), (1380, 806), (1405, 775)], 14.0)}
@@ -98,6 +98,7 @@ CLOSED = {}  # a boca virou anel medido na linha-massa (d218_face.py)
 
 
 SEGMENT_INK = True
+INK_Q = 0.5
 BAND = "--meia-altura" not in sys.argv
 
 
@@ -123,7 +124,7 @@ def colored_segments(pts, ws, base_w, seg_len=180.0):
         inkish = [p["rgb"] for p in pr if sum((p["rgb"][k] * 255 - (92, 46, 46)[k]) ** 2 for k in range(3)) ** 0.5 < 55]
         if len(inkish) >= 2:
             rgb = sorted(inkish, key=sum)
-            col = {"type": "direct", "rgba": list(rgb[len(rgb) // 2]) + [1.0]}
+            col = {"type": "direct", "rgba": list(rgb[int(len(rgb) * INK_Q)]) + [1.0]}  # miolo da tinta, não a borda suavizada
         else:
             col = LINE
         c = meas.curve_from_measure(sp, sw, col, every=1)
