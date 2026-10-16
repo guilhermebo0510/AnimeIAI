@@ -286,7 +286,7 @@ fn commit(env: &mut Env, planned: Result<Command, String>, released_at: Instant,
     if env.ed.apply(env.core, cmd) {
         env.ed.begin_latency(released_at, label, env.core);
         if let Some((pts, width, color)) = ghost {
-            env.ed.ghosts.push(Ghost { pts, width, color, until_counter: env.core.change_counter });
+            env.ed.ghosts.push(Ghost { pts, width, color, until_counter: env.core.change_counter, born: Instant::now() });
         }
     }
 }

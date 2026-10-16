@@ -1,0 +1,165 @@
+{
+  "summary": {
+    "pen": {
+      "n": 6,
+      "tool_ms": 0.03,
+      "render_ms": 147.065,
+      "total_ms": 163.68,
+      "max_total_ms": 202.34
+    },
+    "brush": {
+      "n": 6,
+      "tool_ms": 22.665,
+      "render_ms": 160.56,
+      "total_ms": 193.255,
+      "max_total_ms": 203.86
+    },
+    "fill": {
+      "n": 6,
+      "tool_ms": 294.385,
+      "render_ms": 188.52,
+      "total_ms": 508.415,
+      "max_total_ms": 542.89
+    },
+    "erase_vector": {
+      "n": 3,
+      "tool_ms": 0.56,
+      "render_ms": 157.72,
+      "total_ms": 177.43,
+      "max_total_ms": 182.29
+    }
+  },
+  "log": [
+    {
+      "label": "pen",
+      "render_ms": 128.14,
+      "tool_ms": 0.05,
+      "total_ms": 139.83
+    },
+    {
+      "label": "pen",
+      "render_ms": 125.14,
+      "tool_ms": 0.03,
+      "total_ms": 138.35
+    },
+    {
+      "label": "pen",
+      "render_ms": 129.96,
+      "tool_ms": 0.04,
+      "total_ms": 142.67
+    },
+    {
+      "label": "pen",
+      "render_ms": 169.74,
+      "tool_ms": 0.02,
+      "total_ms": 184.69
+    },
+    {
+      "label": "pen",
+      "render_ms": 189.1,
+      "tool_ms": 0.03,
+      "total_ms": 202.34
+    },
+    {
+      "label": "pen",
+      "render_ms": 164.17,
+      "tool_ms": 0.03,
+      "total_ms": 185.94
+    },
+    {
+      "label": "brush",
+      "render_ms": 168.19,
+      "tool_ms": 21.88,
+      "total_ms": 197.19
+    },
+    {
+      "label": "brush",
+      "render_ms": 158.41,
+      "tool_ms": 27.41,
+      "total_ms": 193.5
+    },
+    {
+      "label": "brush",
+      "render_ms": 166.79,
+      "tool_ms": 27.71,
+      "total_ms": 203.86
+    },
+    {
+      "label": "brush",
+      "render_ms": 154.51,
+      "tool_ms": 22.29,
+      "total_ms": 183.04
+    },
+    {
+      "label": "brush",
+      "render_ms": 158.29,
+      "tool_ms": 21.69,
+      "total_ms": 187.26
+    },
+    {
+      "label": "brush",
+      "render_ms": 162.71,
+      "tool_ms": 23.04,
+      "total_ms": 193.01
+    },
+    {
+      "label": "fill",
+      "render_ms": 187.18,
+      "tool_ms": 295.84,
+      "total_ms": 489.98
+    },
+    {
+      "label": "fill",
+      "render_ms": 228.26,
+      "tool_ms": 291.68,
+      "total_ms": 528.79
+    },
+    {
+      "label": "fill",
+      "render_ms": 174.28,
+      "tool_ms": 343.27,
+      "total_ms": 526.85
+    },
+    {
+      "label": "fill",
+      "render_ms": 189.86,
+      "tool_ms": 280.81,
+      "total_ms": 479.94
+    },
+    {
+      "label": "fill",
+      "render_ms": 174.04,
+      "tool_ms": 292.93,
+      "total_ms": 476.0
+    },
+    {
+      "label": "fill",
+      "render_ms": 190.18,
+      "tool_ms": 343.84,
+      "total_ms": 542.89
+    },
+    {
+      "label": "erase_vector",
+      "render_ms": 157.72,
+      "tool_ms": 0.67,
+      "total_ms": 177.43
+    },
+    {
+      "label": "erase_vector",
+      "render_ms": 170.38,
+      "tool_ms": 0.4,
+      "total_ms": 182.29
+    },
+    {
+      "label": "erase_vector",
+      "render_ms": 156.6,
+      "tool_ms": 0.56,
+      "total_ms": 171.46
+    }
+  ],
+  "canvas": [
+    1920,
+    1080
+  ],
+  "layers": 5
+}

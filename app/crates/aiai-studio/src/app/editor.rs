@@ -421,6 +421,8 @@ pub(crate) struct Ghost {
     pub width: f32,
     pub color: egui::Color32,
     pub until_counter: u64,
+    /// Se o render novo não chegar (erro), o fantasma some sozinho.
+    pub born: Instant,
 }
 
 pub(crate) struct Playback {
@@ -595,6 +597,10 @@ impl Editor {
                 self.fit_pending = true;
                 self.layer = None;
                 self.shown = None;
+                self.selection = None;
+                self.gesture = Gesture::None;
+                self.ghosts.clear();
+                self.playback.playing = false;
             }
             self.cut = new;
         }

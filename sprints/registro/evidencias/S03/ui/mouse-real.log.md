@@ -1,0 +1,142 @@
+# S03/B2 - roteiro de mouse/teclado reais (SendInput)
+
+Gerado por `mouse_real_s03.py`; vigia: `mouse-real-watch.json`.
+
+- `input.ps1 -S "foco; max; wait 700"` -> exit 0 [ok] 3 operacoes 
+Estado inicial: workspace=animacao, janela=[1920.0, 991.02], ppp=1.25, titulo='AnimeIAI - Sem título'
+- `input.ps1 -S "click 77 46; wait 300"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "click 152 76; wait 500"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "wait 200"` -> exit 0 [ok] 1 operacoes 
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\00-projeto-vazio.png"` -> exit 0 [ok] 1 operacoes 
+- OK  projeto novo e vazio (sem corte)
+- `input.ps1 -S "click 310 435; key ctrl+a; type Teste de mouse S03; key enter; wait 300"` -> exit 0 [ok] 5 operacoes 
+- OK  nome do projeto digitado: 'Teste de mouse S03'
+- `input.ps1 -S "click 210 375; wait 900"` -> exit 0 [ok] 2 operacoes 
+- OK  corte criado: canvas [1920, 1080]
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\01-corte-criado.png"` -> exit 0 [ok] 1 operacoes 
+- `input.ps1 -S "click 1424 387; wait 300"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\02-menu-camadas.png"` -> exit 0 [ok] 1 operacoes 
+- `input.ps1 -S "click 1491 421; wait 500"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "click 1424 387; wait 300"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "click 1491 478; wait 500"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "click 1424 387; wait 300"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "click 1491 450; wait 500"` -> exit 0 [ok] 2 operacoes 
+- OK  camadas criadas pelo menu: ['vector', 'raster', 'fill']
+- `input.ps1 -S "dclick 1618 427; wait 300; key ctrl+a; type Linha; key enter; wait 400"` -> exit 0 [ok] 6 operacoes 
+- OK  renomeada por duplo clique: ['Linha', 'Raster 1', 'Preenchimento 1']
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\03-camadas.png"` -> exit 0 [ok] 1 operacoes 
+- `input.ps1 -S "click 35 243; wait 300"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "click 1658 427; wait 300"` -> exit 0 [ok] 2 operacoes 
+- polydrag 45 pontos (left) -> exit 0 [polydrag] 45 pontos, 142 movimentos, titulo='AnimeIAI - Teste de mouse S03*' 
+- OK  um arrasto = um traco na camada Linha (1 traco(s), 134 amostras)
+- OK  o traco comeca onde o cursor apertou: (1404.5, 540.4) vs alvo (1404, 540) (1 px da tela = 2.9 px do desenho)
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\04-caneta-forma.png"` -> exit 0 [ok] 1 operacoes 
+- `input.ps1 -S "click 1661 237; wait 400"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "click 1602 196; wait 400"` -> exit 0 [ok] 2 operacoes 
+- OK  cor atual = cor da paleta (ligada por referencia)
+- `input.ps1 -S "click 1427 280; wait 300"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\05-paleta.png"` -> exit 0 [ok] 1 operacoes 
+- `input.ps1 -S "click 35 343; wait 300"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "click 891 435; wait 300"` -> exit 0 [ok] 2 operacoes 
+- OK  o balde pintou o interior: (232, 160, 112, 255)
+- OK  fora da forma continua transparente: (0, 0, 0, 0)
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\06-balde.png"` -> exit 0 [ok] 1 operacoes 
+- `input.ps1 -S "click 1658 461; wait 300"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "click 35 193; wait 300"` -> exit 0 [ok] 2 operacoes 
+- polydrag 6 pontos (left) -> exit 0 [polydrag] 6 pontos, 87 movimentos, titulo='AnimeIAI - Teste de mouse S03*' 
+- OK  pincel azul no raster: (58, 111, 208, 255)
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\07-pincel.png"` -> exit 0 [ok] 1 operacoes 
+- `input.ps1 -S "click 1861 495; wait 500"` -> exit 0 [ok] 2 operacoes 
+- OK  olho fechado: o preenchimento some do render
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\08-camada-oculta.png"` -> exit 0 [ok] 1 operacoes 
+- `input.ps1 -S "click 1861 495; wait 500"` -> exit 0 [ok] 2 operacoes 
+- OK  olho aberto: o preenchimento volta
+- `input.ps1 -S "foco; key ctrl+z; wait 500"` -> exit 0 [ok] 3 operacoes 
+- OK  Ctrl+Z real desfez (o traco do pincel sumiu)
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\09-desfeito.png"` -> exit 0 [ok] 1 operacoes 
+- `input.ps1 -S "key ctrl+shift+z; wait 600"` -> exit 0 [ok] 2 operacoes 
+- OK  Ctrl+Shift+Z real refez o pincel
+- `input.ps1 -S "click 35 443; wait 300"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "click 891 435; wait 400"` -> exit 0 [ok] 2 operacoes 
+- OK  conta-gotas copiou a cor do canvas: #e8a070ff
+- `input.ps1 -S "click 1658 427; wait 300"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "click 35 243; wait 200"` -> exit 0 [ok] 2 operacoes 
+- polydrag 5 pontos (left) -> exit 0 [polydrag] 5 pontos, 24 movimentos, titulo='AnimeIAI - Teste de mouse S03*' 
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\08b-traco-para-apagar.png"` -> exit 0 [ok] 1 operacoes 
+- `input.ps1 -S "click 35 293; wait 300"` -> exit 0 [ok] 2 operacoes 
+- polydrag 2 pontos (left) -> exit 0 [polydrag] 2 pontos, 16 movimentos, titulo='AnimeIAI - Teste de mouse S03*' 
+- OK  borracha vetorial apagou o traco que o cursor atravessou (2 -> 1)
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\08c-borracha-vetorial.png"` -> exit 0 [ok] 1 operacoes 
+- `input.ps1 -S "key ctrl+z; wait 500"` -> exit 0 [ok] 2 operacoes 
+- OK  Ctrl+Z devolve o traco apagado (um passo)
+- `input.ps1 -S "click 35 393; wait 300"` -> exit 0 [ok] 2 operacoes 
+- polydrag 2 pontos (left) -> exit 0 [polydrag] 2 pontos, 20 movimentos, titulo='AnimeIAI - Teste de mouse S03*' 
+- OK  selecao retangular criada por arrasto
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\08d-selecao.png"` -> exit 0 [ok] 1 operacoes 
+- `input.ps1 -S "click 35 143; wait 300"` -> exit 0 [ok] 2 operacoes 
+- polydrag 2 pontos (left) -> exit 0 [polydrag] 2 pontos, 21 movimentos, titulo='AnimeIAI - Teste de mouse S03*' 
+- OK  movimento pendente do mouse: [-298.55, -99.52]
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\08e-mover-pendente.png"` -> exit 0 [ok] 1 operacoes 
+- `input.ps1 -S "key enter; wait 800"` -> exit 0 [ok] 2 operacoes 
+- OK  Enter aplicou o movimento ao traco: x 1500 -> 1201
+- `input.ps1 -S "key ctrl+z; wait 500"` -> exit 0 [ok] 2 operacoes 
+- OK  Ctrl+Z desfaz o mover
+- `input.ps1 -S "key esc; wait 300"` -> exit 0 [ok] 2 operacoes 
+- OK  Esc limpa a selecao
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\08f-apos-mover.png"` -> exit 0 [ok] 1 operacoes 
+- `input.ps1 -S "move 891 317; wheel 4; wait 500"` -> exit 0 [ok] 3 operacoes 
+- OK  zoom da roda ancorado no cursor: 0.39 -> 0.69; o ponto sob o cursor andou (0, 1) px
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\10-zoom-roda.png"` -> exit 0 [ok] 1 operacoes 
+- polydrag 2 pontos (middle) -> exit 0 [polydrag] 2 pontos, 16 movimentos, titulo='AnimeIAI - Teste de mouse S03*' 
+- OK  pan com o botao do meio
+- polydrag 2 pontos (left+space) -> exit 0 [polydrag] 2 pontos, 11 movimentos, titulo='AnimeIAI - Teste de mouse S03*' 
+- OK  pan com espaco + arrastar
+- `input.ps1 -S "move 891 434; wheel 10; wait 200; wheel 8; wait 500"` -> exit 0 [ok] 5 operacoes 
+- OK  zoom alto para ver a grade de pixels: 848%
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\11-grade-de-pixels.png"` -> exit 0 [ok] 1 operacoes 
+- `input.ps1 -S "click 410 163; wait 400"` -> exit 0 [ok] 2 operacoes 
+- polydrag 3 pontos (left+r) -> exit 0 [polydrag] 3 pontos, 8 movimentos, titulo='AnimeIAI - Teste de mouse S03*' 
+- OK  R + arrastar gira a visao: 21.8 graus
+- `input.ps1 -S "click 410 163; wait 400"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\12-rotacao.png"` -> exit 0 [ok] 1 operacoes 
+- `input.ps1 -S "click 35 243; wait 200"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "click 1658 427; wait 200"` -> exit 0 [ok] 2 operacoes 
+- polydrag 3 pontos (left) -> exit 0 [polydrag] 3 pontos, 10 movimentos, titulo='AnimeIAI - Teste de mouse S03*' 
+- OK  com a visao girada o traco ainda cai no cursor: (1500.4, 200.0) vs (1500, 200)
+- `input.ps1 -S "click 410 163; wait 300"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "dclick 623 164; key ctrl+a; type 0; key enter; wait 300"` -> exit 0 [ok] 5 operacoes 
+- `input.ps1 -S "click 668 164; wait 400"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\13-espelhado.png"` -> exit 0 [ok] 1 operacoes 
+- OK  espelhar a visao
+- polydrag 3 pontos (left) -> exit 0 [polydrag] 3 pontos, 10 movimentos, titulo='AnimeIAI - Teste de mouse S03*' 
+- OK  com a visao espelhada o traco cai no cursor: (1500.7, 321.2) vs (1500, 320)
+- `input.ps1 -S "click 668 164; wait 400"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "click 1658 427; wait 300"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "click 1537 625; wait 400"` -> exit 0 [ok] 2 operacoes 
+- OK  2o cel criado e escolhido na lista
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\14-cel2.png"` -> exit 0 [ok] 1 operacoes 
+- `input.ps1 -S "click 376 808; wait 400"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "click 481 808; wait 400"` -> exit 0 [ok] 2 operacoes 
+- OK  timesheet com exposicoes do cel 2 nos quadros 6 e 12: {"duration": 48, "xsheet": {"tracks": [{"cells": {"0": {"number": 1, "type": "cel"}, "12": {"number": 2, "type": "cel"}, "6": {"number": 2, "type": "cel"}}, "id
+- OK  o quadro 7 expoe o cel 2
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\15-timeline-exposicao.png"` -> exit 0 [ok] 1 operacoes 
+- `input.ps1 -S "foco; click 280 778; wait 300"` -> exit 0 [ok] 3 operacoes 
+- OK  clique na regua leva o cabecote ao quadro 2
+- `input.ps1 -S "drag 280 778 516 778 20; wait 500"` -> exit 0 [ok] 2 operacoes 
+- OK  arrastar na regua faz scrub: quadro 14
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\16-scrub.png"` -> exit 0 [ok] 1 operacoes 
+- `input.ps1 -S "click 411 778; wait 400"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "click 35 243; wait 200"` -> exit 0 [ok] 2 operacoes 
+- polydrag 5 pontos (left) -> exit 0 [polydrag] 5 pontos, 25 movimentos, titulo='AnimeIAI - Teste de mouse S03*' 
+- OK  o traco do quadro 9 entrou no cel 2 (cel1: 4, cel2: 1)
+- OK  o render do quadro 9 tem o traco novo (azul em y=[692, 693]...); o do quadro 3 mostra so o preenchimento
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\17-desenho-no-cel2.png"` -> exit 0 [ok] 1 operacoes 
+- `input.ps1 -S "click 90 741; wait 200"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "key home; wait 200"` -> exit 0 [ok] 2 operacoes 
+- `input.ps1 -S "click 125 741; wait 1500"` -> exit 0 [ok] 2 operacoes 
+- OK  reproduzindo: 13.0 fps reais
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\18-reproduzindo.png"` -> exit 0 [ok] 1 operacoes 
+- `input.ps1 -S "click 125 741; wait 400"` -> exit 0 [ok] 2 operacoes 
+- OK  pausou
+Latencias (solta o mouse -> canvas atualizado), todas as ferramentas desta corrida: [{"label": "pen", "render_ms": 80.22, "tool_ms": 0.1, "total_ms": 95.44}, {"label": "fill", "render_ms": 80.96, "tool_ms": 257.59, "total_ms": 346.88}, {"label": "brush", "render_ms": 97.94, "tool_ms": 44.87, "total_ms": 150.77}, {"label": "pen", "render_ms": 114.11, "tool_ms": 0.05, "total_ms": 131.77}, {"label": "erase_vector", "render_ms": 106.29, "tool_ms": 1.28, "total_ms": 123.21}, {"label": "move", "render_ms": 110.88, "tool_ms": 0.97, "total_ms": 118.72}, {"label": "pen", "render_ms": 101.85, "tool_ms": 0.05, "total_ms": 117.14}, {"label": "pen", "render_ms": 75.88, "tool_ms": 0.02, "total_ms": 85.49}, {"label": "pen", "render_ms": 88.06, "tool_ms": 0.04, "total_ms": 97.97}]
+- `input.ps1 -S "cap C:\AnimeIAI\sprints\registro\evidencias\S03\ui\19-final.png"` -> exit 0 [ok] 1 operacoes 

@@ -721,6 +721,7 @@ fn polyline(painter: &egui::Painter, pts: &[Vec2], width_canvas: f32, color: Col
 
 fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId) {
     // o que o gesto anterior acabou de fazer, até o render novo chegar
+    env.ed.ghosts.retain(|g| g.born.elapsed().as_secs_f32() < 5.0);
     for g in &env.ed.ghosts {
         polyline(painter, &g.pts, g.width, g.color, xf);
     }

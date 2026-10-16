@@ -529,7 +529,7 @@ fn editor_script2(c: &Client) {
     let layers: Vec<(String, String)> = st["editor"]["layers"].as_array().unwrap().iter().map(|l| (l["id"].as_str().unwrap().to_string(), l["kind"].as_str().unwrap().to_string())).collect();
     let kinds: Vec<&str> = layers.iter().map(|l| l.1.as_str()).collect();
     assert_eq!(kinds, ["raster", "vector", "fill"], "o balde entra abaixo da linha; o raster novo acima da camada ativa");
-    let (ras_id, vec_id, fill_id) = (layers[0].0.clone(), layers[1].0.clone(), layers[2].0.clone());
+    let (vec_id, fill_id) = (layers[1].0.clone(), layers[2].0.clone());
     c.click_widget("layers:row:1");
     c.click_widget("layers:up");
     assert_eq!(c.state()["editor"]["layers"][0]["id"], json!(vec_id), "subir move a linha para o topo");
