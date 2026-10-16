@@ -49,6 +49,7 @@ aiai-media = { path = "crates/aiai-media" }
 aiai-guide3d = { path = "crates/aiai-guide3d" }
 aiai-metrics = { path = "crates/aiai-metrics" }
 aiai-bridge = { path = "crates/aiai-bridge" }
+aiai-tools = { path = "crates/aiai-tools" }
 
 # Perfis definidos uma vez (mudar = recompilar tudo; ver lições 6–7). Dependências otimizadas mesmo em dev (UI fluida);
 # código do projeto em opt-level 1.
