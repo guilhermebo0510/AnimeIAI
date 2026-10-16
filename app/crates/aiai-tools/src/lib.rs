@@ -6,6 +6,7 @@ pub mod anim;
 pub mod context;
 pub mod draw;
 pub mod fill;
+pub mod guide;
 pub mod paint;
 pub mod transform;
 

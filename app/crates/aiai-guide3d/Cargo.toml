@@ -3,5 +3,12 @@ name = "aiai-guide3d"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Guias 3D do AnimeIAI: primitivas, manequim posável, câmera com lente, linhas de contorno com remoção de linhas ocultas, sombreado de guia e pontos de fuga"
 
 [dependencies]
+aiai-core = { workspace = true }
+aiai-paint = { workspace = true }
+glam = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
