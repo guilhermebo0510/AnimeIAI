@@ -3,7 +3,7 @@ e brilhos dos olhos (traços brancos curtos na vetorial `brilho`, acima das linh
 import os, sys
 sys.path.insert(0, os.path.dirname(__file__))
 import meas
-from d218 import reorder, d, ids, node, REF0, ck, CEL, F0, W, edge_score, candidates
+from d218 import reorder, d, ids, node, REF0, ck, CEL, F0, W, edge_score, candidates, grow, SCAN_GROW
 
 WHITE = "#f6f3f6"
 SHAPES = {
@@ -66,7 +66,7 @@ def run():
     raw = SHAPES_DES.get(CEL, {})
     for name, (color, poly, do_measure) in {**SHAPES, **raw}.items():
         best = None
-        for cand in ([[tuple(p) for p in poly]] if name in raw else candidates(poly)):  # redesenho: a estimativa do desenho 1 ou a do campo, a que encaixar melhor depois de medida
+        for cand in ([grow(poly, SCAN_GROW.get(CEL, 0) if name in raw else 0)] if name in raw else candidates(poly)):  # redesenho: a estimativa do desenho 1 ou a do campo, a que encaixar melhor depois de medida
             pts = meas.densify(cand, 3, closed=True)
             if do_measure:
                 pts = meas.measure_edge(d, REF0, pts, passes=((5.0, 0.03), (3.0, 0.03)))

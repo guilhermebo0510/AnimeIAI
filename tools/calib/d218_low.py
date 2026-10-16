@@ -3,7 +3,7 @@
 import json, os, sys
 sys.path.insert(0, os.path.dirname(__file__))
 import meas
-from d218 import reorder, d, ids, node, REF0, render, ck, CEL, F0, W, edge_score, candidates
+from d218 import reorder, d, ids, node, REF0, render, ck, CEL, F0, W, edge_score, candidates, grow, SCAN_GROW
 
 INK = "#4a2022"
 
@@ -166,7 +166,7 @@ def draw_shapes(measure=True):
     for name, (color, poly, do_measure) in {**SHAPES, **raw}.items():
         best = None
         keep = name in raw or name in KEEP_DES.get(CEL, set())
-        for cand in ([[tuple(p) for p in poly]] if keep else candidates(poly)):  # redesenho: a estimativa do desenho 1 ou a do campo, a que encaixar melhor depois de medida
+        for cand in ([grow(poly, SCAN_GROW.get(CEL, 0) if name in raw else 0)] if keep else candidates(poly)):  # redesenho: a estimativa do desenho 1 ou a do campo, a que encaixar melhor depois de medida
             pts = meas.densify(cand, 3, closed=True)
             if measure and do_measure:
                 pts = meas.measure_edge(d, REF0, pts, passes=((4.0, 0.03), (2.5, 0.03)))

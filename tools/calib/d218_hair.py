@@ -116,7 +116,7 @@ TAPER_DES = {7: {"franja_h2", "franja_i1"}}
 DIRECT_W_DES = {8: {"queixo": 25.0}}  # no 8 o queixo engrossa (~25 px pela varredura por colunas, borda da pele igual)
 NO_ANCHOR_DES = {8: {"contorno_n2"}}
 # larguras fixas por desenho (lidas por varredura): no alto do quadro a tinta clareia e o paquímetro de faixa estreita a linha
-FIXED_W.update({7: {"mecha_n": 20.0}, 8: {"mecha_n": 22.0}}.get(CEL, {}))
+FIXED_W.update({7: {"mecha_n": 20.0}, 8: {"mecha_n": 22.0, "mecha_yy": 23.0}}.get(CEL, {}))
 INK.update({7: {"alca": "#3e1d1c"}, 8: {"alca": "#3e1d1c"}}.get(CEL, {}))  # alça curta (sem trechos coloridos): cor medida no desenho
 DIRECT_DES[8] = {"alca": ([(1491, 953), (1483, 960), (1476, 970), (1466, 980), (1456, 990), (1446, 1000), (1438, 1010), (1430, 1020), (1422, 1030),
                            (1415, 1040), (1408, 1050), (1402, 1060), (1397, 1070), (1392, 1082)], 24.0),  # centros das varreduras de tinta (runs.py)
@@ -142,6 +142,10 @@ HAIR_DES = {8: {"laco": [(163, 0), (162, 15), (168, 28), (180, 40), (195, 52), (
                 "mecha_f": [(333, 0), (326, 20), (317, 40), (309, 60), (302, 80), (298, 100)],
                 "franja_i2": [(893, 203), (905, 219), (915, 233), (930, 250), (950, 283), (1002, 310), (1053, 336), (1084, 336)],
                 "franja_bico": [(1060, 302), (1070, 307), (1082, 312)],
+                "mecha_yy": [(1639, 814), (1672, 840), (1708, 879), (1729, 912), (1740, 928), (1747, 936), (1750, 952), (1755, 968), (1760, 984),
+                             (1765, 1000), (1769, 1016), (1773, 1032), (1776, 1048), (1780, 1064), (1784, 1082)],
+                "franja_k2": [(1073, -6), (1074, 4), (1067, 49), (1061, 89), (1059, 100), (1057, 110), (1055, 120), (1052, 130), (1049, 140),
+                              (1044, 150), (1040, 158)],
                 # mecha da esquerda desce e fecha a ponta do cacho no 8 (varredura de tinta, runs.py)
                 "mecha_e": [(426, 0), (411, 65), (399, 108), (375, 181), (364, 261), (357, 340), (360, 441), (366, 491), (384, 543), (387, 629),
                             (386, 707), (370, 755), (349, 822), (339, 871), (324, 896), (309, 906), (303, 916), (297, 928), (294, 940), (292, 952),

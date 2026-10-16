@@ -25,6 +25,7 @@ CENTERS = {
 RIM = "#f4a097"
 TAPER_END = set()
 NO_TRIM = set()
+NO_TRIM_DES = {8: {"dir1"}}  # ponta fina que desce até ~555 no 8: o corte comeria a ponta real
 # caudas finas (2–3 px) que a medição de faixa não acompanha: traço fixo lido por varredura (runs.py)
 TAILS = {"mecha_e_cauda": ([(394, 706), (392, 718), (390, 730), (388, 742), (386, 754), (384, 766)], 2.5, "#e47a74"),
          "dir3_cauda": ([(1745, 456), (1742, 464), (1738, 472), (1735, 480), (1732, 488)], 4.0, "#e98a82"),
@@ -39,7 +40,11 @@ CENTERS_DES = {8: {"dir2": [(1615, 62), (1622, 70), (1627, 80), (1634, 90), (164
                             (275, 240), (266, 255), (258, 275), (250, 290), (240, 305), (230, 320), (222, 335)],
                    "esq5": [(232, 860), (233, 872), (231, 880), (228, 888), (225, 896), (223, 904), (220, 912), (217, 920), (214, 928), (210, 936),
                             (207, 944), (205, 952)],
-                   "esq5b": [(203, 956), (200, 964), (197, 972), (194, 980), (193, 988), (192, 996), (191, 1004)]}}
+                   "esq5b": [(203, 956), (200, 964), (197, 972), (194, 980), (193, 988), (192, 996), (191, 1004)],
+                   "dir1": [(1564, 0), (1589, 83), (1604, 183), (1610, 307), (1608, 360), (1607, 400), (1604, 420), (1603, 440), (1599, 460),
+                            (1595, 480), (1591, 500), (1587, 520), (1583, 540), (1580, 555)],
+                   "dir3": [(1716, 318), (1719, 330), (1726, 340), (1734, 350), (1742, 360), (1750, 370), (1757, 380), (1760, 392), (1758, 405),
+                            (1756, 420)]}}
 # caudas relidas por varredura no próprio desenho (runs.py): pontos já no desenho
 TAILS_DES = {7: {"mecha_e_cauda": ([(389, 690), (388, 705), (387, 718), (386, 730), (385, 740), (383, 750)], 3.5, "#e47a74")}}
 AS_SHAPE = "--formas" in sys.argv  # polígonos pelas bordas da faixa pioraram o F1 (0,904 × 0,9075)
@@ -68,7 +73,8 @@ def run():
         cs0 = sorted(own, key=lambda c: sum(c["rgb"]))
         if len(cs0) >= 3:
             hexc = cs0[len(cs0) // 2]["hex"]
-            pts, ws = meas.measure_band(d, REF0, pts, hexc, 0.08, passes=(16.0, 14.0), smooth=1, trim=name not in NO_TRIM)
+            pts, ws = meas.measure_band(d, REF0, pts, hexc, 0.08, passes=(16.0, 14.0), smooth=1,
+                                        trim=name not in NO_TRIM and name not in NO_TRIM_DES.get(CEL, set()))
         probes = meas.first_list(d.call("PROBE_COLOR", {"reference": REF0, "points": [[round(p[0]), round(p[1])] for p in pts[1:-1:2]],
                                                         "radius": 1}))
         cs = sorted(probes, key=lambda c: sum(c["rgb"]))

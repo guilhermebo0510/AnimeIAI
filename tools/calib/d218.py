@@ -86,6 +86,25 @@ def color_score(pts, color, tol):
     return ok / max(1, n)
 
 
+def grow(poly, g):
+    """Polígono digitado das varreduras (vértices no último pixel de cada trecho) empurrado `g` px para fora: a borda real
+    fica meio pixel além do último pixel lido. Pontos na borda do quadro não se mexem."""
+    if not g:
+        return [tuple(p) for p in poly]
+    S = sum(poly[i][0] * poly[(i + 1) % len(poly)][1] - poly[(i + 1) % len(poly)][0] * poly[i][1] for i in range(len(poly)))
+    sign = -1.0 if S > 0 else 1.0  # normal (−ty, tx) aponta para dentro quando a soma é positiva (y para baixo)
+    out = []
+    for (x, y), (nx, ny) in zip(poly, meas._normals([list(p) for p in poly], closed=True)):
+        if x <= 0 or x >= 1919 or y <= 0 or y >= 1079:
+            out.append((x, y))
+        else:
+            out.append((x + sign * nx * g, y + sign * ny * g))
+    return out
+
+
+SCAN_GROW = {8: 1.0}  # desenhos cujas formas relidas por varredura ganham o meio pixel de borda
+
+
 def candidates(poly, field_first=True):
     """Estimativas a testar no desenho atual: nos redesenhos com campo, a levada pelo campo e a do desenho 1."""
     a = [tuple(p) for p in poly]
