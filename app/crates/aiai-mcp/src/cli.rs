@@ -30,8 +30,9 @@ pub const USAGE: &str = "uso:
   aiai-mcp call <AÇÃO> ['<json>'|@arquivo.json] [--png out.png] [--project <pasta .aiai>] [--timeout <s>]
   aiai-mcp info                    destino da bridge e se o app responde
 Ações: PING GET_STATUS APPLY_COMMAND QUERY UNDO REDO GET_LOG NEW_PROJECT OPEN_PROJECT SAVE_PROJECT e as de ferramenta
-RENDER DRAW_CURVES FILL LINT PAINT GRADIENT TRANSFORM REPEAT BRUSH_PRESETS (headless ou app) e
-SCREENSHOT INPUT GET_UI_STATE UI_ACTION GET_METRICS COMPARE (só com o app aberto --bridge).
+RENDER DRAW_CURVES FILL LINT PAINT GRADIENT TRANSFORM REPEAT BRUSH_PRESETS, SKY PATTERN_FILL TEXT LINES GAG_BG PARTICLES GUIDE3D
+PERSPECTIVE MODEL_SHEET CONSISTENCY INBETWEEN PROPAGATE_FILLS TTS_LINE TTS_KOKORO VOICE_PROFILE LIPSYNC SFX BGM MIX_CUT LOUDNESS
+COMPARE PROBE_COLOR MEASURE_LINE MEASURE_EDGE FILL_SHAPE EDIT_SET EXPORT_VIDEO (headless ou app) e SCREENSHOT INPUT GET_UI_STATE UI_ACTION GET_METRICS (só com o app aberto --bridge).
 Headless: sem app (ou com --project / AIAI_HEADLESS_PROJECT) as ações de documento rodam em processo e o projeto é salvo após cada mudança.";
 
 pub fn parse(args: &[String]) -> Result<Cmd, String> {
@@ -54,8 +55,8 @@ pub fn parse(args: &[String]) -> Result<Cmd, String> {
                     "--project" => project = Some(it.next().ok_or("--project exige uma pasta")?.clone()),
                     "--timeout" => {
                         let t: u64 = it.next().ok_or("--timeout exige segundos")?.parse().map_err(|_| "--timeout precisa ser inteiro".to_string())?;
-                        if !(1..=300).contains(&t) {
-                            return Err("--timeout fora de 1..300".into());
+                        if !(1..=1800).contains(&t) {
+                            return Err("--timeout fora de 1..1800".into());
                         }
                         timeout = Some(t);
                     }

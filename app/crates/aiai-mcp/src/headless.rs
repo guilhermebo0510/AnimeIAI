@@ -102,6 +102,12 @@ impl Headless {
                 self.stamp = self.project_dir.as_deref().and_then(stamp_of);
                 Ok(r)
             }
+            other if aiai_bridge::production_tools::is_stateless(other) && self.project_dir.is_none() => {
+                // medições da referência não precisam de projeto: sessão vazia descartável
+                let mut session = core_ops::empty_session();
+                let mut path = None;
+                handle_core_action_with_path(&mut session, &mut path, other, params).ok_or_else(|| BridgeError::unknown_action(other))?
+            }
             other => {
                 self.ensure_loaded()?;
                 let session = self.session.as_mut().expect("carregada");

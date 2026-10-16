@@ -683,3 +683,467 @@ fn project_path_follows_the_session_not_the_caller() {
     assert!(s.path.is_none());
     assert_eq!(act_err(&mut s, "SAVE_PROJECT", json!({})).code, code::INVALID_PARAMS);
 }
+
+// ------------------------------------------------------------------------------------------------ produção (S02 B3)
+
+struct ProdDoc {
+    s: CoreSession,
+    cut: String,
+    ep: String,
+    bg: String,
+    txt: String,
+    line: String,
+    parts: String,
+    guide: String,
+    key: String,
+    mouth: String,
+}
+
+/// Corte 320x180, 48 quadros: BG/TXT (raster), LINHA/CHAVE/BOCA (vetor), partículas, guia; cada camada com cel 1.
+/// A camada CHAVE tem os cels 1 e 2 (chaves da intercalação). Sem timesheet de propósito: um corte com células no
+/// timesheet não pode ser editado por set_props nem reaberto do disco (bug do aiai-core: chaves u32 em NodeKind marcado).
+fn prod_doc() -> ProdDoc {
+    let mut s = CoreSession::for_tests("prod");
+    act(&mut s, "NEW_PROJECT", json!({"name": "prod", "settings": {"width": 320, "height": 180}}));
+    let ep = made(&mut s, "EP", None, json!({"type": "episode", "number": 1}));
+    let sc = made(&mut s, "S", Some(&ep), json!({"type": "scene", "number": 1}));
+    let cut = made(&mut s, "C001", Some(&sc), json!({"type": "cut", "number": 1, "duration": 48}));
+    let bg = made(&mut s, "BG", Some(&cut), json!({"type": "layer", "kind": "raster"}));
+    let txt = made(&mut s, "TXT", Some(&cut), json!({"type": "layer", "kind": "raster"}));
+    let line = made(&mut s, "LINHA", Some(&cut), json!({"type": "layer", "kind": "vector"}));
+    let key = made(&mut s, "CHAVE", Some(&cut), json!({"type": "layer", "kind": "vector"}));
+    let mouth = made(&mut s, "BOCA", Some(&cut), json!({"type": "layer", "kind": "vector"}));
+    let parts = made(&mut s, "PETALAS", Some(&cut), json!({"type": "layer", "kind": "particles"}));
+    let guide = made(&mut s, "GUIA", Some(&cut), json!({"type": "layer", "kind": "guide"}));
+    for l in [&bg, &txt, &line, &key, &guide] {
+        made(&mut s, "c1", Some(l), json!({"type": "cel", "number": 1}));
+    }
+    for n in 1..=9 {
+        made(&mut s, &format!("b{n}"), Some(&mouth), json!({"type": "cel", "number": n}));
+    }
+    made(&mut s, "c2", Some(&key), json!({"type": "cel", "number": 2}));
+    ProdDoc { s, cut, ep, bg, txt, line, parts, guide, key, mouth }
+}
+
+/// Renderiza só `layers` (fundo transparente por padrão) e devolve a imagem.
+fn shot(s: &mut CoreSession, cut: &str, frame: u32, layers: &[&str], extra: Value) -> image::RgbaImage {
+    let mut p = json!({"cut": cut, "frame": frame, "layers": layers});
+    for (k, v) in extra.as_object().unwrap() {
+        p[k] = v.clone();
+    }
+    let r = act(s, "RENDER", p);
+    assert_eq!(r["warnings"], json!([]), "render com avisos: {r}");
+    decode(r["png_base64"].as_str().unwrap())
+}
+
+fn opaque(img: &image::RgbaImage) -> usize {
+    img.pixels().filter(|p| p.0[3] > 20).count()
+}
+
+fn black() -> Value {
+    json!({"type": "direct", "rgba": [0.0, 0.0, 0.0, 1.0]})
+}
+
+#[test]
+fn production_scenery_and_2d_effects_round_trip() {
+    let mut d = prod_doc();
+    let (cut, bg, txt, line, parts) = (d.cut.clone(), d.bg.clone(), d.txt.clone(), d.line.clone(), d.parts.clone());
+    let rev = d.s.project.revision;
+
+    // SKY: azul no alto, claro no horizonte; entra no undo; autor agent:claude
+    let o = act(&mut d.s, "SKY", json!({"cut": cut, "frame": 0, "layer": bg, "sky": {"time_of_day": "day", "horizon_y": 150.0, "clouds": 0.0}}));
+    assert!(o["revision"].as_u64().unwrap() > rev && o["can_undo"] == true, "{o}");
+    let img = shot(&mut d.s, &cut, 0, &[&bg], json!({}));
+    let (top, low) = (img.get_pixel(160, 2).0, img.get_pixel(160, 170).0);
+    assert!(top[2] > top[0] && top[3] == 255, "céu azul no topo: {top:?}");
+    assert_ne!(top, low, "degradê: topo ≠ horizonte");
+    // SKY em camada vetorial é recusado com erro claro
+    let e = act_err(&mut d.s, "SKY", json!({"cut": cut, "frame": 0, "layer": line, "sky": {"horizon_y": 100.0}}));
+    assert_eq!(e.code, code::INVALID_PARAMS);
+
+    // PATTERN_FILL: textura só dentro da região
+    let before = shot(&mut d.s, &cut, 0, &[&bg], json!({}));
+    act(&mut d.s, "PATTERN_FILL", json!({"cut": cut, "frame": 0, "layer": bg, "texture": {"spec": {"type": "brick", "brick": [24.0, 10.0], "mortar": 2.0, "variation": 0.3}, "dark": [0.35, 0.1, 0.05], "light": [0.7, 0.3, 0.2]},
+        "mapping": {"type": "flat"}, "region": {"type": "rect", "rect": [20, 100, 80, 60]}}));
+    let after = shot(&mut d.s, &cut, 0, &[&bg], json!({}));
+    assert_ne!(before.get_pixel(50, 130).0, after.get_pixel(50, 130).0, "textura dentro da região");
+    assert_eq!(before.get_pixel(200, 30).0, after.get_pixel(200, 30).0, "fora da região não muda");
+
+    // GAG_BG: faixas radiais vermelho/azul (no TXT) cobrem o canvas
+    act(&mut d.s, "GAG_BG", json!({"cut": cut, "frame": 0, "layer": txt, "pattern": {"type": "radial_stripes", "center": [160.0, 90.0], "count": 16, "colors": ["#ff0000", "#0000ff"]}}));
+    let g = shot(&mut d.s, &cut, 0, &[&txt], json!({}));
+    let (mut reds, mut blues) = (0, 0);
+    for (x, y) in [(40, 20), (280, 30), (60, 150), (260, 160), (160, 10), (10, 90), (300, 90), (160, 170)] {
+        let p = g.get_pixel(x, y).0;
+        assert_eq!(p[3], 255, "o fundo de gag cobre o canvas");
+        if p[0] > 150 && p[2] < 100 {
+            reds += 1;
+        }
+        if p[2] > 150 && p[0] < 100 {
+            blues += 1;
+        }
+    }
+    assert!(reds >= 1 && blues >= 1, "as duas cores aparecem: {reds} vermelhos, {blues} azuis");
+    let e = act_err(&mut d.s, "GAG_BG", json!({"cut": cut, "frame": 0, "layer": txt, "pattern": {"type": "flat", "color": "vermelho"}}));
+    assert_eq!(e.code, code::INVALID_PARAMS);
+
+    // LINES: linhas de foco pretas na camada vetorial
+    assert_eq!(opaque(&shot(&mut d.s, &cut, 0, &[&line], json!({}))), 0);
+    act(&mut d.s, "LINES", json!({"cut": cut, "frame": 0, "layer": line, "kind": {"type": "focus", "center": [160.0, 90.0], "clear": [40.0, 30.0]}, "count": 60, "length": [60.0, 200.0], "width": [1.0, 4.0], "color": black(), "seed": 5}));
+    let ink = opaque(&shot(&mut d.s, &cut, 0, &[&line], json!({})));
+    assert!(ink > 300, "linhas de foco desenhadas: {ink}");
+
+    // TEXT: ドン preenche a camada raster e contorna na vetorial
+    let txt2 = made(&mut d.s, "TXT2", Some(&cut), json!({"type": "layer", "kind": "raster"}));
+    made(&mut d.s, "c1", Some(&txt2), json!({"type": "cel", "number": 1}));
+    let ol = made(&mut d.s, "OUT", Some(&cut), json!({"type": "layer", "kind": "vector"}));
+    made(&mut d.s, "c1", Some(&ol), json!({"type": "cel", "number": 1}));
+    act(&mut d.s, "TEXT", json!({"cut": cut, "frame": 0, "fill_layer": txt2, "outline_layer": ol, "text": "ドン", "size": 110.0, "center": [160.0, 90.0],
+        "color": {"type": "direct", "rgba": [1.0, 0.85, 0.0, 1.0]}, "outline_width": 4.0, "roughness": 2.0}));
+    let fill = shot(&mut d.s, &cut, 0, &[&txt2], json!({}));
+    let yellow = fill.pixels().filter(|p| p.0[3] > 200 && p.0[0] > 200 && p.0[1] > 150 && p.0[2] < 80).count();
+    assert!(yellow > 500, "letras amarelas: {yellow}");
+    assert!(opaque(&shot(&mut d.s, &cut, 0, &[&ol], json!({}))) > 200, "contorno desenhado");
+    // fonte inexistente e fonte regular
+    let e = act_err(&mut d.s, "TEXT", json!({"cut": cut, "frame": 0, "fill_layer": txt2, "text": "x", "size": 40.0, "center": [10.0, 10.0], "color": black(), "font": "C:/nao/existe.otf"}));
+    assert_eq!(e.code, code::INVALID_PARAMS);
+    act(&mut d.s, "TEXT", json!({"cut": cut, "frame": 0, "fill_layer": txt2, "text": "ABC", "size": 40.0, "center": [60.0, 40.0], "color": black(), "font": "regular"}));
+
+    // PARTICLES: pétalas (preset + overrides); o quadro 12 tem partículas; trocar o sistema substitui o anterior; undo desfaz um passo
+    let o = act(&mut d.s, "PARTICLES", json!({"layer": parts, "preset": "petalas", "overrides": {"rate": 60.0}, "seed": 3}));
+    assert_eq!(o["canvas"], json!([320, 180]));
+    assert_eq!(o["particles"]["rate"], 60.0);
+    let f12 = shot(&mut d.s, &cut, 12, &[&parts], json!({}));
+    assert!(opaque(&f12) > 20, "partículas no quadro 12: {}", opaque(&f12));
+    let rev = d.s.project.revision;
+    act(&mut d.s, "PARTICLES", json!({"layer": parts, "preset": "neve", "seed": 1}));
+    assert!(d.s.project.revision > rev);
+    assert!(opaque(&shot(&mut d.s, &cut, 12, &[&parts], json!({}))) > 5, "neve também aparece");
+    act(&mut d.s, "UNDO", json!({}));
+    assert_eq!(opaque(&shot(&mut d.s, &cut, 12, &[&parts], json!({}))), opaque(&f12), "undo volta às pétalas (um único passo)");
+    // sistema completo + erros claros
+    let sys = aiai_anim::particles::preset("chuva", 320.0, 180.0, 9).unwrap();
+    act(&mut d.s, "PARTICLES", json!({"layer": parts, "system": sys, "overrides": {"rate": 30.0}}));
+    let e = act_err(&mut d.s, "PARTICLES", json!({"layer": parts, "preset": "lava"}));
+    assert!(e.code == code::INVALID_PARAMS && e.message.contains("petalas") && e.message.contains("neve"), "{e}");
+    assert_eq!(act_err(&mut d.s, "PARTICLES", json!({"layer": parts})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "PARTICLES", json!({"layer": line, "preset": "neve"})).code, code::INVALID_PARAMS, "camada que não é de partículas");
+    assert_eq!(act_err(&mut d.s, "PARTICLES", json!({"layer": parts, "preset": "neve", "overrides": {"lifetime": [0.0, 0.0]}})).code, code::INVALID_PARAMS, "validação do sistema");
+    // tudo foi pelo autor padrão
+    assert!(act(&mut d.s, "GET_LOG", json!({"limit": 1000})).to_string().contains("agent:claude"));
+}
+
+#[test]
+fn production_guides_character_and_animation() {
+    let mut d = prod_doc();
+    let (cut, guide, key) = (d.cut.clone(), d.guide.clone(), d.key.clone());
+
+    // GUIDE3D: caixa + manequim vistos por uma câmera viram linhas na camada de guia (aparecem só com include_guides)
+    let o = act(&mut d.s, "GUIDE3D", json!({"cut": cut, "frame": 0, "layer": guide,
+        "scene": {"objects": [{"shape": {"type": "box", "size": [2.0, 1.0, 1.0]}, "position": [1.0, 0.5, -1.0]}], "mannequins": [{"position": [-0.5, 0.0, 0.0], "pose": "standing"}]},
+        "camera": {"position": [2.5, 1.5, 4.0], "target": [0.0, 0.9, 0.0], "focal_mm": 35.0}}));
+    assert_eq!(o["can_undo"], true);
+    assert_eq!(opaque(&shot(&mut d.s, &cut, 0, &[&guide], json!({}))), 0, "guia não aparece sem include_guides");
+    let lines = opaque(&shot(&mut d.s, &cut, 0, &[&guide], json!({"include_guides": true})));
+    assert!(lines > 200, "linhas da cena 3D: {lines}");
+    let layer_json = act(&mut d.s, "QUERY", json!({"query": {"kind": "node", "id": guide}}));
+    assert!(layer_json.to_string().contains("guide3d"), "a cena fica gravada em params.guide3d");
+    assert_eq!(act_err(&mut d.s, "GUIDE3D", json!({"cut": cut, "frame": 0, "layer": guide, "scene": {}, "camera": {"position": [0.0, 0.0, 0.0], "target": [0.0, 0.0, 0.0]}})).code, code::INVALID_PARAMS);
+
+    // PERSPECTIVE: pontos de fuga explícitos viram raios + horizonte e voltam no resultado
+    let o = act(&mut d.s, "PERSPECTIVE", json!({"cut": cut, "frame": 0, "layer": guide, "points": [[-300.0, 90.0], [620.0, 90.0]], "horizon_y": 90.0, "lines_per_point": 10}));
+    assert_eq!(o["perspective"]["points"].as_array().unwrap().len(), 2);
+    assert_eq!(o["perspective"]["horizon_y"], 90.0);
+    assert!(opaque(&shot(&mut d.s, &cut, 0, &[&guide], json!({"include_guides": true}))) > 100);
+    assert_eq!(act_err(&mut d.s, "PERSPECTIVE", json!({"cut": cut, "frame": 0, "layer": guide})).code, code::INVALID_PARAMS, "sem pontos de fuga");
+
+    // MODEL_SHEET + CONSISTENCY
+    let ch = made(&mut d.s, "Rin", None, json!({"type": "character"}));
+    let o = act(&mut d.s, "MODEL_SHEET", json!({"character": ch, "name": "Rin", "heads_tall": 6.5, "figure_px": 650.0}));
+    for k in ["cut", "line_layer", "fill_layer"] {
+        assert!(o[k].is_string(), "{k} no resultado: {o}");
+    }
+    assert_eq!(o["can_undo"], true);
+    let sheet_cut = o["cut"].as_str().unwrap().to_string();
+    let sheet = act(&mut d.s, "RENDER", json!({"cut": sheet_cut, "camera": false, "include_guides": true, "background": "#ffffff"}));
+    assert!(decode(sheet["png_base64"].as_str().unwrap()).pixels().filter(|p| p.0[2] as i32 > p.0[0] as i32 + 50).count() > 1000, "grade e manequim desenhados");
+    let ok = act(&mut d.s, "CONSISTENCY", json!({"character": ch, "head_top": 0.0, "chin": 100.0, "eyes": 55.0, "feet": 650.0}));
+    assert_eq!(ok["ok"], true, "{ok}");
+    let bad = act(&mut d.s, "CONSISTENCY", json!({"character": ch, "head_top": 0.0, "chin": 100.0, "feet": 560.0}));
+    assert_eq!(bad["ok"], false);
+    let rev = d.s.project.revision;
+    act(&mut d.s, "CONSISTENCY", json!({"character": ch, "head_top": 0.0, "chin": 100.0}));
+    assert_eq!(d.s.project.revision, rev, "CONSISTENCY só lê");
+    assert_eq!(act_err(&mut d.s, "MODEL_SHEET", json!({"character": cut, "heads_tall": 6.0})).code, code::INVALID_PARAMS, "corte não é personagem");
+
+    // VOICE_PROFILE grava `voice` no personagem
+    act(&mut d.s, "VOICE_PROFILE", json!({"character": ch, "speaker": 8, "speaker_name": "春日部つむぎ", "params": {"speed_scale": 1.1}}));
+    let c = act(&mut d.s, "QUERY", json!({"query": {"kind": "node", "id": ch}}));
+    assert!(c.to_string().contains("春日部つむぎ"), "{c}");
+
+    // INBETWEEN: duas chaves desenhadas (cel 1 e cel 2) → 2 intercalações como cels 3 e 4
+    let stroke = |dx: f32| json!([{"points": [[40.0 + dx, 40.0], [100.0 + dx, 40.0], [100.0 + dx, 100.0], [40.0 + dx, 100.0]], "width": 3.0, "geometry": "polyline", "closed": true, "color": black()}]);
+    act(&mut d.s, "DRAW_CURVES", json!({"cut": cut, "frame": 0, "layer": key, "curves": stroke(0.0)}));
+    let cel2 = d.s.project.node(&key.as_str().into()).unwrap().children[1].to_string();
+    let seg = |dx: f32| json!({"id": "", "points": [{"x": 40.0 + dx, "y": 40.0, "pressure": 1.0}, {"x": 100.0 + dx, "y": 40.0, "pressure": 1.0}, {"x": 100.0 + dx, "y": 100.0, "pressure": 1.0}, {"x": 40.0 + dx, "y": 100.0, "pressure": 1.0}],
+        "geometry": "polyline", "width": 3.0, "tip": "marker", "closed": true, "color": {"type": "direct", "rgba": [0.0, 0.0, 0.0, 1.0]}});
+    act(&mut d.s, "APPLY_COMMAND", json!({"command": {"kind": "insert_strokes", "cel": cel2, "items": [{"index": 0, "stroke": seg(90.0)}]}}));
+    let cels = |s: &CoreSession| s.project.node(&key.as_str().into()).unwrap().children.len();
+    assert_eq!(cels(&d.s), 2);
+    let o = act(&mut d.s, "INBETWEEN", json!({"cut": cut, "layer": key, "key_a": 1, "key_b": 2, "count": 2}));
+    assert_eq!(o["can_undo"], true);
+    assert_eq!(cels(&d.s), 4, "dois cels intercalados");
+    act(&mut d.s, "UNDO", json!({}));
+    assert_eq!(cels(&d.s), 2, "um único passo de undo");
+    assert_eq!(act_err(&mut d.s, "INBETWEEN", json!({"cut": cut, "layer": key, "key_a": 1, "key_b": 7, "count": 2})).code, code::INVALID_PARAMS, "chave inexistente");
+
+    // PROPAGATE_FILLS sem chave pintada: erro claro
+    let e = act_err(&mut d.s, "PROPAGATE_FILLS", json!({"cut": cut, "fill_layer": d.bg, "key_frame_a": 0, "key_frame_b": 10, "frames": [2, 4]}));
+    assert!(e.code == code::INVALID_PARAMS || e.code == code::ACTION_FAILED, "{e}");
+}
+
+thread_local! {
+    static VOICEVOX_UP: bool = std::net::TcpStream::connect_timeout(&"127.0.0.1:50021".parse().unwrap(), Duration::from_millis(300)).is_ok();
+}
+
+#[test]
+fn production_audio_sfx_bgm_mix_lipsync_and_voicevox() {
+    let mut d = prod_doc();
+    let (cut, mouth) = (d.cut.clone(), d.mouth.clone());
+    let dir = tempfile::tempdir().unwrap();
+
+    // SFX: asset + clipe posicionado na trilha SFX do corte; determinístico (mesma semente, mesmo blob)
+    let a = act(&mut d.s, "SFX", json!({"preset": "impact", "seed": 3, "cut": cut, "start_frame": 6, "gain_db": -3.0}));
+    assert!(a["asset"].is_string() && a["placement"].is_string() && a["duration_s"].as_f64().unwrap() > 0.1, "{a}");
+    assert_eq!(a["can_undo"], true);
+    let blob_of = |s: &CoreSession, id: &str| match &s.project.node(&id.into()).unwrap().data {
+        aiai_core::NodeKind::Asset(x) => x.blob.clone().unwrap(),
+        _ => panic!(),
+    };
+    let b = act(&mut d.s, "SFX", json!({"preset": "impact", "seed": 3}));
+    assert_eq!(blob_of(&d.s, a["asset"].as_str().unwrap()), blob_of(&d.s, b["asset"].as_str().unwrap()), "mesma semente, mesmo áudio");
+    assert_eq!(act_err(&mut d.s, "SFX", json!({"preset": "impact", "cut": cut, "start_frame": 9999})).code, code::INVALID_PARAMS, "fora do corte");
+
+    // BGM com o sintetizador interno, posicionado no corte
+    let song = json!({"tempo_bpm": 120.0, "bars": 2, "tail_s": 0.2, "tracks": [{"name": "lead", "program": 73, "notes": [
+        {"pitch": 72, "start_beat": 0.0, "length_beats": 2.0}, {"pitch": 76, "start_beat": 2.0, "length_beats": 2.0}, {"pitch": 79, "start_beat": 4.0, "length_beats": 3.0}]}]});
+    let m = act(&mut d.s, "BGM", json!({"song": song, "builtin_synth": true, "cut": cut, "start_frame": 0, "gain_db": -6.0}));
+    assert_eq!(m["engine"], "builtin");
+    assert!(m["duration_s"].as_f64().unwrap() > 3.5, "{m}");
+
+    // MIX_CUT: loudness presente; normalização ao alvo ARIB; WAV gravado
+    let plain = act(&mut d.s, "MIX_CUT", json!({"cut": cut}));
+    assert!(plain["loudness"]["integrated_lufs"].is_number() && plain["loudness"]["true_peak_dbtp"].is_number(), "{plain}");
+    assert!(plain["loudness"].get("momentary_series").is_none() && plain["clips"] == 2);
+    let out = dir.path().join("sub").join("mix.wav");
+    let rev = d.s.project.revision;
+    let norm = act(&mut d.s, "MIX_CUT", json!({"cut": cut, "preset": "arib", "out": out.display().to_string()}));
+    assert_eq!(d.s.project.revision, rev, "MIX_CUT não altera o documento");
+    let after = norm["normalize"]["after_lufs"].as_f64().unwrap();
+    assert!((after - -24.0).abs() < 1.5, "ARIB -24 LKFS: {after}");
+    assert!(norm["normalize"]["after_true_peak_dbtp"].as_f64().unwrap() <= -0.9, "{norm}");
+    assert!(std::fs::metadata(&out).unwrap().len() > 10_000 && norm["path"] == json!(out.display().to_string()));
+    let wav = aiai_audio::wav::read_wav(&std::fs::read(&out).unwrap()).unwrap();
+    assert!((wav.duration_s() - 2.0).abs() < 0.05, "48 quadros ≈ 2 s: {}", wav.duration_s());
+    // LOUDNESS por clipe, por corte e por arquivo
+    for p in [json!({"asset": m["asset"]}), json!({"cut": cut}), json!({"path": out.display().to_string(), "series": true})] {
+        let l = act(&mut d.s, "LOUDNESS", p.clone());
+        assert!(l["sample_rate"].is_number() && l["duration_s"].as_f64().unwrap() > 0.0, "{p}: {l}");
+    }
+    assert_eq!(act_err(&mut d.s, "LOUDNESS", json!({})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "MIX_CUT", json!({"cut": cut, "out": "relativo.wav"})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "MIX_CUT", json!({"cut": cut, "out": dir.path().join("x.mp3").display().to_string()})).code, code::INVALID_PARAMS);
+
+    // TTS: motor desligado → erro com o comando para subir; URL que não é loopback é recusada
+    let e = act_err(&mut d.s, "TTS_LINE", json!({"text": "おはよう", "speaker": 8, "voicevox_url": "http://127.0.0.1:9"}));
+    assert!(e.code == code::ACTION_FAILED && e.message.contains("start.ps1") && e.message.contains("VOICEVOX"), "{e}");
+    let e = act_err(&mut d.s, "TTS_LINE", json!({"text": "x", "speaker": 8, "voicevox_url": "http://example.com:50021"}));
+    assert_eq!(e.code, code::INVALID_PARAMS);
+    // com o motor de pé (se alguém o subiu): fala real, com crédito e moras
+    let spoken = if VOICEVOX_UP.with(|u| *u) {
+        let t = act(&mut d.s, "TTS_LINE", json!({"text": "おはよう", "speaker": 8, "cut": cut, "start_frame": 0}));
+        assert!(t["credit"].as_str().unwrap().starts_with("VOICEVOX:") && t["moras"].as_u64().unwrap() >= 3 && t["duration_s"].as_f64().unwrap() > 0.3, "{t}");
+        Some(t)
+    } else {
+        eprintln!("VOICEVOX não está rodando em 127.0.0.1:50021: parte real do TTS_LINE pulada (suba com tools/voicevox/start.ps1)");
+        None
+    };
+
+    // LIPSYNC por energia a partir do clipe de SFX (sem moras): exposições na coluna de boca
+    let o = act(&mut d.s, "LIPSYNC", json!({"cut": cut, "placement": a["placement"], "mouth_layer": mouth, "mode": "energy",
+        "mapping": {"a": 1, "i": 2, "u": 3, "e": 4, "o": 5, "n": 6, "closed": 7, "half": 8, "open": 9}}));
+    assert_eq!(o["used_moras"], false);
+    assert!(o["exposures"].as_array().unwrap().len() >= 2 && o["first_frame"] == 6, "{o}");
+    assert_eq!(act_err(&mut d.s, "LIPSYNC", json!({"cut": cut, "placement": a["placement"], "mouth_layer": mouth, "mode": "moras", "mapping": {"closed": 7}})).code, code::INVALID_PARAMS, "sem moras");
+
+    if let Some(t) = spoken {
+        let l = act(&mut d.s, "LIPSYNC", json!({"cut": cut, "placement": t["placement"], "mouth_layer": mouth, "mapping": {"a": 1, "i": 2, "u": 3, "e": 4, "o": 5, "n": 6, "closed": 7, "half": 8, "open": 9}}));
+        assert_eq!(l["used_moras"], true);
+    }
+}
+
+#[test]
+fn production_calibration_measure_and_compare() {
+    let mut d = prod_doc();
+    let (cut, line) = (d.cut.clone(), d.line.clone());
+    let dir = tempfile::tempdir().unwrap();
+    // linha vertical preta de 4 px em x = 100 (traço "da referência")
+    act(&mut d.s, "DRAW_CURVES", json!({"cut": cut, "frame": 0, "layer": line, "curves": [{"points": [[100.0, 20.0], [100.0, 160.0]], "width": 4.0, "geometry": "polyline", "tip": "marker", "color": black()}]}));
+    let refpng = dir.path().join("ref.png");
+    act(&mut d.s, "RENDER", json!({"cut": cut, "frame": 0, "background": "#ffffff", "out": refpng.display().to_string()}));
+    let reference = refpng.display().to_string();
+    let rev = d.s.project.revision;
+
+    // COMPARE: o render contra si mesmo (PNG salvo) passa; arquivos de diagnóstico saem em out_dir
+    let outd = dir.path().join("cmp");
+    let c = act(&mut d.s, "COMPARE", json!({"cut": cut, "frame": 0, "reference": reference, "out_dir": outd.display().to_string()}));
+    assert_eq!(c["pass"], true, "{c}");
+    assert!(c["report"].is_object() && c["files"].as_array().unwrap().len() == 4, "{c}");
+    for f in c["files"].as_array().unwrap() {
+        assert!(std::path::Path::new(f.as_str().unwrap()).is_file(), "{f}");
+    }
+    // um desenho diferente reprova
+    act(&mut d.s, "LINES", json!({"cut": cut, "frame": 0, "layer": line, "kind": {"type": "focus", "center": [200.0, 90.0], "clear": [10.0, 10.0]}, "count": 80, "length": [80.0, 200.0], "width": [3.0, 6.0], "color": black()}));
+    let c = act(&mut d.s, "COMPARE", json!({"cut": cut, "frame": 0, "reference": reference}));
+    assert_eq!(c["pass"], false, "{c}");
+    assert_eq!(act_err(&mut d.s, "COMPARE", json!({"cut": cut, "frame": 0, "reference": dir.path().join("nao.png").display().to_string()})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "COMPARE", json!({"cut": cut, "frame": 0, "reference": reference, "out_dir": "relativo"})).code, code::INVALID_PARAMS);
+
+    // PROBE_COLOR: branco no fundo, escuro sobre a linha
+    let pr = act(&mut d.s, "PROBE_COLOR", json!({"reference": reference, "points": [[10.0, 10.0], [100.0, 90.0]], "radius": 1}));
+    assert_eq!(pr["colors"][0]["hex"], "#ffffff");
+    assert!(pr["colors"][1]["rgb"][0].as_f64().unwrap() < 0.2, "{pr}");
+    assert_eq!((pr["width"].as_u64(), pr["height"].as_u64()), (Some(320), Some(180)));
+    assert_eq!(act_err(&mut d.s, "PROBE_COLOR", json!({"reference": reference, "points": []})).code, code::INVALID_PARAMS);
+
+    // MEASURE_LINE: estimativa 2,5 px à esquerda → centro ≈ 100 e largura ≈ 4; não cria nada (decisão 22)
+    let rev2 = d.s.project.revision;
+    let m = act(&mut d.s, "MEASURE_LINE", json!({"reference": reference, "points": [[97.5, 40.0], [97.5, 80.0], [97.5, 120.0]], "search": 6.0}));
+    assert_eq!(m["found"], 3, "{m}");
+    for r in m["measures"].as_array().unwrap() {
+        assert!((r["center"][0].as_f64().unwrap() - 100.0).abs() < 0.6, "centro: {r}");
+        assert!((r["width"].as_f64().unwrap() - 4.0).abs() < 1.3, "largura: {r}");
+    }
+    assert!(m["note"].as_str().unwrap().contains("decisão 22"));
+    let ms = act(&mut d.s, "MEASURE_LINE", json!({"reference": reference, "strokes": [[[97.5, 40.0], [97.5, 80.0]], [[200.0, 40.0], [200.0, 80.0]]]}));
+    assert_eq!(ms["strokes"].as_array().unwrap().len(), 2);
+    assert_eq!(ms["strokes"][1]["found"], 0, "onde não há linha, não inventa");
+    assert_eq!(d.s.project.revision, rev2, "medir não altera o documento");
+    assert!(rev2 > rev);
+    assert_eq!(act_err(&mut d.s, "MEASURE_LINE", json!({"reference": reference})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "MEASURE_LINE", json!({"reference": reference, "points": [[1.0, 1.0], [2.0, 2.0]], "strokes": [[[1.0, 1.0], [2.0, 2.0]]]})).code, code::INVALID_PARAMS);
+
+    // FILL_SHAPE + MEASURE_EDGE: mancha vermelha chapada (sem antisserrilhado); estimativa 3 px para fora → a borda medida volta ~3 px
+    let bg = d.bg.clone();
+    let o = act(&mut d.s, "FILL_SHAPE", json!({"cut": cut, "layer": bg, "shapes": [{"points": [[60.0, 50.0], [160.0, 50.0], [160.0, 130.0], [60.0, 130.0]], "geometry": "polyline"}],
+        "color": {"type": "direct", "rgba": [1.0, 0.0, 0.0, 1.0]}, "aliased": true}));
+    assert_eq!(o["can_undo"], true);
+    let blob = shot(&mut d.s, &cut, 0, &[&bg], json!({"background": "#ffffff"}));
+    assert_eq!(blob.get_pixel(100, 90).0, [255, 0, 0, 255]);
+    assert_eq!(blob.get_pixel(30, 90).0, [255, 255, 255, 255]);
+    let ref2 = dir.path().join("massa.png");
+    act(&mut d.s, "RENDER", json!({"cut": cut, "layers": [bg], "background": "#ffffff", "out": ref2.display().to_string()}));
+    let mut est: Vec<[f32; 2]> = Vec::new();
+    for k in 0..=10 {
+        est.push([57.0, 60.0 + k as f32 * 6.0]);
+    }
+    for k in 0..=10 {
+        est.push([60.0 + k as f32 * 10.0, 127.0 + 6.0]);
+    }
+    for k in 0..=10 {
+        est.push([163.0, 130.0 - k as f32 * 7.0]);
+    }
+    let rev3 = d.s.project.revision;
+    let m = act(&mut d.s, "MEASURE_EDGE", json!({"reference": ref2.display().to_string(), "points": &est[..11], "search": 8.0}));
+    assert!(m["found"].as_u64().unwrap() >= 8, "{m}");
+    let mut moved: Vec<f64> = m["measures"].as_array().unwrap().iter().filter(|r| r["strength"].as_f64().unwrap() > 0.0).map(|r| r["moved"].as_f64().unwrap()).collect();
+    moved.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let med = moved[moved.len() / 2];
+    assert!((med - 3.0).abs() < 1.2, "borda a ~3 px da estimativa: mediana {med} ({moved:?})");
+    assert!(m["note"].as_str().unwrap().contains("decisão 22"));
+    assert_eq!(d.s.project.revision, rev3, "MEASURE_EDGE só mede");
+    assert_eq!(act_err(&mut d.s, "MEASURE_EDGE", json!({"reference": ref2.display().to_string(), "points": [[1.0, 1.0]]})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "FILL_SHAPE", json!({"cut": cut, "layer": bg, "shapes": [{"points": [[1.0, 1.0], [2.0, 2.0]]}], "color": black()})).code, code::INVALID_PARAMS, "contorno com menos de 3 pontos");
+
+    // as medições valem numa sessão vazia (sem projeto aberto)
+    let mut empty = core_ops::empty_session();
+    let pr2 = act(&mut empty, "PROBE_COLOR", json!({"reference": reference, "points": [[10.0, 10.0]]}));
+    assert_eq!(pr2["colors"][0]["hex"], "#ffffff");
+}
+
+#[test]
+fn production_export_video_frames_audio_subtitles_and_png_sequence() {
+    if std::process::Command::new(aiai_media::ffmpeg()).arg("-version").output().is_err() {
+        eprintln!("ffmpeg não encontrado: teste pulado");
+        return;
+    }
+    let mut d = prod_doc();
+    let (cut, bg, ep) = (d.cut.clone(), d.bg.clone(), d.ep.clone());
+    let dir = tempfile::tempdir().unwrap();
+    act(&mut d.s, "GAG_BG", json!({"cut": cut, "frame": 0, "layer": bg, "pattern": {"type": "radial_stripes", "center": [160.0, 90.0], "count": 20, "colors": ["#fff3b0", "#ffd23f"]}}));
+    act(&mut d.s, "SFX", json!({"preset": "impact", "seed": 1, "cut": cut, "start_frame": 0}));
+    let rev = d.s.project.revision;
+
+    // 24 quadros com áudio: o ffprobe confirma 24 quadros, tamanho do projeto e AAC
+    let out = dir.path().join("v").join("gag.mp4");
+    let r = act(&mut d.s, "EXPORT_VIDEO", json!({"cut": cut, "start": 0, "end": 24, "out": out.display().to_string(), "crf": 23, "preset": "ebu"}));
+    assert_eq!((r["frames"].as_u64(), r["expected_frames"].as_u64()), (Some(24), Some(24)), "{r}");
+    assert_eq!(r["probe"]["frames"], 24, "{r}");
+    assert_eq!((r["probe"]["width"].as_u64(), r["probe"]["height"].as_u64()), (Some(320), Some(180)));
+    assert_eq!((r["probe"]["video_codec"].as_str(), r["probe"]["audio_codec"].as_str()), (Some("h264"), Some("aac")), "{r}");
+    assert!(r["audio"]["normalize"]["after_lufs"].is_number() && r["audio"]["loudness"]["integrated_lufs"].is_number(), "{r}");
+    assert!(std::fs::metadata(&out).unwrap().len() > 2000);
+    assert_eq!(d.s.project.revision, rev, "exportar não altera o documento");
+    // o primeiro quadro do vídeo é o fundo de gag (amarelo), não vazio
+    let f0 = aiai_media::extract_frame(&out, 0.0).unwrap();
+    let c = f0.get(5, 5);
+    assert!(c[0] > 0.8 && c[2] < 0.9, "quadro amarelado: {c:?}");
+
+    // episódio inteiro (48 quadros) com legenda queimada; sem áudio
+    let out2 = dir.path().join("ep.mp4");
+    let r = act(&mut d.s, "EXPORT_VIDEO", json!({"episode": ep, "out": out2.display().to_string(), "audio": false, "subtitles": [{"start": 0.2, "end": 1.5, "text": "Teste"}]}));
+    assert_eq!((r["frames"].as_u64(), r["probe"]["frames"].as_u64()), (Some(48), Some(48)), "{r}");
+    assert_eq!(r["subtitles_burned"], true);
+    assert!(r["probe"]["audio_codec"].is_null());
+    assert_eq!(r["segments"].as_array().unwrap().len(), 1);
+
+    // documento de edição: o corte inteiro + 1 s de créditos; EXPORT_VIDEO {edit} desenha tudo e o ffprobe confirma 48 quadros
+    let e = act(&mut d.s, "EDIT_SET", json!({"name": "Ep1", "clips": [{"cut": cut, "out_frame": 24}], "subtitles": [{"start_frame": 2, "end_frame": 20, "text": "Teste"}], "credits": ["Fim"], "credits_seconds": 1.0}));
+    assert_eq!(e["timeline"]["total_frames"], 48, "{e}");
+    let edit_id = e["edit"].as_str().unwrap().to_string();
+    let out3 = dir.path().join("edit.mp4");
+    let r = act(&mut d.s, "EXPORT_VIDEO", json!({"edit": edit_id, "out": out3.display().to_string()}));
+    assert_eq!((r["frames"].as_u64(), r["probe"]["frames"].as_u64()), (Some(48), Some(48)), "{r}");
+    assert!(r["probe"]["audio_codec"].is_string(), "o áudio do corte entra na edição: {r}");
+    assert_eq!(r["segments"][0]["edit"], json!(edit_id));
+    // trocar o documento (mesmo id) e erros
+    let e2 = act(&mut d.s, "EDIT_SET", json!({"id": edit_id, "clips": [{"cut": cut, "in_frame": 0, "out_frame": 10}]}));
+    assert_eq!(e2["timeline"]["total_frames"], 10);
+    assert_eq!(act_err(&mut d.s, "EDIT_SET", json!({"clips": [{"cut": "nao-existe"}]})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "EDIT_SET", json!({"id": cut, "clips": [{"cut": cut}]})).code, code::INVALID_PARAMS, "id que não é edição");
+    assert_eq!(act_err(&mut d.s, "EXPORT_VIDEO", json!({"edit": edit_id, "cut": cut, "out": out3.display().to_string()})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "EXPORT_VIDEO", json!({"edit": cut, "out": out3.display().to_string()})).code, code::INVALID_PARAMS);
+
+    // sequência PNG
+    let seq = dir.path().join("png").join("q_%05d.png");
+    let r = act(&mut d.s, "EXPORT_VIDEO", json!({"cut": cut, "start": 5, "end": 8, "codec": "png_sequence", "out": seq.display().to_string()}));
+    assert_eq!(r["frames"], 3);
+    assert!(dir.path().join("png").join("q_00003.png").is_file() && !dir.path().join("png").join("q_00004.png").exists());
+
+    // validações
+    for p in [
+        json!({"out": out.display().to_string()}),
+        json!({"cut": cut, "episode": ep, "out": out.display().to_string()}),
+        json!({"cut": cut, "out": "relativo.mp4"}),
+        json!({"cut": cut, "out": dir.path().join("x.avi").display().to_string()}),
+        json!({"cut": cut, "out": dir.path().join("x.mp4").display().to_string(), "start": 30, "end": 20}),
+        json!({"cut": cut, "out": dir.path().join("x.mp4").display().to_string(), "end": 9999}),
+        json!({"cut": cut, "out": dir.path().join("x.mov").display().to_string(), "codec": "png_sequence"}),
+        json!({"cut": cut, "out": dir.path().join("x.mp4").display().to_string(), "background": "azul"}),
+        json!({"cut": cut, "out": dir.path().join("x.mp4").display().to_string(), "srt": dir.path().join("nao.srt").display().to_string()}),
+    ] {
+        let e = act_err(&mut d.s, "EXPORT_VIDEO", p.clone());
+        assert_eq!(e.code, code::INVALID_PARAMS, "{p}: {e}");
+    }
+    assert!(!dir.path().join("x.mp4").exists());
+}

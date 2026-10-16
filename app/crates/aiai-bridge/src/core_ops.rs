@@ -19,7 +19,7 @@ pub const DEFAULT_AUTHOR: &str = "agent:claude";
 pub const CORE_ACTIONS: &[&str] = &["PING", "APPLY_COMMAND", "QUERY", "UNDO", "REDO", "GET_LOG", "NEW_PROJECT", "OPEN_PROJECT", "SAVE_PROJECT"];
 
 pub fn is_core_action(action: &str) -> bool {
-    CORE_ACTIONS.contains(&action) || crate::core_tools::TOOL_ACTIONS.contains(&action)
+    CORE_ACTIONS.contains(&action) || crate::core_tools::is_tool_action(action)
 }
 
 /// Ações que (quando bem-sucedidas) mudam o documento: o headless salva o projeto depois delas.

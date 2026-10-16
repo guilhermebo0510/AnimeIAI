@@ -170,6 +170,9 @@ fn stdio_protocol_initialize_list_and_headless_apply_query_undo() {
     for want in [
         "aiai_status", "aiai_apply", "aiai_query", "aiai_undo", "aiai_redo", "aiai_log", "aiai_project", "aiai_render", "aiai_compare", "aiai_screenshot", "aiai_input", "aiai_ui", "aiai_schema",
         "aiai_draw_curves", "aiai_fill", "aiai_lint", "aiai_paint", "aiai_gradient", "aiai_transform", "aiai_repeat", "aiai_brush_presets",
+        "aiai_sky", "aiai_pattern_fill", "aiai_text", "aiai_lines", "aiai_gag_bg", "aiai_particles", "aiai_guide3d", "aiai_perspective", "aiai_model_sheet", "aiai_consistency", "aiai_inbetween",
+        "aiai_propagate_fills", "aiai_tts_line", "aiai_tts_kokoro", "aiai_voice_profile", "aiai_lipsync", "aiai_sfx", "aiai_bgm", "aiai_mix", "aiai_loudness", "aiai_probe_color",
+        "aiai_measure_line", "aiai_measure_edge", "aiai_fill_shape", "aiai_edit", "aiai_export_video",
     ] {
         assert!(names.contains(&want), "falta a ferramenta {want}: {names:?}");
     }
@@ -238,7 +241,6 @@ fn stdio_protocol_initialize_list_and_headless_apply_query_undo() {
         ("aiai_screenshot", json!({})),
         ("aiai_input", json!({"events": [{"kind": "mouse_move", "x": 1, "y": 2}]})),
         ("aiai_ui", json!({"action": "get_state"})),
-        ("aiai_compare", json!({"a": "x", "b": "y"})),
     ] {
         let e = s.tool_err(tool, args);
         assert!(e.contains("AnimeIAI Studio não está aberto com --bridge"), "{tool}: {e}");
@@ -550,7 +552,72 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
     assert!(plan("aiai_zzz", json!({})).is_err());
     // o catálogo é uma lista estável de ferramentas, todas com plano
     let defs = tools::definitions();
-    assert_eq!(defs.as_array().unwrap().len(), 21);
+    assert_eq!(defs.as_array().unwrap().len(), 47);
+    // todas as ferramentas de produção: descrição com exemplo de uma linha, schema de objeto, plano com a ação certa e frame 0 por padrão
+    for t in defs.as_array().unwrap() {
+        let n = t["name"].as_str().unwrap();
+        if ["aiai_status", "aiai_apply", "aiai_query", "aiai_undo", "aiai_redo", "aiai_log", "aiai_project", "aiai_render", "aiai_screenshot", "aiai_input", "aiai_ui", "aiai_schema"].contains(&n) {
+            continue;
+        }
+        assert!(t["description"].as_str().unwrap().contains("Exemplo") || ["aiai_brush_presets", "aiai_lint"].contains(&n) || t["description"].as_str().unwrap().len() > 300, "{n} sem exemplo");
+    }
+    for (tool, args, action) in [
+        ("aiai_sky", json!({"cut": "c", "layer": "l", "sky": {}}), "SKY"),
+        ("aiai_pattern_fill", json!({"cut": "c", "layer": "l", "texture": {}, "mapping": {}}), "PATTERN_FILL"),
+        ("aiai_text", json!({"cut": "c", "fill_layer": "l", "text": "ドン", "size": 80, "center": [1, 2], "color": {}}), "TEXT"),
+        ("aiai_lines", json!({"cut": "c", "layer": "l", "kind": {}, "count": 3, "length": [1, 2], "width": [1, 2], "color": {}}), "LINES"),
+        ("aiai_gag_bg", json!({"cut": "c", "layer": "l", "pattern": {}}), "GAG_BG"),
+        ("aiai_particles", json!({"layer": "l", "preset": "neve"}), "PARTICLES"),
+        ("aiai_guide3d", json!({"cut": "c", "layer": "l", "scene": {}, "camera": {}}), "GUIDE3D"),
+        ("aiai_perspective", json!({"cut": "c", "layer": "l"}), "PERSPECTIVE"),
+        ("aiai_model_sheet", json!({"character": "x", "heads_tall": 6}), "MODEL_SHEET"),
+        ("aiai_consistency", json!({"character": "x", "head_top": 0, "chin": 10}), "CONSISTENCY"),
+        ("aiai_inbetween", json!({"cut": "c", "layer": "l", "key_a": 1, "key_b": 2, "count": 1}), "INBETWEEN"),
+        ("aiai_propagate_fills", json!({"cut": "c", "fill_layer": "l", "key_frame_a": 0, "key_frame_b": 4, "frames": [2]}), "PROPAGATE_FILLS"),
+        ("aiai_tts_line", json!({"text": "x"}), "TTS_LINE"),
+        ("aiai_tts_kokoro", json!({"text": "x"}), "TTS_KOKORO"),
+        ("aiai_voice_profile", json!({"character": "x", "speaker": 8}), "VOICE_PROFILE"),
+        ("aiai_lipsync", json!({"cut": "c", "mouth_layer": "l", "mapping": {}}), "LIPSYNC"),
+        ("aiai_sfx", json!({"preset": "impact"}), "SFX"),
+        ("aiai_bgm", json!({"song": {}}), "BGM"),
+        ("aiai_mix", json!({"cut": "c"}), "MIX_CUT"),
+        ("aiai_loudness", json!({"cut": "c"}), "LOUDNESS"),
+        ("aiai_compare", json!({"cut": "c", "reference": "r.png"}), "COMPARE"),
+        ("aiai_probe_color", json!({"reference": "r.png", "points": [[1, 1]]}), "PROBE_COLOR"),
+        ("aiai_measure_line", json!({"reference": "r.png", "points": [[1, 1], [2, 2]]}), "MEASURE_LINE"),
+        ("aiai_measure_edge", json!({"reference": "r.png", "points": [[1, 1], [2, 2], [3, 1]]}), "MEASURE_EDGE"),
+        ("aiai_fill_shape", json!({"cut": "c", "layer": "l", "shapes": [], "color": {}}), "FILL_SHAPE"),
+        ("aiai_edit", json!({"clips": []}), "EDIT_SET"),
+        ("aiai_export_video", json!({"edit": "e", "out": "x.mp4"}), "EXPORT_VIDEO"),
+    ] {
+        let p = plan(tool, args.clone()).unwrap_or_else(|e| panic!("{tool}: {e}"));
+        assert_eq!(p.action, action, "{tool}");
+        if ["aiai_sky", "aiai_text", "aiai_lines", "aiai_gag_bg", "aiai_guide3d", "aiai_perspective", "aiai_compare", "aiai_fill_shape", "aiai_pattern_fill"].contains(&tool) {
+            assert_eq!(p.params["frame"], json!(0), "{tool}: frame ausente vira 0");
+        }
+        assert!(defs.as_array().unwrap().iter().any(|t| t["name"] == tool && t["inputSchema"]["type"] == "object"), "{tool} está no catálogo");
+    }
+    for (tool, args) in [
+        ("aiai_sky", json!({"cut": "c", "layer": "l"})),
+        ("aiai_particles", json!({"layer": "l"})),
+        ("aiai_export_video", json!({"out": "x.mp4"})),
+        ("aiai_measure_line", json!({"reference": "r.png"})),
+        ("aiai_measure_edge", json!({"reference": "r.png"})),
+        ("aiai_compare", json!({"cut": "c"})),
+        ("aiai_sfx", json!({})),
+    ] {
+        assert!(plan(tool, args.clone()).is_err(), "{tool} {args}: deveria faltar algo");
+    }
+    // decisão 22 na descrição das medições
+    for n in ["aiai_measure_line", "aiai_measure_edge"] {
+        let d = defs.as_array().unwrap().iter().find(|t| t["name"] == n).unwrap()["description"].as_str().unwrap().to_string();
+        assert!(d.contains("decisão 22") && d.contains("só MEDE") && d.contains("não cria"), "{n}");
+    }
+    // a cola de aiai_apply cita as ferramentas de produção
+    let apply_desc = defs.as_array().unwrap().iter().find(|t| t["name"] == "aiai_apply").unwrap()["description"].as_str().unwrap().to_string();
+    for n in ["aiai_sky", "aiai_text", "aiai_particles", "aiai_export_video", "aiai_measure_line", "aiai_edit", "aiai_mix"] {
+        assert!(apply_desc.contains(n), "a cola de aiai_apply não cita {n}");
+    }
     // ferramentas curadas: validam o essencial e mapeiam para a ação certa; `frame` ausente vira 0
     let p = plan("aiai_draw_curves", json!({"cut": "c", "layer": "l", "curves": [{"points": [[0, 0], [1, 1]]}]})).unwrap();
     assert_eq!((p.action, p.params["frame"].clone()), ("DRAW_CURVES", json!(0)));
@@ -571,6 +638,88 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
 }
 
 #[test]
+fn sandbox_read_rules_cover_the_repo_and_the_write_dirs_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let sb = Sandbox::new(vec![dir.path().to_path_buf()], true).with_read_dirs(vec![PathBuf::from(r"C:\AnimeIAI")]);
+    assert!(sb.check_read(r"C:\AnimeIAI\calibracao\q0000.png").is_ok());
+    assert!(sb.check_read(dir.path().join("x.png").to_str().unwrap()).is_ok());
+    for bad in [r"C:\Windows\win.ini", r"C:\AnimeIAI\..\Windows\win.ini", "relativo.png", ""] {
+        assert!(sb.check_read(bad).is_err(), "{bad}");
+    }
+    // leitura não depende de a gravação estar ligada
+    assert!(Sandbox::new(vec![dir.path().to_path_buf()], false).with_read_dirs(vec![PathBuf::from(r"C:\AnimeIAI")]).check_read(r"C:\AnimeIAI\x.png").is_ok());
+}
+
+#[test]
+fn production_tools_over_stdio_headless_gag_shot_measure_and_export() {
+    if Command::new("ffmpeg").arg("-version").output().is_err() {
+        eprintln!("ffmpeg não encontrado: teste pulado");
+        return;
+    }
+    let env = Env::new();
+    let mut s = env.mcp();
+    handshake(&mut s);
+    // medições valem SEM projeto (headless sem projeto) e respeitam a leitura do sandbox
+    let reference = env.path("ref.png");
+    {
+        let mut img = image::RgbaImage::from_pixel(64, 40, image::Rgba([255, 255, 255, 255]));
+        for y in 0..40 {
+            for x in 30..33 {
+                img.put_pixel(x, y, image::Rgba([10, 10, 10, 255]));
+            }
+        }
+        img.save(&reference).unwrap();
+    }
+    let probe = s.tool_ok("aiai_probe_color", json!({"reference": reference.to_str().unwrap(), "points": [[5, 5], [31, 20]]}));
+    assert_eq!(probe["colors"][0]["hex"], "#ffffff");
+    assert_eq!(probe["_via"], "headless");
+    let m = s.tool_ok("aiai_measure_line", json!({"reference": reference.to_str().unwrap(), "points": [[28.0, 8.0], [28.0, 20.0], [28.0, 32.0]], "search": 6}));
+    assert_eq!(m["found"], 3, "{m}");
+    assert!((m["measures"][1]["center"][0].as_f64().unwrap() - 31.5).abs() < 0.6, "{m}");
+    let e = s.tool_err("aiai_probe_color", json!({"reference": r"C:\Windows\win.ini", "points": [[1, 1]]}));
+    assert!(e.contains("fora das pastas permitidas"), "{e}");
+
+    // projeto e cena de gag: fundo radial + linhas de foco + ドン + pétalas; SFX no corte; export de 12 quadros com áudio
+    let proj = env.path("gag.aiai");
+    s.tool_ok("aiai_project", json!({"op": "new", "name": "Gag", "path": proj.to_str().unwrap(), "settings": {"width": 320, "height": 180}}));
+    let mk = |s: &mut McpSession, name: &str, parent: Option<&str>, data: Value| -> String { s.tool_ok("aiai_apply", create_node(name, parent, data))["created"][0].as_str().unwrap().to_string() };
+    let ep = mk(&mut s, "EP", None, json!({"type": "episode", "number": 1}));
+    let sc = mk(&mut s, "S", Some(&ep), json!({"type": "scene", "number": 1}));
+    let cut = mk(&mut s, "C001", Some(&sc), json!({"type": "cut", "number": 1, "duration": 24}));
+    let bg = mk(&mut s, "BG", Some(&cut), json!({"type": "layer", "kind": "raster"}));
+    let txt = mk(&mut s, "TXT", Some(&cut), json!({"type": "layer", "kind": "raster"}));
+    let lin = mk(&mut s, "LINHAS", Some(&cut), json!({"type": "layer", "kind": "vector"}));
+    let pet = mk(&mut s, "PETALAS", Some(&cut), json!({"type": "layer", "kind": "particles"}));
+    for l in [&bg, &txt, &lin] {
+        mk(&mut s, "c1", Some(l), json!({"type": "cel", "number": 1}));
+    }
+    let g = s.tool_ok("aiai_gag_bg", json!({"cut": cut, "layer": bg, "pattern": {"type": "radial_stripes", "center": [160.0, 90.0], "count": 24, "colors": ["#fff3b0", "#ffd23f"]}}));
+    assert_eq!(g["can_undo"], true);
+    s.tool_ok("aiai_lines", json!({"cut": cut, "layer": lin, "kind": {"type": "focus", "center": [160.0, 90.0], "clear": [70.0, 50.0]}, "count": 70, "length": [50.0, 200.0], "width": [1.0, 4.0], "color": {"type": "direct", "rgba": [0, 0, 0, 1]}}));
+    s.tool_ok("aiai_text", json!({"cut": cut, "fill_layer": txt, "text": "ドン", "size": 100, "center": [160.0, 90.0], "color": {"type": "direct", "rgba": [1, 0.15, 0.1, 1]}}));
+    s.tool_ok("aiai_particles", json!({"layer": pet, "preset": "petalas", "overrides": {"rate": 50}}));
+    let sfx = s.tool_ok("aiai_sfx", json!({"preset": "impact", "seed": 2, "cut": cut, "start_frame": 0}));
+    assert!(sfx["duration_s"].as_f64().unwrap() > 0.1);
+    let mix = s.tool_ok("aiai_mix", json!({"cut": cut, "preset": "streaming"}));
+    assert!(mix["normalize"]["after_lufs"].is_number(), "{mix}");
+    let out = env.path("gag.mp4");
+    let r = s.tool_ok("aiai_export_video", json!({"cut": cut, "start": 0, "end": 12, "out": out.to_str().unwrap()}));
+    assert_eq!((r["frames"].as_u64(), r["probe"]["frames"].as_u64()), (Some(12), Some(12)), "{r}");
+    assert_eq!(r["probe"]["audio_codec"], "aac");
+    // destino fora do sandbox: recusado antes de renderizar
+    let outside = std::env::current_dir().unwrap().join("fora.mp4");
+    assert!(s.tool_err("aiai_export_video", json!({"cut": cut, "out": outside.to_str().unwrap()})).contains("fora das pastas permitidas"));
+    assert!(!outside.exists());
+    // erros de ferramenta voltam como erro MCP com o código
+    assert!(s.tool_err("aiai_particles", json!({"layer": pet, "preset": "lava"})).contains("petalas"));
+    assert!(s.tool_err("aiai_tts_line", json!({"text": "x", "speaker": 8, "voicevox_url": "http://127.0.0.1:9"})).contains("start.ps1"));
+    // o projeto em disco guarda tudo e o undo do servidor desfaz o último passo (SFX)
+    let disk = std::fs::read_to_string(proj.join("project.json")).unwrap();
+    assert!(disk.contains("particles") && disk.contains("audio"));
+    s.tool_ok("aiai_undo", json!({}));
+}
+
+#[test]
 fn cli_parser_forms() {
     let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     assert_eq!(cli::parse(&a(&[])).unwrap(), Cmd::Serve);
@@ -584,7 +733,7 @@ fn cli_parser_forms() {
         }
         other => panic!("{other:?}"),
     }
-    for bad in [vec!["call"], vec!["call", "ping"], vec!["call", "PING; x"], vec!["call", "PING", "[1]"], vec!["call", "PING", "{}", "{}"], vec!["call", "PING", "--png"], vec!["call", "PING", "--timeout", "999"]] {
+    for bad in [vec!["call"], vec!["call", "ping"], vec!["call", "PING; x"], vec!["call", "PING", "[1]"], vec!["call", "PING", "{}", "{}"], vec!["call", "PING", "--png"], vec!["call", "PING", "--timeout", "9999"]] {
         assert!(cli::parse(&a(&bad)).is_err(), "{bad:?}");
     }
 }

@@ -57,17 +57,35 @@ impl Ctx {
         Ctx { client, force_headless: project.is_some(), headless: Headless::new(sandbox.clone(), project), sandbox }
     }
 
-    /// Valida os caminhos de gravação dos parâmetros ANTES de sair do processo e os troca pela forma absoluta.
+    /// Valida os caminhos de gravação e de leitura dos parâmetros ANTES de sair do processo e os troca pela forma absoluta.
     fn sanitize(&self, action: &str, params: &mut Value) -> Result<(), ToolError> {
-        let keys: &[&str] = match action {
+        let write_keys: &[&str] = match action {
             "NEW_PROJECT" | "OPEN_PROJECT" | "SAVE_PROJECT" => &["path"],
-            "RENDER" | "SCREENSHOT" => &["out"],
-            "COMPARE" => &["out_diff"],
+            "RENDER" | "SCREENSHOT" | "MIX_CUT" | "EXPORT_VIDEO" => &["out"],
+            "COMPARE" => &["out_dir", "out_diff"],
             _ => &[],
         };
-        for key in keys {
+        for key in write_keys {
             if let Some(s) = params.get(*key).and_then(Value::as_str) {
                 let p = self.sandbox.check_write(s).map_err(|e| ToolError::invalid(format!("'{key}': {e}")))?;
+                params[*key] = json!(p.display().to_string());
+            }
+        }
+        // leitura: referências, fontes, SoundFonts, legendas e WAVs (sob C:\AnimeIAI)
+        let read_keys: &[&str] = match action {
+            "COMPARE" | "PROBE_COLOR" | "MEASURE_LINE" | "MEASURE_EDGE" => &["reference"],
+            "TEXT" => &["font"],
+            "BGM" => &["soundfont"],
+            "EXPORT_VIDEO" => &["srt"],
+            "LOUDNESS" => &["path"],
+            _ => &[],
+        };
+        for key in read_keys {
+            if let Some(s) = params.get(*key).and_then(Value::as_str) {
+                if *key == "font" && (s == "regular" || s == "black") {
+                    continue;
+                }
+                let p = self.sandbox.check_read(s).map_err(|e| ToolError::invalid(format!("'{key}': {e}")))?;
                 params[*key] = json!(p.display().to_string());
             }
         }

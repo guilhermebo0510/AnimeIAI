@@ -2,7 +2,7 @@
 //! reiniciar) e o despacho delas para as ações da bridge. As descrições são em português: é o que o agente lê.
 //!
 //! Ferramentas curadas de alto nível (`aiai_draw_curves`, `aiai_fill`, `aiai_lint`, `aiai_paint`, `aiai_gradient`,
-//! `aiai_transform`, `aiai_repeat`, `aiai_brush_presets`, `aiai_render`): açúcar sobre comandos do Command Bus (nada de
+//! `aiai_transform`, `aiai_repeat`, `aiai_brush_presets`, `aiai_render`) e as de produção (`tools_production`): açúcar sobre comandos do Command Bus (nada de
 //! caminho paralelo), com o JSON Schema de entrada gerado dos tipos de requisição de `aiai-tools`. Rodam no app e no headless.
 
 use crate::context::{Ctx, ToolError, mcp_image, take_png};
@@ -32,6 +32,7 @@ Cola dos comandos principais (campo `kind`):\n\
 - set_tiles {cel, tiles:[{x,y,blob}]} (raster; blob = hash já gravado).\n\
 - add_track {cut, track:{\"id\":\"\",\"name\":\"A\",\"kind\":\"drawing\",\"layer\":\"<id da camada>\"}}; set_cells {cut, track, cells:[{frame, cell:{\"type\":\"cel\",\"number\":1}|{\"type\":\"empty\"}|null}]} (quadro 0-based).\n\
 - batch {commands:[...], label?}: vários comandos num único passo de undo (ids dados explicitamente em create_node permitem referenciar dentro do lote).\n\
+Ferramentas de alto nível (açúcar sobre estes comandos, com validação e exemplo; prefira-as quando existirem): desenho aiai_draw_curves, aiai_fill, aiai_lint, aiai_paint, aiai_gradient, aiai_transform, aiai_repeat; cenário e efeitos aiai_sky, aiai_pattern_fill, aiai_text, aiai_lines, aiai_gag_bg, aiai_particles; guias aiai_guide3d, aiai_perspective; personagem aiai_model_sheet, aiai_consistency; animação aiai_inbetween, aiai_propagate_fills; áudio aiai_tts_line, aiai_tts_kokoro, aiai_voice_profile, aiai_lipsync, aiai_sfx, aiai_bgm, aiai_mix, aiai_loudness; forma preenchida aiai_fill_shape; calibração aiai_compare, aiai_probe_color, aiai_measure_line, aiai_measure_edge; edição aiai_edit; saída aiai_render e aiai_export_video. Use aiai_apply para o que não tem ferramenta (criar nós, mover, timesheet, props cruas).\n\
 `aiai_schema {\"which\":\"commands\"}` devolve o JSON Schema completo de todos os comandos.";
 
 const RENDER_DESC: &str = r##"Renderiza um quadro de um corte com o motor CPU real (a MESMA imagem que o app mostra) e devolve a imagem como conteúdo de imagem MCP (reduzida a 1280 px no lado maior) e/ou grava o PNG em `out`. É a forma de VER o que você desenhou: renderize depois de cada passo importante e olhe a imagem.
@@ -66,7 +67,7 @@ const REPEAT_DESC: &str = r##"Repete traços vetoriais ao longo de um caminho (c
 
 const LINT_DESC: &str = r##"Confere o balde de tinta: lista as regiões fechadas pelas linhas (camadas em line_refs da camada de cor) que AINDA não têm cor. Devolve {regions_total, painted, unpainted:[{label, area, point:[x,y], bounds}]}; use `point` de cada região como semente de aiai_fill. Regiões que tocam a borda do quadro e menores que min_area são ignoradas. Se `unpainted` vier vazio, tudo está pintado. Se uma região sumiu ou virou uma só, há buraco na linha: aumente `gap` ou feche o traço."##;
 
-fn schema_of<T: schemars::JsonSchema>() -> Value {
+pub(crate) fn schema_of<T: schemars::JsonSchema>() -> Value {
     serde_json::to_value(schemars::schema_for!(T)).unwrap_or_else(|_| json!({ "type": "object" }))
 }
 
@@ -85,7 +86,7 @@ fn paint_schema() -> Value {
     s
 }
 
-pub fn definitions() -> Value {
+fn base_definitions() -> Value {
     json!([
         {
             "name": "aiai_status",
@@ -176,21 +177,6 @@ Só grava em pastas permitidas (AIAI_MCP_ALLOWED_DIRS; padrão producoes/, calib
                 },
                 "required": ["cut"],
                 "additionalProperties": false
-            }
-        },
-        {
-            "name": "aiai_compare",
-            "description": "Compara duas imagens (arquivos ou quadros renderizados) e devolve métricas (a, b, metrics[], mask, out_diff). Serve à validação visual contra a referência. Exige o app aberto; enquanto a sprint de métricas não termina o app responde com erro claro.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "a": { "description": "Imagem A (caminho ou {cut, frame})." },
-                    "b": { "description": "Imagem B (caminho ou {cut, frame})." },
-                    "metrics": { "type": "array", "items": { "type": "string" } },
-                    "mask": { "type": "string" },
-                    "out_diff": { "type": "string", "description": "Onde gravar a imagem de diferença (pasta permitida)." }
-                },
-                "additionalProperties": true
             }
         },
         {
@@ -289,6 +275,13 @@ Só grava em pastas permitidas (AIAI_MCP_ALLOWED_DIRS; padrão producoes/, calib
     ])
 }
 
+/// Catálogo completo: ferramentas genéricas + curadas de desenho + curadas de produção (`tools_production`).
+pub fn definitions() -> Value {
+    let mut list = base_definitions().as_array().cloned().unwrap_or_default();
+    list.extend(crate::tools_production::definitions());
+    Value::Array(list)
+}
+
 fn args_object(args: &Value) -> Result<Map<String, Value>, ToolError> {
     match args {
         Value::Null => Ok(Map::new()),
@@ -335,6 +328,9 @@ pub struct Plan {
 pub fn plan(name: &str, args: &Value) -> Result<Plan, ToolError> {
     let m = args_object(args)?;
     let simple = |action: &'static str, params: Value| Ok(Plan { action, params, save_png: None });
+    if let Some(p) = crate::tools_production::plan(name, &m) {
+        return p;
+    }
     match name {
         "aiai_status" => simple("GET_STATUS", json!({})),
         "aiai_apply" => {
@@ -371,7 +367,6 @@ pub fn plan(name: &str, args: &Value) -> Result<Plan, ToolError> {
             require(&m, "cut", "id do corte")?;
             simple("RENDER", Value::Object(m))
         }
-        "aiai_compare" => simple("COMPARE", Value::Object(m)),
         "aiai_draw_curves" => {
             required(&m, &["cut", "layer", "curves"])?;
             if !m.get("curves").is_some_and(|c| c.as_array().is_some_and(|a| !a.is_empty())) {

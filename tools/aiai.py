@@ -33,7 +33,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-__all__ = ["BridgeError", "BridgeUnavailable", "call", "batch", "screenshot", "render", "ui_state", "click_widget", "discovery_path", "is_live"]
+__all__ = ["BridgeError", "BridgeUnavailable", "call", "default_timeout", "export_video", "batch", "screenshot", "render", "ui_state", "click_widget", "discovery_path", "is_live"]
 
 _MAX_RESPONSE = 32 << 20
 _ids = itertools.count(1)
@@ -82,8 +82,25 @@ def _target() -> tuple[str, int, str]:
         raise BridgeUnavailable(f"AnimeIAI Studio não está aberto com --bridge (descoberta {path}: {e})") from e
 
 
-def call(action: str, params: dict[str, Any] | None = None, timeout: float = 30.0) -> Any:
-    """Uma ação pela bridge (HTTP ``POST /rpc`` com token Bearer). Devolve ``data``; levanta ``BridgeError`` em erro."""
+def default_timeout(action: str) -> float:
+    """Prazo de leitura por ação (um pouco acima do que o app dá à UI): ferramentas de produção demoram mais."""
+    if action == "EXPORT_VIDEO":
+        return 1200.0
+    if action in ("BGM", "TTS_LINE", "TTS_KOKORO", "MIX_CUT", "LOUDNESS"):
+        return 130.0
+    if action in ("SKY", "PATTERN_FILL", "FILL_SHAPE", "EDIT_SET", "TEXT", "GAG_BG", "GUIDE3D", "MODEL_SHEET", "INBETWEEN", "PROPAGATE_FILLS", "LIPSYNC", "COMPARE", "RENDER"):
+        return 65.0
+    return 30.0
+
+
+def call(action: str, params: dict[str, Any] | None = None, timeout: float | None = None) -> Any:
+    """Uma ação pela bridge (HTTP ``POST /rpc`` com token Bearer). Devolve ``data``; levanta ``BridgeError`` em erro.
+
+    Qualquer ação de ferramenta vale (SKY, PATTERN_FILL, TEXT, LINES, GAG_BG, PARTICLES, GUIDE3D, PERSPECTIVE, MODEL_SHEET,
+    CONSISTENCY, INBETWEEN, PROPAGATE_FILLS, FILL_SHAPE, TTS_LINE, TTS_KOKORO, VOICE_PROFILE, LIPSYNC, SFX, BGM, MIX_CUT, LOUDNESS,
+    COMPARE, PROBE_COLOR, MEASURE_LINE, MEASURE_EDGE, EDIT_SET, EXPORT_VIDEO...). ``timeout`` omitido = ``default_timeout(action)``."""
+    if timeout is None:
+        timeout = default_timeout(action)
     host, port, token = _target()
     body = json.dumps({"id": f"py-{next(_ids)}", "action": action, "params": params or {}}).encode("utf-8")
     headers = {"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
@@ -142,6 +159,11 @@ def render(path: str | os.PathLike[str], cut: str, frame: int = 0, **params: Any
     target.write_bytes(base64.b64decode(b64))
     data["saved_to"] = str(target)
     return data
+
+
+def export_video(out: str | os.PathLike[str], **params: Any) -> dict[str, Any]:
+    """EXPORT_VIDEO: ``cut`` (com ``start``/``end``), ``episode`` ou ``edit``; ``codec``, ``crf``, ``preset``, ``subtitles``... Devolve frames e ffprobe."""
+    return call("EXPORT_VIDEO", {"out": str(out), **params})
 
 
 def ui_state() -> dict[str, Any]:

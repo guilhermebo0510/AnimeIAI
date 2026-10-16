@@ -53,6 +53,9 @@ pub fn read_timeout_for(action: &str) -> Duration {
     match action {
         "SCREENSHOT" | "RENDER" | "COMPARE" => Duration::from_secs(35),
         "NEW_PROJECT" | "OPEN_PROJECT" | "SAVE_PROJECT" => Duration::from_secs(25),
+        "EXPORT_VIDEO" => Duration::from_secs(1200),
+        "BGM" | "TTS_LINE" | "TTS_KOKORO" | "MIX_CUT" | "LOUDNESS" => Duration::from_secs(130),
+        "SKY" | "PATTERN_FILL" | "FILL_SHAPE" | "EDIT_SET" | "TEXT" | "GAG_BG" | "GUIDE3D" | "MODEL_SHEET" | "INBETWEEN" | "PROPAGATE_FILLS" | "LIPSYNC" => Duration::from_secs(65),
         _ => Duration::from_secs(15),
     }
 }

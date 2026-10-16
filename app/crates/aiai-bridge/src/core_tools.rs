@@ -27,9 +27,14 @@ use std::path::Path;
 
 pub const TOOL_ACTIONS: &[&str] = &["RENDER", "DRAW_CURVES", "FILL", "LINT", "PAINT", "GRADIENT", "TRANSFORM", "REPEAT", "BRUSH_PRESETS"];
 
+/// Todas as ações de ferramenta de documento: as de aqui + as de [`crate::production_tools`].
+pub fn is_tool_action(action: &str) -> bool {
+    TOOL_ACTIONS.contains(&action) || crate::production_tools::PRODUCTION_ACTIONS.contains(&action)
+}
+
 /// Ações de ferramenta que mudam o documento.
 pub fn is_mutating_tool(action: &str) -> bool {
-    matches!(action, "DRAW_CURVES" | "FILL" | "PAINT" | "GRADIENT" | "TRANSFORM" | "REPEAT")
+    matches!(action, "DRAW_CURVES" | "FILL" | "PAINT" | "GRADIENT" | "TRANSFORM" | "REPEAT") || crate::production_tools::is_mutating(action)
 }
 
 /// Erros das ferramentas → códigos da bridge: referência/valor inválido é `-32602`; falha do motor é `-32000`.
@@ -46,6 +51,7 @@ pub fn handle_tool_action(session: &mut CoreSession, action: &str, params: &Valu
     Some(match action {
         "RENDER" => render(session, params),
         "BRUSH_PRESETS" => Ok(brush_presets()),
+        a if crate::production_tools::PRODUCTION_ACTIONS.contains(&a) => crate::production_tools::handle(session, a, params),
         "LINT" => lint_action(session, params),
         "DRAW_CURVES" => request::<DrawRequest>(params, "DRAW_CURVES").and_then(|r| {
             let cmd = draw_command(&session.project, &r).map_err(tool_error)?;
@@ -73,7 +79,7 @@ pub fn handle_tool_action(session: &mut CoreSession, action: &str, params: &Valu
 }
 
 /// Decodifica os parâmetros no tipo de requisição da ferramenta (campos extras como `author` são ignorados).
-fn request<T: DeserializeOwned>(params: &Value, action: &str) -> Result<T, BridgeError> {
+pub(crate) fn request<T: DeserializeOwned>(params: &Value, action: &str) -> Result<T, BridgeError> {
     if !params.is_object() {
         return Err(BridgeError::invalid_params(format!("{action}: params deve ser um objeto JSON")));
     }
@@ -81,7 +87,7 @@ fn request<T: DeserializeOwned>(params: &Value, action: &str) -> Result<T, Bridg
 }
 
 /// Aplica o comando devolvido pela ferramenta (autor e `if_revision` dos params).
-fn apply(session: &mut CoreSession, params: &Value, cmd: Command) -> Result<Value, BridgeError> {
+pub(crate) fn apply(session: &mut CoreSession, params: &Value, cmd: Command) -> Result<Value, BridgeError> {
     let p = obj(params)?;
     let author = opt_str(&p, "author")?.unwrap_or(DEFAULT_AUTHOR).to_string();
     let if_revision = opt_u64(&p, "if_revision")?;

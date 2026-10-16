@@ -111,6 +111,10 @@ pub fn action_timeout(action: &str) -> Duration {
     match action {
         "SCREENSHOT" | "RENDER" | "COMPARE" => Duration::from_secs(30),
         "OPEN_PROJECT" | "SAVE_PROJECT" | "NEW_PROJECT" => Duration::from_secs(20),
+        // ferramentas de produção: o trabalho roda na thread da UI (exportar vídeo bloqueia a janela até terminar)
+        "EXPORT_VIDEO" => Duration::from_secs(1190),
+        "BGM" | "TTS_LINE" | "TTS_KOKORO" | "MIX_CUT" | "LOUDNESS" => Duration::from_secs(120),
+        "SKY" | "PATTERN_FILL" | "FILL_SHAPE" | "EDIT_SET" | "TEXT" | "GAG_BG" | "GUIDE3D" | "MODEL_SHEET" | "INBETWEEN" | "PROPAGATE_FILLS" | "LIPSYNC" => Duration::from_secs(60),
         _ => Duration::from_secs(10),
     }
 }
