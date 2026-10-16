@@ -95,7 +95,7 @@ DIRECT = {
                        (960, 964), (1080, 957), (1190, 930), (1250, 906), (1300, 876), (1345, 841), (1380, 806), (1405, 775)], 14.0)}
 # lado da normal (−ty, tx) onde fica a pele: o queixo desce para a direita, a pele fica à esquerda da normal → −1
 # larguras lidas nos perfis: o queixo engrossa (~20 px) ao lado do respiro rosado, ~14 px no resto
-WIDTH_FN = {"queixo": lambda p, w: 20.0 if (p[0] < 675 and 650 < p[1] < 830) else w}
+WIDTH_FN = {"queixo": lambda p, w: 27.0 if (p[0] < 675 and 690 < p[1] < 830) else (20.0 if (p[0] < 675 and 650 < p[1] <= 690) else w)}
 SKIN_SIDE = {"queixo": -1, "contorno_esq": 1, "contorno_n2": -1, "contorno_n3a": -1, "contorno_n4a": -1, "contorno_n5": -1}
 CLOSED = {}  # a boca virou anel medido na linha-massa (d218_face.py)
 
@@ -106,7 +106,7 @@ INK_Q = 0.5
 BAND = "--meia-altura" not in sys.argv
 
 
-def colored_segments(pts, ws, base_w, seg_len=180.0):
+def colored_segments(pts, ws, base_w, seg_len=180.0, clamp=(0.7, 1.3)):
     """Divide a linha em trechos de ~`seg_len` px e dá a cada um a cor da tinta medida nos seus centros (a tinta clareia
     no alto do quadro e escurece sobre o cabelo de trás ao longo de uma mesma linha)."""
     import math
@@ -133,7 +133,7 @@ def colored_segments(pts, ws, base_w, seg_len=180.0):
             col = LINE
         c = meas.curve_from_measure(sp, sw, col, every=1)
         c["width"] = base_w
-        c["profile"] = [[t, max(0.7, min(1.3, (w or base_w) / base_w))] for t, w in zip([k / max(1, len(sw) - 1) for k in range(len(sw))], sw)]
+        c["profile"] = [[t, max(clamp[0], min(clamp[1], (w or base_w) / base_w))] for t, w in zip([k / max(1, len(sw) - 1) for k in range(len(sw))], sw)]
         out.append(c)
     return out
 
@@ -217,7 +217,7 @@ if __name__ == "__main__":
         if name in SKIN_SIDE and name in WIDTH_FN:  # largura variável: reancora pela borda da pele com a meia largura local
             pts = [[p[0] - SKIN_SIDE[name] * n[0] * (wi - w) / 2, p[1] - SKIN_SIDE[name] * n[1] * (wi - w) / 2]
                    for p, n, wi in zip(pts, meas._normals(pts), wl)]
-        segs = colored_segments(pts, wl, w) if SEGMENT_INK else None
+        segs = colored_segments(pts, wl, w, clamp=(0.5, 2.5)) if SEGMENT_INK else None
         if segs:
             c2.extend(segs)
         else:
