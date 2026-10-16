@@ -3,5 +3,12 @@ name = "aiai-render"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Compositor do AnimeIAI: árvore de camadas → quadro (CPU determinístico; GPU para efeitos pesados nas sprints seguintes)"
 
 [dependencies]
+aiai-core = { workspace = true }
+aiai-paint = { workspace = true }
+rayon = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
