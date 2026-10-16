@@ -147,12 +147,30 @@ LINES = {
     "olho_d_pupila": (arc(861.75, 441.25, 7, 7, 0, 360, 16)[:-1], 2.0, True, {"raw": "#5a3a48"}),
     "olho_d_cilio1": ([(832, 489), (847, 490), (862, 490)], 2.0, False, {"raw": INK}),
     "olho_d_cilio2": ([(892, 489), (901, 487), (910, 485)], 2.0, False, {"raw": INK}),
+    # gola, broche, laço e camisa (ink_grid 580–900 × 740–1080, 2×)
+    "g_gola_e": ([(600, 772), (606, 790), (612, 806), (617, 820)], 2.5, False),
+    "g_gola_baixo_e": ([(617, 822), (645, 832), (680, 842), (700, 845)], 2.5, False),
+    "g_gola_baixo_d": ([(750, 842), (790, 835), (820, 827), (837, 820)], 2.5, False),
+    "l_asa_e_topo": ([(580, 845), (610, 835), (640, 830), (670, 837), (700, 845)], 2.5, False),
+    "l_asa_e_baixo": ([(580, 932), (610, 905), (640, 885), (670, 872), (700, 860)], 2.5, False),
+    "l_asa_d": ([(755, 847), (790, 860), (820, 872), (850, 885), (880, 905), (900, 920)], 2.5, False),
+    "p_lapela_d": ([(837, 820), (860, 835), (880, 855), (900, 875)], 2.5, False),
+    "p_lapela_d2": ([(837, 822), (845, 860), (852, 912)], 2.5, False),
+    "p_lapela_e": ([(617, 822), (612, 855), (602, 890), (595, 915)], 2.5, False),
+    "b_broche_fora": (arc(729, 865, 24.5, 35, 0, 360, 24)[:-1], 2.0, True),
+    "b_broche_dentro": (arc(729, 864, 18, 27, 0, 360, 24)[:-1], 2.0, True),
+    "b_botao": (arc(731, 950, 5, 7.5, 0, 360, 12)[:-1], 2.0, True),
+    "k_camisa_e": ([(715, 905), (712, 965), (707, 1020), (705, 1080)], 2.5, False),
+    "k_camisa_d": ([(740, 905), (742, 965), (747, 1020), (752, 1080)], 2.5, False),
+    "k_camisa_e2": ([(705, 965), (697, 1020), (687, 1080)], 3.0, False),
+    "k_camisa_d2": ([(752, 965), (762, 1020), (770, 1080)], 3.0, False),
 }
 
 
-def measured(poly, w_nom, closed=False):
-    pts, ws = meas.measure_line(d, REF, meas.densify(poly, 3, closed=closed), closed=closed, passes=((14.0, 0.06), (8.0, 0.06)), smooth=1)
-    for sr in (6.0, 3.0):
+def measured(poly, w_nom, closed=False, fine=False):
+    ps = ((6.0, 0.06), (3.0, 0.06)) if fine else ((14.0, 0.06), (8.0, 0.06))  # curta: áreas escuras vizinhas (laço) puxam a linha
+    pts, ws = meas.measure_line(d, REF, meas.densify(poly, 3, closed=closed), closed=closed, passes=ps, smooth=1)
+    for sr in ((3.0, 2.0) if fine else (6.0, 3.0)):
         pts, ws = meas.anchor_line(d, REF, pts, [max(wv or 0.0, 0.9 * w_nom) for wv in ws], w_nom, closed=closed, search=sr,
                                    w_range=(1.2, 8.0))
     ws = [max(wv or 0.0, 0.9 * w_nom) for wv in ws]
@@ -175,9 +193,10 @@ def lines():
             curves.append({"points": [list(p) for p in poly], "width": float(w), "tip": "marker", "geometry": "spline",
                            "color": {"type": "direct", "rgba": c + [1.0]}, "closed": closed})
             continue
-        key = json.dumps([name, poly, w, closed, F])
+        fine = o.get("fino", name[:2] in ("g_", "l_", "p_", "b_", "k_"))
+        key = json.dumps([name, poly, w, closed, F, fine])
         if key not in cache:
-            cache[key] = measured(poly, w, closed)
+            cache[key] = measured(poly, w, closed, fine)
         curves.append(cache[key])
     json.dump(cache, open(CACHE_F, "w"))
     return d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": F, "layer": ids["linha"], "curves": curves}).get("description")
