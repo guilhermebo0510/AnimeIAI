@@ -45,7 +45,8 @@ HAIR = {
     "franja_h3": [(700, 170), (750, 147), (780, 132), (825, 136)],
     "franja_i1": [(885, 200), (895, 250), (915, 300), (945, 345)],
     "franja_i2": [(910, 255), (950, 290), (1000, 318), (1050, 350), (1096, 350)],
-    "franja_entalhe": [(1058, 308), (1075, 315), (1092, 322), (1108, 330)],
+    "franja_entalhe": [(1060, 315), (1075, 317), (1090, 321)],
+    "franja_bico": [(1068, 330), (1080, 338), (1092, 346), (1099, 350)],
     "franja_k1": [(957, -6), (965, 30), (980, 80), (1000, 125), (1025, 165), (1040, 200), (1060, 235), (1080, 270), (1100, 300), (1127, 332)],
     "franja_k2": [(1064, -6), (1065, 30), (1058, 75), (1050, 115), (1030, 160), (1025, 170)],
     "franja_k3": [(1095, 280), (1115, 240), (1125, 200), (1130, 175), (1137, 200), (1142, 240), (1147, 280), (1165, 240), (1185, 195),
@@ -93,6 +94,8 @@ DIRECT = {
           "queixo": ([(549, 560), (550, 602), (566, 655), (586, 703), (612, 752), (644, 804), (697, 858), (760, 898), (840, 937),
                        (960, 964), (1080, 957), (1190, 930), (1250, 906), (1300, 876), (1345, 841), (1380, 806), (1405, 775)], 14.0)}
 # lado da normal (−ty, tx) onde fica a pele: o queixo desce para a direita, a pele fica à esquerda da normal → −1
+# larguras lidas nos perfis: o queixo engrossa (~20 px) ao lado do respiro rosado, ~14 px no resto
+WIDTH_FN = {"queixo": lambda p, w: 20.0 if (p[0] < 675 and 650 < p[1] < 830) else w}
 SKIN_SIDE = {"queixo": -1, "contorno_esq": 1, "contorno_n2": -1, "contorno_n3a": -1, "contorno_n4a": -1, "contorno_n5": -1}
 CLOSED = {}  # a boca virou anel medido na linha-massa (d218_face.py)
 
@@ -210,7 +213,11 @@ if __name__ == "__main__":
         pts = meas.densify(poly, 4)
         if name in SKIN_SIDE:  # encosta na pele: a borda da pele é nítida, ancora nela
             pts = meas.edge_offset_line(d, REF0, pts, SKIN_SIDE[name], w / 2)
-        segs = colored_segments(pts, [w] * len(pts), w) if SEGMENT_INK else None
+        wl = [WIDTH_FN[name](p, w) for p in pts] if name in WIDTH_FN else [w] * len(pts)
+        if name in SKIN_SIDE and name in WIDTH_FN:  # largura variável: reancora pela borda da pele com a meia largura local
+            pts = [[p[0] - SKIN_SIDE[name] * n[0] * (wi - w) / 2, p[1] - SKIN_SIDE[name] * n[1] * (wi - w) / 2]
+                   for p, n, wi in zip(pts, meas._normals(pts), wl)]
+        segs = colored_segments(pts, wl, w) if SEGMENT_INK else None
         if segs:
             c2.extend(segs)
         else:
