@@ -29,7 +29,7 @@ def node(key, name, data, parent=None):
     return ids[key]
 
 
-ORDER = ["bg", "letreiro", "caules", "moldura_cor", "moldura_luz", "moldura_linha", "fx", "foco", "foco_mascara", "fecho"]
+ORDER = ["bg", "letreiro", "caules", "moldura_cor", "moldura_luz", "moldura_linha", "linha_suave", "fx", "foco", "foco_mascara", "fecho"]
 
 
 def reorder():

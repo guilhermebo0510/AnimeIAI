@@ -63,6 +63,7 @@ LINES = {
                    (119, 458)], 4, False),
     "r3_diag": ([(151, 322), (150, 330), (148, 338), (141, 354), (135, 362), (122, 370), (116, 378), (108, 386), (101, 394), (94, 402),
                  (88, 410)], 4, False),
+    "r3_arco2": ([(0, 422), (12, 429), (24, 433), (36, 436), (48, 441), (60, 448), (72, 456), (80, 462)], 5, False),
     "r3_topo_esq": ([(0, 192), (50, 195), (80, 202), (100, 205), (130, 205), (160, 215), (180, 235)], 7, False),
 
     # rosa R4 (embaixo à esquerda, centro ~90,850) — linhas mais finas e avermelhadas
@@ -254,6 +255,11 @@ LINES = {
 # fechamentos do balde (camada oculta `fecho`): frestas onde a linha medida não encosta na borda do quadro ou na vizinha
 FECHO = [
     [(-4, 584), (14, 592)],  # folha da esquerda ↔ borda do quadro
+    [(198, 886), (220, 878), (245, 870), (275, 861)],  # R4: faixa salmão da direita ↔ vermelho de baixo
+    [(3, 762), (14, 736), (26, 714)],  # R4: ponta esquerda da faixa salmão
+    [(1860, 748), (1867, 768), (1870, 792)],  # R2: ponta direita do crescente salmão
+    [(1762, 893), (1784, 886)],  # R2: ponta de baixo do crescente salmão
+    [(1546, 910), (1560, 890), (1576, 869), (1592, 855), (1602, 846)],  # R12: tampa salmão de cima ↔ anel vermelho
 ]
 
 # estimativas que não caem na tinta (c131_check.py): repetidas de contornos ou nervuras que não existem

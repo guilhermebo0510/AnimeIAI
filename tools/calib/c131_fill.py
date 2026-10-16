@@ -18,7 +18,7 @@ def rgb(h):
 
 
 def run(gap=8.0, min_area=40):  # folga 8: fecha as pontas soltas das pétalas (4: F1 0,665; 8: 0,691; 12: 0,680)
-    layers = [ids["moldura_linha"]] + ([ids["fecho"]] if "fecho" in ids else [])
+    layers = [ids["moldura_linha"]] + [ids[k] for k in ("linha_suave", "fecho") if k in ids]
     d.call("RENDER", {"cut": ids["cut"], "frame": F, "out": TMP, "layers": layers})
     wall = np.asarray(Image.open(TMP).convert("RGBA"))[..., 3] > 40
     wall = binary_dilation(wall, iterations=max(1, int(gap / 2)))

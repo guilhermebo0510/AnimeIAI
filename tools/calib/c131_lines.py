@@ -10,12 +10,13 @@ for _n in os.environ.get("C131_QLIST", "").split(","):
 
 CACHE_F = os.path.join("C:/AnimeIAI/calibracao/tmp", "c131_medidas.json")
 CACHE = json.load(open(CACHE_F)) if os.path.exists(CACHE_F) else {}
+SOFT_R = float(os.environ.get("C131_SUAVE", "0"))
 VAR_F = os.path.join(os.path.dirname(os.path.abspath(__file__)), "c131_variantes.json")
 VARIANTS = json.load(open(VAR_F)) if os.path.exists(VAR_F) else {}
 
 if __name__ == "__main__":
     d.apply({"kind": "replace_data", "id": ids["moldura_linha_c1"], "data": {"type": "cel", "number": 1}})
-    curves = []
+    curves, soft = [], []
     for name, (poly, w, closed, *opt) in LINES.items():
         ink, tol, mode = (opt + [None, None, None])[:3]
         if mode == "raw":  # traço lido por varredura, sem medição (nervura fina que o paquímetro perde)
@@ -31,14 +32,23 @@ if __name__ == "__main__":
         if key not in CACHE:  # só remede a linha que mudou
             kw = dict(mode=var[0], anchor=var[1], fine=var[2]) if var else {}
             CACHE[key] = measured(name, poly, w, closed=closed, ink=ink or "#1a0508", tol=(tol or 0.12) * tolx, **kw)
-        curves.append(CACHE[key])
+        (soft if (SOFT_R > 0 and ink and ink != "#1a0508") else curves).append(CACHE[key])
     json.dump(CACHE, open(CACHE_F, "w"))
+    # linhas vermelho-escuras de dentro das rosas numa camada própria com desfoque (na referência são suaves e o detector
+    # de bordas não as vê; continuam barreira do balde)
+    ls = node("linha_suave", "Linha suave", {"type": "layer", "kind": "vector"}, ids["cut"])
+    node("linha_suave_c1", "1", {"type": "cel", "number": 1}, ls)
+    reorder()
+    d.apply({"kind": "replace_data", "id": ids["linha_suave_c1"], "data": {"type": "cel", "number": 1}})
+    d.apply({"kind": "set_props", "id": ls, "data": {"params": {"effects": [{"effect": {"type": "gaussian_blur", "radius": SOFT_R}}]} if SOFT_R > 0 else {}}})
+    if soft:
+        d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": F, "layer": ls, "curves": soft})
     print(d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": F, "layer": ids["moldura_linha"], "curves": curves}).get("description"))
     # linhas de fechamento do balde (camada oculta, só nas line_refs da cor)
     f = node("fecho", "Fecho do balde", {"type": "layer", "kind": "vector"}, ids["cut"])
     node("fecho_c1", "1", {"type": "cel", "number": 1}, f)
     d.apply({"kind": "set_props", "id": f, "data": {"visible": False}})
-    d.apply({"kind": "set_props", "id": ids["moldura_cor"], "data": {"line_refs": [ids["moldura_linha"], f]}})
+    d.apply({"kind": "set_props", "id": ids["moldura_cor"], "data": {"line_refs": [ids["moldura_linha"], ids["linha_suave"], f]}})
     reorder()
     d.apply({"kind": "replace_data", "id": ids["fecho_c1"], "data": {"type": "cel", "number": 1}})
     if FECHO:
