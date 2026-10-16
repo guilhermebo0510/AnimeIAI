@@ -1,0 +1,3 @@
+Cena de teste, Grade sunset direto vs LUT 17^3:
+  sunset_17.cube (portável, 0..1) reimportado: erro máximo 0.01474 (3.76/255)
+  tabela sem limite (uso interno, aplicador limita depois): erro máximo 0.00051 (0.13/255)

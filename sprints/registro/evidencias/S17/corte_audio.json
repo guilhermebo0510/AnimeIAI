@@ -1,0 +1,95 @@
+{
+  "audio": [
+    {
+      "asset": "id-000020",
+      "character": "id-000018",
+      "fade_in": 0.0,
+      "fade_out": 0.0,
+      "gain_db": 0.0,
+      "id": "id-000021",
+      "pan": -0.10000000149011612,
+      "start_frame": 36,
+      "track": "dialogue",
+      "trim_start": 0.0
+    },
+    {
+      "asset": "id-000022",
+      "character": "id-000019",
+      "fade_in": 0.0,
+      "fade_out": 0.0,
+      "gain_db": 3.0,
+      "id": "id-000023",
+      "pan": 0.10000000149011612,
+      "start_frame": 104,
+      "track": "dialogue",
+      "trim_start": 0.0
+    },
+    {
+      "asset": "id-000024",
+      "fade_in": 0.0,
+      "fade_out": 0.0,
+      "gain_db": -2.0,
+      "id": "id-000025",
+      "pan": -0.30000001192092896,
+      "start_frame": 4,
+      "track": "sfx",
+      "trim_start": 0.0
+    },
+    {
+      "asset": "id-000026",
+      "fade_in": 0.0,
+      "fade_out": 0.0,
+      "gain_db": -2.0,
+      "id": "id-000027",
+      "pan": -0.050000011920928955,
+      "start_frame": 17,
+      "track": "sfx",
+      "trim_start": 0.0
+    },
+    {
+      "asset": "id-000028",
+      "fade_in": 0.0,
+      "fade_out": 0.0,
+      "gain_db": -2.0,
+      "id": "id-000029",
+      "pan": 0.19999998807907104,
+      "start_frame": 30,
+      "track": "sfx",
+      "trim_start": 0.0
+    },
+    {
+      "asset": "id-000030",
+      "fade_in": 0.0,
+      "fade_out": 0.0,
+      "gain_db": -10.0,
+      "id": "id-000031",
+      "pan": 0.20000000298023224,
+      "start_frame": 145,
+      "track": "sfx",
+      "trim_start": 0.0
+    },
+    {
+      "asset": "id-000032",
+      "fade_in": 0.0,
+      "fade_out": 0.0,
+      "gain_db": 0.0,
+      "id": "id-000033",
+      "pan": 0.0,
+      "start_frame": 0,
+      "track": "bgm",
+      "trim_start": 0.0
+    }
+  ],
+  "xsheet_trilhas": [
+    {
+      "entradas": 13,
+      "nome": "BOCA Haru",
+      "tipo": "mouth"
+    },
+    {
+      "entradas": 12,
+      "nome": "BOCA Mio",
+      "tipo": "mouth"
+    }
+  ]
+}

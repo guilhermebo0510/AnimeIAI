@@ -1,0 +1,16 @@
+Comandos que geraram esta pasta (S17), da raiz do repositório C:\AnimeIAI:
+
+1. Subir o VOICEVOX Engine local:      powershell -File tools\voicevox\start.ps1
+2. Gerar a prova de uso (falas, SFX, BGM, lip-sync, mix, loudness):
+     cd app
+     cargo test -p aiai-tools -j 2 --test audio s17_evidence -- --ignored --nocapture
+   -> lipsync_tabela.md, lipsync_quadros.json, medicoes.json, loudness_relatorio.json, creditos_do_video.txt, corte_audio.json, mix_previa_24k.wav
+   -> sidecars\out\s17\ (fora do git): mix_normalizada_48k.wav (PCM16 48 kHz estéreo), mix_bruta_48k_f32.wav, stem_fala/sfx/bgm.wav
+3. Gráficos e conferência independente com FFmpeg (ebur128):  python -X utf8 sprints\registro\evidencias\S17\plot_s17.py
+   -> mix_analise.png, falas_lipsync.png, ffmpeg_ebur128.txt
+4. Parar o engine:  powershell -File tools\voicevox\stop.ps1
+
+Testes automatizados:
+   cd app
+   cargo test -p aiai-audio -j 2
+   cargo test -p aiai-tools -j 2 --test audio

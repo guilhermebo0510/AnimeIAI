@@ -54,6 +54,14 @@ dependencies = [
 [[package]]
 name = "aiai-audio"
 version = "0.1.0"
+dependencies = [
+ "hound",
+ "rustysynth",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "aiai-bridge"
@@ -201,6 +209,7 @@ name = "aiai-tools"
 version = "0.1.0"
 dependencies = [
  "aiai-anim",
+ "aiai-audio",
  "aiai-core",
  "aiai-guide3d",
  "aiai-paint",
@@ -1251,6 +1260,12 @@ name = "hermit-abi"
 version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e17592d60ebacc7d5e169f4663c5f84f9161cc90328abcfe8456f41e4dfcb284"
+
+[[package]]
+name = "hound"
+version = "3.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62adaabb884c94955b19907d60019f4e145d091c75345379e70d1ee696f7854f"
 
 [[package]]
 name = "image"
@@ -2578,6 +2593,12 @@ dependencies = [
  "tempfile",
  "wait-timeout",
 ]
+
+[[package]]
+name = "rustysynth"
+version = "1.3.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e2fafc9b46be0b8ad0a15bb17406e34b4602987c90d12509ca71710ab545b40f"
 
 [[package]]
 name = "same-file"

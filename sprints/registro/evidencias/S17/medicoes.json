@@ -1,0 +1,106 @@
+{
+  "creditos_obrigatorios": [
+    "VOICEVOX:春日部つむぎ",
+    "VOICEVOX:雨晴はう"
+  ],
+  "elementos": [
+    {
+      "credito": "VOICEVOX:春日部つむぎ",
+      "diferenca_ms": 4.440892098500626e-13,
+      "duracao_prevista_pelos_tempos_s": 2.218666666666666,
+      "duracao_wav_s": 2.2186666666666666,
+      "elemento": "fala 1",
+      "fim_fala_medido_no_audio_s": 2.08,
+      "fim_fala_previsto_s": 2.122666666666666,
+      "inicio_fala_medido_no_audio_s": 0.03,
+      "inicio_fala_previsto_s": 0.042666666666666665,
+      "moras_de_fala": 14,
+      "moras_por_segundo": 6.7307692307692335,
+      "pico_dbfs": -5.846871080622612,
+      "rms_fala_dbfs": -21.958837894196982,
+      "rms_pausa_dbfs": -89.51829258054528,
+      "taxa_wav": 24000,
+      "texto": "おはよう、今日もいい天気だね。"
+    },
+    {
+      "credito": "VOICEVOX:雨晴はう",
+      "diferenca_ms": 0.0,
+      "duracao_prevista_pelos_tempos_s": 2.5813333333333333,
+      "duracao_wav_s": 2.5813333333333333,
+      "elemento": "fala 2",
+      "fim_fala_medido_no_audio_s": 2.37,
+      "fim_fala_previsto_s": 2.421333333333333,
+      "inicio_fala_medido_no_audio_s": 0.04,
+      "inicio_fala_previsto_s": 0.05333333333333334,
+      "moras_de_fala": 13,
+      "moras_por_segundo": 5.489864864864865,
+      "pico_dbfs": -11.141544049622214,
+      "rms_fala_dbfs": -26.561820615608227,
+      "rms_pausa_dbfs": -85.25830683057656,
+      "taxa_wav": 24000,
+      "texto": "うん、バラがきれいに咲いたよ。"
+    },
+    {
+      "duracao_s": 1.5,
+      "elemento": "kira",
+      "fracao_de_energia_acima_de_3khz": 0.5032447218152902,
+      "pico_dbfs": -2.99961340124013,
+      "preset": "kira",
+      "rms_dbfs": -19.725118356112404
+    },
+    {
+      "duracao_s": 0.3,
+      "elemento": "passo 1",
+      "fracao_de_energia_acima_de_3khz": 0.018717129148215505,
+      "pico_dbfs": -3.9148048134347024,
+      "preset": "footstep",
+      "rms_dbfs": -18.94497143279387
+    },
+    {
+      "descontinuidade_na_emenda_do_laco": 0.002593994140625,
+      "duracao_s": 15.0,
+      "elemento": "bgm",
+      "motor": "rustysynth + FluidR3_GM (MIT)",
+      "pico_dbfs": -14.799702512279573,
+      "rms_dbfs": -28.521051668239,
+      "soundfont": "C:\\AnimeIAI\\sidecars\\soundfonts\\FluidR3_GM.sf2"
+    }
+  ],
+  "lipsync": {
+    "fala1_3formas_exposicoes": 8,
+    "fala1_exposicoes": 13,
+    "fala1_quadros_boca_aberta": 38,
+    "fala1_quadros_total": 54,
+    "fala2_exposicoes": 12,
+    "fala2_quadros_boca_aberta": 41,
+    "fala2_quadros_total": 62
+  },
+  "mix": {
+    "alvo_lufs": -24.0,
+    "ganho_aplicado_db": 0.8007991066406568,
+    "limitador_atuou": false,
+    "lra_lu": 6.057657226816964,
+    "lufs_integrado": -24.000264920720063,
+    "pico_de_amostra_dbfs": -6.854021919539487,
+    "teto_dbtp": -1.0,
+    "true_peak_dbtp": -6.811249961977998
+  },
+  "posicoes_quadros": {
+    "bgm": 0,
+    "fala1": 36,
+    "fala2": 104,
+    "kira": 145,
+    "passos": [
+      4,
+      17,
+      30
+    ]
+  },
+  "projeto": {
+    "corte_quadros": 360,
+    "corte_s": 15.014999999999999,
+    "fps": 23.976023976023978,
+    "mix_s": 15.015,
+    "taxa": 48000
+  }
+}

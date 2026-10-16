@@ -12,9 +12,17 @@ use aiai_paint::Image;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+pub mod blur;
+pub mod color;
 pub mod effects;
+pub mod light;
+pub mod lut;
+pub mod scopes;
+pub mod style;
+pub mod util;
 
-pub use effects::Effect;
+pub use effects::{Effect, bake_lut};
+pub use lut::Lut;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct EffectInstance {
