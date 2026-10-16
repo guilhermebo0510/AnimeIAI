@@ -5,6 +5,7 @@
 pub mod anim;
 pub mod audio;
 pub mod background;
+pub mod calib;
 pub mod character;
 pub mod context;
 pub mod draw;

@@ -68,7 +68,6 @@ pub fn text_command(p: &Project, blobs: &mut BlobStore, req: &TextRequest) -> To
             bytes = std::fs::read(path).map_err(|e| ToolError::Invalid(format!("fonte {path}: {e}")))?;
             &bytes
         }
-        None => default_font(),
     };
     let opt = TextOptions { size: req.size, letter_spacing: req.letter_spacing, vertical: req.vertical, center: req.center, rotation: req.rotation, skew: req.skew, scale: req.scale };
     let outline = text_outline(font, &req.text, &opt).map_err(ToolError::Invalid)?;

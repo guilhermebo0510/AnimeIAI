@@ -1,0 +1,162 @@
+//! Instrumentos de medição para a calibração N1 (decisão 22): o agente mede a referência — cor mediana numa região,
+//! centro e largura da linha perto do traço que ELE estimou — e usa os números para emitir os próprios traços.
+//! Nada aqui cria traços nem extrai contornos da referência.
+
+use crate::context::{ToolError, ToolResult};
+use aiai_paint::Image;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+/// Carrega um quadro de referência (PNG).
+pub fn load_reference(path: &str) -> ToolResult<Image> {
+    Image::load_png(std::path::Path::new(path)).map_err(|e| ToolError::Invalid(format!("referência {path}: {e}")))
+}
+
+#[inline]
+fn lum(p: [f32; 4]) -> f32 {
+    if p[3] <= 0.0 { 1.0 } else { (0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]) / p[3] }
+}
+
+fn sample(img: &Image, x: f32, y: f32) -> [f32; 4] {
+    aiai_paint::warp::sample_bilinear(img, x, y)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ProbeResult {
+    pub point: [f32; 2],
+    /// Cor mediana sRGB "#rrggbb".
+    pub hex: String,
+    pub rgb: [f32; 3],
+}
+
+/// Cor mediana (por canal) num quadrado de lado 2·radius+1 em volta de cada ponto.
+pub fn probe_colors(img: &Image, points: &[[f32; 2]], radius: u32) -> Vec<ProbeResult> {
+    points
+        .iter()
+        .map(|&[x, y]| {
+            let mut ch: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+            let r = radius as i32;
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    let (xx, yy) = (x as i32 + dx, y as i32 + dy);
+                    if xx < 0 || yy < 0 || xx >= img.width as i32 || yy >= img.height as i32 {
+                        continue;
+                    }
+                    let p = img.get(xx as u32, yy as u32);
+                    if p[3] > 0.0 {
+                        for c in 0..3 {
+                            ch[c].push(p[c] / p[3]);
+                        }
+                    }
+                }
+            }
+            let med = |v: &mut Vec<f32>| {
+                if v.is_empty() {
+                    return 0.0;
+                }
+                v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                v[v.len() / 2]
+            };
+            let rgb = [med(&mut ch[0]), med(&mut ch[1]), med(&mut ch[2])];
+            let c = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+            ProbeResult { point: [x, y], hex: format!("#{:02x}{:02x}{:02x}", c(rgb[0]), c(rgb[1]), c(rgb[2])), rgb }
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct LineMeasure {
+    /// Ponto informado pelo agente.
+    pub given: [f32; 2],
+    /// Centro da linha medido na referência (ou o próprio ponto, se não achou linha).
+    pub center: [f32; 2],
+    /// Deslocamento aplicado (px).
+    pub moved: f32,
+    /// Largura medida da linha (px, meia-altura do contraste).
+    pub width: f32,
+    /// Escuridão relativa da linha (0 = não achou).
+    pub contrast: f32,
+}
+
+/// Para cada ponto do traço estimado, busca ao longo da normal (±`search` px) o vale de luminância mais forte
+/// (centro da linha) e mede sua largura. A normal vem dos vizinhos do próprio traço.
+pub fn measure_line(img: &Image, points: &[[f32; 2]], search: f32, min_contrast: f32) -> Vec<LineMeasure> {
+    let n = points.len();
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let p = points[i];
+        let (a, b) = (points[i.saturating_sub(1)], points[(i + 1).min(n - 1)]);
+        let (tx, ty) = (b[0] - a[0], b[1] - a[1]);
+        let tl = (tx * tx + ty * ty).sqrt();
+        if tl < 1e-4 {
+            out.push(LineMeasure { given: p, center: p, moved: 0.0, width: 0.0, contrast: 0.0 });
+            continue;
+        }
+        let (nx, ny) = (-ty / tl, tx / tl);
+        let step = 0.25f32;
+        let k = (search / step).ceil() as i32;
+        let prof: Vec<(f32, f32)> = (-k..=k)
+            .map(|j| {
+                let t = j as f32 * step;
+                // média de 3 amostras ao longo da tangente para reduzir ruído de compressão
+                let mut l = 0.0;
+                for s in [-1.0f32, 0.0, 1.0] {
+                    l += lum(sample(img, p[0] + nx * t + tx / tl * s, p[1] + ny * t + ty / tl * s));
+                }
+                (t, l / 3.0)
+            })
+            .collect();
+        let bg = prof.iter().map(|q| q.1).fold(f32::MIN, f32::max);
+        let (tmin, lmin) = prof.iter().cloned().fold((0.0, f32::MAX), |acc, q| if q.1 < acc.1 { q } else { acc });
+        let contrast = bg - lmin;
+        if contrast < min_contrast {
+            out.push(LineMeasure { given: p, center: p, moved: 0.0, width: 0.0, contrast: 0.0 });
+            continue;
+        }
+        // centro = centróide da escuridão abaixo da meia altura, em volta do mínimo; largura = extensão dessa região
+        let half = lmin + contrast * 0.5;
+        let imin = prof.iter().position(|q| q.0 == tmin).unwrap_or(0);
+        let (mut lo, mut hi) = (imin, imin);
+        while lo > 0 && prof[lo - 1].1 < half {
+            lo -= 1;
+        }
+        while hi + 1 < prof.len() && prof[hi + 1].1 < half {
+            hi += 1;
+        }
+        let (mut wsum, mut tsum) = (0.0f32, 0.0f32);
+        for q in &prof[lo..=hi] {
+            let w = (half - q.1).max(0.0);
+            wsum += w;
+            tsum += w * q.0;
+        }
+        let tc = if wsum > 0.0 { tsum / wsum } else { tmin };
+        let width = (hi - lo + 1) as f32 * step;
+        out.push(LineMeasure { given: p, center: [p[0] + nx * tc, p[1] + ny * tc], moved: tc.abs(), width, contrast });
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_line_center_and_width() {
+        // linha escura vertical de 3 px centrada em x = 50,5 sobre fundo claro
+        let mut img = Image::filled(100, 40, [0.95, 0.9, 0.85, 1.0]);
+        for y in 0..40 {
+            for x in 49..52 {
+                let i = img.idx(x, y);
+                img.data[i] = [0.2, 0.15, 0.15, 1.0];
+            }
+        }
+        let est = vec![[46.0, 10.0], [46.5, 20.0], [47.0, 30.0]];
+        let m = measure_line(&img, &est, 8.0, 0.1);
+        for r in &m {
+            assert!((r.center[0] - 50.5).abs() < 0.35, "centro {:?}", r.center);
+            assert!((r.width - 3.0).abs() < 0.8, "largura {}", r.width);
+        }
+        let c = probe_colors(&img, &[[10.0, 10.0]], 2);
+        assert_eq!(c[0].hex, "#f2e6d9");
+    }
+}
