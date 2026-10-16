@@ -25,12 +25,64 @@ pub enum BrushTip {
     Round { hardness: f32, roundness: f32, angle: f32 },
     /// Máscara em escala de cinza (desenhada no app ou importada) guardada em blob ("AIM1"), esticada para o diâmetro.
     /// `mask` é carregada do blob por quem chama (aiai-tools) antes de pintar.
+    /// Forma de cenário (folha, pétala, lâmina de grama, nuvem, estrela, quadrado) com proporção (largura/altura).
+    Shape { shape: TipShape, #[serde(default = "d_one")] aspect: f32 },
     Image {
         blob: aiai_core::BlobHash,
         #[serde(skip)]
         #[schemars(skip)]
         mask: Option<Mask>,
     },
+}
+
+/// Formas de ponta para pincéis de cenário (folhagem, grama, flores, nuvens, brilhos).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TipShape {
+    Leaf,
+    Petal,
+    GrassBlade,
+    CloudPuff,
+    Star,
+    Square,
+}
+
+/// Cobertura 0..1 de uma forma em coordenadas locais normalizadas (u, v ∈ [-1, 1]; v = -1 é a "ponta" superior).
+fn shape_alpha(shape: TipShape, u: f32, v: f32, aa: f32) -> f32 {
+    let edge = |d: f32| (0.5 - d / aa.max(1e-4)).clamp(0.0, 1.0); // d = distância com sinal (aprox.) em unidades locais
+    match shape {
+        TipShape::Leaf => {
+            if v.abs() > 1.0 { return 0.0 }
+            let half = 0.42 * (1.0 - v * v).max(0.0).powf(0.75);
+            edge(u.abs() - half)
+        }
+        TipShape::Petal => {
+            if v.abs() > 1.0 { return 0.0 }
+            let t = (v + 1.0) / 2.0; // 0 em cima
+            let half = 0.55 * (t * (1.0 - t)).max(0.0).sqrt() * (0.6 + 0.8 * t) ;
+            edge(u.abs() - half)
+        }
+        TipShape::GrassBlade => {
+            if v.abs() > 1.0 { return 0.0 }
+            let t = (v + 1.0) / 2.0;
+            let bend = 0.25 * (1.0 - t) * (1.0 - t);
+            let half = 0.12 * t.powf(0.7);
+            edge((u - bend).abs() - half)
+        }
+        TipShape::CloudPuff => {
+            let c = |cx: f32, cy: f32, r: f32| ((u - cx).powi(2) + (v - cy).powi(2)).sqrt() - r;
+            let d = c(0.0, -0.1, 0.55).min(c(-0.45, 0.2, 0.42)).min(c(0.45, 0.2, 0.45)).min(c(0.0, 0.35, 0.5));
+            edge(d)
+        }
+        TipShape::Star => {
+            let r = (u * u + v * v).sqrt();
+            let a = v.atan2(u);
+            let k = (a * 5.0 / 2.0).cos().abs().powf(8.0);
+            let rad = 0.25 + 0.75 * k;
+            edge(r - rad)
+        }
+        TipShape::Square => edge(u.abs().max(v.abs()) - 0.9),
+    }
 }
 
 impl Default for BrushTip {
@@ -270,6 +322,51 @@ impl BrushPreset {
         smudge.smudge_carry = 0.8;
         smudge.flow = 0.6;
         v.push(smudge);
+        // pincéis de cenário (S11)
+        let mut foliage = BrushPreset::round("Folhagem", 26.0, 1.0);
+        foliage.tip = BrushTip::Shape { shape: TipShape::Leaf, aspect: 0.8 };
+        foliage.spacing = 0.35;
+        foliage.scatter = 1.2;
+        foliage.count = 3;
+        foliage.size_jitter = 0.4;
+        foliage.angle_jitter = 180.0;
+        foliage.value_jitter = 0.12;
+        foliage.hue_jitter = 0.04;
+        foliage.size_pressure_min = 0.6;
+        v.push(foliage);
+        let mut grass = BrushPreset::round("Grama", 30.0, 1.0);
+        grass.tip = BrushTip::Shape { shape: TipShape::GrassBlade, aspect: 1.0 };
+        grass.spacing = 0.12;
+        grass.scatter = 0.3;
+        grass.count = 2;
+        grass.size_jitter = 0.35;
+        grass.angle_jitter = 12.0;
+        grass.value_jitter = 0.15;
+        v.push(grass);
+        let mut petals = BrushPreset::round("Flores/pétalas", 14.0, 1.0);
+        petals.tip = BrushTip::Shape { shape: TipShape::Petal, aspect: 0.8 };
+        petals.spacing = 0.5;
+        petals.scatter = 1.5;
+        petals.count = 3;
+        petals.size_jitter = 0.4;
+        petals.angle_jitter = 180.0;
+        petals.saturation_jitter = 0.1;
+        petals.value_jitter = 0.12;
+        v.push(petals);
+        let mut cloud = BrushPreset::round("Nuvem", 90.0, 1.0);
+        cloud.tip = BrushTip::Shape { shape: TipShape::CloudPuff, aspect: 1.2 };
+        cloud.spacing = 0.25;
+        cloud.scatter = 0.25;
+        cloud.size_jitter = 0.3;
+        cloud.flow = 0.6;
+        v.push(cloud);
+        let mut sparkle = BrushPreset::round("Brilhos", 18.0, 1.0);
+        sparkle.tip = BrushTip::Shape { shape: TipShape::Star, aspect: 1.0 };
+        sparkle.spacing = 1.5;
+        sparkle.scatter = 2.0;
+        sparkle.size_jitter = 0.6;
+        sparkle.angle_jitter = 20.0;
+        v.push(sparkle);
         let mut eraser = BrushPreset::round("Borracha", 30.0, 0.9);
         eraser.mode = BrushMode::Erase;
         v.push(eraser);
@@ -321,6 +418,16 @@ fn tip_alpha(tip: &BrushTip, dx: f32, dy: f32, radius: f32, extra_angle: f32, al
             let h = hardness.clamp(0.0, 1.0);
             let inner = if d <= h { 1.0 } else { let t = ((d - h) / (1.0 - h).max(1e-4)).clamp(0.0, 1.0); 0.5 + 0.5 * (t * std::f32::consts::PI).cos() };
             inner * edge
+        }
+        BrushTip::Shape { shape, aspect } => {
+            let a = extra_angle.to_radians();
+            let (sn, cs) = a.sin_cos();
+            let lx = dx * cs + dy * sn;
+            let ly = -dx * sn + dy * cs;
+            let r = radius.max(0.25);
+            let (u, v) = (lx / (r * aspect.clamp(0.1, 4.0)), ly / r);
+            let val = shape_alpha(*shape, u, v, 1.0 / r);
+            if aliased { if val >= 0.5 { 1.0 } else { 0.0 } } else { val }
         }
         BrushTip::Image { mask, .. } => {
             let Some(mask) = mask else { return 0.0 };
