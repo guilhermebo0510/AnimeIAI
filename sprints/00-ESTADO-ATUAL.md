@@ -5,7 +5,7 @@
 ## Agora
 
 - **Fase:** execução autônoma iniciada em 2026-10-15 22:50 (usuário liberou).
-- **Sprint atual:** S21 calibração, corte D (#218). **Desenho 1 (quadros 0–5) APROVADO** na régua da decisão 24 (FLIP 0,136 ≤ 0,192; SSIM 0,964 ≥ 0,963; F1 0,930 ≥ 0,929; ΔE 2,2; paleta e espessura ok) — evidência em `registro/calibracao/D218/aprovado/`. O corte tem 8 desenhos (0, 6, 9, 14, 54, 57, 60, 63; depois ciclo 57/60/63 até 86); os outros diferem do 1 só em sobrancelhas (h3 e começo de l1), boca e gotas de suor → próximos passos: camadas dinâmicas (sobrancelha, boca, gota) com cels por desenho e trilhas no timesheet. Pipeline `tools/calib/d218_all.py TAG [--linhas]`. Corte C pausado com o letreiro pronto. Régua revista nas decisões 23 e 24.
+- **Sprint atual:** S21 calibração, corte D (#218). Aprovados na régua da decisão 24: **desenhos 1–6** (quadros 0–59 e as repetições do 6), com camadas dinâmicas (sobrancelhas, boca, gotas) por desenho e trilhas no timesheet (`tools/calib/d218_dyn.py`). Faltam os **desenhos 7 e 8** (q60–65 e ciclo até 86): são redesenhos inteiros de tremor (todas as linhas mudam alguns px) → próximo passo: parametrizar o pipeline por desenho (cel 7/8 em todas as camadas + trilhas) e medir de novo contra q60/q63. Margens de F1 ainda finas (~0,002–0,01) por causa do ruído de compressão entre quadros. Corte C pausado com o letreiro pronto.
 - **Pendências sugeridas pelo B2:** perfil dev com opt-level 3 para aiai-render/aiai-paint; escala em `RenderOptions` (reprodução); taper da G-pen contado no `gap` do balde; arrastar para reordenar camadas; edição de pontos.
 - **Fatia atual:** letreiro ゴン passada 1 feita (contorno + balde); aguardando MEASURE_EDGE/FILL_SHAPE no MCP (B3) para refinar bordas e começar as rosas com MEASURE_LINE.
 - **Próximo passo concreto:** quando o B3 entrar: refinar ゴン com MEASURE_EDGE + FILL_SHAPE (rugosidade), medir paleta das rosas (PROBE_COLOR), desenhar rosa a rosa no quadro 15, COMPARE com piso 0,0083, iterar; depois quadros 0–12.
@@ -37,7 +37,7 @@
 | S18 Edição e entrega | em andamento | evidencias/S18 | edição (transições, legendas, créditos) + export MP4 prontos; falta UI |
 | S19 Produção e revisão | em andamento | evidencias/S19 | tracker, correções, retakes, relatório prontos; falta UI |
 | S20 UI/UX e identidade | pendente | — | |
-| S21 Calibração (A, B, C obrigatórios; D, E meta) | em andamento | registro/calibracao/D218, C131 | D: desenho 1 (q0–5) aprovado; faltam desenhos 2–8; C: letreiro pronto |
+| S21 Calibração (A, B, C obrigatórios; D, E meta) | em andamento | registro/calibracao/D218, C131 | D: desenhos 1–6 aprovados; faltam 7–8 (tremor); C: letreiro pronto |
 | S22 Micro anime | pendente | — | |
 | S23 Endurecimento e apresentação | pendente | — | |
 
