@@ -5,6 +5,7 @@
 use crate::blob::BlobHash;
 use crate::color::{ColorRef, Rgba};
 use crate::ids::Id;
+use crate::keys::KeyTracks;
 use crate::stroke::Stroke;
 use crate::xsheet::XSheet;
 use schemars::JsonSchema;
@@ -347,17 +348,24 @@ impl CutData {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CameraData {
-    /// Centro do quadro de câmera em pixels do canvas.
-    pub center: [f32; 2],
+    /// Centro do quadro de câmera em pixels do canvas; `None` = centro do canvas.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub center: Option<[f32; 2]>,
     /// 1 = quadro do tamanho do projeto.
     pub zoom: f32,
     /// Graus.
     pub rotation: f32,
+    /// Keyframes: center_x, center_y, zoom, rotation, shake (amplitude em px).
+    #[serde(default, skip_serializing_if = "KeyTracks::is_empty")]
+    pub keys: KeyTracks,
+    /// Semente do tremor de câmera.
+    #[serde(default)]
+    pub shake_seed: u64,
 }
 
 impl Default for CameraData {
     fn default() -> Self {
-        CameraData { center: [960.0, 540.0], zoom: 1.0, rotation: 0.0 }
+        CameraData { center: None, zoom: 1.0, rotation: 0.0, keys: KeyTracks::default(), shake_seed: 0 }
     }
 }
 
@@ -469,6 +477,9 @@ pub struct LayerData {
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     #[schemars(with = "Option<serde_json::Value>")]
     pub params: serde_json::Value,
+    /// Keyframes: offset_x, offset_y, opacity, rotation (graus, horário), scale.
+    #[serde(default, skip_serializing_if = "KeyTracks::is_empty")]
+    pub keys: KeyTracks,
 }
 
 fn yes() -> bool {
@@ -493,6 +504,7 @@ impl LayerData {
             offset: [0.0, 0.0],
             line_refs: Vec::new(),
             params: serde_json::Value::Null,
+            keys: KeyTracks::default(),
         }
     }
 
@@ -506,7 +518,7 @@ impl LayerData {
         if !(self.depth.is_finite() && self.offset.iter().all(|v| v.is_finite())) {
             return Err("profundidade/deslocamento não finitos".into());
         }
-        Ok(())
+        self.keys.validate()
     }
 }
 

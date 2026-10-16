@@ -18,11 +18,14 @@ pub struct RenderOptions {
     pub only_layers: Option<Vec<Id>>,
     /// Achata sobre esta cor opaca (sRGB 0..1); `None` = fundo transparente.
     pub background: Option<[f32; 3]>,
+    /// Aplica a câmera do corte (saída no tamanho do projeto, com multiplano). `false` = o canvas inteiro do corte,
+    /// sem câmera (edição, balde, model sheets).
+    pub camera: bool,
 }
 
 impl Default for RenderOptions {
     fn default() -> Self {
-        RenderOptions { include_guides: false, include_reference: false, only_layers: None, background: None }
+        RenderOptions { include_guides: false, include_reference: false, only_layers: None, background: None, camera: true }
     }
 }
 
@@ -44,9 +47,71 @@ pub enum RenderError {
 pub struct Renderer<'a> {
     pub project: &'a Project,
     pub blobs: &'a BlobStore,
+    /// Canvas do corte (onde os cels são desenhados).
     width: u32,
     height: u32,
+    /// Tamanho da saída (quadro da câmera ou o próprio canvas).
+    out_w: u32,
+    out_h: u32,
+    camera: Option<CameraState>,
     warnings: Vec<String>,
+}
+
+/// Câmera avaliada num quadro.
+#[derive(Debug, Clone, Copy)]
+pub struct CameraState {
+    pub center: [f32; 2],
+    /// Centro de repouso (para o multiplano: planos distantes se deslocam menos a partir daqui).
+    pub rest: [f32; 2],
+    pub zoom: f32,
+    pub rotation: f32,
+    pub shake: [f32; 2],
+}
+
+impl CameraState {
+    pub fn eval(cam: &CameraData, frame: u32, canvas: (u32, u32)) -> CameraState {
+        let f = frame as f32;
+        let k = &cam.keys;
+        let base = cam.center.unwrap_or([canvas.0 as f32 / 2.0, canvas.1 as f32 / 2.0]);
+        let center = [k.eval("center_x", f).unwrap_or(base[0]), k.eval("center_y", f).unwrap_or(base[1])];
+        let rest = [
+            k.0.get("center_x").and_then(|v| v.first()).map(|x| x.value).unwrap_or(base[0]),
+            k.0.get("center_y").and_then(|v| v.first()).map(|x| x.value).unwrap_or(base[1]),
+        ];
+        let amp = k.eval("shake", f).unwrap_or(0.0);
+        let shake = if amp != 0.0 {
+            let seed = (cam.shake_seed & 0xffff_ffff) as u32;
+            [amp * aiai_paint::noise::perlin(f * 0.61, 0.37, seed), amp * aiai_paint::noise::perlin(0.53, f * 0.61, seed ^ 0x9e37)]
+        } else {
+            [0.0, 0.0]
+        };
+        CameraState { center, rest, zoom: k.eval("zoom", f).unwrap_or(cam.zoom), rotation: k.eval("rotation", f).unwrap_or(cam.rotation), shake }
+    }
+
+    /// Matriz canvas → saída para um plano de profundidade `depth` (0 = plano da câmera).
+    pub fn affine(&self, depth: f32, out_w: u32, out_h: u32) -> Affine {
+        let kpar = 1.0 / (1.0 + depth.max(0.0));
+        let c = [
+            self.rest[0] + (self.center[0] - self.rest[0]) * kpar + self.shake[0],
+            self.rest[1] + (self.center[1] - self.rest[1]) * kpar + self.shake[1],
+        ];
+        let z = 1.0 + (self.zoom - 1.0) * kpar;
+        let (sn, cs) = (-self.rotation).to_radians().sin_cos();
+        let (a, b, d, e) = (z * cs, -z * sn, z * sn, z * cs);
+        let (ox, oy) = (out_w as f32 / 2.0, out_h as f32 / 2.0);
+        Affine([a, b, ox - (a * c[0] + b * c[1]), d, e, oy - (d * c[0] + e * c[1])])
+    }
+}
+
+fn compose_affine(m2: Affine, m1: Affine) -> Affine {
+    let [a1, b1, c1, d1, e1, f1] = m1.0;
+    let [a2, b2, c2, d2, e2, f2] = m2.0;
+    Affine([a2 * a1 + b2 * d1, a2 * b1 + b2 * e1, a2 * c1 + b2 * f1 + c2, d2 * a1 + e2 * d1, d2 * b1 + e2 * e1, d2 * c1 + e2 * f1 + f2])
+}
+
+/// Valor de propriedade animável da camada no quadro.
+fn layer_prop(layer: &LayerData, prop: &str, frame: u32, default: f32) -> f32 {
+    layer.keys.eval(prop, frame as f32).unwrap_or(default)
 }
 
 /// Tamanho do canvas do corte.
@@ -67,7 +132,12 @@ pub fn render_frame(project: &Project, blobs: &BlobStore, cut_id: &Id, frame: u3
         return Err(RenderError::FrameOutOfRange { frame, duration: cut.duration });
     }
     let (w, h) = cut_canvas(project, cut);
-    let mut r = Renderer { project, blobs, width: w, height: h, warnings: Vec::new() };
+    let (out_w, out_h, camera) = if opts.camera {
+        (project.settings.width, project.settings.height, Some(CameraState::eval(&cut.camera, frame, (w, h))))
+    } else {
+        (w, h, None)
+    };
+    let mut r = Renderer { project, blobs, width: w, height: h, out_w, out_h, camera, warnings: Vec::new() };
     let allowed = opts.only_layers.as_ref().map(|ids| {
         let mut set = std::collections::BTreeSet::new();
         for id in ids {
@@ -77,7 +147,7 @@ pub fn render_frame(project: &Project, blobs: &BlobStore, cut_id: &Id, frame: u3
         }
         set
     });
-    let mut buf = Image::new(w, h);
+    let mut buf = Image::new(out_w, out_h);
     r.composite_children(&mut buf, &cut_node.children, cut, frame, opts, allowed.as_ref());
     if let Some(bg) = opts.background {
         buf.data.par_iter_mut().for_each(|p| {
@@ -123,7 +193,7 @@ impl<'a> Renderer<'a> {
                         clip_base = None;
                         continue;
                     }
-                    let mut g = Image::new(self.width, self.height);
+                    let mut g = Image::new(self.out_w, self.out_h);
                     self.composite_children(&mut g, &node.children, cut, frame, opts, allowed);
                     Some(g)
                 }
@@ -161,7 +231,7 @@ impl<'a> Renderer<'a> {
             let mask = layer.mask.as_ref().and_then(|m| self.mask_values(m, cut, frame));
             let mode = if layer.blend == BlendMode::PassThrough { BlendMode::Normal } else { layer.blend };
             let clip = if layer.clip_to_below { clip_base.as_deref() } else { None };
-            let opacity = layer.opacity;
+            let opacity = layer_prop(layer, "opacity", frame, layer.opacity).clamp(0.0, 1.0);
             buf.data.par_iter_mut().enumerate().for_each(|(i, d)| {
                 let mut a = opacity;
                 if let Some(m) = &mask {
@@ -202,13 +272,20 @@ impl<'a> Renderer<'a> {
         let cel_node = self.exposed_cel(id, node, cut, frame)?;
         let NodeKind::Cel(cel) = &cel_node.data else { return None };
         let hide_trace = layer.params.get("hide_color_trace").and_then(|v| v.as_bool()).unwrap_or(false);
-        let mut img = self.render_cel(cel, hide_trace, &node.name);
+        let img = self.render_cel(cel, hide_trace, &node.name);
         let [tx, ty, s, rot] = cel.transform;
-        let xf = Affine::from_trs(tx + layer.offset[0], ty + layer.offset[1], s, rot, [self.width as f32 / 2.0, self.height as f32 / 2.0]);
-        if !xf.is_identity() {
-            img = transform_image(&img, xf, self.width, self.height);
+        let ox = layer_prop(layer, "offset_x", frame, layer.offset[0]);
+        let oy = layer_prop(layer, "offset_y", frame, layer.offset[1]);
+        let ks = layer_prop(layer, "scale", frame, 1.0);
+        let kr = layer_prop(layer, "rotation", frame, 0.0);
+        let mut xf = Affine::from_trs(tx + ox, ty + oy, s * ks, rot + kr, [self.width as f32 / 2.0, self.height as f32 / 2.0]);
+        if let Some(cam) = &self.camera {
+            xf = compose_affine(cam.affine(layer.depth, self.out_w, self.out_h), xf);
         }
-        Some(img)
+        if xf.is_identity() && self.out_w == self.width && self.out_h == self.height {
+            return Some(img);
+        }
+        Some(transform_image(&img, xf, self.out_w, self.out_h))
     }
 
     pub fn resolve_color(&mut self, c: &ColorRef) -> [f32; 4] {

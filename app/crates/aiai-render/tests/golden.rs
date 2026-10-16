@@ -246,3 +246,43 @@ fn xsheet_exposure_switches_cels() {
     assert!(f2.get(15, 10)[3] == 0.0 && f2.get(45, 50)[3] > 0.9, "quadro 2 = A2");
     assert_eq!(f2.content_hash(), f9.content_hash(), "A2 segurado até o fim");
 }
+
+#[test]
+fn camera_pan_with_multiplane_parallax_and_layer_keys() {
+    let mut s = CoreSession::for_tests("cam");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 200, "height": 100}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let mut cd = CutData::new(25);
+    cd.canvas = Some([400, 100]); // cenário mais largo que o quadro
+    let cut = create(&mut s, Some(&sc), "C", NodeKind::Cut(cd));
+    // câmera: pan de x=100 a x=300 em 24 quadros
+    s.apply(Command::SetProps { id: cut.clone(), name: None, data: json!({"camera": {"keys": {"center_x": [{"frame": 0, "value": 100.0}, {"frame": 24, "value": 300.0}]}}}) }).unwrap();
+    let mark = |s: &mut CoreSession, name: &str, x: f32, depth: f32| {
+        let (l, c) = layer(s, &cut, name, LayerType::Vector, json!({"depth": depth}));
+        let mut m = gpen(&[(x, 40.0, 1.0), (x, 60.0, 1.0)], 4.0, ColorRef::Direct { rgba: Rgba::BLACK });
+        m.tip = VectorTip::Marker;
+        s.apply(Command::InsertStrokes { cel: c, items: vec![IndexedStroke { index: 0, stroke: m }] }).unwrap();
+        l
+    };
+    mark(&mut s, "BG", 150.0, 2.0); // plano distante
+    let near = mark(&mut s, "Personagem", 150.0, 0.0);
+    let col_of = |img: &Image, y: u32| -> Vec<u32> { (0..img.width).filter(|&x| img.get(x, y)[3] > 0.5).collect() };
+    let f0 = render_frame(&s.project, &s.blobs, &cut, 0, &RenderOptions::default()).unwrap().image;
+    assert_eq!((f0.width, f0.height), (200, 100), "saída no tamanho do projeto");
+    let f24 = render_frame(&s.project, &s.blobs, &cut, 24, &RenderOptions::default()).unwrap().image;
+    // quadro 0: câmera em 100 → x=150 do canvas aparece em 150 (os dois juntos)
+    let c0 = col_of(&f0, 50);
+    assert!(c0.iter().all(|&x| (147..=153).contains(&x)), "{c0:?}");
+    // quadro 24: plano 0 deslocou 200 px (sai do quadro); plano de profundidade 2 deslocou 200/3 ≈ 67 px
+    let c24 = col_of(&f24, 50);
+    assert!(!c24.is_empty() && c24.iter().all(|&x| (80..=86).contains(&x)), "só o fundo aparece, em ~83: {c24:?}");
+    // chaves de camada: opacidade 0 no quadro 0 some com o personagem
+    s.apply(Command::SetProps { id: near, name: None, data: json!({"keys": {"opacity": [{"frame": 0, "value": 0.0}, {"frame": 10, "value": 1.0}]}}) }).unwrap();
+    let f0b = render_frame(&s.project, &s.blobs, &cut, 0, &RenderOptions::default()).unwrap().image;
+    let max_a = (140..160).map(|x| f0b.get(x, 50)[3]).fold(0.0f32, f32::max);
+    assert!(max_a > 0.5, "o fundo continua lá");
+    // sem câmera: canvas inteiro 400 px
+    let raw = render_frame(&s.project, &s.blobs, &cut, 24, &RenderOptions { camera: false, ..Default::default() }).unwrap().image;
+    assert_eq!(raw.width, 400);
+}
