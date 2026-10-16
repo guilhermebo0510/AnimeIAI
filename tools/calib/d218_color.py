@@ -5,17 +5,17 @@ sys.path.insert(0, os.path.dirname(__file__))
 import meas
 from d218 import reorder, d, ids, node, REF0, render
 
-ROSTO = {"pele", "branco_olho", "boca", "laco"}  # não-cabelo: vão para `cor_rosto` (acima da sombra/realce do cabelo)
+ROSTO = {"pele", "branco_olho", "boca", "laco", "bochecha"}  # não-cabelo: vão para `cor_rosto` (acima da sombra/realce do cabelo)
 
 PALETTE = {
     "cabelo": "#9d1837", "cabelo_franja": "#e15a5a", "cabelo_franja2": "#d94a4f", "cabelo_topo": "#b23a4c",
     "cabelo_rim": "#f49089", "cabelo_sombra": "#7b0922", "cabelo_tras": "#660821", "pele": "#f8d3cb",
-    "branco_olho": "#f6f3f6", "boca": "#ea7582", "laco": "#f4f5dc",
+    "branco_olho": "#f6f3f6", "boca": "#ea7582", "laco": "#f4f5dc", "bochecha": "#ce6f74",
 }
 BG = {"bg_bege": "#c1a083", "bg_escuro": "#4d2418", "bg_madeira": "#5e3619", "bg_topo": "#5a3423"}
 
 
-MANUAL = {(450, 400): "cabelo", (1500, 420): "cabelo", (1480, 640): "cabelo", (562, 650): "cabelo"}  # a roupa fica na camada `baixo`
+MANUAL = {(450, 400): "cabelo", (1500, 420): "cabelo", (1480, 640): "cabelo", (575, 750): "bochecha"}  # a roupa fica na camada `baixo`
 
 
 def rgb(h):
@@ -58,13 +58,14 @@ def fills(min_area=150, gap=6.0):
     for r, p in zip(regs, probes):
         name, hexc, dist = nearest(p["hex"])
         log.append((r["point"], r["area"], p["hex"], name, round(dist)))
-        if name in BG or dist > 45 or (name in ROSTO and dist > 15):
+        if name in BG or dist > 45 or (name in ROSTO and dist > (30 if r["area"] < 30000 else 15)):
             continue  # fundo, ou ambígua (fica para a leitura manual abaixo)
         seed = {"x": r["point"][0], "y": r["point"][1], "color": {"type": "direct", "rgba": [v / 255 for v in rgb(hexc)] + [1.0]}}
         (face if name in ROSTO else seeds).append(seed)
     # leitura do agente: regiões cujo ponto mais interno cai numa área não representativa
     for (x, y), name in MANUAL.items():
-        seeds.append({"x": x, "y": y, "color": {"type": "direct", "rgba": [v / 255 for v in rgb(PALETTE[name])] + [1.0]}})
+        seed = {"x": x, "y": y, "color": {"type": "direct", "rgba": [v / 255 for v in rgb(PALETTE[name])] + [1.0]}}
+        (face if name in ROSTO else seeds).append(seed)
     res = d.call("FILL", {"cut": ids["cut"], "frame": 0, "layer": ids["cor"], "seeds": seeds, "gap": gap})
     # pele numa camada própria com degradê vertical medido (topo mais claro); olhos/boca/laço ficam em `cor_rosto`
     pele = node("pele", "Pele", {"type": "layer", "kind": "fill"}, ids["cut"])

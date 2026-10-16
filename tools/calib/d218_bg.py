@@ -23,13 +23,14 @@ def run():
     reorder()
     for k in ("bg_c1", "bg_dir_c1", "bg_dir_luz_c1"):
         d.apply({"kind": "replace_data", "id": ids[k], "data": {"type": "cel", "number": 1}})
-    ys = list(range(15, 1080, 30))
+    # transições do fundo são quase nítidas (y≈130 e y≈650): paradas densas perto delas
+    ys = sorted(set(list(range(15, 1080, 30)) + list(range(110, 160, 5)) + list(range(625, 700, 5))))
     d.call("GRADIENT", {"cut": ids["cut"], "frame": 0, "layer": ids["bg"], "kind": "linear", "from": [0, 0], "to": [0, 1080],
                         "stops": column_stops(60, ys, x_low=140, y_low=880)})
     d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": 0, "layer": base, "shapes": [{"points": [[1560, 0], [1920, 0], [1920, 720], [1560, 720]],
                                                                                     "geometry": "polyline"}],
                           "color": {"type": "direct", "rgba": [1, 1, 1, 1]}})
-    ys_r = list(range(15, 700, 30))
+    ys_r = sorted(set(list(range(15, 700, 30)) + list(range(110, 160, 5)) + list(range(640, 700, 5))))
     return d.call("GRADIENT", {"cut": ids["cut"], "frame": 0, "layer": luz, "kind": "linear", "from": [0, 0], "to": [0, 1080],
                                "stops": column_stops(1885, ys_r)})
 

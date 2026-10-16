@@ -21,8 +21,8 @@ def run():
         outer = meas.measure_edge(d, REF0, meas.circle(cx, cy, ro, n=72))
         inner = meas.measure_edge(d, REF0, meas.circle(cx, cy, ri, n=60))
         shapes += [{"points": outer, "geometry": "polyline"}, {"points": list(reversed(inner)), "geometry": "polyline"}]
-    outer = meas.measure_edge(d, REF0, meas.densify(MOUTH_OUT, 5, closed=True), passes=((8.0, 0.03), (4.0, 0.03)))
-    inner = meas.measure_edge(d, REF0, meas.densify(MOUTH_IN, 5, closed=True), passes=((8.0, 0.03), (4.0, 0.03)))
+    outer = meas.measure_edge(d, REF0, meas.densify(MOUTH_OUT, 5, closed=True), passes=((5.0, 0.03), (2.5, 0.03)))
+    inner = meas.measure_edge(d, REF0, meas.densify(MOUTH_IN, 5, closed=True), passes=((5.0, 0.03), (2.5, 0.03)))
     shapes += [{"points": outer, "geometry": "polyline"}, {"points": list(reversed(inner)), "geometry": "polyline"}]
     return d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": 0, "layer": massa, "shapes": shapes, "color": LINE})
 

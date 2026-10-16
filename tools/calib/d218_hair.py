@@ -8,7 +8,7 @@ from d218 import d, ids, REF0, draw, render
 MIN_W = 11.0
 # larguras lidas nos perfis da referência onde um lado da linha funde numa massa escura (a medição não acha a 2ª borda)
 PIN_START = {"queixo"}
-FIXED_W = {"queixo": 14.0, "tras_b": 13.0, "tras_c": 13.0, "tras_d1": 12.0, "tras_d2": 12.0, "tras_e": 12.0, "base_g": 14.0}
+FIXED_W = {"alca": 16.0, "queixo": 14.0, "tras_b": 13.0, "tras_c": 13.0, "tras_d1": 12.0, "tras_d2": 12.0, "tras_e": 12.0, "base_g": 14.0}
 ANCHOR = "--sem-ancora" not in sys.argv
 LINE = {"type": "direct", "rgba": [0x5c / 255, 0x2e / 255, 0x2e / 255, 1.0]}
 
@@ -29,7 +29,8 @@ HAIR = {
     "franja_h2": [(725, 70), (750, 125), (775, 175), (800, 225), (850, 280), (900, 320), (942, 345)],
     "franja_h3": [(700, 170), (750, 147), (780, 132), (825, 136)],
     "franja_i1": [(885, 200), (895, 250), (915, 300), (945, 345)],
-    "franja_i2": [(910, 255), (950, 290), (1000, 318), (1050, 350), (1097, 352)],
+    "franja_i2": [(910, 255), (950, 290), (1000, 318), (1050, 350), (1103, 351)],
+    "franja_entalhe": [(1058, 308), (1075, 315), (1092, 322), (1108, 330)],
     "franja_k1": [(957, -6), (965, 30), (980, 80), (1000, 125), (1025, 165), (1040, 200), (1060, 235), (1080, 270), (1100, 300), (1127, 332)],
     "franja_k2": [(1064, -6), (1065, 30), (1058, 75), (1050, 115), (1030, 160), (1025, 170)],
     "franja_k3": [(1095, 280), (1115, 240), (1125, 200), (1130, 175), (1137, 200), (1142, 240), (1147, 280), (1165, 240), (1185, 195),
@@ -68,7 +69,8 @@ HAIR = {
     "tras_e": [(842, 950), (838, 1010), (832, 1080)],
 }
 # trechos onde duas linhas correm coladas (a medição pula de uma para a outra): desenhados direto da leitura ampliada
-DIRECT = {"queixo": ([(549, 560), (550, 602), (566, 655), (586, 703), (612, 752), (644, 804), (697, 858), (760, 898), (840, 937),
+DIRECT = {"alca": ([(1500, 978), (1474, 1005), (1446, 1042), (1417, 1084)], 16.0),
+          "queixo": ([(549, 560), (550, 602), (566, 655), (586, 703), (612, 752), (644, 804), (697, 858), (760, 898), (840, 937),
                        (960, 964), (1080, 957), (1190, 930), (1250, 906), (1300, 876), (1345, 841), (1380, 806), (1405, 775)], 14.0)}
 # lado da normal (−ty, tx) onde fica a pele: o queixo desce para a direita, a pele fica à esquerda da normal → −1
 SKIN_SIDE = {"queixo": -1}
@@ -139,7 +141,8 @@ if __name__ == "__main__":
         pts = meas.densify(poly, 8)
         if name in SKIN_SIDE:  # encosta na pele: a borda da pele é nítida, ancora nela
             pts = meas.edge_offset_line(d, REF0, pts, SKIN_SIDE[name], w / 2)
-        c2.append({"points": pts, "width": w, "tip": "marker", "geometry": "spline", "color": LINE})
+        color = {"type": "direct", "rgba": [0x4e / 255, 0x25 / 255, 0x27 / 255, 1.0]} if name == "queixo" else LINE  # medido no queixo
+        c2.append({"points": pts, "width": w, "tip": "marker", "geometry": "spline", "color": color})
     curves += c2; log.update(l2)
     json.dump(curves, open(os.path.join(os.path.dirname(__file__), "..", "..", "calibracao", "projetos", "d218_hair_curves.json"), "w"))
     print(json.dumps(log))
