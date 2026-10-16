@@ -33,7 +33,11 @@ def reorder():
 def measured(name, poly, w_nom, closed=False, step=3, search=(16.0, 10.0), ink=INK, tol=0.12):
     """Centro e largura da tinta ao longo da estimativa (paquímetro de faixa na cor da tinta)."""
     pts, ws = meas.measure_band(d, REF, meas.densify(poly, step, closed=closed), ink, tol, closed=closed, passes=search, smooth=1)
-    c = meas.curve_from_measure(pts, ws, {"type": "direct", "rgba": [0x1a / 255, 0x05 / 255, 0x08 / 255, 1.0]}, closed=closed, every=1)
+    # cor própria da linha: mediana medida nos centros (as linhas de dentro das rosas são vermelho-escuras, não pretas)
+    pr = meas.first_list(d.call("PROBE_COLOR", {"reference": REF, "points": [[round(p[0]), round(p[1])] for p in pts[::2]], "radius": 0}))
+    cs = sorted([p["rgb"] for p in pr], key=sum)
+    col = list(cs[len(cs) // 8]) if cs else [0x1a / 255, 0x05 / 255, 0x08 / 255]  # oitavo mais escuro: o centro da tinta
+    c = meas.curve_from_measure(pts, ws, {"type": "direct", "rgba": col + [1.0]}, closed=closed, every=1)
     c["width"] = max(c["width"], 0.6 * w_nom)
     c["profile"] = [[t, max(0.4, min(1.6, w))] for t, w in c["profile"]]
     return c
