@@ -114,6 +114,7 @@ pub fn save(session: &mut CoreSession, dir: &Path) -> CoreResult<()> {
     let wal = Wal::create(dir, session.project.revision)?;
     session.attach_wal(wal);
     session.blobs.take_dirty();
+    session.path = Some(dir.to_path_buf());
     Ok(())
 }
 
@@ -180,6 +181,7 @@ pub fn open(dir: &Path) -> CoreResult<(CoreSession, OpenReport)> {
         }
     }
     session.attach_wal(Wal::open_append(dir, report.replayed > 0, session.project.revision)?);
+    session.path = Some(dir.to_path_buf());
     Ok((session, report))
 }
 

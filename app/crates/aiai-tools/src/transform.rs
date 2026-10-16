@@ -1,0 +1,260 @@
+//! Transformar, deformar e repetir conteúdo de um cel (vetor sem perda; raster por reamostragem), opcionalmente só
+//! dentro de uma seleção.
+
+use crate::context::*;
+use crate::paint::{cel_raster, tiles_for_region};
+use aiai_core::command::IndexedStroke;
+use aiai_core::*;
+use aiai_paint::Image;
+use aiai_paint::select::{SelectShape, Selection};
+use aiai_paint::warp::{Homography, Liquify, MeshWarp, positions_along, resample_inverse};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Deform {
+    /// Translação, escala (x, y), rotação (graus) e cisalhamento em torno de `pivot`.
+    Affine {
+        #[serde(default)]
+        translate: [f32; 2],
+        #[serde(default = "unit2")]
+        scale: [f32; 2],
+        #[serde(default)]
+        rotate: f32,
+        #[serde(default)]
+        shear: [f32; 2],
+        pivot: [f32; 2],
+    },
+    /// Leva o quadrilátero `from` (4 cantos: sup-esq, sup-dir, inf-dir, inf-esq) para `to`.
+    Perspective { from: [[f32; 2]; 4], to: [[f32; 2]; 4] },
+    Mesh(MeshWarp),
+    Liquify(Liquify),
+    /// Espelha no eixo vertical x = valor (horizontal = true) ou horizontal y = valor.
+    Flip { horizontal: bool, axis: f32 },
+}
+
+fn unit2() -> [f32; 2] {
+    [1.0, 1.0]
+}
+
+impl Deform {
+    fn affine_matrix(&self) -> Option<[f32; 6]> {
+        match self {
+            Deform::Affine { translate, scale, rotate, shear, pivot } => {
+                let (s, c) = rotate.to_radians().sin_cos();
+                // M = T(pivot + translate) · R · Sh · S · T(-pivot)
+                let (a0, b0, d0, e0) = (scale[0], shear[0] * scale[1], shear[1] * scale[0], scale[1]);
+                let (a, b, d, e) = (c * a0 - s * d0, c * b0 - s * e0, s * a0 + c * d0, s * b0 + c * e0);
+                let tx = pivot[0] + translate[0] - (a * pivot[0] + b * pivot[1]);
+                let ty = pivot[1] + translate[1] - (d * pivot[0] + e * pivot[1]);
+                Some([a, b, tx, d, e, ty])
+            }
+            Deform::Flip { horizontal, axis } => Some(if *horizontal { [-1.0, 0.0, 2.0 * axis, 0.0, 1.0, 0.0] } else { [1.0, 0.0, 0.0, 0.0, -1.0, 2.0 * axis] }),
+            _ => None,
+        }
+    }
+
+    /// Ponto original → deformado.
+    pub fn forward(&self, x: f32, y: f32) -> ToolResult<(f32, f32)> {
+        if let Some(m) = self.affine_matrix() {
+            return Ok((m[0] * x + m[1] * y + m[2], m[3] * x + m[4] * y + m[5]));
+        }
+        match self {
+            Deform::Perspective { from, to } => {
+                let h = Homography::from_quads(*from, *to).ok_or_else(|| ToolError::Invalid("quadriláteros degenerados".into()))?;
+                Ok(h.apply(x, y))
+            }
+            Deform::Mesh(m) => {
+                m.validate().map_err(ToolError::Invalid)?;
+                Ok(m.forward(x, y))
+            }
+            Deform::Liquify(l) => Ok(l.forward(x, y)),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Fator médio de escala (para a largura dos traços).
+    fn width_scale(&self) -> f32 {
+        match self.affine_matrix() {
+            Some(m) => ((m[0] * m[4] - m[1] * m[3]).abs()).sqrt(),
+            None => 1.0,
+        }
+    }
+
+    fn image(&self, src: &Image) -> ToolResult<Image> {
+        let (w, h) = (src.width, src.height);
+        if let Some(m) = self.affine_matrix() {
+            return Ok(aiai_paint::transform_image(src, aiai_paint::Affine(m), w, h));
+        }
+        match self {
+            Deform::Perspective { from, to } => {
+                let hm = Homography::from_quads(*from, *to).ok_or_else(|| ToolError::Invalid("quadriláteros degenerados".into()))?;
+                Ok(aiai_paint::warp::perspective_image(src, &hm))
+            }
+            Deform::Mesh(mw) => {
+                mw.validate().map_err(ToolError::Invalid)?;
+                Ok(mw.warp_image(src))
+            }
+            Deform::Liquify(l) => Ok(l.liquify_image(src)),
+            _ => Ok(resample_inverse(src, w, h, |x, y| Some((x, y)))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct TransformRequest {
+    pub cut: Id,
+    pub frame: u32,
+    pub layer: Id,
+    pub deform: Deform,
+    /// Só o que está dentro da seleção (vetor: traços cujo centro da caixa está dentro).
+    #[serde(default)]
+    pub selection: Option<SelectShape>,
+    /// Vetor: escala a largura dos traços junto (padrão: sim).
+    #[serde(default = "yes")]
+    pub scale_width: bool,
+    /// Vetor: só estes traços (ids); vazio = todos (ou os da seleção).
+    #[serde(default)]
+    pub strokes: Vec<Id>,
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn stroke_center(s: &Stroke) -> (f32, f32) {
+    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for p in &s.points {
+        x0 = x0.min(p.x);
+        y0 = y0.min(p.y);
+        x1 = x1.max(p.x);
+        y1 = y1.max(p.y);
+    }
+    ((x0 + x1) / 2.0, (y0 + y1) / 2.0)
+}
+
+pub fn transform_command(p: &Project, blobs: &mut BlobStore, req: &TransformRequest) -> ToolResult<Command> {
+    let cut = cut_data(p, &req.cut)?;
+    let layer = layer_data(p, &req.layer)?;
+    if layer.locked {
+        return Err(ToolError::Invalid("camada travada".into()));
+    }
+    let node = exposed_cel(p, cut, &req.layer, req.frame).ok_or_else(|| ToolError::Invalid(format!("a camada não expõe cel no quadro {}", req.frame)))?;
+    let NodeKind::Cel(cel) = &node.data else { unreachable!() };
+    let (w, h) = canvas_size(p, cut);
+    let sel = match &req.selection {
+        Some(shape) => {
+            let reference = if matches!(shape, SelectShape::Wand { .. } | SelectShape::ColorRange { .. }) { Some(cel_raster(blobs, cel, w, h)?) } else { None };
+            Some(Selection::from_shape(shape, w, h, reference.as_ref()).map_err(ToolError::Invalid)?)
+        }
+        None => None,
+    };
+    match layer.kind {
+        LayerType::Vector => {
+            let ws = if req.scale_width { req.deform.width_scale() } else { 1.0 };
+            let mut changed = Vec::new();
+            for s in &cel.strokes {
+                if !req.strokes.is_empty() && !req.strokes.contains(&s.id) {
+                    continue;
+                }
+                if let Some(sel) = &sel {
+                    let (cx, cy) = stroke_center(s);
+                    let (ix, iy) = (cx as i64, cy as i64);
+                    if ix < 0 || iy < 0 || ix >= w as i64 || iy >= h as i64 || sel.cov[(iy as u32 * w + ix as u32) as usize] < 0.5 {
+                        continue;
+                    }
+                }
+                let mut ns = s.clone();
+                for pt in &mut ns.points {
+                    let (x, y) = req.deform.forward(pt.x, pt.y)?;
+                    pt.x = x;
+                    pt.y = y;
+                }
+                ns.width = (ns.width * ws).clamp(0.05, 2000.0);
+                changed.push(ns);
+            }
+            if changed.is_empty() {
+                return Err(ToolError::Invalid("nenhum traço selecionado para transformar".into()));
+            }
+            Ok(Command::ReplaceStrokes { cel: node.id.clone(), strokes: changed })
+        }
+        LayerType::Raster => {
+            let src = cel_raster(blobs, cel, w, h)?;
+            let result = match &sel {
+                None => req.deform.image(&src)?,
+                Some(sel) => {
+                    // flutuante = parte selecionada; base = o resto
+                    let mut floating = src.clone();
+                    let mut base = src.clone();
+                    for (i, &c) in sel.cov.iter().enumerate() {
+                        for k in 0..4 {
+                            floating.data[i][k] *= c;
+                            base.data[i][k] *= 1.0 - c;
+                        }
+                    }
+                    let moved = req.deform.image(&floating)?;
+                    base.draw_over(&moved, 0, 0, 1.0);
+                    base
+                }
+            };
+            Ok(Command::SetTiles { cel: node.id.clone(), tiles: tiles_for_region(blobs, &result, [0, 0, w as i32, h as i32]) })
+        }
+        other => Err(ToolError::Invalid(format!("transformar ainda não suporta camada {other:?}"))),
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RepeatRequest {
+    pub cut: Id,
+    pub frame: u32,
+    pub layer: Id,
+    /// Traços a repetir (o "motivo"), centrados em `origin`.
+    pub strokes: Vec<Id>,
+    pub origin: [f32; 2],
+    /// Caminho (polilinha) ao longo do qual repetir.
+    pub path: Vec<[f32; 2]>,
+    pub spacing: f32,
+    #[serde(default)]
+    pub offset: f32,
+    /// Gira o motivo seguindo a tangente do caminho.
+    #[serde(default)]
+    pub follow: bool,
+    /// Escala no início e no fim do caminho (perspectiva simples: diminui ao afastar).
+    #[serde(default = "unit2")]
+    pub scale_range: [f32; 2],
+}
+
+/// Repetição ao longo de caminho (colunas, balaústres, janelas, babados) para camadas vetoriais.
+pub fn repeat_command(p: &Project, req: &RepeatRequest) -> ToolResult<Command> {
+    let cut = cut_data(p, &req.cut)?;
+    let node = exposed_cel(p, cut, &req.layer, req.frame).ok_or_else(|| ToolError::Invalid("a camada não expõe cel nesse quadro".into()))?;
+    let NodeKind::Cel(cel) = &node.data else { unreachable!() };
+    let motif: Vec<&Stroke> = cel.strokes.iter().filter(|s| req.strokes.contains(&s.id)).collect();
+    if motif.is_empty() {
+        return Err(ToolError::Invalid("nenhum traço do motivo encontrado".into()));
+    }
+    let pos = positions_along(&req.path, req.spacing, req.offset);
+    let n = pos.len().max(1);
+    let mut items = Vec::new();
+    let mut idx = cel.strokes.len();
+    for (k, &(x, y, ang)) in pos.iter().enumerate() {
+        let t = if n > 1 { k as f32 / (n - 1) as f32 } else { 0.0 };
+        let sc = req.scale_range[0] + (req.scale_range[1] - req.scale_range[0]) * t;
+        let a = if req.follow { ang.to_radians() } else { 0.0 };
+        let (sn, cs) = a.sin_cos();
+        for s in &motif {
+            let mut ns = (*s).clone();
+            ns.id = Id(String::new());
+            for pt in &mut ns.points {
+                let (dx, dy) = ((pt.x - req.origin[0]) * sc, (pt.y - req.origin[1]) * sc);
+                pt.x = x + dx * cs - dy * sn;
+                pt.y = y + dx * sn + dy * cs;
+            }
+            ns.width = (ns.width * sc).max(0.05);
+            items.push(IndexedStroke { index: idx, stroke: ns });
+            idx += 1;
+        }
+    }
+    Ok(Command::InsertStrokes { cel: node.id.clone(), items })
+}

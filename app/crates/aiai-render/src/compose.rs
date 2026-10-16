@@ -127,6 +127,25 @@ impl<'a> Renderer<'a> {
                     self.composite_children(&mut g, &node.children, cut, frame, opts, allowed);
                     Some(g)
                 }
+                LayerType::Adjustment => {
+                    // Camada de ajuste: altera o que já foi composto abaixo dela (dentro da mesma pasta).
+                    match layer.params.get("adjustment").map(|v| serde_json::from_value::<aiai_paint::adjust::Adjustment>(v.clone())) {
+                        Some(Ok(adj)) => {
+                            let mask = layer.mask.as_ref().and_then(|m| self.mask_values(m, cut, frame));
+                            let clip = if layer.clip_to_below { clip_base.clone() } else { None };
+                            let m: Option<Vec<f32>> = match (mask, clip) {
+                                (Some(a), Some(b)) => Some(a.iter().zip(&b).map(|(x, y)| x * y).collect()),
+                                (Some(a), None) => Some(a),
+                                (None, Some(b)) => Some(b),
+                                (None, None) => None,
+                            };
+                            adj.apply_image(buf, layer.opacity, m.as_deref());
+                        }
+                        Some(Err(e)) => self.warnings.push(format!("ajuste inválido em '{}': {e}", node.name)),
+                        None => self.warnings.push(format!("camada de ajuste '{}' sem params.adjustment", node.name)),
+                    }
+                    continue;
+                }
                 k if k.holds_cels() => self.layer_image(id, node, layer, cut, frame),
                 other => {
                     self.warnings.push(format!("camada '{}' do tipo {other:?} ainda não é renderizada", node.name));

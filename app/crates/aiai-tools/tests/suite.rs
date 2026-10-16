@@ -158,3 +158,48 @@ fn paint_sky_study_with_brushes() {
     s.redo().unwrap();
     assert_eq!(render_frame(&s.project, &s.blobs, &cut, 0, &RenderOptions::default()).unwrap().image.content_hash(), before);
 }
+
+#[test]
+fn transform_vector_raster_and_repeat() {
+    use aiai_tools::transform::{Deform, RepeatRequest, TransformRequest, repeat_command, transform_command};
+    let mut s = CoreSession::for_tests("tr");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 400, "height": 200}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = create(&mut s, Some(&sc), "C", NodeKind::Cut(CutData::new(24)));
+    let vl = create(&mut s, Some(&cut), "V", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+    let vcel = create(&mut s, Some(&vl), "V1", NodeKind::Cel(CelData::new(1)));
+    let black = ColorRef::Direct { rgba: Rgba::BLACK };
+    let col = curve(&[[20.0, 150.0, 1.0], [20.0, 60.0, 1.0]], 6.0, &black, false);
+    let req = DrawRequest { cut: cut.clone(), frame: 0, layer: vl.clone(), curves: vec![col], mirror_x: None };
+    s.apply(draw_command(&s.project, &req).unwrap()).unwrap();
+    let sid = match &s.project.node(&vcel).unwrap().data { NodeKind::Cel(c) => c.strokes[0].id.clone(), _ => unreachable!() };
+    // repetir a "coluna" ao longo de uma linha diminuindo (perspectiva simples)
+    let rep = RepeatRequest { cut: cut.clone(), frame: 0, layer: vl.clone(), strokes: vec![sid.clone()], origin: [20.0, 150.0], path: vec![[60.0, 150.0], [380.0, 130.0]], spacing: 40.0, offset: 0.0, follow: false, scale_range: [1.0, 0.6] };
+    s.apply(repeat_command(&s.project, &rep).unwrap()).unwrap();
+    let n = match &s.project.node(&vcel).unwrap().data { NodeKind::Cel(c) => c.strokes.len(), _ => 0 };
+    assert_eq!(n, 1 + 9, "motivo + 9 cópias");
+    // girar 90° a coluna original em torno da base
+    let tr = TransformRequest { cut: cut.clone(), frame: 0, layer: vl.clone(), deform: Deform::Affine { translate: [0.0, 0.0], scale: [1.0, 1.0], rotate: 90.0, shear: [0.0, 0.0], pivot: [20.0, 150.0] }, selection: None, scale_width: true, strokes: vec![sid.clone()] };
+    { let c = transform_command(&s.project, &mut s.blobs, &tr).unwrap(); s.apply(c).unwrap(); }
+    let pts = match &s.project.node(&vcel).unwrap().data { NodeKind::Cel(c) => c.strokes[0].points.clone(), _ => unreachable!() };
+    assert!((pts[1].x - 110.0).abs() < 0.01 && (pts[1].y - 150.0).abs() < 0.01, "y para baixo: +90° = horário, (20,60) → (110,150): {:?}", pts[1]);
+    // raster: retângulo pintado, seleção à esquerda, empurrar 50 px
+    use aiai_paint::brush::{BrushPreset};
+    use aiai_paint::select::SelectShape;
+    use aiai_tools::paint::{PaintRequest, PaintStrokeSpec, paint_command};
+    let rl = create(&mut s, Some(&cut), "R", NodeKind::Layer(LayerData::new(LayerType::Raster)));
+    create(&mut s, Some(&rl), "R1", NodeKind::Cel(CelData::new(1)));
+    let pr = PaintRequest { cut: cut.clone(), frame: 0, layer: rl.clone(), preset: BrushPreset::round("d", 20.0, 1.0), color: ColorRef::Direct { rgba: Rgba::from_hex("#ff0000").unwrap() }, strokes: vec![PaintStrokeSpec { points: vec![vec![100.0, 100.0], vec![300.0, 100.0]], smooth: false }], seed: 0 };
+    { let c = paint_command(&s.project, &mut s.blobs, &pr).unwrap(); s.apply(c).unwrap(); }
+    let tr2 = TransformRequest { cut: cut.clone(), frame: 0, layer: rl.clone(), deform: Deform::Affine { translate: [0.0, 50.0], scale: [1.0, 1.0], rotate: 0.0, shear: [0.0, 0.0], pivot: [0.0, 0.0] }, selection: Some(SelectShape::Rect { rect: [0.0, 0.0, 200.0, 200.0] }), scale_width: true, strokes: vec![] };
+    { let c = transform_command(&s.project, &mut s.blobs, &tr2).unwrap(); s.apply(c).unwrap(); }
+    let only = RenderOptions { only_layers: Some(vec![rl.clone()]), ..Default::default() };
+    let img = render_frame(&s.project, &s.blobs, &cut, 0, &only).unwrap().image;
+    assert!(img.get(150, 100)[3] < 0.05 && img.get(150, 150)[3] > 0.9, "metade esquerda desceu 50 px");
+    assert!(img.get(250, 100)[3] > 0.9, "metade direita ficou");
+    if let Ok(dir) = std::env::var("AIAI_EVIDENCE_DIR") {
+        let all = render_frame(&s.project, &s.blobs, &cut, 0, &RenderOptions { background: Some([1.0; 3]), ..Default::default() }).unwrap().image;
+        all.save_png(&std::path::Path::new(&dir).join("transformar_repetir.png")).unwrap();
+    }
+}

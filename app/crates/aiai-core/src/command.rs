@@ -138,7 +138,15 @@ impl Command {
             Command::DeleteNode { id } => format!("Apagar {id}"),
             Command::RestoreNodes { nodes, .. } => format!("Restaurar {} nó(s)", nodes.len()),
             Command::MoveNode { id, .. } => format!("Mover {id}"),
-            Command::SetProps { id, .. } => format!("Editar {id}"),
+            Command::SetProps { id, name, data } => {
+                let keys: Vec<String> = data.as_object().map(|o| o.keys().cloned().collect()).unwrap_or_default();
+                let what = match (name, keys.is_empty()) {
+                    (Some(n), true) => format!("nome → \"{n}\""),
+                    (Some(n), false) => format!("nome → \"{n}\", {}", keys.join(", ")),
+                    (None, _) => keys.join(", "),
+                };
+                format!("Editar {what} ({id})")
+            }
             Command::ReplaceData { id, .. } => format!("Substituir dados de {id}"),
             Command::SetProjectProps { .. } => "Editar projeto".into(),
             Command::SetCells { cells, .. } => format!("Timesheet: {} célula(s)", cells.len()),

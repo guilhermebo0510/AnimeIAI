@@ -532,6 +532,7 @@ pub struct TileEntry {
 /// Região preenchida pelo balde (detalhada na S07): semente + índice de cor; a máscara rasterizada fica em blob.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FillRegion {
+    #[serde(default = "empty_id")]
     pub id: Id,
     pub seed: [f32; 2],
     pub color: ColorRef,
@@ -564,6 +565,10 @@ pub struct CelData {
     /// Transformação da imagem/cel: [tx, ty, escala, rotação em graus].
     #[serde(default = "identity_xform")]
     pub transform: [f32; 4],
+}
+
+fn empty_id() -> Id {
+    Id(String::new())
 }
 
 fn identity_xform() -> [f32; 4] {
@@ -647,6 +652,7 @@ fn default_heads() -> f32 {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct NamedColor {
+    #[serde(default = "empty_id")]
     pub id: Id,
     pub name: String,
     /// Agrupamento no settei ("pele", "cabelo"...).

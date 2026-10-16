@@ -6,5 +6,6 @@ pub mod context;
 pub mod draw;
 pub mod fill;
 pub mod paint;
+pub mod transform;
 
 pub use context::{ToolError, ToolResult};

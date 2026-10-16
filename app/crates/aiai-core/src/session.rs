@@ -57,6 +57,8 @@ pub struct CoreSession {
     wal: Option<Wal>,
     /// Sobe a cada mudança no documento (apply/undo/redo) e também quando o projeto é trocado — para caches.
     pub change_counter: u64,
+    /// Pasta `.aiai` do projeto (definida por abrir/salvar).
+    pub path: Option<std::path::PathBuf>,
 }
 
 impl CoreSession {
@@ -74,6 +76,7 @@ impl CoreSession {
             undo_limit: 500,
             wal: None,
             change_counter: 0,
+            path: None,
         }
     }
 
@@ -222,6 +225,9 @@ impl CoreSession {
 
     /// Troca o projeto inteiro (abrir/novo). Histórico e log recomeçam.
     pub fn replace_project(&mut self, project: Project, blobs: BlobStore) {
+        // o WAL e a pasta pertencem ao projeto anterior
+        self.wal = None;
+        self.path = None;
         self.project = project;
         self.blobs = blobs;
         self.undo.clear();

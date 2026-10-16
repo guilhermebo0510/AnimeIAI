@@ -25,6 +25,10 @@ fn one() -> f32 {
     1.0
 }
 
+fn empty_id() -> Id {
+    Id(String::new())
+}
+
 /// Como os pontos viram curva.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
@@ -61,6 +65,8 @@ pub struct WidthProfile(pub Vec<[f32; 2]>);
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct Stroke {
+    /// Vazio (ou omitido) = gerado pela sessão.
+    #[serde(default = "empty_id")]
     pub id: Id,
     pub points: Vec<StrokePoint>,
     #[serde(default)]
