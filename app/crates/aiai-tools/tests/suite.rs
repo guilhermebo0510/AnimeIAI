@@ -203,3 +203,76 @@ fn transform_vector_raster_and_repeat() {
         all.save_png(&std::path::Path::new(&dir).join("transformar_repetir.png")).unwrap();
     }
 }
+
+#[test]
+fn inbetween_with_timesheet_and_fill_propagation() {
+    use aiai_tools::anim::{InbetweenRequest, PropagateFillsRequest, inbetween_command, propagate_fills};
+    use aiai_tools::transform::{Deform, TransformRequest, transform_command};
+    let mut s = CoreSession::for_tests("anim");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 480, "height": 270}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = create(&mut s, Some(&sc), "C", NodeKind::Cut(CutData::new(24)));
+    let fill = create(&mut s, Some(&cut), "A-cor", NodeKind::Layer(LayerData::new(LayerType::Fill)));
+    let line = create(&mut s, Some(&cut), "A", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+    s.apply(Command::SetProps { id: fill.clone(), name: None, data: json!({"line_refs": [line.0]}) }).unwrap();
+    for n in [1u32, 2] {
+        create(&mut s, Some(&line), &format!("A{n}"), NodeKind::Cel(CelData::new(n)));
+        create(&mut s, Some(&fill), &format!("C{n}"), NodeKind::Cel(CelData::new(n)));
+    }
+    let tl = s.ids.next();
+    s.apply(Command::AddTrack { cut: cut.clone(), index: None, track: Track::new(tl.clone(), "A", TrackKind::Drawing, Some(line.clone())) }).unwrap();
+    let tf = s.ids.next();
+    s.apply(Command::AddTrack { cut: cut.clone(), index: None, track: Track::new(tf.clone(), "A-cor", TrackKind::Drawing, Some(fill.clone())) }).unwrap();
+    // A1 no quadro 0, A2 no quadro 8 (temporário, para desenhar/pintar cada chave)
+    for t in [&tl, &tf] {
+        s.apply(Command::SetCells { cut: cut.clone(), track: t.clone(), cells: vec![
+            aiai_core::command::CellEdit { frame: 0, cell: Some(CellRef::Cel { number: 1 }) },
+            aiai_core::command::CellEdit { frame: 8, cell: Some(CellRef::Cel { number: 2 }) },
+        ] }).unwrap();
+    }
+    let ink = ColorRef::Direct { rgba: Rgba::from_hex("#2b2020").unwrap() };
+    let skin = ColorRef::Direct { rgba: Rgba::from_hex("#f7d9c4").unwrap() };
+    // chave A: cabeça (contorno fechado) + olho
+    let head = curve(&[[200.0, 80.0, 1.0], [260.0, 90.0, 1.0], [270.0, 160.0, 1.0], [230.0, 200.0, 1.0], [190.0, 160.0, 1.0]], 4.0, &ink, true);
+    let eye = curve(&[[225.0, 130.0, 1.0], [232.0, 120.0, 1.0], [239.0, 130.0, 1.0]], 3.0, &ink, false);
+    let d = DrawRequest { cut: cut.clone(), frame: 0, layer: line.clone(), curves: vec![head.clone(), eye.clone()], mirror_x: None };
+    s.apply(draw_command(&s.project, &d).unwrap()).unwrap();
+    // chave B: mesma cabeça girada 25° e deslocada (como um animador copiaria e moveria a chave)
+    let d2 = DrawRequest { cut: cut.clone(), frame: 8, layer: line.clone(), curves: vec![head, eye], mirror_x: None };
+    s.apply(draw_command(&s.project, &d2).unwrap()).unwrap();
+    let tr = TransformRequest { cut: cut.clone(), frame: 8, layer: line.clone(), deform: Deform::Affine { translate: [80.0, 10.0], scale: [1.0, 1.0], rotate: 25.0, shear: [0.0, 0.0], pivot: [230.0, 140.0] }, selection: None, scale_width: true, strokes: vec![] };
+    { let c = transform_command(&s.project, &mut s.blobs, &tr).unwrap(); s.apply(c).unwrap(); }
+    // pintar as duas chaves
+    for (f, x, y) in [(0u32, 215.0f32, 165.0f32), (8, 0.0, 0.0)] {
+        let (sx, sy) = if f == 0 { (x, y) } else {
+            let r = lint(&s.project, &s.blobs, &cut, 8, &fill, 3.0, 200).unwrap();
+            let big = r.unpainted.iter().max_by_key(|g| g.area).unwrap();
+            (big.point[0] as f32, big.point[1] as f32)
+        };
+        let req = FillRequest { cut: cut.clone(), frame: f, layer: fill.clone(), seeds: vec![FillSeed { x: sx, y: sy, color: skin.clone() }], line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35 };
+        let c = fill_command(&s.project, &mut s.blobs, &req).unwrap();
+        s.apply(c).unwrap();
+    }
+    // 3 intercalações (metades para B), A em 0, intercalações em 2, 4, 6, B em 8 — em 2s
+    let ib = InbetweenRequest { cut: cut.clone(), layer: line.clone(), key_a: 1, key_b: 2, count: 3, times: vec![], ease: None, halves_toward_b: Some(true), first_number: None, start_frame: Some(0), hold: 2, options: Default::default(), fill_layer: Some(fill.clone()) };
+    let cmd = inbetween_command(&s.project, &mut s.ids, &ib).unwrap();
+    s.apply(cmd).unwrap();
+    let changes = Query::ChangeFrames { cut: cut.clone() }.run(&s).unwrap();
+    assert_eq!(changes, json!([0, 2, 4, 6, 8]), "timesheet em 2s");
+    let pf = PropagateFillsRequest { cut: cut.clone(), fill_layer: fill.clone(), key_frame_a: 0, key_frame_b: 8, frames: vec![2, 4, 6], gap: 3.0 };
+    for c in propagate_fills(&s.project, &mut s.blobs, &pf).unwrap() {
+        s.apply(c).unwrap();
+    }
+    let mut strip = aiai_paint::Image::new(240 * 5, 135);
+    for (k, f) in [0u32, 2, 4, 6, 8].iter().enumerate() {
+        let r = lint(&s.project, &s.blobs, &cut, *f, &fill, 3.0, 200).unwrap();
+        assert!(r.unpainted.is_empty(), "quadro {f} sem cor: {:?}", r.unpainted);
+        let img = render_frame(&s.project, &s.blobs, &cut, *f, &RenderOptions { background: Some([1.0; 3]), ..Default::default() }).unwrap().image;
+        let half = aiai_paint::transform_image(&img, aiai_paint::Affine([0.5, 0.0, 0.0, 0.0, 0.5, 0.0]), 240, 135);
+        strip.draw_over(&half, k as i32 * 240, 0, 1.0);
+    }
+    if let Ok(dir) = std::env::var("AIAI_EVIDENCE_DIR") {
+        strip.save_png(&std::path::Path::new(&dir).join("intercalacao_tira.png")).unwrap();
+    }
+}
