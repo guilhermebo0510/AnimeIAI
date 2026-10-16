@@ -331,6 +331,21 @@ def lines():
     return r
 
 
+def fill_call(seeds, gap):
+    """FILL; semente que o app vê sobre a linha (render da linha difere do nosso por meio px) sai e tenta de novo."""
+    import re
+    from drive import DriveError
+    while seeds:
+        try:
+            return d.call("FILL", {"cut": ids["cut"], "frame": F, "layer": ids["cor"], "seeds": seeds, "gap": gap}).get("description")
+        except DriveError as e:
+            m = re.search(r"semente \((\d+), (\d+)\) caiu sobre a linha", str(e))
+            if not m:
+                raise
+            seeds = [sd for sd in seeds if (sd["x"], sd["y"]) != (int(m.group(1)), int(m.group(2)))]
+    return "sem sementes"
+
+
 def fill(gap=4.0, min_area=40):
     """Mesma rotulagem do balde do app (fill.rs): núcleos = componentes de {D > gap/2} (D = distância à linha); cada pixel
     fora da linha vai para o núcleo mais próximo. Cor do núcleo = mediana da referência na região; semente no ponto mais
@@ -368,7 +383,7 @@ def fill(gap=4.0, min_area=40):
         seeds.append({"x": int(j % line.shape[1]), "y": int(j // line.shape[1]), "color": {"type": "direct", "rgba": [float(v) / 255 for v in med] + [1.0]}})
     if not seeds:
         return "sem regiões"
-    r = d.call("FILL", {"cut": ids["cut"], "frame": F, "layer": ids["cor"], "seeds": seeds, "gap": gap}).get("description")
+    r = fill_call(seeds, gap)
     # 2ª passada, folga pequena: regiões fechadas estreitas (íris entre contorno e pupila, branco do olho) não têm núcleo
     # com D > gap/2 e ficam vazias na 1ª
     tc = os.path.join(TMP, "a138_cor.png")
@@ -387,7 +402,7 @@ def fill(gap=4.0, min_area=40):
         y, x = np.unravel_index(np.argmax(dt), dt.shape)
         seeds2.append({"x": int(x + sl[1].start), "y": int(y + sl[0].start), "color": {"type": "direct", "rgba": [float(v) / 255 for v in med] + [1.0]}})
     if seeds2:
-        d.call("FILL", {"cut": ids["cut"], "frame": F, "layer": ids["cor"], "seeds": seeds2, "gap": g2})
+        fill_call(seeds2, g2)
     return f"{n} núcleos, {len(seeds)} sementes, {skipped} fundo; {r}; 2ª passada {len(seeds2)}"
 
 
