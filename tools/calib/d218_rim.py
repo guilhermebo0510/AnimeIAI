@@ -13,7 +13,8 @@ CENTERS = {
     "esq4": [(252, 668), (230, 740), (215, 795), (228, 828)],
     "esq5": [(242, 864), (238, 888), (233, 912), (229, 936), (228, 956)],
     "esq5b": [(228, 960), (226, 976), (223, 992), (220, 1008), (220, 1016), (219, 1032), (219, 1040), (220, 1048), (225, 1056)],
-    "mecha_e": [(430, 0), (412, 60), (398, 150), (390, 250), (390, 400), (397, 520), (399, 640), (396, 690), (393, 710)],
+    "mecha_e": [(430, 0), (412, 60), (398, 150), (390, 250), (390, 400), (397, 520), (399, 640), (396, 690), (393, 714), (390, 730),
+                (387, 750), (384, 770)],
     "mecha_e_topo": [(370, 0), (352, 50), (345, 75)],
     "dir1": [(1560, 0), (1585, 100), (1600, 200), (1610, 320), (1607, 420), (1600, 515)],
     "dir2": [(1625, 135), (1660, 150), (1700, 180), (1720, 212), (1712, 250), (1698, 298)],
@@ -24,6 +25,7 @@ CENTERS = {
 }
 RIM = "#f4a097"
 TAPER_END = set()
+NO_TRIM = {"mecha_e", "dir3"}  # pontas finas e mais escuras: a cor da faixa muda e o corte comeria a ponta real
 AS_SHAPE = "--formas" in sys.argv  # polígonos pelas bordas da faixa pioraram o F1 (0,904 × 0,9075)
 
 
@@ -43,7 +45,7 @@ def run():
         cs0 = sorted(own, key=lambda c: sum(c["rgb"]))
         if len(cs0) >= 3:
             hexc = cs0[len(cs0) // 2]["hex"]
-            pts, ws = meas.measure_band(d, REF0, pts, hexc, 0.08, passes=(16.0, 14.0), smooth=1, trim=True)
+            pts, ws = meas.measure_band(d, REF0, pts, hexc, 0.08, passes=(16.0, 14.0), smooth=1, trim=name not in NO_TRIM)
         probes = meas.first_list(d.call("PROBE_COLOR", {"reference": REF0, "points": [[round(p[0]), round(p[1])] for p in pts[1:-1:2]],
                                                         "radius": 1}))
         cs = sorted(probes, key=lambda c: sum(c["rgb"]))
