@@ -13,7 +13,7 @@ CENTERS = {
     "esq4": [(252, 668), (230, 740), (215, 795), (228, 828)],
     "esq5": [(242, 864), (238, 888), (233, 912), (229, 936), (228, 956)],
     "esq5b": [(228, 960), (226, 976), (223, 992), (220, 1008), (220, 1016), (219, 1032), (219, 1040), (220, 1048), (225, 1056)],
-    "mecha_e": [(430, 0), (412, 60), (398, 150), (390, 250), (390, 400), (397, 520), (399, 640), (392, 720), (385, 770)],
+    "mecha_e": [(430, 0), (412, 60), (398, 150), (390, 250), (390, 400), (397, 520), (399, 640), (396, 690), (393, 710)],
     "mecha_e_topo": [(370, 0), (352, 50), (345, 75)],
     "dir1": [(1560, 0), (1585, 100), (1600, 200), (1610, 320), (1607, 420), (1600, 515)],
     "dir2": [(1625, 135), (1660, 150), (1700, 180), (1720, 212), (1712, 250), (1698, 298)],
@@ -23,6 +23,8 @@ CENTERS = {
     "dir6": [(1913, 722), (1914, 815)],
 }
 RIM = "#f4a097"
+TAPER_END = set()
+AS_SHAPE = "--formas" in sys.argv  # polígonos pelas bordas da faixa pioraram o F1 (0,904 × 0,9075)
 
 
 def run():
@@ -31,7 +33,7 @@ def run():
     d.apply({"kind": "set_props", "id": lay, "data": {"clip_to_below": True, "visible": True}})
     reorder()
     d.apply({"kind": "replace_data", "id": ids["rim_c1"], "data": {"type": "cel", "number": 1}})
-    curves, log = [], {}
+    curves, shapes, log = [], [], {}
     for name, poly in CENTERS.items():
         # paquímetro de faixa: a cor do realce varia por dentro (borda salmão, miolo mais claro)
         pts, ws = meas.measure_band(d, REF0, meas.densify(poly, 3), RIM, 0.09, smooth=1)
@@ -41,16 +43,38 @@ def run():
         cs0 = sorted(own, key=lambda c: sum(c["rgb"]))
         if len(cs0) >= 3:
             hexc = cs0[len(cs0) // 2]["hex"]
-            pts, ws = meas.measure_band(d, REF0, pts, hexc, 0.08, passes=(16.0, 14.0), smooth=1)
+            pts, ws = meas.measure_band(d, REF0, pts, hexc, 0.08, passes=(16.0, 14.0), smooth=1, trim=True)
         probes = meas.first_list(d.call("PROBE_COLOR", {"reference": REF0, "points": [[round(p[0]), round(p[1])] for p in pts[1:-1:2]],
                                                         "radius": 1}))
         cs = sorted(probes, key=lambda c: sum(c["rgb"]))
         mid = cs[len(cs) // 2]["rgb"] if cs else [0xf4 / 255, 0xa0 / 255, 0x97 / 255]
         c = meas.curve_from_measure(pts, ws, {"type": "direct", "rgba": list(mid) + [1.0]}, tip="marker", every=1)
         c["profile"] = [[t, max(0.1, min(1.8, w))] for t, w in c["profile"]]
-        curves.append(c)
+        if name in TAPER_END:  # faixa que termina em ponta dentro do cabelo
+            n = len(c["profile"])
+            k = max(2, n // 6)
+            for i in range(n - k, n):
+                c["profile"][i][1] = max(0.08, c["profile"][i][1] * (n - i - 0.5) / k)
+        if AS_SHAPE:
+            # polígono pelas bordas medidas da faixa (pontas retas/agudas como na referência, sem tampa redonda)
+            ns = meas._normals(pts)
+            wl = [w or c["width"] for w in ws]
+            left = [[p[0] + n[0] * w / 2, p[1] + n[1] * w / 2] for p, n, w in zip(pts, ns, wl)]
+            right = [[p[0] - n[0] * w / 2, p[1] - n[1] * w / 2] for p, n, w in zip(pts, ns, wl)]
+            shapes.append(({"points": left + right[::-1], "geometry": "polyline"}, list(mid)))
+        else:
+            curves.append(c)
         log[name] = (round(c["width"], 1), "#%02x%02x%02x" % tuple(round(v * 255) for v in mid))
-    d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": 0, "layer": lay, "curves": curves})
+    if curves:
+        d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": 0, "layer": lay, "curves": curves})
+    if shapes:
+        rl = node("rim_r", "Realce de borda (formas)", {"type": "layer", "kind": "raster"}, ids["cut"])
+        node("rim_r_c1", "1", {"type": "cel", "number": 1}, rl)
+        d.apply({"kind": "set_props", "id": rl, "data": {"clip_to_below": True}})
+        reorder()
+        d.apply({"kind": "replace_data", "id": ids["rim_r_c1"], "data": {"type": "cel", "number": 1}})
+        for sh, col in shapes:
+            d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": 0, "layer": rl, "shapes": [sh], "color": {"type": "direct", "rgba": col + [1.0]}})
     return log
 
 

@@ -201,14 +201,21 @@ def edge_offset_line(d, ref, pts, side, half_w, search=10.0, passes=3):
     return cur
 
 
-def measure_band(d, ref, pts, color, tolerance, closed=False, passes=(20.0, 10.0), smooth=2):
-    """Faixa de cor medida como paquímetro (MEASURE_LINE com `tolerance`): centros e larguras do trecho contínuo."""
+def measure_band(d, ref, pts, color, tolerance, closed=False, passes=(20.0, 10.0), smooth=2, trim=False):
+    """Faixa de cor medida como paquímetro (MEASURE_LINE com `tolerance`): centros e larguras do trecho contínuo.
+    `trim`: corta as pontas onde a faixa não foi achada (o filtro de mediana não inventa largura além da ponta real)."""
     widths = None
+    found = None
     for search in passes:
         res = first_list(d.call("MEASURE_LINE", {"reference": ref, "points": pts, "search": search, "line_color": color,
                                                  "tolerance": tolerance}))
         ox = _median_filter([(m["center"][0] - m["given"][0]) if m["contrast"] > 0 else None for m in res], closed)
         oy = _median_filter([(m["center"][1] - m["given"][1]) if m["contrast"] > 0 else None for m in res], closed)
         widths = _median_filter([m["width"] if m["contrast"] > 0 else None for m in res], closed)
+        found = [m["contrast"] > 0 for m in res]
         pts = [[m["given"][0] + (ox[i] or 0.0), m["given"][1] + (oy[i] or 0.0)] for i, m in enumerate(res)]
+    if trim and found and any(found) and not closed:
+        a = found.index(True)
+        b = len(found) - 1 - found[::-1].index(True)
+        pts, widths = pts[a:b + 1], widths[a:b + 1]
     return smooth_points(pts, closed, smooth), widths
