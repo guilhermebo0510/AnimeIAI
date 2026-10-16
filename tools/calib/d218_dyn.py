@@ -2,7 +2,7 @@
 da franja), boca e gotas de suor. Cada camada dinâmica ganha um cel por desenho e uma trilha no timesheet; o resto do
 quadro fica no cel 1 de sempre. Estimativas por desenho lidas pelo agente (recortes e varreduras), refinadas pelas mesmas
 medições do desenho 1. uso: python d218_dyn.py [desenhos...]  (padrão: todos)"""
-import os, sys
+import math, os, sys
 sys.path.insert(0, os.path.dirname(__file__))
 import meas
 from d218 import reorder, d, ids, node
@@ -61,7 +61,7 @@ DATA[3] = dict(D1,
         {"poly": [(1347, 569), (1353, 575), (1353, 595), (1351, 599), (1349, 603), (1351, 606), (1356, 609), (1363, 609), (1367, 606),
                   (1370, 607), (1369, 612), (1367, 616), (1360, 620), (1350, 621), (1343, 619), (1339, 615), (1336, 611), (1334, 607),
                   (1332, 603), (1332, 591), (1333, 587), (1334, 583), (1336, 579), (1339, 575), (1344, 571)],
-         "inner": [(1353, 598), (1362, 599), (1365, 603), (1363, 608), (1355, 608), (1351, 604)],
+         "inner": [(1353, 598), (1362, 599), (1365, 603), (1363, 608), (1355, 608), (1351, 604)], "hl": ((1347, 595), (6.0, 7.0)),
          "shadow": [(1331, 611), (1337, 615), (1345, 619), (1359, 623), (1358, 627), (1348, 631), (1340, 629), (1333, 623)]}])
 
 # desenho 4 (q14–53): sobrancelhas e gota direita iguais às do 3, gota esquerda igual à do 1, boca menor
@@ -100,7 +100,7 @@ DATA[5] = dict(DATA[4],
 DATA[6] = dict(DATA[5], brow_w={},
     drops=DATA[5]["drops"] + [
         {"u": [(795, 796), (793, 806), (793, 818), (796, 828), (806, 833), (816, 833), (824, 828), (824, 816), (823, 809)], "w": 19.0,
-         "inner": [(804, 814), (809, 812), (813, 816), (810, 821), (805, 820)],
+         "inner": [(804, 814), (809, 812), (813, 816), (810, 821), (805, 820)], "hl": ([(798, 808), (799, 812)], 11.0),
          "shadow": [(788, 836), (796, 842), (808, 844), (822, 840), (826, 838), (823, 846), (815, 850), (800, 850), (791, 846)]}],
     brows={"franja_h3": [(742, 216), (752, 220.5), (760, 225), (768, 229.5), (776, 233), (784, 236.5), (796, 241), (820, 258), (850, 272),
                          (880, 284), (905, 293), (925, 300)],
@@ -266,9 +266,9 @@ def draw_drops(k, lay, data, fr, ref):
                        "color": {"type": "direct", "rgba": WHITE}})
         if drop.get("dot"):
             gc.append({"points": [list(p) for p in drop["dot"]], "width": drop.get("dot_w", 8.0), "tip": "marker", "geometry": "polyline",
-                       "color": {"type": "direct", "rgba": WHITE}})
+                       "color": {"type": "direct", "rgba": HIGHLIGHT}})  # a bolinha é o brilho branco-puro (luma ~254 na referência)
     for drop in data["drops"]:  # brilho branco-puro dentro da gota (por cima do branco)
-        if drop.get("hl"):
+        if drop.get("hl") and not drop.get("poly"):
             pts, wd = drop["hl"]
             gc.append({"points": [list(p) for p in pts], "width": wd, "tip": "marker", "geometry": "polyline", "color": {"type": "direct", "rgba": HIGHLIGHT}})
     if gc:
@@ -278,6 +278,11 @@ def draw_drops(k, lay, data, fr, ref):
             d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": fr, "layer": lay["gota_r2"], "shapes": [{"points": [list(p) for p in drop["poly"]],
                                                                                                          "geometry": "polyline"}],
                                   "color": {"type": "direct", "rgba": WHITE}})
+        if drop.get("hl") and drop.get("poly"):  # brilho da gota em crescente: elipse por cima do branco, antes do miolo
+            (cx, cy), (rx, ry) = drop["hl"]
+            ell = [[cx + rx * math.cos(a * math.pi / 12), cy + ry * math.sin(a * math.pi / 12)] for a in range(24)]
+            d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": fr, "layer": lay["gota_r2"], "shapes": [{"points": ell, "geometry": "polyline"}],
+                                  "color": {"type": "direct", "rgba": HIGHLIGHT}})
         if drop.get("inner"):  # miolo rosado da gota (por cima do branco): camada `gota_r2`
             d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": fr, "layer": lay["gota_r2"], "shapes": [{"points": [list(p) for p in drop["inner"]],
                                                                                                          "geometry": "polyline"}],
