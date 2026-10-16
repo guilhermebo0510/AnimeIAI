@@ -136,6 +136,67 @@ pub fn measure_line(img: &Image, points: &[[f32; 2]], search: f32, min_contrast:
     out
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EdgeMeasure {
+    pub given: [f32; 2],
+    /// Posição da borda (maior variação de cor ao longo da normal), subpixel.
+    pub edge: [f32; 2],
+    pub moved: f32,
+    /// Intensidade do degrau (0 = não achou).
+    pub strength: f32,
+}
+
+/// Borda de uma massa de cor (sem linha): para cada ponto do contorno estimado, procura ao longo da normal a maior
+/// variação de cor (RGB) e refina por parábola. O contorno é tratado como fechado.
+pub fn measure_edge(img: &Image, points: &[[f32; 2]], search: f32, min_strength: f32) -> Vec<EdgeMeasure> {
+    let n = points.len();
+    let mut out = Vec::with_capacity(n);
+    let col = |x: f32, y: f32| {
+        let p = sample(img, x, y);
+        if p[3] > 0.0 { [p[0] / p[3], p[1] / p[3], p[2] / p[3]] } else { [1.0; 3] }
+    };
+    for i in 0..n {
+        let p = points[i];
+        let (a, b) = (points[(i + n - 1) % n], points[(i + 1) % n]);
+        let (tx, ty) = (b[0] - a[0], b[1] - a[1]);
+        let tl = (tx * tx + ty * ty).sqrt();
+        if tl < 1e-4 {
+            out.push(EdgeMeasure { given: p, edge: p, moved: 0.0, strength: 0.0 });
+            continue;
+        }
+        let (nx, ny) = (-ty / tl, tx / tl);
+        let step = 0.25f32;
+        let k = (search / step).ceil() as i32;
+        let grads: Vec<(f32, f32)> = (-k..k)
+            .map(|j| {
+                let t = j as f32 * step;
+                let (c0, c1) = (col(p[0] + nx * t, p[1] + ny * t), col(p[0] + nx * (t + step), p[1] + ny * (t + step)));
+                let g = ((c1[0] - c0[0]).powi(2) + (c1[1] - c0[1]).powi(2) + (c1[2] - c0[2]).powi(2)).sqrt() / step;
+                (t + step / 2.0, g)
+            })
+            .collect();
+        let best = grads.iter().enumerate().max_by(|x, y| x.1.1.partial_cmp(&y.1.1).unwrap_or(std::cmp::Ordering::Equal));
+        let Some((im, &(tm, gm))) = best else {
+            out.push(EdgeMeasure { given: p, edge: p, moved: 0.0, strength: 0.0 });
+            continue;
+        };
+        if gm * step < min_strength {
+            out.push(EdgeMeasure { given: p, edge: p, moved: 0.0, strength: 0.0 });
+            continue;
+        }
+        let mut t = tm;
+        if im > 0 && im + 1 < grads.len() {
+            let (g0, g1, g2) = (grads[im - 1].1, gm, grads[im + 1].1);
+            let den = g0 - 2.0 * g1 + g2;
+            if den.abs() > 1e-6 {
+                t += 0.5 * (g0 - g2) / den * step;
+            }
+        }
+        out.push(EdgeMeasure { given: p, edge: [p[0] + nx * t, p[1] + ny * t], moved: t.abs(), strength: gm * step });
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,6 +216,18 @@ mod tests {
         for r in &m {
             assert!((r.center[0] - 50.5).abs() < 0.35, "centro {:?}", r.center);
             assert!((r.width - 3.0).abs() < 0.8, "largura {}", r.width);
+        }
+        // borda de massa: retângulo vermelho de x=60 em diante
+        let mut m = Image::filled(100, 40, [0.95, 0.9, 0.85, 1.0]);
+        for y in 0..40 {
+            for x in 60..100 {
+                let i = m.idx(x, y);
+                m.data[i] = [0.7, 0.1, 0.1, 1.0];
+            }
+        }
+        let e = measure_edge(&m, &[[57.0, 5.0], [57.5, 20.0], [58.0, 35.0]], 6.0, 0.1);
+        for r in &e {
+            assert!((r.edge[0] - 60.0).abs() < 0.35, "borda {:?}", r.edge);
         }
         let c = probe_colors(&img, &[[10.0, 10.0]], 2);
         assert_eq!(c[0].hex, "#f2e6d9");

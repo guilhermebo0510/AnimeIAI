@@ -188,3 +188,97 @@ pub fn gradient_command(p: &Project, blobs: &mut BlobStore, req: &GradientReques
     gradient_fill(&mut img, req.kind, req.from, req.to, &stops, req.blend, req.opacity);
     Ok(Command::SetTiles { cel: node.id.clone(), tiles: tiles_for_region(blobs, &img, [0, 0, w as i32, h as i32]) })
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ShapeSpec {
+    /// Contorno fechado: pontos [x, y].
+    pub points: Vec<[f32; 2]>,
+    /// "spline" (curva suave pelos pontos, padrão) ou "polyline" (lados retos).
+    #[serde(default = "d_geom")]
+    pub geometry: String,
+}
+
+fn d_geom() -> String {
+    "spline".into()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct FillShapeRequest {
+    pub cut: Id,
+    #[serde(default)]
+    pub frame: u32,
+    /// Camada raster.
+    pub layer: Id,
+    /// Um ou mais contornos (regra não-zero: um contorno em sentido oposto abre buraco).
+    pub shapes: Vec<ShapeSpec>,
+    pub color: ColorRef,
+    #[serde(default = "d_one_f")]
+    pub opacity: f32,
+    #[serde(default)]
+    pub blend: BlendMode,
+    /// Sem antisserrilhado (cor chapada de cel).
+    #[serde(default)]
+    pub aliased: bool,
+    /// Borda irregular (letreiro/pincel): amplitude e comprimento de onda em px.
+    #[serde(default)]
+    pub roughness: f32,
+    #[serde(default = "d_wave_f")]
+    pub roughness_wavelength: f32,
+    #[serde(default)]
+    pub seed: u32,
+}
+
+fn d_one_f() -> f32 {
+    1.0
+}
+fn d_wave_f() -> f32 {
+    18.0
+}
+
+/// Massa de cor: contornos fechados preenchidos numa camada raster (manchas de cor, letreiros, formas de cenário).
+pub fn fill_shape_command(p: &Project, blobs: &mut BlobStore, req: &FillShapeRequest) -> ToolResult<Command> {
+    let (node, cel, w, h) = raster_cel(p, &req.cut, &req.layer, req.frame)?;
+    let mut img = cel_raster(blobs, cel, w, h)?;
+    let mut contours: Vec<Vec<[f32; 2]>> = Vec::new();
+    for sh in &req.shapes {
+        if sh.points.len() < 3 {
+            return Err(ToolError::Invalid("contorno precisa de 3+ pontos".into()));
+        }
+        let pts: Vec<[f32; 2]> = if sh.geometry == "polyline" {
+            sh.points.clone()
+        } else {
+            let stroke = Stroke {
+                id: Id::default(),
+                points: sh.points.iter().map(|q| StrokePoint { x: q[0], y: q[1], pressure: 1.0, tilt: None, t: None }).collect(),
+                geometry: StrokeGeometry::Spline,
+                tension: 0.0,
+                tip: VectorTip::Marker,
+                width: 1.0,
+                profile: WidthProfile::default(),
+                color: ColorRef::default(),
+                opacity: 1.0,
+                closed: true,
+                aliased: false,
+                color_trace: false,
+            };
+            aiai_paint::sample_stroke(&stroke).iter().map(|q| [q.x, q.y]).collect()
+        };
+        contours.push(pts);
+    }
+    aiai_paint::text::roughen_contours(&mut contours, req.roughness, req.roughness_wavelength, req.seed);
+    let cov = aiai_paint::poly::fill_polygons(&contours, req.aliased, w, h).ok_or_else(|| ToolError::Invalid("forma fora do canvas".into()))?;
+    let c = resolve_color(p, &req.color)?;
+    let a = c[3] * req.opacity;
+    let src = [c[0] * a, c[1] * a, c[2] * a, a];
+    for y in 0..cov.height {
+        for x in 0..cov.width {
+            let v = cov.cov[(y * cov.width + x) as usize];
+            if v > 0.0 {
+                let i = img.idx(cov.x0 as u32 + x, cov.y0 as u32 + y);
+                aiai_paint::blend::blend_pixel(&mut img.data[i], src, req.blend, v);
+            }
+        }
+    }
+    let bounds = [cov.x0, cov.y0, cov.x0 + cov.width as i32, cov.y0 + cov.height as i32];
+    Ok(Command::SetTiles { cel: node.id.clone(), tiles: tiles_for_region(blobs, &img, bounds) })
+}

@@ -28,11 +28,16 @@ pub struct TextOptions {
 /// Bordas irregulares de letreiro feito à mão: desloca os pontos do contorno ao longo da normal por ruído
 /// (amplitude em px, comprimento de onda em px). Reamostra antes para a irregularidade não depender dos vértices da fonte.
 pub fn roughen(outline: &mut TextOutline, amplitude: f32, wavelength: f32, seed: u32) {
+    roughen_contours(&mut outline.contours, amplitude, wavelength, seed);
+}
+
+/// Igual a `roughen`, para quaisquer contornos fechados.
+pub fn roughen_contours(contours: &mut [Vec<[f32; 2]>], amplitude: f32, wavelength: f32, seed: u32) {
     if amplitude <= 0.0 {
         return;
     }
     let step = (wavelength / 6.0).clamp(0.75, 6.0);
-    for c in &mut outline.contours {
+    for c in contours.iter_mut() {
         // reamostra o contorno fechado a cada `step` px
         let n = c.len();
         let mut res = Vec::new();
