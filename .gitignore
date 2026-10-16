@@ -1,0 +1,25 @@
+# Material de referência e calibração (direito autoral; nunca versionar)
+/anime de referencia/
+/calibracao/
+*.mkv
+
+# Sidecars e modelos baixados
+/sidecars/
+
+# Build
+/app/target/
+target/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+/tools/.venv/
+
+# Estado volátil da rodada
+/sprints/.heartbeat
+
+# Vídeos grandes fora das evidências
+*.mp4
+!/sprints/registro/evidencias/**/*.mp4
+!/producoes/**/*.mp4
