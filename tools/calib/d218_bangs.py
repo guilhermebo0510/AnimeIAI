@@ -43,8 +43,13 @@ def run():
     d.call("FILL", {"cut": ids["cut"], "frame": 0, "layer": f, "seeds": seeds, "gap": 6})
     d.call("GRADIENT", {"cut": ids["cut"], "frame": 0, "layer": ids["franja_mascara"], "kind": "linear", "from": [0, 15], "to": [0, 140],
                         "stops": [(0.0, "#000000"), (1.0, "#ffffff")]})
-    d.call("GRADIENT", {"cut": ids["cut"], "frame": 0, "layer": fl, "kind": "radial", "from": [1000, 225], "to": [1290, 225],
-                        "stops": [(0.0, "#e25a5a"), (0.5, "#d94a50"), (1.0, "#b5374f")]})
+    # degradê ajustado a 13 amostras medidas da franja (centro claro à direita, borda vermelho-escura no alto à esquerda)
+    # vertical: alto vermelho-escuro → franja clara a partir de y≈170 (a mecha entre h2 e i1 é clara até embaixo)
+    d.call("GRADIENT", {"cut": ids["cut"], "frame": 0, "layer": fl, "kind": "linear", "from": [0, 40], "to": [0, 175],
+                        "stops": [(0.0, "#ad3047"), (1.0, "#da4a4e")]})
+    # brilho do miolo, à direita do centro
+    d.call("GRADIENT", {"cut": ids["cut"], "frame": 0, "layer": fl, "kind": "radial", "from": [1080, 170], "to": [1230, 170],
+                        "stops": [(0.0, "#e3595bff"), (1.0, "#e3595b00")]})
     # topo do cabelo mais claro que a base (#b4344d em y≈0 → base em y≈380)
     d.call("GRADIENT", {"cut": ids["cut"], "frame": 0, "layer": ids["realce"], "kind": "linear", "from": [0, 0], "to": [0, 380],
                         "stops": [(0.0, "#b2324bff"), (1.0, "#b2324b00")]})
