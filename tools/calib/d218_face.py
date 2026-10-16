@@ -28,11 +28,7 @@ def run():
         inner = meas.measure_edge(d, REF0, meas.circle(cx, cy, ri, n=120))
         mid = [[cx + (ro + ri) / 2 * math.cos(a), cy + (ro + ri) / 2 * math.sin(a)] for a in [k * math.pi / 18 for k in range(36)]]
         out.append(ring(massa, outer, inner, mid))
-    # boca: contornos tirados da varredura linha a linha da tinta (runs.py); a medição de borda saltava na ponta esquerda
-    outer = [list(p) for p in MOUTH_OUT_SCAN]
-    inner = [list(p) for p in reversed(MOUTH_IN_SCAN)]  # mesmo sentido do externo; ring() inverte para virar furo
-    mid = [[(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] for a, b in zip(meas.densify(MOUTH_OUT, 20, closed=True), meas.densify(MOUTH_IN, 20, closed=True))]
-    out.append(ring(massa, outer, inner, mid))
+    # a boca muda por desenho: fica em d218_dyn.py (camada `boca`)
     return out
 
 

@@ -16,7 +16,6 @@ SHAPES = {
     "bochecha": ("#ce6f74", [(558, 668), (565, 690), (580, 715), (597, 745), (612, 770), (628, 797), (600, 800), (570, 795), (552, 788),
                              (551, 750), (553, 700)], True),
     "sombra_l2": ("#872637", [(1330, 92), (1355, 104), (1380, 116), (1392, 122), (1395, 145), (1375, 140), (1350, 125)], True),
-    "gota_sombra": ("#d77882", [(690, 752), (725, 752), (726, 760), (720, 768), (708, 771), (696, 769), (690, 762)], False),
 }
 HIGHLIGHTS = [
     [(747, 351), (755, 349), (762, 347)],
@@ -46,13 +45,7 @@ def run():
     w = [int(WHITE[i:i + 2], 16) / 255 for i in (1, 3, 5)]
     curves = [{"points": [list(p) for p in h], "width": 4.0, "tip": "marker", "geometry": "spline", "color": {"type": "direct", "rgba": w + [1.0]},
                "profile": [[0, 0.4], [0.5, 1.0], [1, 0.4]]} for h in HIGHLIGHTS]
-    # gota de suor: traço branco grosso enrolado (centro cor de pele), lido no recorte ampliado 4×
-    gw = {"type": "direct", "rgba": [0xf6 / 255, 0xf2 / 255, 0xf6 / 255, 1.0]}
-    # gota: "U" grosso (braço esquerdo mais alto), lido no recorte 4× e conferido nas bordas
-    # centros e larguras tirados dos trechos brancos medidos linha a linha na referência
-    curves.append({"points": [[692, 712], [689, 718], [687, 728], [688, 740], [695, 750], [705, 753], [715, 751], [722, 744], [724, 734],
-                              [723, 730]], "width": 17.0, "tip": "marker", "geometry": "spline", "color": gw})
-    curves.append({"points": [[702, 731], [702, 737]], "width": 8.0, "tip": "marker", "geometry": "polyline", "color": gw})
+    # a gota de suor muda por desenho: d218_dyn.py (camadas `gota`/`gota_r`)
     return d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": 0, "layer": bri, "curves": curves})
 
 

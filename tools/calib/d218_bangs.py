@@ -40,6 +40,8 @@ def run():
         log.append((r["point"], r["area"], p["hex"], round(dist)))
         if dist < 60:
             seeds.append({"x": r["point"][0], "y": r["point"][1], "color": {"type": "direct", "rgba": [0xd0 / 255, 0x46 / 255, 0x50 / 255, 1.0]}})
+    # semente fixa na mecha clara entre k1 e k3 (sem a sobrancelha l1, o ponto mais interno da região cai na tinta dela)
+    seeds.append({"x": 1100, "y": 150, "color": {"type": "direct", "rgba": [0xd0 / 255, 0x46 / 255, 0x50 / 255, 1.0]}})
     d.call("FILL", {"cut": ids["cut"], "frame": 0, "layer": f, "seeds": seeds, "gap": 6})
     d.call("GRADIENT", {"cut": ids["cut"], "frame": 0, "layer": ids["franja_mascara"], "kind": "linear", "from": [0, 15], "to": [0, 140],
                         "stops": [(0.0, "#000000"), (1.0, "#ffffff")]})

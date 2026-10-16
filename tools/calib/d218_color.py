@@ -15,7 +15,7 @@ PALETTE = {
 BG = {"bg_bege": "#c1a083", "bg_escuro": "#4d2418", "bg_madeira": "#5e3619", "bg_topo": "#5a3423"}
 
 
-MANUAL = {(450, 400): "cabelo", (1500, 420): "cabelo", (1480, 640): "cabelo", (575, 750): "bochecha", (372, 800): "cabelo"}  # a roupa fica na camada `baixo`
+MANUAL = {(450, 400): "cabelo", (1500, 420): "cabelo", (1480, 640): "cabelo", (575, 750): "bochecha", (372, 800): "cabelo", (900, 600): "pele", (1136, 103): "cabelo_topo"}  # a roupa fica na camada `baixo`
 
 
 def rgb(h):

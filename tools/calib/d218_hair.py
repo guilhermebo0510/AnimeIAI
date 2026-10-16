@@ -10,11 +10,13 @@ MIN_W = 11.0
 PIN_START = {"queixo"}
 # linhas coladas a um realce: a borda realce→cabelo engana a ancoragem (pega a borda errada e alarga a linha)
 NO_ANCHOR = {"mecha_e", "mecha_n"}
-FIXED_W = {"franja_l1": 22.0,  "queixo": 14.0, "tras_b": 13.0, "tras_c": 13.0, "tras_d1": 12.0, "tras_d2": 12.0, "tras_e": 12.0, "base_g": 14.0}
+FIXED_W = {"franja_l1": 22.0, "franja_l1b": 22.0,  "queixo": 14.0, "tras_b": 13.0, "tras_c": 13.0, "tras_d1": 12.0, "tras_d2": 12.0, "tras_e": 12.0, "base_g": 14.0}
 ANCHOR = "--sem-ancora" not in sys.argv
 _INK_F = os.path.join(os.path.dirname(__file__), "..", "..", "calibracao", "projetos", "d218_ink.json")
 INK = json.load(open(_INK_F)) if os.path.exists(_INK_F) else {}  # cor da tinta medida por linha (d218_inkcolors.py)
 INK.update({"tras_c": "#451b1f", "tras_e": "#451b1f"})
+if "franja_l1" in INK:
+    INK.setdefault("franja_l1b", INK["franja_l1"])  # parte fixa de l1 (a parte da sobrancelha está em d218_dyn.py)
 
 
 def ink_of(name, poly):
@@ -42,7 +44,6 @@ HAIR = {
     "ramo_g": [(620, 50), (610, 100), (585, 165), (565, 220), (550, 260)],
     "franja_h1": [(550, 465), (575, 425), (600, 390), (625, 345), (645, 300), (665, 250), (690, 200), (700, 170), (715, 110), (725, 70), (722, 0)],
     "franja_h2": [(725, 70), (750, 125), (775, 175), (800, 225), (850, 280), (900, 320), (937, 341)],
-    "franja_h3": [(700, 170), (750, 147), (780, 132), (825, 136)],
     "franja_i1": [(885, 200), (895, 250), (915, 300), (940, 341)],
     "franja_i2": [(903, 236), (910, 255), (950, 290), (1000, 318), (1050, 350), (1090, 350)],
     "franja_entalhe": [(1068, 314), (1080, 318), (1090, 322)],
@@ -51,7 +52,8 @@ HAIR = {
     "franja_k2": [(1064, -6), (1065, 30), (1058, 75), (1050, 115), (1030, 160), (1025, 170)],
     "franja_k3": [(1095, 280), (1115, 240), (1125, 200), (1130, 175), (1137, 200), (1142, 240), (1147, 280), (1165, 240), (1185, 195),
                   (1205, 140), (1220, 85), (1225, 30), (1228, -6)],
-    "franja_l1": [(1130, 99), (1175, 85), (1225, 95), (1275, 125), (1325, 165), (1375, 200), (1415, 215), (1420, 230)],
+    # l1 até ~x 1255 é a sobrancelha direita (muda por desenho, d218_dyn.py); daqui para a direita é fixa
+    "franja_l1b": [(1250, 110), (1275, 125), (1325, 165), (1375, 200), (1415, 215), (1420, 230)],
     "franja_l2": [(1295, 75), (1340, 110), (1390, 140), (1410, 165)],
     "mecha_m": [(1356, -6), (1365, 25), (1385, 75), (1405, 125), (1420, 175), (1430, 225), (1437, 275), (1442, 350), (1445, 425), (1435, 475),
                 (1430, 500), (1410, 550), (1385, 600), (1360, 650), (1350, 685), (1360, 725), (1385, 755), (1410, 772), (1445, 778)],
@@ -111,7 +113,7 @@ INK_Q = 0.5
 BAND = "--meia-altura" not in sys.argv
 
 
-def colored_segments(pts, ws, base_w, seg_len=180.0, clamp=(0.7, 1.3)):
+def colored_segments(pts, ws, base_w, seg_len=180.0, clamp=(0.7, 1.3), ref=None):
     """Divide a linha em trechos de ~`seg_len` px e dá a cada um a cor da tinta medida nos seus centros (a tinta clareia
     no alto do quadro e escurece sobre o cabelo de trás ao longo de uma mesma linha)."""
     import math
@@ -128,7 +130,7 @@ def colored_segments(pts, ws, base_w, seg_len=180.0, clamp=(0.7, 1.3)):
     for a, b in zip(cuts[:-1], cuts[1:]):
         sp, sw = pts[a:b + 1], ws[a:b + 1]
         probe = [[round(p[0]), round(p[1])] for p in sp[::2]]
-        pr = meas.first_list(d.call("PROBE_COLOR", {"reference": REF0, "points": probe, "radius": 1}))
+        pr = meas.first_list(d.call("PROBE_COLOR", {"reference": ref or REF0, "points": probe, "radius": 1}))
         # só amostras com cara de tinta (o centro medido pode cair no realce ou no cabelo ao lado)
         inkish = [p["rgb"] for p in pr if sum((p["rgb"][k] * 255 - (92, 46, 46)[k]) ** 2 for k in range(3)) ** 0.5 < 55]
         if len(inkish) >= 2:
@@ -143,15 +145,16 @@ def colored_segments(pts, ws, base_w, seg_len=180.0, clamp=(0.7, 1.3)):
     return out
 
 
-def measured_curves(table, step=3, closed=False):
+def measured_curves(table, step=3, closed=False, ref=None):
+    REF = ref or REF0
     curves, log = [], {}
     for name, poly in table.items():
         if BAND:
             # paquímetro de faixa pela cor da tinta: separa a tinta do cabelo, do realce e da sombra sem viés de meia altura
-            pts, ws = meas.measure_band(d, REF0, meas.densify(poly, step, closed=closed), "#5c2e2e", 0.09, closed=closed,
+            pts, ws = meas.measure_band(d, REF, meas.densify(poly, step, closed=closed), "#5c2e2e", 0.09, closed=closed,
                                         passes=(16.0, 10.0), smooth=SMOOTH)
         else:
-            pts, ws = meas.measure_line(d, REF0, meas.densify(poly, step, closed=closed), closed=closed, line_color="#5c2e2e",
+            pts, ws = meas.measure_line(d, REF, meas.densify(poly, step, closed=closed), closed=closed, line_color="#5c2e2e",
                                         passes=((14.0, 0.08), (9.0, 0.08)), smooth=3)
         if name in PIN_START:  # emenda exata com o trecho desenhado direto
             pts[0] = list(poly[0])
@@ -166,7 +169,7 @@ def measured_curves(table, step=3, closed=False):
             # refino pelas bordas (lado da pele/fundo é nítido): centro e largura locais
             ws = [max(w or 0, MIN_W) for w in ws]
             for search in (10.0, 4.0):
-                pts, ws2 = meas.anchor_line(d, REF0, pts, ws, c["width"], closed=closed, search=search)
+                pts, ws2 = meas.anchor_line(d, REF, pts, ws, c["width"], closed=closed, search=search)
                 ws = ws if name in FIXED_W else ws2
                 if name in PIN_START:
                     pts[0] = list(poly[0])
@@ -174,7 +177,7 @@ def measured_curves(table, step=3, closed=False):
             c["width"] = max(c["width"], MIN_W - 1)
         c["profile"] = [[t, max(0.7, min(1.3, w))] for t, w in c["profile"]]
         if SEGMENT_INK and not closed and name in INK:
-            segs = colored_segments(pts, ws, c["width"])
+            segs = colored_segments(pts, ws, c["width"], ref=REF)
             if segs:
                 curves.extend(segs)
                 log[name] = c["width"]
@@ -193,6 +196,7 @@ FECHO = [
     [(1915, 720), (1925, 730)],        # contorno n5 ↔ borda direita
     [(241, 662), (247, 645)],          # cacho esquerdo ↔ contorno esquerdo
     [(737, 95), (800, 70), (880, 50), (965, 40), (1065, 35), (1150, 35), (1228, 35)],  # topo da franja (região do degradê claro)
+    [(1212, 93), (1232, 101), (1252, 111)],  # l1 entre o braço de k3 e a parte fixa (a parte visível muda por desenho)
 ]
 
 
