@@ -42,7 +42,7 @@ pub struct Track {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layer: Option<Id>,
     /// Quadro → mudança de exposição.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "u32_keys")]
     pub cells: BTreeMap<u32, CellRef>,
 }
 
@@ -55,6 +55,16 @@ impl Track {
     pub fn exposed_at(&self, frame: u32) -> Option<CellRef> {
         self.cells.range(..=frame).next_back().map(|(_, c)| *c)
     }
+}
+
+/// Aceita chaves de quadro como número ou texto. Necessário porque `NodeKind` é um enum com tag interna: o serde
+/// bufferiza o conteúdo e entrega as chaves de mapa como string, que `u32` não aceita direto (projeto com timesheet
+/// não reabria do disco).
+fn u32_keys<'de, D: serde::Deserializer<'de>>(d: D) -> Result<BTreeMap<u32, CellRef>, D::Error> {
+    let raw: BTreeMap<String, CellRef> = BTreeMap::deserialize(d)?;
+    raw.into_iter()
+        .map(|(k, v)| k.trim().parse::<u32>().map(|f| (f, v)).map_err(|_| serde::de::Error::custom(format!("quadro inválido no timesheet: {k}"))))
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Default)]

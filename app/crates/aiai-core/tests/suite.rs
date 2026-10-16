@@ -293,3 +293,21 @@ proptest! {
         prop_assert_eq!(snapshot(&s), end);
     }
 }
+
+
+#[test]
+fn project_with_timesheet_reopens_and_accepts_set_props() {
+    let dir = std::env::temp_dir().join(format!("aiai-core-xsheet-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut s = CoreSession::for_tests("xs");
+    let (_ep, cut, layer, _cel) = build_basic(&mut s);
+    s.apply(Command::AddTrack { cut: cut.clone(), index: None, track: Track::new(Id::from(""), "A", TrackKind::Drawing, Some(layer)) }).unwrap();
+    let tid = match &s.project.node(&cut).unwrap().data { NodeKind::Cut(c) => c.xsheet.tracks[0].id.clone(), _ => unreachable!() };
+    s.apply(Command::SetCells { cut: cut.clone(), track: tid, cells: vec![CellEdit { frame: 0, cell: Some(CellRef::Cel { number: 1 }) }, CellEdit { frame: 12, cell: Some(CellRef::Empty) }] }).unwrap();
+    // set_props num corte com células (antes: "invalid type: string \"0\", expected u32")
+    s.apply(Command::SetProps { id: cut.clone(), name: None, data: json!({"notes": "teste"}) }).unwrap();
+    persist::save(&mut s, &dir).unwrap();
+    let (s2, _) = persist::open(&dir).unwrap();
+    assert_eq!(snapshot(&s2), snapshot(&s));
+    let _ = std::fs::remove_dir_all(&dir);
+}
