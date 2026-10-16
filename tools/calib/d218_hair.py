@@ -113,13 +113,21 @@ DIRECT_DES = {7: {"alca": ([(1486, 947), (1480, 960), (1467, 980), (1452, 1000),
                   # fim do contorno direito: mais grosso no 7 (~24 px pela extensão vertical a 45°, runs.py) e desce até a borda
                   "contorno_n5": ([(1832, 640), (1850, 652), (1870, 672), (1890, 697), (1910, 722), (1925, 738)], 24.0)}}
 TAPER_DES = {7: {"franja_h2", "franja_i1"}}
-DIRECT_W_DES = {8: {"queixo": 25.0}}
-NO_ANCHOR_DES = {8: {"contorno_n2"}}  # no 8 o queixo engrossa (~25 px pela varredura por colunas, borda da pele igual)
+DIRECT_W_DES = {8: {"queixo": 25.0}}  # no 8 o queixo engrossa (~25 px pela varredura por colunas, borda da pele igual)
+NO_ANCHOR_DES = {8: {"contorno_n2"}}
 # larguras fixas por desenho (lidas por varredura): no alto do quadro a tinta clareia e o paquímetro de faixa estreita a linha
 FIXED_W.update({7: {"mecha_n": 20.0}, 8: {"mecha_n": 22.0}}.get(CEL, {}))
 INK.update({7: {"alca": "#3e1d1c"}, 8: {"alca": "#3e1d1c"}}.get(CEL, {}))  # alça curta (sem trechos coloridos): cor medida no desenho
 DIRECT_DES[8] = {"alca": ([(1491, 953), (1483, 960), (1476, 970), (1466, 980), (1456, 990), (1446, 1000), (1438, 1010), (1430, 1020), (1422, 1030),
                            (1415, 1040), (1408, 1050), (1402, 1060), (1397, 1070), (1392, 1082)], 24.0),  # centros das varreduras de tinta (runs.py)
+                 # contorno de baixo à esquerda: no 8 a ponta do cacho fecha embaixo (curva até a mecha da direita)
+                 "borda_inf_esq": ([(172, 801), (181, 811), (189, 821), (201, 844), (210, 866), (212, 880), (209, 892), (205, 904), (200, 916),
+                                    (197, 928), (193, 940), (189, 952), (185, 964), (182, 976), (179, 988), (180, 1000), (186, 1012), (196, 1022),
+                                    (212, 1031), (232, 1042), (258, 1053), (285, 1062), (305, 1066)], 14.0),
+                 # queixo do 8: borda da pele por varredura (runs.py) menos meia largura; sem ancoragem (ela criava um calombo em x≈1040)
+                 "queixo": ([(541, 560), (544, 590), (548, 620), (556, 650), (568, 680), (582, 710), (596, 740), (614, 770), (636, 800), (666, 830),
+                             (708, 857), (745, 876), (800, 900), (860, 922), (920, 935), (980, 941), (1040, 942), (1100, 935), (1160, 923),
+                             (1220, 907), (1280, 882), (1340, 846), (1385, 806), (1410, 770)], 25.0),
                  # contorno esquerdo do 8 (centros das varreduras; sem pontos de campo no alto à esquerda)
                  "contorno_esq": ([(298, 100), (288, 125), (277, 150), (273, 170), (270, 190), (265, 210), (259, 230), (249, 250), (237, 270),
                                    (223, 290), (206, 310), (194, 330), (199, 350), (209, 370), (221, 390), (236, 410), (244, 420), (240, 440),
@@ -134,6 +142,11 @@ HAIR_DES = {8: {"laco": [(163, 0), (162, 15), (168, 28), (180, 40), (195, 52), (
                 "mecha_f": [(333, 0), (326, 20), (317, 40), (309, 60), (302, 80), (298, 100)],
                 "franja_i2": [(893, 203), (905, 219), (915, 233), (930, 250), (950, 283), (1002, 310), (1053, 336), (1084, 336)],
                 "franja_bico": [(1060, 302), (1070, 307), (1082, 312)],
+                # mecha da esquerda desce e fecha a ponta do cacho no 8 (varredura de tinta, runs.py)
+                "mecha_e": [(426, 0), (411, 65), (399, 108), (375, 181), (364, 261), (357, 340), (360, 441), (366, 491), (384, 543), (387, 629),
+                            (386, 707), (370, 755), (349, 822), (339, 871), (324, 896), (309, 906), (303, 916), (297, 928), (294, 940), (292, 952),
+                            (290, 964), (289, 976), (290, 988), (291, 1000), (295, 1012), (299, 1024), (304, 1036), (310, 1048), (316, 1060),
+                            (322, 1072), (326, 1082)],
                 "mecha_n": [(1585, 0), (1590, 20), (1597, 40), (1602, 60), (1606, 80), (1610, 100), (1615, 120), (1619, 140), (1622, 160),
                             (1626, 180), (1628, 200), (1631, 240), (1633, 261), (1635, 338), (1630, 439), (1606, 515), (1591, 565), (1574, 616),
                             (1559, 642)]}}
@@ -288,7 +301,7 @@ if __name__ == "__main__":
             if best is None or sc > best[0]:
                 best = (sc, cp)
         pts = best[1]
-        wl = [WIDTH_FN[name](p, w) for p in pts] if name in WIDTH_FN else [w] * len(pts)
+        wl = [WIDTH_FN[name](p, w) for p in pts] if name in WIDTH_FN and name not in RAW else [w] * len(pts)
         if name in SKIN_SIDE and name in WIDTH_FN:  # largura variável: reancora pela borda da pele com a meia largura local
             pts = [[p[0] - SKIN_SIDE[name] * n[0] * (wi - w) / 2, p[1] - SKIN_SIDE[name] * n[1] * (wi - w) / 2]
                    for p, n, wi in zip(pts, meas._normals(pts), wl)]
