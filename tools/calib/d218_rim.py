@@ -1,44 +1,50 @@
-"""Corte D, quadro 0: realces salmão (luz de borda do cabelo). Polígonos estimados no mapa de proximidade
-(grid_crop --near f49089), bordas medidas com MEASURE_EDGE de alcance curto; pintados na `realce` (recortada na cor)."""
-import json, os, sys
+"""Corte D, quadro 0: realces salmão como TRAÇOS medidos (substitui a versão de polígonos, que errava a faixa em 3–5 px). O agente estima a
+linha central de cada faixa; MEASURE_LINE pela cor do realce (busca larga: as faixas têm até ~20 px) dá centro e largura;
+cor de cada faixa = mediana medida nos centros. Camada vetorial `rim`, recortada na cor do cabelo."""
+import os, sys
 sys.path.insert(0, os.path.dirname(__file__))
 import meas
-from d218 import d, ids, REF0
+from d218 import reorder, d, ids, node, REF0
 
-RIM = "#f49089"
-SHAPES = {
-    "esq1": [(296, 148), (306, 150), (285, 230), (262, 300), (252, 335), (244, 350), (240, 345), (250, 300), (270, 230), (290, 160)],
-    "esq2": [(214, 350), (232, 340), (222, 370), (250, 425), (258, 445), (250, 450), (225, 400), (210, 370)],
-    "esq3": [(258, 460), (268, 480), (250, 540), (230, 590), (248, 625), (255, 640), (238, 630), (215, 600), (222, 560), (245, 490)],
-    "esq4": [(250, 662), (258, 680), (235, 740), (222, 790), (232, 828), (222, 826), (205, 800), (215, 750), (238, 690)],
-    "esq5": [(240, 858), (250, 860), (240, 940), (228, 1010), (225, 1056), (214, 1055), (218, 1000), (230, 920)],
-    "mecha_e": [(415, 0), (445, 0), (420, 60), (405, 150), (395, 250), (392, 400), (400, 520), (404, 640), (395, 720), (385, 778),
-                (380, 760), (386, 640), (382, 520), (378, 400), (380, 250), (390, 150), (405, 60)],
-    "mecha_e_topo": [(362, 0), (378, 0), (355, 50), (345, 80), (342, 60)],
-    "dir1": [(1545, 0), (1565, 0), (1590, 90), (1605, 200), (1610, 320), (1600, 420), (1595, 520), (1588, 515), (1590, 420), (1592, 320),
-             (1585, 200), (1570, 100)],
-    "dir2": [(1620, 128), (1660, 140), (1700, 175), (1725, 205), (1730, 220), (1715, 260), (1700, 300), (1695, 300), (1708, 250),
-             (1712, 215), (1690, 190), (1650, 160), (1625, 145)],
-    "dir3": [(1705, 305), (1720, 310), (1755, 350), (1790, 385), (1795, 395), (1780, 430), (1755, 480), (1730, 500), (1725, 495),
-             (1750, 450), (1770, 400), (1745, 370), (1710, 330)],
-    "dir4": [(1745, 500), (1760, 505), (1800, 545), (1838, 575), (1845, 585), (1835, 620), (1820, 650), (1812, 648), (1825, 600),
-             (1800, 570), (1760, 530)],
-    "dir5": [(1815, 662), (1830, 665), (1865, 690), (1885, 705), (1880, 712), (1840, 695), (1818, 680)],
-    "dir6": [(1910, 720), (1920, 720), (1920, 820), (1905, 815)],
+CENTERS = {
+    "esq1": [(300, 150), (285, 230), (262, 300), (247, 345)],
+    "esq2": [(222, 345), (225, 385), (250, 440)],
+    "esq3": [(262, 465), (240, 540), (225, 595), (250, 635)],
+    "esq4": [(252, 668), (230, 740), (215, 795), (228, 828)],
+    "esq5": [(245, 860), (235, 940), (225, 1010), (220, 1056)],
+    "mecha_e": [(430, 0), (412, 60), (398, 150), (390, 250), (390, 400), (397, 520), (399, 640), (392, 720), (385, 770)],
+    "mecha_e_topo": [(370, 0), (352, 50), (345, 75)],
+    "dir1": [(1560, 0), (1585, 100), (1600, 200), (1610, 320), (1607, 420), (1600, 515)],
+    "dir2": [(1625, 135), (1660, 150), (1700, 180), (1720, 212), (1712, 250), (1698, 298)],
+    "dir3": [(1712, 308), (1752, 360), (1785, 392), (1765, 440), (1740, 490)],
+    "dir4": [(1752, 503), (1800, 555), (1838, 582), (1828, 625), (1815, 648)],
+    "dir5": [(1820, 670), (1860, 692), (1882, 708)],
+    "dir6": [(1913, 722), (1914, 815)],
 }
+RIM = "#f4a097"
 
 
-def run(measure=True):
-    c = [int(RIM[i:i + 2], 16) / 255 for i in (1, 3, 5)]
-    shapes = []
-    for name, poly in SHAPES.items():
-        pts = meas.densify(poly, 5, closed=True)
-        if measure:
-            pts = meas.measure_edge(d, REF0, pts, passes=((5.0, 0.04), (3.0, 0.04)))
-        shapes.append({"points": pts, "geometry": "polyline"})
-    return d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": 0, "layer": ids["realce"], "shapes": shapes,
-                                 "color": {"type": "direct", "rgba": c + [1.0]}})
+def run():
+    lay = node("rim", "Realce de borda", {"type": "layer", "kind": "vector"}, ids["cut"])
+    node("rim_c1", "1", {"type": "cel", "number": 1}, lay)
+    d.apply({"kind": "set_props", "id": lay, "data": {"clip_to_below": True, "visible": True}})
+    reorder()
+    d.apply({"kind": "replace_data", "id": ids["rim_c1"], "data": {"type": "cel", "number": 1}})
+    curves, log = [], {}
+    for name, poly in CENTERS.items():
+        pts, ws = meas.measure_line(d, REF0, meas.densify(poly, 6), line_color=RIM, passes=((20.0, 0.08), (12.0, 0.08)), smooth=2)
+        probes = meas.first_list(d.call("PROBE_COLOR", {"reference": REF0, "points": [[round(p[0]), round(p[1])] for p in pts[1:-1:2]],
+                                                        "radius": 1}))
+        cs = sorted(probes, key=lambda c: sum(c["rgb"]))
+        mid = cs[len(cs) // 2]["rgb"] if cs else [0xf4 / 255, 0xa0 / 255, 0x97 / 255]
+        c = meas.curve_from_measure(pts, ws, {"type": "direct", "rgba": list(mid) + [1.0]}, tip="marker")
+        c["profile"] = [[t, max(0.1, min(1.8, w))] for t, w in c["profile"]]
+        curves.append(c)
+        log[name] = (round(c["width"], 1), "#%02x%02x%02x" % tuple(round(v * 255) for v in mid))
+    d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": 0, "layer": lay, "curves": curves})
+    return log
 
 
 if __name__ == "__main__":
-    print(run("--sem-medir" not in sys.argv).get("description"))
+    for k, v in run().items():
+        print(k, v)
