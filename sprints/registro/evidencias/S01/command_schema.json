@@ -1,0 +1,2056 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "AssetType": {
+      "enum": [
+        "texture",
+        "brush_preset",
+        "lut",
+        "audio_clip",
+        "background",
+        "effect_preset",
+        "font"
+      ],
+      "type": "string"
+    },
+    "BlendMode": {
+      "oneOf": [
+        {
+          "enum": [
+            "normal",
+            "multiply",
+            "screen",
+            "overlay",
+            "soft_light",
+            "hard_light",
+            "add",
+            "subtract",
+            "darken",
+            "lighten",
+            "difference",
+            "color",
+            "hue",
+            "saturation",
+            "luminosity"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Só para pastas: os filhos se misturam direto com o que está abaixo da pasta.",
+          "enum": [
+            "pass_through"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Só pinta onde já há pixels abaixo na mesma pasta é tratado por `clip_to_below`; este modo pinta ATRÁS.",
+          "enum": [
+            "behind"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "CameraData": {
+      "properties": {
+        "center": {
+          "description": "Centro do quadro de câmera em pixels do canvas.",
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "rotation": {
+          "description": "Graus.",
+          "format": "float",
+          "type": "number"
+        },
+        "zoom": {
+          "description": "1 = quadro do tamanho do projeto.",
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "center",
+        "rotation",
+        "zoom"
+      ],
+      "type": "object"
+    },
+    "CelRole": {
+      "enum": [
+        "key",
+        "breakdown",
+        "inbetween"
+      ],
+      "type": "string"
+    },
+    "CellEdit": {
+      "properties": {
+        "cell": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CellRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "`None` remove a entrada (o quadro passa a segurar o que vinha antes)."
+        },
+        "frame": {
+          "description": "Quadro 0-based.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "frame"
+      ],
+      "type": "object"
+    },
+    "CellRef": {
+      "oneOf": [
+        {
+          "description": "Número do cel da camada da trilha (como \"A3\").",
+          "properties": {
+            "number": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "type": {
+              "enum": [
+                "cel"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "number",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Quadro vazio (nada daquela trilha aparece).",
+          "properties": {
+            "type": {
+              "enum": [
+                "empty"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ColorRef": {
+      "description": "Referência de cor: direta ou por índice de paleta (trocar a cor na paleta recolore tudo que a referencia).",
+      "oneOf": [
+        {
+          "properties": {
+            "rgba": {
+              "$ref": "#/definitions/Rgba"
+            },
+            "type": {
+              "enum": [
+                "direct"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "rgba",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "color": {
+              "type": "string"
+            },
+            "palette": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "palette"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "color",
+            "palette",
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Command": {
+      "oneOf": [
+        {
+          "description": "Cria um nó. `id` omitido = gerado. `parent` omitido = nó de raiz (a categoria vem do tipo).",
+          "properties": {
+            "data": {
+              "$ref": "#/definitions/NodeKind"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "index": {
+              "description": "Posição entre os irmãos; omitido = no fim.",
+              "format": "uint",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "kind": {
+              "enum": [
+                "create_node"
+              ],
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "parent": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "data",
+            "kind",
+            "name"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Apaga o nó e toda a subárvore; referências externas a ele (máscara, trilha, paleta do personagem) são limpas.",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "delete_node"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Reinsere uma subárvore apagada (inverso de `delete_node`). `nodes[0]` é a raiz da subárvore.",
+          "properties": {
+            "index": {
+              "format": "uint",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "kind": {
+              "enum": [
+                "restore_nodes"
+              ],
+              "type": "string"
+            },
+            "nodes": {
+              "items": {
+                "$ref": "#/definitions/Node"
+              },
+              "type": "array"
+            },
+            "parent": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "index",
+            "kind",
+            "nodes"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Move o nó para outro pai/posição.",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "index": {
+              "format": "uint",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "kind": {
+              "enum": [
+                "move_node"
+              ],
+              "type": "string"
+            },
+            "parent": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Edita propriedades de qualquer nó: `name` e/ou um JSON Merge Patch sobre `data` (o campo `type` não muda).",
+          "properties": {
+            "data": true,
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "set_props"
+              ],
+              "type": "string"
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Substitui os dados inteiros de um nó (mesmo tipo).",
+          "properties": {
+            "data": {
+              "$ref": "#/definitions/NodeKind"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "replace_data"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "data",
+            "id",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Merge Patch sobre `{name, settings, bible}` do projeto.",
+          "properties": {
+            "kind": {
+              "enum": [
+                "set_project_props"
+              ],
+              "type": "string"
+            },
+            "patch": true
+          },
+          "required": [
+            "kind",
+            "patch"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Edita células do timesheet de uma trilha.",
+          "properties": {
+            "cells": {
+              "items": {
+                "$ref": "#/definitions/CellEdit"
+              },
+              "type": "array"
+            },
+            "cut": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "set_cells"
+              ],
+              "type": "string"
+            },
+            "track": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cells",
+            "cut",
+            "kind",
+            "track"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cut": {
+              "type": "string"
+            },
+            "index": {
+              "format": "uint",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "kind": {
+              "enum": [
+                "add_track"
+              ],
+              "type": "string"
+            },
+            "track": {
+              "$ref": "#/definitions/Track"
+            }
+          },
+          "required": [
+            "cut",
+            "kind",
+            "track"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cut": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "remove_track"
+              ],
+              "type": "string"
+            },
+            "track": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "cut",
+            "kind",
+            "track"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Insere traços num cel (índices referem-se à lista final, aplicados em ordem crescente).",
+          "properties": {
+            "cel": {
+              "type": "string"
+            },
+            "items": {
+              "items": {
+                "$ref": "#/definitions/IndexedStroke"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "enum": [
+                "insert_strokes"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "cel",
+            "items",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "cel": {
+              "type": "string"
+            },
+            "ids": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "enum": [
+                "remove_strokes"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "cel",
+            "ids",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Substitui traços existentes (casados por id).",
+          "properties": {
+            "cel": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "replace_strokes"
+              ],
+              "type": "string"
+            },
+            "strokes": {
+              "items": {
+                "$ref": "#/definitions/Stroke"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "cel",
+            "kind",
+            "strokes"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Troca tiles raster de um cel (os blobs precisam existir no armazenamento).",
+          "properties": {
+            "cel": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "set_tiles"
+              ],
+              "type": "string"
+            },
+            "tiles": {
+              "items": {
+                "$ref": "#/definitions/TileEdit"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "cel",
+            "kind",
+            "tiles"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Substitui as regiões de preenchimento de um cel.",
+          "properties": {
+            "cel": {
+              "type": "string"
+            },
+            "fills": {
+              "items": {
+                "$ref": "#/definitions/FillRegion"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "enum": [
+                "replace_fills"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "cel",
+            "fills",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "description": "Vários comandos como um passo único de undo.",
+          "properties": {
+            "commands": {
+              "items": {
+                "$ref": "#/definitions/Command"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "enum": [
+                "batch"
+              ],
+              "type": "string"
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "commands",
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "DocumentType": {
+      "enum": [
+        "script",
+        "storyboard",
+        "edit",
+        "notes"
+      ],
+      "type": "string"
+    },
+    "FillRegion": {
+      "description": "Região preenchida pelo balde (detalhada na S07): semente + índice de cor; a máscara rasterizada fica em blob.",
+      "properties": {
+        "bounds": {
+          "default": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "description": "Retângulo da máscara em pixels do canvas [x, y, w, h].",
+          "items": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "color": {
+          "$ref": "#/definitions/ColorRef"
+        },
+        "id": {
+          "type": "string"
+        },
+        "mask": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "seed": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "required": [
+        "color",
+        "id",
+        "seed"
+      ],
+      "type": "object"
+    },
+    "IndexedStroke": {
+      "properties": {
+        "index": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "stroke": {
+          "$ref": "#/definitions/Stroke"
+        }
+      },
+      "required": [
+        "index",
+        "stroke"
+      ],
+      "type": "object"
+    },
+    "LayerRole": {
+      "description": "Papel da camada no pipeline (para filtros, travas por etapa e organização).",
+      "enum": [
+        "none",
+        "layout",
+        "genga",
+        "douga",
+        "shiage",
+        "shadow",
+        "highlight",
+        "background",
+        "book",
+        "effect",
+        "correction",
+        "construction"
+      ],
+      "type": "string"
+    },
+    "LayerType": {
+      "enum": [
+        "group",
+        "vector",
+        "raster",
+        "fill",
+        "text",
+        "guide",
+        "reference",
+        "adjustment",
+        "effect",
+        "particles"
+      ],
+      "type": "string"
+    },
+    "NamedColor": {
+      "properties": {
+        "group": {
+          "default": "",
+          "description": "Agrupamento no settei (\"pele\", \"cabelo\"...).",
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "rgba": {
+          "$ref": "#/definitions/Rgba"
+        },
+        "role": {
+          "default": "",
+          "description": "Papel: \"normal\", \"sombra\", \"sombra2\", \"realce\", \"linha\"...",
+          "type": "string"
+        },
+        "variants": {
+          "additionalProperties": {
+            "$ref": "#/definitions/Rgba"
+          },
+          "description": "Variantes de iluminação (\"entardecer\", \"noite\") → cor.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "rgba"
+      ],
+      "type": "object"
+    },
+    "Node": {
+      "properties": {
+        "children": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "data": {
+          "$ref": "#/definitions/NodeKind"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parent": {
+          "description": "`None` = nó de raiz (está em `Project.roots`).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provenance": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/Provenance"
+            }
+          ],
+          "default": {
+            "created_by": "",
+            "modified_by": "",
+            "revision": 0
+          }
+        }
+      },
+      "required": [
+        "data",
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "NodeKind": {
+      "oneOf": [
+        {
+          "properties": {
+            "number": {
+              "default": 0,
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "type": {
+              "enum": [
+                "episode"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "description": {
+              "default": "",
+              "type": "string"
+            },
+            "number": {
+              "default": 0,
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "type": {
+              "enum": [
+                "scene"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "camera": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/CameraData"
+                }
+              ],
+              "default": {
+                "center": [
+                  960.0,
+                  540.0
+                ],
+                "rotation": 0.0,
+                "zoom": 1.0
+              },
+              "description": "Câmera do corte (detalhada na S13); por ora transformação estática."
+            },
+            "canvas": {
+              "description": "Tamanho do quadro deste corte; `None` = configuração do projeto. Model sheets e cenários grandes usam outro tamanho.",
+              "items": {
+                "format": "uint32",
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "dialogue_links": {
+              "description": "Falas do roteiro vinculadas (ids de elementos do documento de roteiro).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "duration": {
+              "description": "Duração em quadros.",
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "notes": {
+              "default": "",
+              "type": "string"
+            },
+            "number": {
+              "default": 0,
+              "description": "Número do corte (カット番号).",
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "stages": {
+              "additionalProperties": {
+                "$ref": "#/definitions/StageStatus"
+              },
+              "default": {},
+              "type": "object"
+            },
+            "storyboard_panel": {
+              "description": "Painel de storyboard de origem.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "enum": [
+                "cut"
+              ],
+              "type": "string"
+            },
+            "xsheet": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/XSheet"
+                }
+              ],
+              "default": {
+                "tracks": []
+              }
+            }
+          },
+          "required": [
+            "duration",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "blend": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/BlendMode"
+                }
+              ],
+              "default": "normal"
+            },
+            "clip_to_below": {
+              "default": false,
+              "description": "Máscara de recorte: só aparece onde a camada imediatamente abaixo tem alfa.",
+              "type": "boolean"
+            },
+            "depth": {
+              "default": 0.0,
+              "description": "Profundidade para multiplano (0 = plano da câmera; maior = mais longe).",
+              "format": "float",
+              "type": "number"
+            },
+            "kind": {
+              "$ref": "#/definitions/LayerType"
+            },
+            "line_refs": {
+              "description": "Camada de preenchimento: camada(s) de linha usadas como fronteira do balde.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "locked": {
+              "default": false,
+              "type": "boolean"
+            },
+            "mask": {
+              "description": "Camada usada como máscara (raster em escala de cinza ou vetor).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "offset": {
+              "default": [
+                0.0,
+                0.0
+              ],
+              "description": "Deslocamento da camada em pixels (cenário maior que o quadro, pan).",
+              "items": {
+                "format": "float",
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            "opacity": {
+              "default": 1.0,
+              "format": "float",
+              "type": "number"
+            },
+            "params": {
+              "description": "Parâmetros específicos (efeito, ajuste, partículas, texto, referência) — esquema por tipo, definido nas sprints."
+            },
+            "role": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/LayerRole"
+                }
+              ],
+              "default": "none"
+            },
+            "type": {
+              "enum": [
+                "layer"
+              ],
+              "type": "string"
+            },
+            "visible": {
+              "default": true,
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "fills": {
+              "items": {
+                "$ref": "#/definitions/FillRegion"
+              },
+              "type": "array"
+            },
+            "image": {
+              "description": "Imagem importada (camadas de referência) — blob PNG.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "number": {
+              "description": "Número do cel dentro da camada (o \"3\" de \"A3\"); único por camada.",
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "role": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/CelRole"
+                }
+              ],
+              "default": "key"
+            },
+            "strokes": {
+              "items": {
+                "$ref": "#/definitions/Stroke"
+              },
+              "type": "array"
+            },
+            "text": {
+              "description": "Texto (camadas de texto/balão).",
+              "type": "string"
+            },
+            "tiles": {
+              "description": "Tiles raster (ordenados por y, x).",
+              "items": {
+                "$ref": "#/definitions/TileEntry"
+              },
+              "type": "array"
+            },
+            "transform": {
+              "default": [
+                0.0,
+                0.0,
+                1.0,
+                0.0
+              ],
+              "description": "Transformação da imagem/cel: [tx, ty, escala, rotação em graus].",
+              "items": {
+                "format": "float",
+                "type": "number"
+              },
+              "maxItems": 4,
+              "minItems": 4,
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "cel"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "number",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "age": {
+              "default": "",
+              "type": "string"
+            },
+            "heads_tall": {
+              "default": 6.5,
+              "description": "Altura em cabeças (proporção do model sheet).",
+              "format": "float",
+              "type": "number"
+            },
+            "measurements": {
+              "description": "Medidas de referência do model sheet para o medidor de consistência (S10)."
+            },
+            "palette": {
+              "description": "Paleta de settei deste personagem.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "profile": {
+              "default": "",
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "character"
+              ],
+              "type": "string"
+            },
+            "voice": {
+              "description": "Perfil de voz (motor, voz, ajustes) — esquema definido na S17."
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "active_variant": {
+              "default": "",
+              "description": "Variante ativa (\"\" = normal).",
+              "type": "string"
+            },
+            "colors": {
+              "default": [],
+              "items": {
+                "$ref": "#/definitions/NamedColor"
+              },
+              "type": "array"
+            },
+            "type": {
+              "enum": [
+                "palette"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "asset": {
+              "$ref": "#/definitions/AssetType"
+            },
+            "blob": {
+              "description": "Conteúdo binário principal (PNG, WAV, .cube...).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "params": {
+              "description": "Parâmetros (gerador procedural, preset de pincel, texto/ajustes de origem de uma fala TTS...)."
+            },
+            "source": {
+              "default": "",
+              "description": "Origem e licença (ex.: \"procedural\", \"desenhado no app\", \"CC0: <url>\", \"VOICEVOX: <personagem>\").",
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "asset"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "asset",
+            "type"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "content": {
+              "description": "Conteúdo estruturado (elementos do roteiro, painéis, timeline de edição) — esquema definido nas S16/S18."
+            },
+            "doc": {
+              "$ref": "#/definitions/DocumentType"
+            },
+            "type": {
+              "enum": [
+                "document"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "doc",
+            "type"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Provenance": {
+      "description": "Quem criou e quem alterou por último (auditoria; sem IA generativa, `tool:*` marca operações automáticas como intercalação ou preenchimento propagado).",
+      "properties": {
+        "created_by": {
+          "default": "",
+          "type": "string"
+        },
+        "modified_by": {
+          "default": "",
+          "type": "string"
+        },
+        "revision": {
+          "default": 0,
+          "description": "Revisão do projeto na última alteração deste nó.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "Rgba": {
+      "description": "Cor sRGB não linear com alfa, componentes 0..=1 (o que o usuário vê e o que o settei guarda). A conversão para linear acontece no render.",
+      "items": {
+        "format": "float",
+        "type": "number"
+      },
+      "maxItems": 4,
+      "minItems": 4,
+      "type": "array"
+    },
+    "StageStatus": {
+      "enum": [
+        "not_started",
+        "in_progress",
+        "review",
+        "approved",
+        "retake"
+      ],
+      "type": "string"
+    },
+    "Stroke": {
+      "properties": {
+        "aliased": {
+          "default": false,
+          "description": "Sem antisserrilhado (linha de cel, compatível com balde e seleção por cor).",
+          "type": "boolean"
+        },
+        "closed": {
+          "default": false,
+          "type": "boolean"
+        },
+        "color": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ColorRef"
+            }
+          ],
+          "default": {
+            "rgba": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "type": "direct"
+          }
+        },
+        "color_trace": {
+          "default": false,
+          "description": "Linha de cor (色トレス): delimita sombra/realce; pode sumir no render final conforme ajuste da camada.",
+          "type": "boolean"
+        },
+        "geometry": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/StrokeGeometry"
+            }
+          ],
+          "default": "freehand"
+        },
+        "id": {
+          "type": "string"
+        },
+        "opacity": {
+          "default": 1.0,
+          "format": "float",
+          "type": "number"
+        },
+        "points": {
+          "items": {
+            "$ref": "#/definitions/StrokePoint"
+          },
+          "type": "array"
+        },
+        "profile": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/WidthProfile"
+            }
+          ],
+          "description": "Perfil opcional; vazio = só pressão e regra da ponta."
+        },
+        "tension": {
+          "default": 0.0,
+          "description": "Tensão da spline (0 = Catmull-Rom padrão).",
+          "format": "float",
+          "type": "number"
+        },
+        "tip": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/VectorTip"
+            }
+          ],
+          "default": "g_pen"
+        },
+        "width": {
+          "description": "Largura base em pixels.",
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "points",
+        "width"
+      ],
+      "type": "object"
+    },
+    "StrokeGeometry": {
+      "description": "Como os pontos viram curva.",
+      "oneOf": [
+        {
+          "description": "Amostras livres (mão/caneta); suavizadas e ajustadas por Bézier no motor.",
+          "enum": [
+            "freehand"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Pontos de passagem: spline Catmull-Rom centrípeta (o modo preferido do agente).",
+          "enum": [
+            "spline"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Polilinha reta entre os pontos.",
+          "enum": [
+            "polyline"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Bézier cúbica explícita: [p0, c1, c2, p1, c1, c2, p2, ...].",
+          "enum": [
+            "bezier"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "StrokePoint": {
+      "description": "Amostra de entrada (caneta, mouse ou comando). Coordenadas em pixels do quadro do corte (origem no canto superior esquerdo).",
+      "properties": {
+        "pressure": {
+          "default": 1.0,
+          "description": "0..=1",
+          "format": "float",
+          "type": "number"
+        },
+        "t": {
+          "description": "Tempo relativo ao início do traço, em segundos (opcional; replay e dinâmica por velocidade).",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "tilt": {
+          "description": "Inclinação da caneta em graus (opcional).",
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "x": {
+          "format": "float",
+          "type": "number"
+        },
+        "y": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "type": "object"
+    },
+    "TileEdit": {
+      "properties": {
+        "blob": {
+          "description": "`None` apaga o tile.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "x": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "y": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "type": "object"
+    },
+    "TileEntry": {
+      "properties": {
+        "blob": {
+          "type": "string"
+        },
+        "x": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "y": {
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "blob",
+        "x",
+        "y"
+      ],
+      "type": "object"
+    },
+    "Track": {
+      "properties": {
+        "cells": {
+          "additionalProperties": {
+            "$ref": "#/definitions/CellRef"
+          },
+          "default": {},
+          "description": "Quadro → mudança de exposição.",
+          "type": "object"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TrackKind"
+            }
+          ],
+          "default": "drawing"
+        },
+        "layer": {
+          "description": "Camada cujos cels esta trilha expõe (trilhas de desenho, BG, BOOK, boca, olhos).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Nome da coluna (\"A\", \"B\", \"BG\"…).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "TrackKind": {
+      "enum": [
+        "drawing",
+        "background",
+        "book",
+        "camera",
+        "effect",
+        "dialogue",
+        "mouth",
+        "eyes"
+      ],
+      "type": "string"
+    },
+    "VectorTip": {
+      "description": "Ponta do pincel vetorial.",
+      "oneOf": [
+        {
+          "description": "Largura segue a pressão e afina nas pontas (linha principal de anime).",
+          "enum": [
+            "g_pen"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Fina e uniforme, pouca variação.",
+          "enum": [
+            "maru_pen"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Largura constante.",
+          "enum": [
+            "marker"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Lápis vetorial (textura de grafite; P1).",
+          "enum": [
+            "pencil"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "WidthProfile": {
+      "description": "Perfil de largura ao longo do traço: pares (t em 0..=1, multiplicador da largura base).",
+      "items": {
+        "items": {
+          "format": "float",
+          "type": "number"
+        },
+        "maxItems": 2,
+        "minItems": 2,
+        "type": "array"
+      },
+      "type": "array"
+    },
+    "XSheet": {
+      "properties": {
+        "tracks": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/Track"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "oneOf": [
+    {
+      "description": "Cria um nó. `id` omitido = gerado. `parent` omitido = nó de raiz (a categoria vem do tipo).",
+      "properties": {
+        "data": {
+          "$ref": "#/definitions/NodeKind"
+        },
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "index": {
+          "description": "Posição entre os irmãos; omitido = no fim.",
+          "format": "uint",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "create_node"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "data",
+        "kind",
+        "name"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "Apaga o nó e toda a subárvore; referências externas a ele (máscara, trilha, paleta do personagem) são limpas.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "delete_node"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "Reinsere uma subárvore apagada (inverso de `delete_node`). `nodes[0]` é a raiz da subárvore.",
+      "properties": {
+        "index": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "kind": {
+          "enum": [
+            "restore_nodes"
+          ],
+          "type": "string"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/definitions/Node"
+          },
+          "type": "array"
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "index",
+        "kind",
+        "nodes"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "Move o nó para outro pai/posição.",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "index": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "move_node"
+          ],
+          "type": "string"
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "Edita propriedades de qualquer nó: `name` e/ou um JSON Merge Patch sobre `data` (o campo `type` não muda).",
+      "properties": {
+        "data": true,
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "set_props"
+          ],
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "Substitui os dados inteiros de um nó (mesmo tipo).",
+      "properties": {
+        "data": {
+          "$ref": "#/definitions/NodeKind"
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "replace_data"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "id",
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "Merge Patch sobre `{name, settings, bible}` do projeto.",
+      "properties": {
+        "kind": {
+          "enum": [
+            "set_project_props"
+          ],
+          "type": "string"
+        },
+        "patch": true
+      },
+      "required": [
+        "kind",
+        "patch"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "Edita células do timesheet de uma trilha.",
+      "properties": {
+        "cells": {
+          "items": {
+            "$ref": "#/definitions/CellEdit"
+          },
+          "type": "array"
+        },
+        "cut": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "set_cells"
+          ],
+          "type": "string"
+        },
+        "track": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cells",
+        "cut",
+        "kind",
+        "track"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "cut": {
+          "type": "string"
+        },
+        "index": {
+          "format": "uint",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "add_track"
+          ],
+          "type": "string"
+        },
+        "track": {
+          "$ref": "#/definitions/Track"
+        }
+      },
+      "required": [
+        "cut",
+        "kind",
+        "track"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "cut": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "remove_track"
+          ],
+          "type": "string"
+        },
+        "track": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cut",
+        "kind",
+        "track"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "Insere traços num cel (índices referem-se à lista final, aplicados em ordem crescente).",
+      "properties": {
+        "cel": {
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/definitions/IndexedStroke"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "enum": [
+            "insert_strokes"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "cel",
+        "items",
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "cel": {
+          "type": "string"
+        },
+        "ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "enum": [
+            "remove_strokes"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "cel",
+        "ids",
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "Substitui traços existentes (casados por id).",
+      "properties": {
+        "cel": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "replace_strokes"
+          ],
+          "type": "string"
+        },
+        "strokes": {
+          "items": {
+            "$ref": "#/definitions/Stroke"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "cel",
+        "kind",
+        "strokes"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "Troca tiles raster de um cel (os blobs precisam existir no armazenamento).",
+      "properties": {
+        "cel": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "set_tiles"
+          ],
+          "type": "string"
+        },
+        "tiles": {
+          "items": {
+            "$ref": "#/definitions/TileEdit"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "cel",
+        "kind",
+        "tiles"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "Substitui as regiões de preenchimento de um cel.",
+      "properties": {
+        "cel": {
+          "type": "string"
+        },
+        "fills": {
+          "items": {
+            "$ref": "#/definitions/FillRegion"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "enum": [
+            "replace_fills"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "cel",
+        "fills",
+        "kind"
+      ],
+      "type": "object"
+    },
+    {
+      "description": "Vários comandos como um passo único de undo.",
+      "properties": {
+        "commands": {
+          "items": {
+            "$ref": "#/definitions/Command"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "enum": [
+            "batch"
+          ],
+          "type": "string"
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "commands",
+        "kind"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "Command"
+}
