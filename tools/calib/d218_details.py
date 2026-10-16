@@ -35,7 +35,7 @@ def run():
     for k in ("detalhe_c1", "brilho_c1"):
         d.apply({"kind": "replace_data", "id": ids[k], "data": {"type": "cel", "number": 1}})
     for name, (color, poly, do_measure) in SHAPES.items():
-        pts = meas.densify(poly, 4, closed=True)
+        pts = meas.densify(poly, 3, closed=True)
         if do_measure:
             pts = meas.measure_edge(d, REF0, pts, passes=((5.0, 0.03), (3.0, 0.03)))
         c = [int(color[i:i + 2], 16) / 255 for i in (1, 3, 5)]

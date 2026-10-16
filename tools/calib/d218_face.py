@@ -18,12 +18,12 @@ def run():
     d.apply({"kind": "replace_data", "id": ids["linha_massa_c1"], "data": {"type": "cel", "number": 1}})
     out = []
     for cx, cy, ro, ri in [(772, 446, 117, 78), (1288, 389, 112, 77)]:
-        outer = meas.measure_edge(d, REF0, meas.circle(cx, cy, ro, n=72))
-        inner = meas.measure_edge(d, REF0, meas.circle(cx, cy, ri, n=60))
+        outer = meas.measure_edge(d, REF0, meas.circle(cx, cy, ro, n=144))
+        inner = meas.measure_edge(d, REF0, meas.circle(cx, cy, ri, n=120))
         mid = [[cx + (ro + ri) / 2 * math.cos(a), cy + (ro + ri) / 2 * math.sin(a)] for a in [k * math.pi / 18 for k in range(36)]]
         out.append(ring(massa, outer, inner, mid))
-    outer = meas.measure_edge(d, REF0, meas.densify(MOUTH_OUT, 5, closed=True), passes=((5.0, 0.03), (2.5, 0.03)))
-    inner = meas.measure_edge(d, REF0, meas.densify(MOUTH_IN, 5, closed=True), passes=((5.0, 0.03), (2.5, 0.03)))
+    outer = meas.measure_edge(d, REF0, meas.densify(MOUTH_OUT, 3, closed=True), passes=((5.0, 0.03), (2.5, 0.03)))
+    inner = meas.measure_edge(d, REF0, meas.densify(MOUTH_IN, 3, closed=True), passes=((5.0, 0.03), (2.5, 0.03)))
     mid = [[(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] for a, b in zip(meas.densify(MOUTH_OUT, 20, closed=True), meas.densify(MOUTH_IN, 20, closed=True))]
     out.append(ring(massa, outer, inner, mid))
     return out

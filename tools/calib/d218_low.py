@@ -59,7 +59,7 @@ def draw_shapes(measure=True):
     d.apply({"kind": "replace_data", "id": ids["baixo_c1"], "data": {"type": "cel", "number": 1}})
     out = {}
     for name, (color, poly, do_measure) in SHAPES.items():
-        pts = meas.densify(poly, 6, closed=True)
+        pts = meas.densify(poly, 3, closed=True)
         if measure and do_measure:
             pts = meas.measure_edge(d, REF0, pts, passes=((4.0, 0.03), (2.5, 0.03)))
         c = [int(color[i:i + 2], 16) / 255 for i in (1, 3, 5)]

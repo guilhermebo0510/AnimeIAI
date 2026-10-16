@@ -33,7 +33,7 @@ def run():
     curves, log = [], {}
     for name, poly in CENTERS.items():
         # paquímetro de faixa: a cor do realce varia por dentro (borda salmão, miolo mais claro)
-        pts, ws = meas.measure_band(d, REF0, meas.densify(poly, 4), RIM, 0.09, smooth=1)
+        pts, ws = meas.measure_band(d, REF0, meas.densify(poly, 3), RIM, 0.09, smooth=1)
         probes = meas.first_list(d.call("PROBE_COLOR", {"reference": REF0, "points": [[round(p[0]), round(p[1])] for p in pts[1:-1:2]],
                                                         "radius": 1}))
         cs = sorted(probes, key=lambda c: sum(c["rgb"]))

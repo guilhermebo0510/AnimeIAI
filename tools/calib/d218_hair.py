@@ -135,7 +135,7 @@ def colored_segments(pts, ws, base_w, seg_len=180.0):
     return out
 
 
-def measured_curves(table, step=5, closed=False):
+def measured_curves(table, step=3, closed=False):
     curves, log = [], {}
     for name, poly in table.items():
         if BAND:
@@ -207,7 +207,7 @@ if __name__ == "__main__":
     curves, log = measured_curves(HAIR)
     c2, l2 = measured_curves(CLOSED, closed=True)
     for name, (poly, w) in DIRECT.items():
-        pts = meas.densify(poly, 8)
+        pts = meas.densify(poly, 4)
         if name in SKIN_SIDE:  # encosta na pele: a borda da pele é nítida, ancora nela
             pts = meas.edge_offset_line(d, REF0, pts, SKIN_SIDE[name], w / 2)
         segs = colored_segments(pts, [w] * len(pts), w) if SEGMENT_INK else None
