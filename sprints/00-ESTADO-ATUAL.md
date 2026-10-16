@@ -5,7 +5,7 @@
 ## Agora
 
 - **Fase:** execução autônoma iniciada em 2026-10-15 22:50 (usuário liberou).
-- **Sprint atual:** S21 calibração, corte D (#218). Aprovados na régua da decisão 24: **desenhos 1–6** (quadros 0–59 e as repetições do 6), com camadas dinâmicas (sobrancelhas, boca, gotas) por desenho e trilhas no timesheet (`tools/calib/d218_dyn.py`). Faltam os **desenhos 7 e 8** (q60–65 e ciclo até 86): são redesenhos inteiros de tremor (todas as linhas mudam alguns px) → próximo passo: parametrizar o pipeline por desenho (cel 7/8 em todas as camadas + trilhas) e medir de novo contra q60/q63. Margens de F1 ainda finas (~0,002–0,01) por causa do ruído de compressão entre quadros. Corte C pausado com o letreiro pronto.
+- **Sprint atual:** S21 calibração, corte D (#218). Aprovados na régua da decisão 24: **desenhos 1–7** — o 7 (redesenho de tremor) em todos os seus quadros (q60–62, 69–71, 78–80) com o pipeline parametrizado por desenho (`D218_DES`, cels e trilhas nas camadas fixas), campo de deslocamento medido (`d218_campo.py`), escolha entre estimativas e releituras por varredura; repetições do 6 (q66/75/84) passam. **Desenho 8 pausado** (q63: F1 0,927 / SSIM 0,957 contra limites ~0,928–0,933 / 0,961 nos quadros 63/72/81): o atributo por elemento (`d218_atrib.py`) e o Canny replicado (`canny_pair.py`) mostram perda espalhada (gola, ponta da franja, faixa esquerda, peças do laço). Próximo: cortes obrigatórios (C com o letreiro pronto, depois B e A); voltar ao 8 depois.
 - **Pendências sugeridas pelo B2:** perfil dev com opt-level 3 para aiai-render/aiai-paint; escala em `RenderOptions` (reprodução); taper da G-pen contado no `gap` do balde; arrastar para reordenar camadas; edição de pontos.
 - **Fatia atual:** letreiro ゴン passada 1 feita (contorno + balde); aguardando MEASURE_EDGE/FILL_SHAPE no MCP (B3) para refinar bordas e começar as rosas com MEASURE_LINE.
 - **Próximo passo concreto:** quando o B3 entrar: refinar ゴン com MEASURE_EDGE + FILL_SHAPE (rugosidade), medir paleta das rosas (PROBE_COLOR), desenhar rosa a rosa no quadro 15, COMPARE com piso 0,0083, iterar; depois quadros 0–12.
@@ -37,7 +37,7 @@
 | S18 Edição e entrega | em andamento | evidencias/S18 | edição (transições, legendas, créditos) + export MP4 prontos; falta UI |
 | S19 Produção e revisão | em andamento | evidencias/S19 | tracker, correções, retakes, relatório prontos; falta UI |
 | S20 UI/UX e identidade | pendente | — | |
-| S21 Calibração (A, B, C obrigatórios; D, E meta) | em andamento | registro/calibracao/D218, C131 | D: desenhos 1–6 aprovados; faltam 7–8 (tremor); C: letreiro pronto |
+| S21 Calibração (A, B, C obrigatórios; D, E meta) | em andamento | registro/calibracao/D218, C131 | D: desenhos 1–7 aprovados; 8 pausado (F1 0,927); C: letreiro pronto |
 | S22 Micro anime | pendente | — | |
 | S23 Endurecimento e apresentação | pendente | — | |
 
