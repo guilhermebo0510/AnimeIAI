@@ -56,8 +56,8 @@ true
 ],
 "r2_botao": [
 "faixa",
-true,
-false
+false,
+true
 ],
 "r2_crescente": [
 "faixa",
@@ -120,9 +120,9 @@ true,
 false
 ],
 "folha_tl_borda": [
-"meia",
+"faixa",
 true,
-true
+false
 ],
 "r5_anel2": [
 "faixa",
@@ -265,9 +265,9 @@ false,
 false
 ],
 "r11_a1": [
-"meia",
+"faixa",
 false,
-false
+true
 ],
 "r11_a3": [
 "meia",
@@ -280,8 +280,8 @@ false,
 false
 ],
 "r12_espiral_in": [
-"meia",
-false,
+"faixa",
+true,
 false
 ],
 "r12_crescente": [
@@ -296,7 +296,7 @@ false
 ],
 "r12_fundo": [
 "faixa",
-true,
+false,
 false
 ],
 "r12_topo": [
@@ -407,6 +407,76 @@ true
 "folha_t_v5": [
 "meia",
 true,
+true
+],
+"r2_l4": [
+"meia",
+true,
+true
+],
+"r2_anel": [
+"meia",
+true,
+true
+],
+"r3_fora_topo": [
+"faixa",
+false,
+false
+],
+"r5_arco_dir": [
+"faixa",
+false,
+false
+],
+"r5_baixo3": [
+"faixa",
+false,
+false
+],
+"r5_esq1": [
+"meia",
+false,
+false
+],
+"r6_anel2": [
+"meia",
+true,
+true
+],
+"r6_v1": [
+"faixa",
+false,
+true
+],
+"r6_v3": [
+"meia",
+true,
+true
+],
+"r6_botao": [
+"meia",
+false,
+false
+],
+"r8_fora": [
+"faixa",
+true,
+false
+],
+"r8_arco": [
+"meia",
+true,
+true
+],
+"folha_br_topo": [
+"faixa",
+false,
+true
+],
+"r12_espiral": [
+"faixa",
+false,
 true
 ]
 }
