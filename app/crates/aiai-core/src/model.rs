@@ -307,9 +307,54 @@ pub struct CutData {
     /// Painel de storyboard de origem.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storyboard_panel: Option<Id>,
-    /// Câmera do corte (detalhada na S13); por ora transformação estática.
+    /// Câmera do corte (centro, zoom, rotação, chaves, tremor).
     #[serde(default)]
     pub camera: CameraData,
+    /// Clipes de áudio posicionados no corte (falas, SFX, BGM, ambiente).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audio: Vec<AudioPlacement>,
+}
+
+/// Trilha de áudio (mixer).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AudioTrack {
+    #[default]
+    Dialogue,
+    Sfx,
+    Bgm,
+    Ambience,
+}
+
+/// Um clipe de áudio (asset `audio_clip`) colocado no tempo do corte.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct AudioPlacement {
+    #[serde(default = "empty_id")]
+    pub id: Id,
+    /// Asset de áudio (WAV em blob).
+    pub asset: Id,
+    #[serde(default)]
+    pub track: AudioTrack,
+    /// Quadro (0-based) onde o clipe começa.
+    pub start_frame: u32,
+    /// Corte do início do clipe, em segundos.
+    #[serde(default)]
+    pub trim_start: f32,
+    /// Duração usada (s); `None` = até o fim do clipe.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration: Option<f32>,
+    #[serde(default)]
+    pub gain_db: f32,
+    /// -1 (esquerda) .. 1 (direita).
+    #[serde(default)]
+    pub pan: f32,
+    #[serde(default)]
+    pub fade_in: f32,
+    #[serde(default)]
+    pub fade_out: f32,
+    /// Personagem que fala (falas) — liga ao lip-sync.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub character: Option<Id>,
 }
 
 impl CutData {
@@ -324,6 +369,7 @@ impl CutData {
             dialogue_links: Vec::new(),
             storyboard_panel: None,
             camera: CameraData::default(),
+            audio: Vec::new(),
         }
     }
 
@@ -334,6 +380,11 @@ impl CutData {
         if let Some([w, h]) = self.canvas {
             if w == 0 || h == 0 || w > 16384 || h > 16384 {
                 return Err(format!("canvas inválido {w}x{h}"));
+            }
+        }
+        for a in &self.audio {
+            if !(a.gain_db.is_finite() && (-1.0..=1.0).contains(&a.pan) && a.fade_in >= 0.0 && a.fade_out >= 0.0 && a.trim_start >= 0.0) {
+                return Err(format!("clipe de áudio {} com parâmetros inválidos", a.id));
             }
         }
         let mut names = std::collections::BTreeSet::new();

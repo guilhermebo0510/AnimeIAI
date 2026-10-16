@@ -622,6 +622,11 @@ fn resolve_data_ids(data: &mut NodeKind, idgen: &mut IdGen) {
                     t.id = idgen.next();
                 }
             }
+            for a in &mut cd.audio {
+                if a.id.0.is_empty() {
+                    a.id = idgen.next();
+                }
+            }
         }
         _ => {}
     }
@@ -669,6 +674,9 @@ fn clean_refs(data: &mut NodeKind, gone: &std::collections::BTreeSet<Id>) -> boo
             let before = c.xsheet.tracks.len();
             c.xsheet.tracks.retain(|t| !t.layer.as_ref().is_some_and(|l| gone.contains(l)));
             changed |= before != c.xsheet.tracks.len();
+            let before_a = c.audio.len();
+            c.audio.retain(|a| !gone.contains(&a.asset));
+            changed |= before_a != c.audio.len();
             if c.storyboard_panel.as_ref().is_some_and(|s| gone.contains(s)) {
                 c.storyboard_panel = None;
                 changed = true;
