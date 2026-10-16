@@ -1,6 +1,6 @@
 //! Comparação de um quadro renderizado com a referência pela régua do protocolo (07-PROTOCOLO-DE-VALIDACAO.md §5,
-//! decisões 20, 21 e 23): FLIP limitado pelo FLIP da própria referência sob uma perturbação de 5% (P5), SSIM, ΔE em
-//! regiões chapadas, F1 de bordas, espessura.
+//! decisões 20, 21, 23 e 24): FLIP, SSIM e F1 de bordas limitados pelo valor da própria referência sob a perturbação
+//! P5T (5% de cor, 1 px de deslocamento e tremor suave de 1 px de decalque), ΔE em regiões chapadas, espessura.
 
 use crate::calib::load_reference;
 use crate::context::*;
@@ -38,6 +38,9 @@ pub struct FrameVerdict {
     pub noise_floor: f32,
     pub flip_limit: f64,
     pub flip_hard_limit: f64,
+    /// SSIM e F1 mínimos desta referência (decisão 24).
+    pub ssim_limit: f64,
+    pub edge_f1_limit: f64,
     pub line_width_ok: bool,
     pub pass: bool,
     pub files: Vec<String>,
@@ -61,6 +64,97 @@ pub fn perturb(img: &aiai_paint::Image, k: f32, dx: i32, dy: i32) -> aiai_paint:
         }
     }
     out
+}
+
+/// Deslocamento suave determinístico (decisão 24): campo aleatório filtrado por gaussiana (σ = 40 px) com desvio de
+/// `amp` px em cada eixo — o tremor de um decalque cuidadoso na mesa de luz.
+pub fn smooth_warp(img: &aiai_paint::Image, amp: f32, seed: u64) -> aiai_paint::Image {
+    let (w, h) = (img.width as usize, img.height as usize);
+    // ruído numa tela com margem de 3σ e recorte do miolo: o desfoque replica as bordas e, sem margem, o campo fica
+    // forte nas beiradas e a normalização enfraquece o miolo pela metade
+    let m = 120usize;
+    let (pw, ph) = (w + 2 * m, h + 2 * m);
+    let field = |s: u64| {
+        let mut x = s;
+        let noise: Vec<f32> = (0..pw * ph)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                (x >> 11) as f32 / (1u64 << 53) as f32 - 0.5
+            })
+            .collect();
+        let big = aiai_metrics::gaussian_blur(&noise, pw, ph, 40.0);
+        let mut f = Vec::with_capacity(w * h);
+        for y in 0..h {
+            f.extend_from_slice(&big[(y + m) * pw + m..(y + m) * pw + m + w]);
+        }
+        let n = f.len() as f32;
+        let mean = f.iter().sum::<f32>() / n;
+        let sd = (f.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / n).sqrt().max(1e-9);
+        f.into_iter().map(|v| (v - mean) / sd * amp).collect::<Vec<f32>>()
+    };
+    let (ux, uy) = (field(seed), field(seed ^ 0x9E37_79B9_7F4A_7C15));
+    let mut out = aiai_paint::Image::new(img.width, img.height);
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            // centro do pixel em +0,5 (convenção de sample_bilinear); sem isso o tremor ainda borra meio pixel
+            let (sx, sy) = ((x as f32 + 0.5 + ux[i]).clamp(0.5, w as f32 - 0.5), (y as f32 + 0.5 + uy[i]).clamp(0.5, h as f32 - 0.5));
+            out.data[i] = aiai_paint::warp::sample_bilinear(img, sx, sy);
+        }
+    }
+    out
+}
+
+/// Limites da decisão 24 para esta referência: a própria referência sob P5T = (brilho e saturação ×1,05 ou ×0,95,
+/// 1 px de deslocamento e tremor suave de 1 px), nas duas direções; vale o mais exigente de cada métrica.
+pub struct P5tLimits {
+    pub flip_mean_max: f64,
+    pub flip_hard_max: f64,
+    pub ssim_min: f64,
+    pub edge_f1_min: f64,
+}
+
+pub fn p5t_limits(reference: &aiai_paint::Image) -> Result<P5tLimits, String> {
+    let opts = CompareOptions::default();
+    // média de seis sorteios do tremor por direção (um campo só faz o F1 variar ±0,02)
+    const SEEDS: [u64; 6] = [0x5EED_0001, 0x5EED_0002, 0x5EED_0003, 0x5EED_0004, 0x5EED_0005, 0x5EED_0006];
+    let run = |k: f32| -> Result<(f64, f64, f64), String> {
+        let n = SEEDS.len() as f64;
+        let mut acc = (0.0, 0.0, 0.0);
+        for seed in SEEDS {
+            let r = aiai_metrics::compare(reference, &smooth_warp(&perturb(reference, k, 1, 0), 1.0, seed), &opts)?;
+            acc = (acc.0 + r.flip.mean / n, acc.1 + r.ssim / n, acc.2 + r.edges.f1 / n);
+        }
+        Ok(acc)
+    };
+    let (up, down) = (run(1.05)?, run(0.95)?);
+    Ok(P5tLimits { flip_mean_max: up.0.min(down.0), flip_hard_max: up.0.max(down.0), ssim_min: up.1.max(down.1), edge_f1_min: up.2.max(down.2) })
+}
+
+/// [`p5t_limits`] guardado ao lado da referência (`<quadro>.p5t.json`, chave = tamanho + data do arquivo): 12 comparações
+/// por quadro de referência só na primeira vez.
+pub fn cached_p5t_limits(path: &str, reference: &aiai_paint::Image) -> Result<P5tLimits, String> {
+    let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    let key = format!("{}-{:?}-v1", meta.len(), meta.modified().ok());
+    let cache = format!("{path}.p5t.json");
+    if let Ok(txt) = std::fs::read_to_string(&cache) {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) {
+            if v.get("key").and_then(|k| k.as_str()) == Some(key.as_str()) {
+                let g = |k: &str| v.get(k).and_then(|x| x.as_f64()).unwrap_or(f64::NAN);
+                let lim = P5tLimits { flip_mean_max: g("flip_mean_max"), flip_hard_max: g("flip_hard_max"), ssim_min: g("ssim_min"), edge_f1_min: g("edge_f1_min") };
+                if [lim.flip_mean_max, lim.flip_hard_max, lim.ssim_min, lim.edge_f1_min].iter().all(|x| x.is_finite()) {
+                    return Ok(lim);
+                }
+            }
+        }
+    }
+    let lim = p5t_limits(reference)?;
+    let v = serde_json::json!({"key": key, "flip_mean_max": lim.flip_mean_max, "flip_hard_max": lim.flip_hard_max,
+                               "ssim_min": lim.ssim_min, "edge_f1_min": lim.edge_f1_min});
+    let _ = std::fs::write(&cache, serde_json::to_string_pretty(&v).unwrap_or_default());
+    Ok(lim)
 }
 
 /// Limites de FLIP da decisão 23 para esta referência: (médio, máximo) = (FLIP sob P5, FLIP sob P5').
@@ -87,9 +181,12 @@ pub fn compare_frame(p: &Project, blobs: &BlobStore, req: &CompareRequest) -> To
         return Err(ToolError::Invalid(format!("render {}x{} ≠ referência {}x{}", out.image.width, out.image.height, reference.width, reference.height)));
     }
     let mut opts = CompareOptions::default();
-    let (flip_limit, flip_hard_limit) = p5_flip_limits(&reference).map_err(ToolError::Invalid)?;
+    let lim = cached_p5t_limits(&req.reference, &reference).map_err(ToolError::Invalid)?;
+    let (flip_limit, flip_hard_limit) = (lim.flip_mean_max, lim.flip_hard_max);
     opts.thresholds.flip_mean_max = flip_limit;
     opts.thresholds.flip_mean_hard_max = flip_hard_limit;
+    opts.thresholds.ssim_min = lim.ssim_min;
+    opts.thresholds.edge_f1_min = lim.edge_f1_min;
     let (report, art) = compare_with_artifacts(&reference, &out.image, &opts).map_err(ToolError::Invalid)?;
     let lw_ok = line_width_ok(&report);
     let v = &report.verdict;
@@ -118,5 +215,6 @@ pub fn compare_frame(p: &Project, blobs: &BlobStore, req: &CompareRequest) -> To
         std::fs::write(&rep_path, serde_json::to_string_pretty(&report).unwrap_or_default()).map_err(|e| ToolError::Invalid(e.to_string()))?;
         files.push(rep_path.to_string_lossy().to_string());
     }
-    Ok(FrameVerdict { flip_limit, flip_hard_limit, noise_floor: req.noise_floor, line_width_ok: lw_ok, pass, report, files })
+    Ok(FrameVerdict { flip_limit, flip_hard_limit, ssim_limit: lim.ssim_min, edge_f1_limit: lim.edge_f1_min, noise_floor: req.noise_floor,
+                      line_width_ok: lw_ok, pass, report, files })
 }

@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from d218 import reorder, d, ids, node
 
 
-def run(radius=8.0, top=110, bottom=2000):
+def run(radius=4.0, top=110, bottom=2000):
     m = node("foco_mascara", "Máscara do foco", {"type": "layer", "kind": "raster"}, ids["cut"])
     node("foco_mascara_c1", "1", {"type": "cel", "number": 1}, m)
     f = node("foco", "Profundidade de campo", {"type": "layer", "kind": "effect"}, ids["cut"])
