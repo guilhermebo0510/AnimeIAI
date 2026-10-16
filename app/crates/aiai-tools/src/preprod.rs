@@ -1808,7 +1808,7 @@ pub fn storyboard_export_sheet(p: &Project, blobs: &BlobStore, storyboard: &Id, 
     fill_rect(&mut img, 0, 0, base_w as i32, title_h, HEAD_BG);
     let title = if sb.title.is_empty() { p.name.clone() } else { sb.title.clone() };
     draw_text(&mut img, bold, 32.0, &format!("絵コンテ  {title}"), 30.0, 16.0, [1.0, 1.0, 1.0, 1.0]);
-    let summary = format!("{} paineis · {:.1} s", sb.panels.len(), sb.total_seconds());
+    let summary = format!("{} painéis · {:.1} s", sb.panels.len(), sb.total_seconds());
     let sw = text_width(font, 20.0, &summary);
     draw_text(&mut img, font, 20.0, &summary, base_w as f32 - 30.0 - sw, 26.0, [0.8, 0.85, 1.0, 1.0]);
     // cabeçalho das colunas

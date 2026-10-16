@@ -552,7 +552,7 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
     assert!(plan("aiai_zzz", json!({})).is_err());
     // o catálogo é uma lista estável de ferramentas, todas com plano
     let defs = tools::definitions();
-    assert_eq!(defs.as_array().unwrap().len(), 47);
+    assert_eq!(defs.as_array().unwrap().len(), 52);
     // todas as ferramentas de produção: descrição com exemplo de uma linha, schema de objeto, plano com a ação certa e frame 0 por padrão
     for t in defs.as_array().unwrap() {
         let n = t["name"].as_str().unwrap();
@@ -589,6 +589,11 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
         ("aiai_fill_shape", json!({"cut": "c", "layer": "l", "shapes": [], "color": {}}), "FILL_SHAPE"),
         ("aiai_edit", json!({"clips": []}), "EDIT_SET"),
         ("aiai_export_video", json!({"edit": "e", "out": "x.mp4"}), "EXPORT_VIDEO"),
+        ("aiai_script", json!({"op": "read", "doc": "d"}), "SCRIPT"),
+        ("aiai_beats", json!({"op": "read", "doc": "d"}), "BEATS"),
+        ("aiai_storyboard", json!({"op": "read", "storyboard": "s"}), "STORYBOARD"),
+        ("aiai_animatic", json!({"storyboard": "s", "out": "a.mp4"}), "ANIMATIC"),
+        ("aiai_cuts_from_storyboard", json!({"storyboard": "s", "episode": "e"}), "CUTS_FROM_STORYBOARD"),
     ] {
         let p = plan(tool, args.clone()).unwrap_or_else(|e| panic!("{tool}: {e}"));
         assert_eq!(p.action, action, "{tool}");

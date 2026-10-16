@@ -1147,3 +1147,71 @@ fn production_export_video_frames_audio_subtitles_and_png_sequence() {
     }
     assert!(!dir.path().join("x.mp4").exists());
 }
+
+#[test]
+fn preprod_script_storyboard_sheet_animatic_and_cuts() {
+    let mut d = prod_doc();
+    let ep = d.ep.clone();
+    let dir = tempfile::tempdir().unwrap();
+
+    // SCRIPT: cria, edita por id (um passo de undo), estima e grava o tempo, exporta Fountain
+    let o = act(&mut d.s, "SCRIPT", json!({"op": "create", "name": "Roteiro", "title": "Teste", "scenes": [{"heading": "EXT. PONTE", "elements": [
+        {"kind": "action", "text": "雨が降り始める。", "translation": "Começa a chover."},
+        {"kind": "dialogue", "speaker": "ハル", "text": "傘、持ってる？", "translation": "Trouxe guarda-chuva?"}]}]}));
+    let doc = o["doc"].as_str().unwrap().to_string();
+    let scene = o["script"]["scenes"][0]["id"].as_str().unwrap().to_string();
+    let line = o["script"]["scenes"][0]["elements"][1]["id"].as_str().unwrap().to_string();
+    assert_eq!(o["can_undo"], true);
+    let o = act(&mut d.s, "SCRIPT", json!({"op": "edit", "doc": doc, "ops": [{"op": "insert_element", "scene": scene, "element": {"kind": "dialogue", "speaker": "ミナ", "text": "ないよ。", "translation": "Não."}}]}));
+    assert_eq!(o["created"].as_array().unwrap().len(), 1);
+    let t = act(&mut d.s, "SCRIPT", json!({"op": "timing", "doc": doc}));
+    assert!(t["total_seconds"].as_f64().unwrap() > 1.0, "{t}");
+    act(&mut d.s, "SCRIPT", json!({"op": "apply_timing", "doc": doc}));
+    let r = act(&mut d.s, "SCRIPT", json!({"op": "read", "doc": doc}));
+    assert!(r["script"]["scenes"][0]["elements"][1]["est_seconds"].as_f64().unwrap() > 0.0);
+    let f = act(&mut d.s, "SCRIPT", json!({"op": "to_fountain", "doc": doc}));
+    assert!(f["fountain"].as_str().unwrap().contains("EXT. PONTE"));
+    assert_eq!(act_err(&mut d.s, "SCRIPT", json!({"op": "edit", "doc": doc, "ops": [{"op": "delete_scene", "scene": "nao-existe"}]})).code, code::INVALID_PARAMS);
+
+    // BEATS
+    let b = act(&mut d.s, "BEATS", json!({"op": "create", "name": "Beats"}));
+    let bd = b["doc"].as_str().unwrap().to_string();
+    act(&mut d.s, "BEATS", json!({"op": "edit", "doc": bd, "ops": [{"op": "add_act", "name": "Início"}, {"op": "add_beat", "act": 0, "title": "Chuva", "target_seconds": 8.0}]}));
+    assert_eq!(act(&mut d.s, "BEATS", json!({"op": "read", "doc": bd}))["total_target_seconds"], 8.0);
+
+    // STORYBOARD: dois painéis; o primeiro desenhado no corte do painel, com pan de câmera
+    let o = act(&mut d.s, "STORYBOARD", json!({"op": "create", "name": "E-conte", "title": "Teste"}));
+    let sb = o["storyboard"].as_str().unwrap().to_string();
+    let p1 = act(&mut d.s, "STORYBOARD", json!({"op": "panel_add", "storyboard": sb, "spec": {"shot": "wide", "action": "Ponte na chuva", "seconds": 1.0, "dialogue_refs": [line], "dialogue_text": "傘、持ってる？", "scene": scene,
+        "camera_move": {"kind": "pan", "from": {"center": [0.4, 0.5], "zoom": 1.2}, "to": {"center": [0.6, 0.5], "zoom": 1.2}}}}));
+    let (pcut, player) = (p1["drawing"]["cut"].as_str().unwrap().to_string(), p1["drawing"]["layer"].as_str().unwrap().to_string());
+    act(&mut d.s, "DRAW_CURVES", json!({"cut": pcut, "frame": 0, "layer": player, "curves": [{"points": [[40.0, 200.0], [240.0, 80.0], [440.0, 200.0]], "width": 4.0, "color": black()}]}));
+    let p2 = act(&mut d.s, "STORYBOARD", json!({"op": "panel_add", "storyboard": sb, "spec": {"shot": "close", "action": "Haru olha", "seconds": 0.5, "scene": scene}}));
+    let pid2 = p2["panel"].as_str().unwrap().to_string();
+    act(&mut d.s, "STORYBOARD", json!({"op": "panel_update", "storyboard": sb, "panel": pid2, "patch": {"seconds": 0.75}}));
+    let rd = act(&mut d.s, "STORYBOARD", json!({"op": "read", "storyboard": sb}));
+    assert_eq!(rd["total_seconds"], 1.75);
+    assert_eq!(act(&mut d.s, "STORYBOARD", json!({"op": "panel_drawing", "storyboard": sb, "panel": p1["panel"]}))["layer"], json!(player));
+    let sheet = dir.path().join("econte.png");
+    let o = act(&mut d.s, "STORYBOARD", json!({"op": "sheet", "storyboard": sb, "out": sheet.display().to_string()}));
+    assert!(sheet.exists() && o["width"].as_u64().unwrap() > 100, "{o}");
+    assert_eq!(act_err(&mut d.s, "STORYBOARD", json!({"op": "sheet", "storyboard": sb, "out": "relativo.png"})).code, code::INVALID_PARAMS);
+
+    // ANIMATIC (precisa do ffmpeg)
+    if std::process::Command::new(aiai_media::ffmpeg()).arg("-version").output().is_ok() {
+        let mp4 = dir.path().join("animatic.mp4");
+        let o = act(&mut d.s, "ANIMATIC", json!({"storyboard": sb, "out": mp4.display().to_string(), "width": 320, "height": 180, "captions": true, "cut_numbers": true}));
+        assert!(mp4.exists(), "{o}");
+        assert_eq!(o["panels"].as_array().unwrap().len(), 2);
+    }
+
+    // CUTS_FROM_STORYBOARD: uma cena (mesma cena do roteiro), dois cortes; o do pan tem chaves de câmera e camada de referência
+    let o = act(&mut d.s, "CUTS_FROM_STORYBOARD", json!({"storyboard": sb, "episode": ep, "scene_per_panel_group": true, "script": doc}));
+    assert_eq!(o["scenes"].as_array().unwrap().len(), 1);
+    let cuts = o["cuts"].as_array().unwrap();
+    assert_eq!(cuts.len(), 2);
+    let c1 = act(&mut d.s, "QUERY", json!({"query": {"kind": "node", "id": cuts[0]["cut"]}}));
+    assert!(c1.to_string().contains("center_x"), "pan vira chaves de câmera: {c1}");
+    let undo = act(&mut d.s, "UNDO", json!({}));
+    assert_eq!(undo["can_undo"], true, "cortes do storyboard = um passo de undo");
+}

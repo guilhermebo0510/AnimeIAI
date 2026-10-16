@@ -276,10 +276,12 @@ Só grava em pastas permitidas (AIAI_MCP_ALLOWED_DIRS; padrão producoes/, calib
     ])
 }
 
-/// Catálogo completo: ferramentas genéricas + curadas de desenho + curadas de produção (`tools_production`).
+/// Catálogo completo: ferramentas genéricas + curadas de desenho + de produção (`tools_production`) + de pré-produção
+/// (`tools_preprod`).
 pub fn definitions() -> Value {
     let mut list = base_definitions().as_array().cloned().unwrap_or_default();
     list.extend(crate::tools_production::definitions());
+    list.extend(crate::tools_preprod::definitions());
     Value::Array(list)
 }
 
@@ -330,6 +332,9 @@ pub fn plan(name: &str, args: &Value) -> Result<Plan, ToolError> {
     let m = args_object(args)?;
     let simple = |action: &'static str, params: Value| Ok(Plan { action, params, save_png: None });
     if let Some(p) = crate::tools_production::plan(name, &m) {
+        return p;
+    }
+    if let Some(p) = crate::tools_preprod::plan(name, &m) {
         return p;
     }
     match name {

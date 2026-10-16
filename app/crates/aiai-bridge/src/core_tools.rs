@@ -29,12 +29,12 @@ pub const TOOL_ACTIONS: &[&str] = &["RENDER", "DRAW_CURVES", "FILL", "LINT", "PA
 
 /// Todas as ações de ferramenta de documento: as de aqui + as de [`crate::production_tools`].
 pub fn is_tool_action(action: &str) -> bool {
-    TOOL_ACTIONS.contains(&action) || crate::production_tools::PRODUCTION_ACTIONS.contains(&action)
+    TOOL_ACTIONS.contains(&action) || crate::production_tools::PRODUCTION_ACTIONS.contains(&action) || crate::preprod_tools::PREPROD_ACTIONS.contains(&action)
 }
 
 /// Ações de ferramenta que mudam o documento.
 pub fn is_mutating_tool(action: &str) -> bool {
-    matches!(action, "DRAW_CURVES" | "FILL" | "PAINT" | "GRADIENT" | "TRANSFORM" | "REPEAT") || crate::production_tools::is_mutating(action)
+    matches!(action, "DRAW_CURVES" | "FILL" | "PAINT" | "GRADIENT" | "TRANSFORM" | "REPEAT") || crate::production_tools::is_mutating(action) || crate::preprod_tools::is_mutating(action)
 }
 
 /// Erros das ferramentas → códigos da bridge: referência/valor inválido é `-32602`; falha do motor é `-32000`.
@@ -52,6 +52,7 @@ pub fn handle_tool_action(session: &mut CoreSession, action: &str, params: &Valu
         "RENDER" => render(session, params),
         "BRUSH_PRESETS" => Ok(brush_presets()),
         a if crate::production_tools::PRODUCTION_ACTIONS.contains(&a) => crate::production_tools::handle(session, a, params),
+        a if crate::preprod_tools::PREPROD_ACTIONS.contains(&a) => crate::preprod_tools::handle(session, a, params),
         "LINT" => lint_action(session, params),
         "DRAW_CURVES" => request::<DrawRequest>(params, "DRAW_CURVES").and_then(|r| {
             let cmd = draw_command(&session.project, &r).map_err(tool_error)?;
