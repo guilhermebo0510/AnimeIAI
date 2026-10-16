@@ -57,4 +57,5 @@ Erros já pagos neste PC, nos projetos Smart Canvas e ANIGO do mesmo usuário. A
 ## Trabalho com vários agentes
 
 32. **Nunca `git add -A` (nem `git add app/crates`) com outro agente trabalhando**: o commit leva o trabalho em andamento dele. Sempre `git add` com os caminhos exatos do próprio escopo. (2026-10-15: aconteceu e foi desfeito com `reset --soft`.)
+32b. **O índice do git é compartilhado entre agentes**: `git add` de um entra no `git commit` do outro (2026-10-16: o trabalho de áudio saiu dentro do commit dos efeitos). Commitar SEMPRE com pathspec: `git commit -m "..." -- <caminhos>` (commita só esses caminhos, ignorando o resto do índice), sem `git add` prévio.
 33. Dois agentes compilando no mesmo `target/` não quebram nada (o cargo serializa pelo lock), mas um espera o outro; tarefas sem build podem rodar em paralelo à vontade.

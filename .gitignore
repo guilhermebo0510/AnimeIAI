@@ -23,3 +23,6 @@ __pycache__/
 *.mp4
 !/sprints/registro/evidencias/**/*.mp4
 !/producoes/**/*.mp4
+
+# Sobras do VOICEVOX engine
+/tools/voicevox/engine.*
