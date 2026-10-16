@@ -12,6 +12,7 @@ import meas
 INK = "#6a3533"  # núcleo da linha medido no queixo (linhas de ~2 px, halo claro de nitidez dos dois lados)
 TMP = r"C:\AnimeIAI\calibracao\tmp"
 CACHE_F = os.path.join(TMP, "a138_medidas.json")
+VAR_F = os.path.join(os.path.dirname(os.path.abspath(__file__)), "a138_variantes.json")  # escolhidas por a138_opt.py
 
 def arc(cx, cy, rx, ry, t0, t1, n=24):
     """Arco de elipse (graus; 0 = direita, 90 = topo, sentido anti-horário na tela)."""
@@ -298,8 +299,15 @@ def lines():
     cache = json.load(open(CACHE_F)) if os.path.exists(CACHE_F) else {}
     d.apply({"kind": "replace_data", "id": ids["linha_c1"], "data": {"type": "cel", "number": 1}})
     curves = []
+    var = json.load(open(VAR_F)) if os.path.exists(VAR_F) else {}
     for name, (poly, w, closed, *opt) in LINES.items():
-        o = opt[0] if opt else {}
+        o = dict(opt[0]) if opt else {}
+        v = var.get(name)
+        if v == "raw" and "raw" not in o:
+            o["raw"] = INK
+        elif v in ("fino", "longo"):
+            o.pop("raw", None) if "raw" not in (opt[0] if opt else {}) else None
+            o["fino"] = v == "fino"
         if "raw" in o:  # geometria digitada sem medição (olhos: o miolo escuro da íris engana o paquímetro)
             c = [int(o["raw"][i:i + 2], 16) / 255 for i in (1, 3, 5)]
             curves.append({"points": [list(p) for p in poly], "width": float(w), "tip": "marker", "geometry": "spline",
