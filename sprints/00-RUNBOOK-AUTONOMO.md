@@ -46,6 +46,14 @@ Para não descobrir na S21 que uma ferramenta não serve, há três ensaios curt
 
 Resultado de cada checkpoint em `registro/calibracao/checkpoint-<n>/`.
 
+## 2.2 Distribuição de trabalho entre modelos (pedido do usuário, 2026-10-15)
+
+- **Sonnet com esforço alto** (`model: "sonnet"`, `effort: "high"`) para implementações de dificuldade pequena e média: adaptar código do ANIGO/Smart Canvas, comandos e testes repetitivos, i18n, widgets de UI simples, scripts de QA, wrappers de FFmpeg/VOICEVOX, golden tests, documentação.
+- **Opus** (sessão principal ou `model: "opus"`) para o que é complexo: arquitetura do núcleo, motor de pincel e rasterização vetorial, fechamento de gap, intercalação, compositor/efeitos em WGSL, timesheet, métricas, integração e depuração difícil, e todo o trabalho de desenho/calibração via MCP.
+- Haiku não é usado para implementação (custo de retrabalho maior que a economia).
+- A sessão principal (Opus) orquestra: escreve o briefing de cada subagente (arquivos, contrato, testes, critério de pronto), revisa o diff, roda os testes e valida visualmente. Resultado de subagente é relatório, não prova.
+- **Nunca dois agentes compilando ao mesmo tempo** (8 GB de RAM, disco curto, lock do `target/`): subagentes que compilam rodam um por vez; em paralelo só tarefas sem build (pesquisa, leitura, escrita de docs/scripts Python).
+
 ## 3. Ciclo de autocorreção
 
 Quando uma ferramenta não produz o resultado esperado:
