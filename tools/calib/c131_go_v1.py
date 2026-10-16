@@ -15,9 +15,10 @@ GO = [(366,462),(410,448),(460,432),(510,413),(550,397),(590,375),(625,357),(645
       (500,725),(550,710),(600,687),(650,667),(690,652),(722,640),(722,610),(705,570),(695,530),(675,485),(665,462),(645,454),
       (600,460),(550,474),(475,500),(420,520),(380,546),(368,505)]
 
-r = d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": 15, "layer": ids["letreiro"], "curves": [
-    {"points": [list(p) for p in GO], "width": 2.0, "tip": "marker", "geometry": "polyline", "color": RED, "closed": True}]})
-print("linha:", r.get("description") if isinstance(r, dict) else r)
-r = d.call("FILL", {"cut": ids["cut"], "frame": 15, "layer": ids["letreiro"], "line_layers": [ids["letreiro"]],
-                    "seeds": [{"x": 740, "y": 600, "color": RED}], "gap": 0, "expand": 2})
-print("balde:", r.get("description") if isinstance(r, dict) else r)
+if __name__ == "__main__":
+    r = d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": 15, "layer": ids["letreiro"], "curves": [
+        {"points": [list(p) for p in GO], "width": 2.0, "tip": "marker", "geometry": "polyline", "color": RED, "closed": True}]})
+    print("linha:", r.get("description") if isinstance(r, dict) else r)
+    r = d.call("FILL", {"cut": ids["cut"], "frame": 15, "layer": ids["letreiro"], "line_layers": [ids["letreiro"]],
+                        "seeds": [{"x": 740, "y": 600, "color": RED}], "gap": 0, "expand": 2})
+    print("balde:", r.get("description") if isinstance(r, dict) else r)
