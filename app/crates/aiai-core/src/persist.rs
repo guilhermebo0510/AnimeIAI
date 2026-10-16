@@ -105,9 +105,13 @@ pub fn save(session: &mut CoreSession, dir: &Path) -> CoreResult<()> {
     let referenced = session.project.referenced_blobs();
     let blob_bytes: u64 = referenced.iter().filter_map(|h| session.blobs.get(h)).map(|b| b.len() as u64).sum();
     ensure_space(dir, json.len() as u64 + blob_bytes)?;
+    let required = session.project.required_blobs();
     for h in &referenced {
-        let b = session.blobs.get(h).ok_or_else(|| CoreError::MissingBlob(h.0.clone()))?;
-        write_blob(dir, h, &b)?;
+        match session.blobs.get(h) {
+            Some(b) => write_blob(dir, h, &b)?,
+            None if required.contains(h) => return Err(CoreError::MissingBlob(h.0.clone())),
+            None => {} // string com cara de hash em JSON livre que não é blob
+        }
     }
     write_atomic(&dir.join(PROJECT_FILE), json.as_bytes())?;
     // WAL recomeça a partir desta revisão.
@@ -127,9 +131,13 @@ pub fn open(dir: &Path) -> CoreResult<(CoreSession, OpenReport)> {
     }
     project.validate().map_err(|e| CoreError::invalid("project", e))?;
     let mut blobs = BlobStore::default();
+    let required = project.required_blobs();
     for h in project.referenced_blobs() {
-        let bytes = std::fs::read(blob_path(dir, &h)).map_err(|_| CoreError::MissingBlob(h.0.clone()))?;
-        blobs.insert_clean(h, bytes)?;
+        match std::fs::read(blob_path(dir, &h)) {
+            Ok(bytes) => blobs.insert_clean(h, bytes)?,
+            Err(_) if required.contains(&h) => return Err(CoreError::MissingBlob(h.0.clone())),
+            Err(_) => {}
+        }
     }
     let mut session = CoreSession::new(project);
     session.blobs = blobs;

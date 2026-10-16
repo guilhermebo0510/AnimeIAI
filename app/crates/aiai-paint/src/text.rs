@@ -94,8 +94,9 @@ pub fn text_outline(font_bytes: &[u8], text: &str, opt: &TextOptions) -> Result<
     let font = FontRef::try_from_slice(font_bytes).map_err(|e| format!("fonte inválida: {e}"))?;
     let scale = PxScale::from(opt.size);
     let sf = font.as_scaled(scale);
-    let upem = font.units_per_em().unwrap_or(1000.0);
-    let k = opt.size / upem;
+    // mesma escala para avanço e contorno (a de `PxScale`: `size` = altura ascendente+descendente em px)
+    let kx = sf.h_scale_factor();
+    let ky = sf.v_scale_factor();
     let mut contours: Vec<Vec<[f32; 2]>> = Vec::new();
     let mut pen = 0.0f32;
     let chars: Vec<char> = text.chars().collect();
@@ -108,7 +109,7 @@ pub fn text_outline(font_bytes: &[u8], text: &str, opt: &TextOptions) -> Result<
             let mut cur: Vec<[f32; 2]> = Vec::new();
             let mut last: Option<[f32; 2]> = None;
             for c in &outline.curves {
-                let tp = |p: ab_glyph::Point| [gx + p.x * k, gy - p.y * k];
+                let tp = |p: ab_glyph::Point| [gx + p.x * kx, gy - p.y * ky];
                 let (start, end) = match c {
                     OutlineCurve::Line(a, b) => (tp(*a), tp(*b)),
                     OutlineCurve::Quad(a, _, c2) => (tp(*a), tp(*c2)),

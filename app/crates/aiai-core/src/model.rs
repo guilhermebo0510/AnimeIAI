@@ -809,6 +809,22 @@ pub struct DocumentData {
     pub content: serde_json::Value,
 }
 
+/// Blobs citados dentro de JSON livre (documentos, parâmetros de efeito/pincel, retakes): qualquer string com cara de
+/// hash BLAKE3 (64 hex) conta como referência — melhor guardar um blob a mais do que perder um.
+fn scan_blob_hashes(v: &serde_json::Value, out: &mut std::collections::BTreeSet<BlobHash>) {
+    match v {
+        serde_json::Value::String(s) => {
+            let h = BlobHash(s.clone());
+            if h.is_well_formed() {
+                out.insert(h);
+            }
+        }
+        serde_json::Value::Array(a) => a.iter().for_each(|x| scan_blob_hashes(x, out)),
+        serde_json::Value::Object(o) => o.values().for_each(|x| scan_blob_hashes(x, out)),
+        _ => {}
+    }
+}
+
 // ---------------------------------------------------------------- projeto: helpers
 
 impl Project {
@@ -871,8 +887,8 @@ impl Project {
         l.children.iter().filter_map(|c| self.nodes.get(c)).find(|n| matches!(&n.data, NodeKind::Cel(c) if c.number == number))
     }
 
-    /// Todos os hashes de blob referenciados pelo documento (para persistência e coleta de lixo).
-    pub fn referenced_blobs(&self) -> std::collections::BTreeSet<BlobHash> {
+    /// Blobs obrigatórios: tiles, máscaras, imagens de cel e conteúdo de assets (faltar um é erro).
+    pub fn required_blobs(&self) -> std::collections::BTreeSet<BlobHash> {
         let mut out = std::collections::BTreeSet::new();
         for n in self.nodes.values() {
             match &n.data {
@@ -882,6 +898,32 @@ impl Project {
                     out.extend(c.image.clone());
                 }
                 NodeKind::Asset(a) => out.extend(a.blob.clone()),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    /// Todos os hashes de blob referenciados (obrigatórios + citados em JSON livre) — persistência e coleta de lixo.
+    pub fn referenced_blobs(&self) -> std::collections::BTreeSet<BlobHash> {
+        let mut out = std::collections::BTreeSet::new();
+        for n in self.nodes.values() {
+            match &n.data {
+                NodeKind::Cel(c) => {
+                    out.extend(c.tiles.iter().map(|t| t.blob.clone()));
+                    out.extend(c.fills.iter().filter_map(|f| f.mask.clone()));
+                    out.extend(c.image.clone());
+                }
+                NodeKind::Asset(a) => {
+                    out.extend(a.blob.clone());
+                    scan_blob_hashes(&a.params, &mut out);
+                }
+                NodeKind::Document(d) => scan_blob_hashes(&d.content, &mut out),
+                NodeKind::Layer(l) => scan_blob_hashes(&l.params, &mut out),
+                NodeKind::Character(c) => {
+                    scan_blob_hashes(&c.voice, &mut out);
+                    scan_blob_hashes(&c.measurements, &mut out);
+                }
                 _ => {}
             }
         }
