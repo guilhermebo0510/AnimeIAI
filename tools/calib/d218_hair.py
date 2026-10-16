@@ -116,6 +116,7 @@ TAPER_DES = {7: {"franja_h2", "franja_i1"}}
 DIRECT_W_DES = {8: {"queixo": 25.0}}  # no 8 o queixo engrossa (~25 px pela varredura por colunas, borda da pele igual)
 NO_ANCHOR_DES = {8: {"contorno_n2"}}
 FIELD_FIRST = {8}  # empate entre as estimativas: no 8 fica a do campo
+WIDTH_SCALE = {}  # testado no 8 com 1,06: F1 0,9106 → 0,9082
 # larguras fixas por desenho (lidas por varredura): no alto do quadro a tinta clareia e o paquímetro de faixa estreita a linha
 FIXED_W.update({7: {"mecha_n": 20.0}, 8: {"mecha_n": 22.0, "mecha_yy": 23.0}}.get(CEL, {}))
 INK.update({7: {"alca": "#3e1d1c"}, 8: {"alca": "#3e1d1c"}}.get(CEL, {}))  # alça curta (sem trechos coloridos): cor medida no desenho
@@ -135,7 +136,9 @@ DIRECT_DES[8] = {"alca": ([(1491, 953), (1483, 960), (1476, 970), (1466, 980), (
                                    (235, 460), (227, 480), (218, 500), (209, 520), (201, 540), (195, 571), (205, 600), (220, 611), (250, 637),
                                    (270, 652), (300, 672), (330, 689), (360, 703), (372, 708)], 16.0),
                  # contorno do alto à direita: no 8 começa ~60 px mais alto (centros das varreduras), resto pelo campo
-                 "contorno_n2": ([(1603, 40), (1622, 60), (1636, 70), (1649, 80), (1665, 100), (1682, 120), (1697, 140), (1711, 160), (1724, 180),
+                 # topo: ombro quase horizontal (borda do fundo lida no Canny da referência, centro = borda + 11 px na normal)
+                 "contorno_n2": ([(1600, 42), (1612, 44), (1622, 48), (1630, 55), (1638, 64), (1647, 76), (1657, 88), (1668, 104), (1683, 120),
+                                  (1697, 140), (1711, 160), (1724, 180),
                                   (1734, 200), (1733, 220), (1728, 240), (1723, 260), (1717, 280), (1709, 300), (1700, 320), (1690, 340), (1677, 360),
                                   (1662, 380), (1645, 392)], 20.0)}
 # linhas do cabelo relidas no próprio desenho (varreduras runs.py; coordenadas do desenho, sem campo)
@@ -240,6 +243,9 @@ def measured_curves(table, step=3, closed=False, ref=None):
             c = meas.curve_from_measure(pts, ws, ink_of(name, poly), closed=closed, every=1)
             c["width"] = max(c["width"], MIN_W - 1)
         c["profile"] = [[t, max(0.7, min(1.3, w))] for t, w in c["profile"]]
+        if CEL in WIDTH_SCALE and name not in FIXED_W:  # o paquímetro de faixa estreita um pouco a linha neste desenho
+            c["width"] *= WIDTH_SCALE[CEL]
+            ws = [(w or c["width"]) * WIDTH_SCALE[CEL] for w in ws]
         taper = name in TAPER_DES.get(CEL, set())
         if taper:  # ponta fina no fim (as mechas da franja terminam em bico no redesenho)
             n = len(ws)
