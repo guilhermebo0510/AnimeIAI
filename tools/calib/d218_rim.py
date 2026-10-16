@@ -13,8 +13,7 @@ CENTERS = {
     "esq4": [(252, 668), (230, 740), (215, 795), (228, 828)],
     "esq5": [(242, 864), (238, 888), (233, 912), (229, 936), (228, 956)],
     "esq5b": [(228, 960), (226, 976), (223, 992), (220, 1008), (220, 1016), (219, 1032), (219, 1040), (220, 1048), (225, 1056)],
-    "mecha_e": [(430, 0), (412, 60), (398, 150), (390, 250), (390, 400), (397, 520), (399, 640), (396, 690), (393, 714), (390, 730),
-                (387, 750), (384, 770)],
+    "mecha_e": [(430, 0), (412, 60), (398, 150), (390, 250), (390, 400), (397, 520), (399, 640), (397, 680), (395, 706)],
     "mecha_e_topo": [(370, 0), (352, 50), (345, 75)],
     "dir1": [(1560, 0), (1585, 100), (1600, 200), (1610, 320), (1607, 420), (1600, 515)],
     "dir2": [(1625, 135), (1660, 150), (1700, 180), (1720, 212), (1712, 250), (1698, 298)],
@@ -25,7 +24,9 @@ CENTERS = {
 }
 RIM = "#f4a097"
 TAPER_END = set()
-NO_TRIM = {"mecha_e", "dir3"}  # pontas finas e mais escuras: a cor da faixa muda e o corte comeria a ponta real
+NO_TRIM = {"dir3"}
+# caudas finas (2–3 px) que a medição de faixa não acompanha: traço fixo lido por varredura (runs.py)
+TAILS = {"mecha_e_cauda": ([(394, 706), (392, 718), (390, 730), (388, 742), (386, 754), (384, 766)], 2.5, "#e47a74")}  # pontas finas e mais escuras: a cor da faixa muda e o corte comeria a ponta real
 AS_SHAPE = "--formas" in sys.argv  # polígonos pelas bordas da faixa pioraram o F1 (0,904 × 0,9075)
 
 
@@ -67,6 +68,10 @@ def run():
         else:
             curves.append(c)
         log[name] = (round(c["width"], 1), "#%02x%02x%02x" % tuple(round(v * 255) for v in mid))
+    for name, (poly, w, hexc) in TAILS.items():
+        col = [int(hexc[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        curves.append({"points": [list(p) for p in poly], "width": w, "tip": "marker", "geometry": "spline",
+                       "color": {"type": "direct", "rgba": col + [1.0]}, "profile": [[0, 1.2], [1, 0.4]]})
     if curves:
         d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": 0, "layer": lay, "curves": curves})
     if shapes:
