@@ -8,6 +8,11 @@ for _n in os.environ.get("C131_QLIST", "").split(","):
     if _n:
         QLINE[_n] = float(os.environ.get("C131_QL", "0.5"))
 
+CACHE_F = os.path.join("C:/AnimeIAI/calibracao/tmp", "c131_medidas.json")
+CACHE = json.load(open(CACHE_F)) if os.path.exists(CACHE_F) else {}
+VAR_F = os.path.join(os.path.dirname(os.path.abspath(__file__)), "c131_variantes.json")
+VARIANTS = json.load(open(VAR_F)) if os.path.exists(VAR_F) else {}
+
 if __name__ == "__main__":
     d.apply({"kind": "replace_data", "id": ids["moldura_linha_c1"], "data": {"type": "cel", "number": 1}})
     curves = []
@@ -19,7 +24,15 @@ if __name__ == "__main__":
                            "color": {"type": "direct", "rgba": c + [1.0]}, "closed": closed})
             continue
         tolx = float(os.environ.get("C131_TOL_ESC", "1.0"))  # escala da tolerância de cor (largura à meia altura, não só o miolo)
-        curves.append(measured(name, poly, w, closed=closed, ink=ink or "#1a0508", tol=(tol or 0.12) * tolx))
+        var = VARIANTS.get(name)  # variante de medição escolhida por linha (c131_opt.py): [modo, âncora, busca curta]
+        key = json.dumps([name, poly, w, closed, ink, tol, tolx, os.environ.get("C131_MODO"), os.environ.get("C131_ANCORA"),
+                          os.environ.get("C131_FINO"), os.environ.get("C131_PISO"), os.environ.get("C131_LARG"), os.environ.get("C131_QCOR"),
+                          os.environ.get("C131_QCOR_V"), QLINE.get(name), F, var])
+        if key not in CACHE:  # só remede a linha que mudou
+            kw = dict(mode=var[0], anchor=var[1], fine=var[2]) if var else {}
+            CACHE[key] = measured(name, poly, w, closed=closed, ink=ink or "#1a0508", tol=(tol or 0.12) * tolx, **kw)
+        curves.append(CACHE[key])
+    json.dump(CACHE, open(CACHE_F, "w"))
     print(d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": F, "layer": ids["moldura_linha"], "curves": curves}).get("description"))
     # linhas de fechamento do balde (camada oculta, só nas line_refs da cor)
     f = node("fecho", "Fecho do balde", {"type": "layer", "kind": "vector"}, ids["cut"])
