@@ -1,0 +1,412 @@
+{
+"r1_fora_esq": [
+"faixa",
+true,
+false
+],
+"r1_l2": [
+"faixa",
+false,
+false
+],
+"r1_anel_b": [
+"faixa",
+true,
+false
+],
+"r1_anel_c": [
+"faixa",
+true,
+false
+],
+"r1_anel_a": [
+"faixa",
+true,
+false
+],
+"r1_fora_dir": [
+"faixa",
+true,
+false
+],
+"r2_topo_dir": [
+"faixa",
+true,
+false
+],
+"r2_l1": [
+"faixa",
+true,
+false
+],
+"r2_l2": [
+"meia",
+true,
+true
+],
+"r2_l3": [
+"faixa",
+false,
+false
+],
+"r2_vert": [
+"meia",
+true,
+true
+],
+"r2_botao": [
+"faixa",
+true,
+false
+],
+"r2_crescente": [
+"faixa",
+true,
+false
+],
+"r2_anel_baixo": [
+"faixa",
+true,
+false
+],
+"r3_vert": [
+"faixa",
+false,
+false
+],
+"r3_botao": [
+"faixa",
+false,
+false
+],
+"r3_salmao_esq": [
+"faixa",
+false,
+false
+],
+"r3_salmao_topo": [
+"meia",
+true,
+true
+],
+"r3_arco1": [
+"meia",
+false,
+false
+],
+"r4_fora": [
+"faixa",
+true,
+false
+],
+"r4_botao": [
+"meia",
+false,
+false
+],
+"r4_anel2": [
+"faixa",
+false,
+true
+],
+"r4_arco_esq": [
+"meia",
+false,
+false
+],
+"r4_arco_baixo": [
+"faixa",
+true,
+false
+],
+"folha_tl_borda": [
+"meia",
+true,
+true
+],
+"r5_anel2": [
+"faixa",
+true,
+false
+],
+"r5_topo": [
+"faixa",
+false,
+false
+],
+"r56_borda": [
+"meia",
+true,
+true
+],
+"r6_fora_baixo": [
+"faixa",
+true,
+false
+],
+"r6_anel_dir": [
+"meia",
+false,
+false
+],
+"r6_arco_topo": [
+"faixa",
+false,
+false
+],
+"r7_fora": [
+"faixa",
+false,
+false
+],
+"r71_faixa": [
+"faixa",
+true,
+false
+],
+"caule_t_borda": [
+"meia",
+false,
+false
+],
+"r7_botao": [
+"faixa",
+false,
+false
+],
+"r7_anel2": [
+"meia",
+false,
+false
+],
+"r7_anel3": [
+"faixa",
+false,
+true
+],
+"r7_arco_baixo": [
+"faixa",
+false,
+false
+],
+"r8_botao": [
+"meia",
+false,
+false
+],
+"r8_anel2": [
+"meia",
+true,
+true
+],
+"r9_esq": [
+"faixa",
+false,
+false
+],
+"r9_l1": [
+"faixa",
+false,
+false
+],
+"caule_h1": [
+"meia",
+false,
+false
+],
+"caule_h2": [
+"meia",
+true,
+true
+],
+"r10_anel_a": [
+"faixa",
+false,
+true
+],
+"r10_anel_b": [
+"meia",
+false,
+false
+],
+"r10_arco_c": [
+"meia",
+true,
+true
+],
+"r10_arco_esq": [
+"faixa",
+true,
+false
+],
+"caule_b_cima": [
+"meia",
+true,
+true
+],
+"folha_b_ponta": [
+"meia",
+false,
+false
+],
+"caule_b_baixo": [
+"faixa",
+false,
+false
+],
+"r11_fora": [
+"faixa",
+true,
+false
+],
+"r11_fora2": [
+"meia",
+false,
+false
+],
+"r11_a1": [
+"meia",
+false,
+false
+],
+"r11_a3": [
+"meia",
+true,
+true
+],
+"r12_arco_esq": [
+"faixa",
+false,
+false
+],
+"r12_espiral_in": [
+"meia",
+false,
+false
+],
+"r12_crescente": [
+"faixa",
+true,
+false
+],
+"r12_dir": [
+"meia",
+false,
+false
+],
+"r12_fundo": [
+"faixa",
+true,
+false
+],
+"r12_topo": [
+"faixa",
+true,
+false
+],
+"folha_t1_n0": [
+"meia",
+true,
+true
+],
+"folha_t1_n1": [
+"meia",
+true,
+true
+],
+"folha_t1_n2": [
+"faixa",
+true,
+false
+],
+"folha_t1_n3": [
+"meia",
+true,
+true
+],
+"folha_t1_n4": [
+"meia",
+false,
+false
+],
+"folha_l_n0": [
+"faixa",
+true,
+false
+],
+"folha_l_n1": [
+"meia",
+true,
+true
+],
+"folha_l_n5": [
+"faixa",
+true,
+false
+],
+"folha_l_n6": [
+"faixa",
+true,
+false
+],
+"folha_l_n7": [
+"faixa",
+true,
+false
+],
+"folha_b_n0": [
+"meia",
+true,
+true
+],
+"folha_b_n4": [
+"faixa",
+true,
+false
+],
+"folha_b_n5": [
+"faixa",
+true,
+false
+],
+"folha_h_n0": [
+"faixa",
+true,
+false
+],
+"folha_h_n3": [
+"faixa",
+true,
+false
+],
+"faixa_bege": [
+"faixa",
+false,
+false
+],
+"folha_m_esq": [
+"faixa",
+false,
+false
+],
+"folha_m_n2": [
+"faixa",
+true,
+false
+],
+"folha_t_esq": [
+"faixa",
+true,
+false
+],
+"folha_t_v1": [
+"faixa",
+false,
+true
+],
+"folha_t_v5": [
+"meia",
+true,
+true
+]
+}
