@@ -3,7 +3,7 @@ import os, sys
 sys.path.insert(0, os.path.dirname(__file__))
 from c131 import d, ids
 
-RADIUS = 1.5
+RADIUS = 3.0
 
 
 def run(radius=RADIUS):
