@@ -55,7 +55,7 @@ LINES = {
     "c_m1": ([(653, 27), (640, 43), (628, 62), (620, 77), (612, 93), (605, 110), (600, 130)], 2.0, False),
     "c_m2": ([(708, 13), (690, 27), (665, 53)], 2.0, False),
     "c_m3": ([(627, 127), (622, 147), (617, 177)], 3.0, False),
-    "c_m4": ([(802, 65), (780, 88), (757, 113), (730, 140), (707, 157), (683, 173), (657, 188), (632, 200)], 2.0, False),
+    "c_m4": ([(858, 5), (845, 18), (830, 33), (815, 50), (802, 65), (780, 88), (757, 113), (730, 140), (707, 157), (683, 173), (657, 188), (632, 200)], 2.0, False),
     "c_m5": ([(708, 137), (703, 160)], 2.0, False),
     "c_m6a": ([(845, 73), (840, 93), (835, 113), (830, 127), (823, 147), (815, 170), (807, 188)], 2.5, False),
     "c_m6b": ([(830, 125), (807, 140), (787, 152), (760, 167), (733, 180), (713, 192)], 2.5, False),
@@ -136,7 +136,8 @@ LINES = {
     "c_e22": ([(1082, 330), (1077, 352), (1072, 375)], 2.5, False),
     "c_e23": ([(1043, 352), (1047, 368), (1050, 383)], 2.0, False),
     # olhos (recortes 4×: 510–700 e 780–970 × 360–500); íris com contorno só em cima e dos lados (embaixo degradê sem linha)
-    "olho_e_palpebra": ([(517, 440), (525, 425), (535, 414), (547, 406), (562, 401), (580, 397)], 11.0, False, {"raw": "#74502f"}),
+    "olho_e_palpebra": ([(517, 440), (525, 425), (535, 414), (547, 405), (560, 398), (580, 392), (600, 388), (618, 385)], 11.0, False, {"raw": "#74502f"}),
+    "olho_e_palpebra_d": ([(644, 397), (658, 396), (667, 400), (674, 414)], 7.0, False, {"raw": "#74502f"}),
     "olho_e_iris": (arc(609, 438, 41, 38.5, -25, 205), 3.0, False, {"raw": "#6a4048"}),
     "olho_e_pupila": (arc(609, 441, 7.5, 7.5, 0, 360, 16)[:-1], 2.0, True, {"raw": "#5a3a48"}),
     "olho_e_cilio1": ([(567, 485), (575, 486)], 2.0, False, {"raw": INK}),
@@ -192,6 +193,15 @@ LINES = {
     "c_m4b": ([(630, 210), (631, 230), (631, 248)], 2.0, False, {"fino": True}),
     "olho_e_dobra2": ([(568, 290), (590, 289), (610, 288), (625, 287)], 3.0, False, {"fino": True}),
     "f_ponta_e": ([(650, 333), (643, 350), (633, 367), (623, 383)], 2.0, False, {"fino": True}),
+    # topo do cabelo (mapa de faltantes 780–1060 × 0–110)
+    "c_t4": ([(903, 3), (915, 5), (925, 12), (930, 22), (933, 33)], 2.0, False, {"fino": True}),
+    "c_t5": ([(948, 0), (958, 5), (970, 12), (978, 17)], 2.0, False, {"fino": True}),
+    "c_contorno_dt": ([(1000, 0), (1012, 12), (1025, 28), (1037, 45), (1047, 62), (1055, 80), (1060, 95)], 2.0, False, {"fino": True}),
+    # arcos internos da íris (azul-marinho)
+    "olho_d_arco_e": ([(826, 464), (835, 472), (847, 478)], 2.0, False, {"raw": "#2c2f86"}),
+    "olho_d_arco_d": ([(877, 478), (890, 472), (899, 463)], 2.0, False, {"raw": "#2c2f86"}),
+    "olho_e_arco_e": ([(572, 464), (581, 472), (593, 478)], 2.0, False, {"raw": "#2c2f86"}),
+    "olho_e_arco_d": ([(624, 478), (637, 472), (646, 463)], 2.0, False, {"raw": "#2c2f86"}),
 }
 
 
@@ -208,7 +218,15 @@ FECHO = {
                  (935, 465), (944, 452), (947, 440), (949, 430), (950, 425)],
     "pescoco_gola": [(636, 762), (660, 785), (680, 790), (700, 790), (735, 788), (760, 787), (790, 775), (832, 762)],
     # sombras do cabelo e da testa (fronteiras sem tinta lidas no mapa de bordas faltantes)
-    "sombra_franja": [(620, 237), (660, 228), (700, 212), (740, 195), (770, 180), (800, 160), (825, 135), (840, 105), (848, 70), (850, 58)],
+    "sombra_franja": [(620, 237), (660, 228), (700, 212), (740, 195), (770, 180), (800, 160), (818, 110)],
+    "sombra_cunha": [(818, 110), (830, 90), (842, 70), (852, 50), (857, 40), (858, 60), (857, 85), (855, 110)],
+    # olhos: sombra lilás no alto do branco, faixa marinho/azul da íris
+    "branco_d_sombra_e": [(800, 427), (811, 424), (823, 423)],
+    "branco_d_sombra_d": [(896, 419), (902, 420), (920, 425), (935, 433), (945, 442), (951, 452)],
+    "branco_e_sombra_e": [(522, 438), (545, 428), (569, 425)],
+    "branco_e_sombra_d": [(643, 418), (649, 420), (658, 428), (665, 438)],
+    "iris_d_faixa": [(823, 452), (845, 452), (855, 450), (868, 450), (880, 448), (902, 450)],
+    "iris_e_faixa": [(569, 453), (591, 453), (601, 451), (614, 451), (626, 449), (649, 451)],
     "sombra_dir": [(880, 60), (884, 95), (890, 130), (898, 165), (906, 198)],
     "sombra_esq": [(525, 140), (545, 120), (565, 103), (578, 95)],
     "sombra_testa_d": [(848, 200), (856, 230), (866, 262), (878, 292), (888, 320)],
@@ -299,9 +317,9 @@ def fill(gap=4.0, min_area=40):
     line = np.asarray(Image.open(tl).convert("RGBA"))[..., 3] >= 0.35 * 255
     D = distance_transform_edt(~line)
     cores, n = label(D > gap / 2)
-    _, (iy, ix) = distance_transform_edt(cores == 0, return_indices=True)
-    lab = cores[iy, ix]
-    lab[line] = 0
+    # propagação dos núcleos só por pixels fora da linha (como o balde do app: a onda não atravessa a linha)
+    from skimage.segmentation import watershed
+    lab = watershed(-D, markers=cores, mask=~line)
     ref = np.asarray(Image.open(REF).convert("RGB")).astype(float)
     bgr = np.asarray(Image.open(tb).convert("RGB")).astype(float)
     # fundo = regiões que contêm pontos digitados de fundo (cor parecida não serve: branco do olho ≈ parede creme)
