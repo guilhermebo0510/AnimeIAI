@@ -32,7 +32,8 @@ def run():
     d.apply({"kind": "replace_data", "id": ids["rim_c1"], "data": {"type": "cel", "number": 1}})
     curves, log = [], {}
     for name, poly in CENTERS.items():
-        pts, ws = meas.measure_line(d, REF0, meas.densify(poly, 6), line_color=RIM, passes=((20.0, 0.08), (12.0, 0.08)), smooth=2)
+        # paquímetro de faixa: a cor do realce varia por dentro (borda salmão, miolo mais claro)
+        pts, ws = meas.measure_band(d, REF0, meas.densify(poly, 6), RIM, 0.09)
         probes = meas.first_list(d.call("PROBE_COLOR", {"reference": REF0, "points": [[round(p[0]), round(p[1])] for p in pts[1:-1:2]],
                                                         "radius": 1}))
         cs = sorted(probes, key=lambda c: sum(c["rgb"]))

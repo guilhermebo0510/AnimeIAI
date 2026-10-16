@@ -26,7 +26,7 @@ use aiai_tools::ToolError;
 use aiai_tools::anim::{InbetweenRequest, PropagateFillsRequest, inbetween_command, propagate_fills};
 use aiai_tools::audio::{self, BgmRequest, KokoroLineRequest, LipsyncRequest, SfxRequest, TtsLineRequest, VoiceProfile, WavBits};
 use aiai_tools::background::{PatternFillRequest, SkyRequest, pattern_fill_command, sky_command};
-use aiai_tools::calib::{load_reference, measure_edge, measure_line_color, probe_colors};
+use aiai_tools::calib::{load_reference, measure_band, measure_edge, measure_line_color, probe_colors};
 use aiai_tools::edit::{EditDoc, edit_command, load_edit, mix_edit, render_edit_frame};
 use aiai_tools::paint::{FillShapeRequest, fill_shape_command};
 use aiai_tools::character::{ConsistencyRequest, ModelSheetRequest, consistency, model_sheet};
@@ -497,6 +497,10 @@ pub struct MeasureLineRequest {
     /// linha passa sobre massas escuras (cabelo, sombra) e o contraste de luminância some.
     #[serde(default)]
     pub line_color: Option<String>,
+    /// Com `line_color`: modo faixa (paquímetro) — pixels a até `tolerance` (0..1) da cor formam a faixa; devolve o meio
+    /// e o comprimento do trecho contínuo junto ao ponto. Para faixas de cor que varia por dentro (realces).
+    #[serde(default)]
+    pub tolerance: Option<f32>,
 }
 
 fn measure(params: &Value) -> Result<Value, BridgeError> {
@@ -520,7 +524,10 @@ fn measure(params: &Value) -> Result<Value, BridgeError> {
     };
     let img = load_reference(&r.reference).map_err(tool_error)?;
     let summarize = |pts: &[[f32; 2]]| {
-        let m = measure_line_color(&img, pts, search, min_contrast, line_color);
+        let m = match (r.tolerance, line_color) {
+            (Some(tol), Some(c)) => measure_band(&img, pts, search, c, tol),
+            _ => measure_line_color(&img, pts, search, min_contrast, line_color),
+        };
         let found: Vec<_> = m.iter().filter(|x| x.contrast > 0.0).collect();
         let n = found.len().max(1) as f32;
         json!({

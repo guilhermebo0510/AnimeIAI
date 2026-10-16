@@ -176,7 +176,7 @@ def anchor_line(d, ref, pts, widths, w_nom, closed=False, search=4.0, strong=0.0
     return smooth_points(new_pts, closed, 2), _median_filter(new_w, closed)
 
 
-def edge_offset_line(d, ref, pts, side, half_w, search=6.0, passes=2):
+def edge_offset_line(d, ref, pts, side, half_w, search=10.0, passes=3):
     """Linha cujo lado `side` (+1/−1 na normal) encosta numa massa clara e nítida (pele): mede essa borda com MEASURE_EDGE
     e põe o centro a `half_w` dela, para dentro da linha. Pontas mantêm a posição estimada (normal pouco confiável)."""
     cur = [list(p) for p in pts]
@@ -199,3 +199,16 @@ def edge_offset_line(d, ref, pts, side, half_w, search=6.0, passes=2):
         cur = smooth_points(nxt, False, 2)
         search = max(3.0, search / 2)
     return cur
+
+
+def measure_band(d, ref, pts, color, tolerance, closed=False, passes=(20.0, 10.0), smooth=2):
+    """Faixa de cor medida como paquímetro (MEASURE_LINE com `tolerance`): centros e larguras do trecho contínuo."""
+    widths = None
+    for search in passes:
+        res = first_list(d.call("MEASURE_LINE", {"reference": ref, "points": pts, "search": search, "line_color": color,
+                                                 "tolerance": tolerance}))
+        ox = _median_filter([(m["center"][0] - m["given"][0]) if m["contrast"] > 0 else None for m in res], closed)
+        oy = _median_filter([(m["center"][1] - m["given"][1]) if m["contrast"] > 0 else None for m in res], closed)
+        widths = _median_filter([m["width"] if m["contrast"] > 0 else None for m in res], closed)
+        pts = [[m["given"][0] + (ox[i] or 0.0), m["given"][1] + (oy[i] or 0.0)] for i, m in enumerate(res)]
+    return smooth_points(pts, closed, smooth), widths

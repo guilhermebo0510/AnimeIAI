@@ -154,6 +154,66 @@ pub fn measure_line_color(img: &Image, points: &[[f32; 2]], search: f32, min_con
     out
 }
 
+/// Faixa de cor (paquímetro): ao longo da normal (±`search`), os pixels a até `tolerance` (distância RGB 0..1, como em
+/// [`measure_line_color`]) de `color` formam a faixa; centro = meio do trecho contínuo que contém o ponto (ou o mais
+/// próximo dele) e largura = comprimento desse trecho. Serve para faixas cuja cor varia por dentro (realces, reflexos).
+pub fn measure_band(img: &Image, points: &[[f32; 2]], search: f32, color: [f32; 3], tolerance: f32) -> Vec<LineMeasure> {
+    let n = points.len();
+    let mut out = Vec::with_capacity(n);
+    let step = 0.25f32;
+    let k = (search / step).ceil() as i32;
+    for i in 0..n {
+        let p = points[i];
+        let (a, b) = (points[i.saturating_sub(1)], points[(i + 1).min(n - 1)]);
+        let (tx, ty) = (b[0] - a[0], b[1] - a[1]);
+        let tl = (tx * tx + ty * ty).sqrt();
+        let none = LineMeasure { given: p, center: p, moved: 0.0, width: 0.0, contrast: 0.0 };
+        if tl < 1e-4 {
+            out.push(none);
+            continue;
+        }
+        let (nx, ny) = (-ty / tl, tx / tl);
+        let inside: Vec<bool> = (-k..=k)
+            .map(|j| {
+                let t = j as f32 * step;
+                let q = sample(img, p[0] + nx * t, p[1] + ny * t);
+                if q[3] <= 0.0 {
+                    return false;
+                }
+                let d: f32 = (0..3).map(|c| (q[c] / q[3] - color[c]).powi(2)).sum();
+                (d / 3.0).sqrt() <= tolerance
+            })
+            .collect();
+        // trechos contínuos [ini, fim] em índices
+        let mut runs: Vec<(usize, usize)> = Vec::new();
+        let mut start = None;
+        for (idx, &v) in inside.iter().enumerate() {
+            match (v, start) {
+                (true, None) => start = Some(idx),
+                (false, Some(s0)) => {
+                    runs.push((s0, idx - 1));
+                    start = None;
+                }
+                _ => {}
+            }
+        }
+        if let Some(s0) = start {
+            runs.push((s0, inside.len() - 1));
+        }
+        let mid = k as usize;
+        let dist = |r: &(usize, usize)| if r.0 <= mid && mid <= r.1 { 0 } else { (r.0 as i64 - mid as i64).abs().min((r.1 as i64 - mid as i64).abs()) };
+        let Some(best) = runs.iter().filter(|r| r.1 > r.0).min_by_key(|r| dist(r)) else {
+            out.push(none);
+            continue;
+        };
+        let t0 = best.0 as f32 * step - search;
+        let t1 = best.1 as f32 * step - search;
+        let tc = (t0 + t1) / 2.0;
+        out.push(LineMeasure { given: p, center: [p[0] + nx * tc, p[1] + ny * tc], moved: tc.abs(), width: t1 - t0 + step, contrast: 1.0 });
+    }
+    out
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct EdgeMeasure {
     pub given: [f32; 2],
@@ -269,6 +329,18 @@ mod tests {
         }
         for r in measure_line_color(&k, &est, 8.0, 0.06, Some([0.36, 0.18, 0.18])) {
             assert!((r.width - 4.0).abs() < 1.0 && (r.center[0] - 51.0).abs() < 0.8, "{r:?}");
+        }
+        // faixa clara de 10 px (x 60..70) com cor variando por dentro: a faixa inteira é medida
+        let mut f = Image::filled(100, 40, [0.63, 0.11, 0.23, 1.0]);
+        for y in 0..40 {
+            for x in 60..70 {
+                let i = f.idx(x, y);
+                let v = (x - 60) as f32 / 10.0;
+                f.data[i] = [0.95, 0.60 + 0.1 * v, 0.57 + 0.1 * v, 1.0];
+            }
+        }
+        for r in measure_band(&f, &[[58.0, 10.0], [58.0, 20.0], [58.0, 30.0]], 12.0, [0.95, 0.63, 0.6], 0.2) {
+            assert!((r.center[0] - 65.0).abs() < 0.6 && (r.width - 10.0).abs() < 1.0, "{r:?}");
         }
         let c = probe_colors(&img, &[[10.0, 10.0]], 2);
         assert_eq!(c[0].hex, "#f2e6d9");
