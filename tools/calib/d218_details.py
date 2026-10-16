@@ -3,7 +3,7 @@ e brilhos dos olhos (traços brancos curtos na vetorial `brilho`, acima das linh
 import os, sys
 sys.path.insert(0, os.path.dirname(__file__))
 import meas
-from d218 import reorder, d, ids, node, REF0
+from d218 import reorder, d, ids, node, REF0, ck, CEL, F0, W, edge_score, candidates
 
 WHITE = "#f6f3f6"
 SHAPES = {
@@ -19,6 +19,15 @@ SHAPES = {
     "cunha_k3_l1": ("#6f413c", [(1222, 80), (1240, 86), (1250, 100), (1232, 101), (1224, 97)], False),
     "sombra_l2": ("#872637", [(1330, 92), (1355, 104), (1380, 116), (1392, 122), (1395, 145), (1375, 140), (1350, 125)], True),
 }
+# redesenhos: formas relidas no próprio desenho (varredura por colunas, runs.py), sem campo
+SHAPES_DES = {7: {
+    "fita_esq": ("#f5e0c7", [(472, 0), (551, 0), (548, 25), (544, 40), (540, 58), (533, 59), (528, 48), (522, 42), (504, 41), (492, 44),
+                             (484, 50), (474, 60), (466, 67), (460, 58), (466, 30), (470, 10)], False),
+    "fita_dir": ("#f5e0c7", [(768, 0), (864, 0), (862, 20), (862, 38), (856, 37), (850, 28), (842, 27), (830, 30), (818, 37), (806, 42),
+                             (794, 40), (789, 57), (782, 57), (776, 44), (770, 25)], False),
+    "fita_dir2": ("#f5e0c7", [(886, 0), (919, 0), (917, 22), (908, 22), (900, 24), (896, 36), (890, 26), (886, 6)], False)}}
+# fresta rosada (cor da pele) entre as duas voltas do anel de baixo do olho esquerdo, quando ela cresce no redesenho
+GAP_DES = {7: [([(708, 523), (718, 529), (730, 534), (744, 538), (758, 540), (770, 541)], 7.0)]}
 HIGHLIGHTS = [
     [(747, 351), (755, 349), (762, 347)],
     [(737, 537), (751, 539), (765, 540), (778, 539), (790, 537)],
@@ -31,24 +40,35 @@ HIGHLIGHTS = [
 
 def run():
     det = node("detalhe", "Detalhes", {"type": "layer", "kind": "raster"}, ids["cut"])
-    node("detalhe_c1", "1", {"type": "cel", "number": 1}, det)
+    ck("detalhe")
     bri = node("brilho", "Brilhos", {"type": "layer", "kind": "vector"}, ids["cut"])
-    node("brilho_c1", "1", {"type": "cel", "number": 1}, bri)
+    ck("brilho")
     reorder()
-    for k in ("detalhe_c1", "brilho_c1"):
-        d.apply({"kind": "replace_data", "id": ids[k], "data": {"type": "cel", "number": 1}})
-    for name, (color, poly, do_measure) in SHAPES.items():
-        pts = meas.densify(poly, 3, closed=True)
-        if do_measure:
-            pts = meas.measure_edge(d, REF0, pts, passes=((5.0, 0.03), (3.0, 0.03)))
+    for k in (ck("detalhe"), ck("brilho")):
+        d.apply({"kind": "replace_data", "id": ids[k], "data": {"type": "cel", "number": CEL}})
+    raw = SHAPES_DES.get(CEL, {})
+    for name, (color, poly, do_measure) in {**SHAPES, **raw}.items():
+        best = None
+        for cand in ([[tuple(p) for p in poly]] if name in raw else candidates(poly)):  # redesenho: a estimativa do desenho 1 ou a do campo, a que encaixar melhor depois de medida
+            pts = meas.densify(cand, 3, closed=True)
+            if do_measure:
+                pts = meas.measure_edge(d, REF0, pts, passes=((5.0, 0.03), (3.0, 0.03)))
+            sc = edge_score(pts) if CEL != 1 else 0
+            if best is None or sc > best[0]:
+                best = (sc, pts)
+        pts = best[1]
         c = [int(color[i:i + 2], 16) / 255 for i in (1, 3, 5)]
-        d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": 0, "layer": det, "shapes": [{"points": pts, "geometry": "polyline"}],
+        d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": F0, "layer": det, "shapes": [{"points": pts, "geometry": "polyline"}],
                               "color": {"type": "direct", "rgba": c + [1.0]}})
     w = [int(WHITE[i:i + 2], 16) / 255 for i in (1, 3, 5)]
-    curves = [{"points": [list(p) for p in h], "width": 4.0, "tip": "marker", "geometry": "spline", "color": {"type": "direct", "rgba": w + [1.0]},
+    curves = [{"points": [list(p) for p in W(h)], "width": 4.0, "tip": "marker", "geometry": "spline", "color": {"type": "direct", "rgba": w + [1.0]},
                "profile": [[0, 0.4], [0.5, 1.0], [1, 0.4]]} for h in HIGHLIGHTS]
+    pele = [0xf8 / 255, 0xd3 / 255, 0xcb / 255, 1.0]
+    for pts, wd in GAP_DES.get(CEL, []):
+        curves.append({"points": [list(p) for p in pts], "width": wd, "tip": "marker", "geometry": "spline", "color": {"type": "direct", "rgba": pele},
+                       "profile": [[0, 0.3], [0.45, 1.0], [1, 0.3]]})
     # a gota de suor muda por desenho: d218_dyn.py (camadas `gota`/`gota_r`)
-    return d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": 0, "layer": bri, "curves": curves})
+    return d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": F0, "layer": bri, "curves": curves})
 
 
 if __name__ == "__main__":

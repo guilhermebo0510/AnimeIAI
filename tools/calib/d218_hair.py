@@ -3,7 +3,7 @@ grid_crop --near 5c2e2e) e refinadas por MEASURE_LINE (decisão 22). Desenha na 
 import json, os, sys
 sys.path.insert(0, os.path.dirname(__file__))
 import meas
-from d218 import d, ids, REF0, draw, render
+from d218 import d, ids, REF0, draw, render, ck, CEL, F0, W, candidates, color_score
 
 MIN_W = 11.0
 # larguras lidas nos perfis da referência onde um lado da linha funde numa massa escura (a medição não acha a 2ª borda)
@@ -103,6 +103,11 @@ WIDTH_FN = {"contorno_n3a": lambda p, w: w + max(0.0, min(8.0, (p[1] - 400) * 0.
             "contorno_n2": lambda p, w: 20.0 if p[0] < 1700 and p[1] < 175 else w,
             "borda_inf_esq": lambda p, w: max(5.0, min(14.0, 14.0 - (p[1] - 880) * 9.0 / 160.0)),
             "queixo": lambda p, w: 25.0 if (p[0] < 675 and 690 < p[1] < 830) else (20.0 if (p[0] < 675 and 650 < p[1] <= 690) else w)}
+# redesenhos de tremor: linhas que o campo de deslocamento não leva para o lugar certo, relidas pelo agente no desenho
+# (coordenadas já do desenho; não passam pelo campo)
+DIRECT_DES = {7: {"alca": ([(1494, 945), (1481, 960), (1467, 980), (1452, 1000), (1440, 1020), (1427, 1040), (1416, 1060), (1404, 1082)], 27.0)}}  # runs.py
+RAW = set(DIRECT_DES.get(CEL, {}))
+DIRECT.update(DIRECT_DES.get(CEL, {}))
 SKIN_SIDE = {"queixo": -1, "contorno_esq": 1, "contorno_n2": -1, "contorno_n3a": -1, "contorno_n4a": -1, "contorno_n5": -1}
 CLOSED = {}  # a boca virou anel medido na linha-massa (d218_face.py)
 
@@ -150,14 +155,21 @@ def measured_curves(table, step=3, closed=False, ref=None):
     curves, log = [], {}
     for name, poly in table.items():
         if BAND:
-            # paquímetro de faixa pela cor da tinta: separa a tinta do cabelo, do realce e da sombra sem viés de meia altura
-            pts, ws = meas.measure_band(d, REF, meas.densify(poly, step, closed=closed), "#5c2e2e", 0.09, closed=closed,
-                                        passes=(16.0, 10.0), smooth=SMOOTH)
+            # paquímetro de faixa pela cor da tinta: separa a tinta do cabelo, do realce e da sombra sem viés de meia altura;
+            # redesenho: mede a estimativa do desenho 1 e a do campo e fica com a que cai mais na tinta
+            best = None
+            for cand in (candidates(poly) if ref is None else [[tuple(p) for p in poly]]):  # ref dada: dados lidos no próprio desenho (d218_dyn)
+                cp, cw = meas.measure_band(d, REF, meas.densify(cand, step, closed=closed), "#5c2e2e", 0.09, closed=closed,
+                                           passes=(16.0, 10.0), smooth=SMOOTH)
+                sc = color_score(cp, "#5c2e2e", 55) if CEL != 1 else 0
+                if best is None or sc > best[0]:
+                    best = (sc, cp, cw, cand)
+            _, pts, ws, poly = best
         else:
-            pts, ws = meas.measure_line(d, REF, meas.densify(poly, step, closed=closed), closed=closed, line_color="#5c2e2e",
+            pts, ws = meas.measure_line(d, REF, meas.densify(W(poly), step, closed=closed), closed=closed, line_color="#5c2e2e",
                                         passes=((14.0, 0.08), (9.0, 0.08)), smooth=3)
         if name in PIN_START:  # emenda exata com o trecho desenhado direto
-            pts[0] = list(poly[0])
+            pts[0] = list(W(poly)[0])
         c = meas.curve_from_measure(pts, ws, ink_of(name, poly), closed=closed, every=1)
         # linhas do chibi são quase uniformes (11–15 px); onde a tinta funde numa massa escura a meia altura subestima:
         # piso de 11 px e variação do perfil limitada (leitura do agente nos recortes ampliados)
@@ -172,7 +184,7 @@ def measured_curves(table, step=3, closed=False, ref=None):
                 pts, ws2 = meas.anchor_line(d, REF, pts, ws, c["width"], closed=closed, search=search)
                 ws = ws if name in FIXED_W else ws2
                 if name in PIN_START:
-                    pts[0] = list(poly[0])
+                    pts[0] = list(W(poly)[0])
             c = meas.curve_from_measure(pts, ws, ink_of(name, poly), closed=closed, every=1)
             c["width"] = max(c["width"], MIN_W - 1)
         c["profile"] = [[t, max(0.7, min(1.3, w))] for t, w in c["profile"]]
@@ -203,25 +215,31 @@ FECHO = [
 def fecho():
     from d218 import node
     f = node("fecho", "Fecho do balde", {"type": "layer", "kind": "vector"}, ids["cut"])
-    node("fecho_c1", "1", {"type": "cel", "number": 1}, f)
+    ck("fecho")
     d.apply({"kind": "set_props", "id": f, "data": {"visible": False}})
     d.apply({"kind": "set_props", "id": ids["cor"], "data": {"line_refs": [ids["linha"], ids["linha_massa"], f]}})
-    d.apply({"kind": "replace_data", "id": ids["fecho_c1"], "data": {"type": "cel", "number": 1}})
-    curves = [{"points": [list(p) for p in c], "width": 2.0, "tip": "marker", "geometry": "polyline", "color": LINE} for c in FECHO]
-    return d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": 0, "layer": f, "curves": curves})
+    d.apply({"kind": "replace_data", "id": ids[ck("fecho")], "data": {"type": "cel", "number": CEL}})
+    curves = [{"points": [list(p) for p in W(c)], "width": 2.0, "tip": "marker", "geometry": "polyline", "color": LINE} for c in FECHO]
+    return d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": F0, "layer": f, "curves": curves})
 
 
 if __name__ == "__main__":
     print(fecho().get("description"))
     if "--so-fecho" in sys.argv:
         sys.exit()
-    d.apply({"kind": "replace_data", "id": ids["linha_c1"], "data": {"type": "cel", "number": 1}})
+    d.apply({"kind": "replace_data", "id": ids[ck("linha")], "data": {"type": "cel", "number": CEL}})
     curves, log = measured_curves(HAIR)
     c2, l2 = measured_curves(CLOSED, closed=True)
     for name, (poly, w) in DIRECT.items():
-        pts = meas.densify(poly, 4)
-        if name in SKIN_SIDE:  # encosta na pele: a borda da pele é nítida, ancora nela
-            pts = meas.edge_offset_line(d, REF0, pts, SKIN_SIDE[name], w / 2, search=16.0 if name == "queixo" else 10.0)
+        best = None
+        for cand in ([[tuple(p) for p in poly]] if name in RAW else [W(poly)]):  # escolha entre as duas piorou aqui (F1 −0,005)
+            cp = meas.densify(cand, 4)
+            if name in SKIN_SIDE:  # encosta na pele: a borda da pele é nítida, ancora nela
+                cp = meas.edge_offset_line(d, REF0, cp, SKIN_SIDE[name], w / 2, search=16.0 if name == "queixo" else 10.0)
+            sc = color_score(cp, "#5c2e2e", 55) if CEL != 1 else 0
+            if best is None or sc > best[0]:
+                best = (sc, cp)
+        pts = best[1]
         wl = [WIDTH_FN[name](p, w) for p in pts] if name in WIDTH_FN else [w] * len(pts)
         if name in SKIN_SIDE and name in WIDTH_FN:  # largura variável: reancora pela borda da pele com a meia largura local
             pts = [[p[0] - SKIN_SIDE[name] * n[0] * (wi - w) / 2, p[1] - SKIN_SIDE[name] * n[1] * (wi - w) / 2]

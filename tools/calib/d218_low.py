@@ -3,14 +3,14 @@
 import json, os, sys
 sys.path.insert(0, os.path.dirname(__file__))
 import meas
-from d218 import reorder, d, ids, node, REF0, render
+from d218 import reorder, d, ids, node, REF0, render, ck, CEL, F0, W, edge_score, candidates
 
 INK = "#4a2022"
 
 
 def layers():
     baixo = node("baixo", "Baixo (roupa)", {"type": "layer", "kind": "raster"}, ids["cut"])
-    node("baixo_c1", "1", {"type": "cel", "number": 1}, baixo)
+    ck("baixo")
     # ordem de baixo para cima: bg, cor, realce (recortado na cor), baixo, linha-massa, linha, satsuei, fecho
     reorder()
     return baixo
@@ -58,14 +58,20 @@ SHAPES = {
 
 
 def draw_shapes(measure=True):
-    d.apply({"kind": "replace_data", "id": ids["baixo_c1"], "data": {"type": "cel", "number": 1}})
+    d.apply({"kind": "replace_data", "id": ids[ck("baixo")], "data": {"type": "cel", "number": CEL}})
     out = {}
     for name, (color, poly, do_measure) in SHAPES.items():
-        pts = meas.densify(poly, 3, closed=True)
-        if measure and do_measure:
-            pts = meas.measure_edge(d, REF0, pts, passes=((4.0, 0.03), (2.5, 0.03)))
+        best = None
+        for cand in candidates(poly):  # redesenho: a estimativa do desenho 1 ou a do campo, a que encaixar melhor depois de medida
+            pts = meas.densify(cand, 3, closed=True)
+            if measure and do_measure:
+                pts = meas.measure_edge(d, REF0, pts, passes=((4.0, 0.03), (2.5, 0.03)))
+            sc = edge_score(pts) if CEL != 1 else 0
+            if best is None or sc > best[0]:
+                best = (sc, pts)
+        pts = best[1]
         c = [int(color[i:i + 2], 16) / 255 for i in (1, 3, 5)]
-        r = d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": 0, "layer": ids["baixo"], "shapes": [{"points": pts, "geometry": "polyline"}],
+        r = d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": F0, "layer": ids["baixo"], "shapes": [{"points": pts, "geometry": "polyline"}],
                                   "color": {"type": "direct", "rgba": c + [1.0]}})
         out[name] = r.get("description")
     return out

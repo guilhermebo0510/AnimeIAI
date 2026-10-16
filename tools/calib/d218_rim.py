@@ -4,7 +4,7 @@ cor de cada faixa = mediana medida nos centros. Camada vetorial `rim`, recortada
 import os, sys
 sys.path.insert(0, os.path.dirname(__file__))
 import meas
-from d218 import reorder, d, ids, node, REF0
+from d218 import reorder, d, ids, node, REF0, ck, CEL, F0, W, candidates, color_score
 
 CENTERS = {
     "esq1": [(300, 150), (285, 230), (262, 300), (247, 345)],
@@ -34,14 +34,20 @@ AS_SHAPE = "--formas" in sys.argv  # polígonos pelas bordas da faixa pioraram o
 
 def run():
     lay = node("rim", "Realce de borda", {"type": "layer", "kind": "vector"}, ids["cut"])
-    node("rim_c1", "1", {"type": "cel", "number": 1}, lay)
+    ck("rim")
     d.apply({"kind": "set_props", "id": lay, "data": {"clip_to_below": True, "visible": True}})
     reorder()
-    d.apply({"kind": "replace_data", "id": ids["rim_c1"], "data": {"type": "cel", "number": 1}})
+    d.apply({"kind": "replace_data", "id": ids[ck("rim")], "data": {"type": "cel", "number": CEL}})
     curves, shapes, log = [], [], {}
     for name, poly in CENTERS.items():
         # paquímetro de faixa: a cor do realce varia por dentro (borda salmão, miolo mais claro)
-        pts, ws = meas.measure_band(d, REF0, meas.densify(poly, 3), RIM, 0.09, smooth=1)
+        best = None
+        for cand in candidates(poly):  # redesenho: estimativa do desenho 1 ou do campo, a que cai mais no realce
+            cp, cw = meas.measure_band(d, REF0, meas.densify(cand, 3), RIM, 0.09, smooth=1)
+            sc = color_score(cp, RIM, 60) if CEL != 1 else 0
+            if best is None or sc > best[0]:
+                best = (sc, cp, cw)
+        _, pts, ws = best
         # cor própria da faixa (varia de faixa para faixa) e nova medição com ela
         own = meas.first_list(d.call("PROBE_COLOR", {"reference": REF0, "points": [[round(p[0]), round(p[1])] for p in pts[2:-2:4]],
                                                      "radius": 1}))
@@ -72,18 +78,18 @@ def run():
         log[name] = (round(c["width"], 1), "#%02x%02x%02x" % tuple(round(v * 255) for v in mid))
     for name, (poly, w, hexc) in TAILS.items():
         col = [int(hexc[i:i + 2], 16) / 255 for i in (1, 3, 5)]
-        curves.append({"points": [list(p) for p in poly], "width": w, "tip": "marker", "geometry": "spline",
+        curves.append({"points": [list(p) for p in W(poly)], "width": w, "tip": "marker", "geometry": "spline",
                        "color": {"type": "direct", "rgba": col + [1.0]}, "profile": [[0, 1.2], [1, 0.4]]})
     if curves:
-        d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": 0, "layer": lay, "curves": curves})
+        d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": F0, "layer": lay, "curves": curves})
     if shapes:
         rl = node("rim_r", "Realce de borda (formas)", {"type": "layer", "kind": "raster"}, ids["cut"])
-        node("rim_r_c1", "1", {"type": "cel", "number": 1}, rl)
+        ck("rim_r")
         d.apply({"kind": "set_props", "id": rl, "data": {"clip_to_below": True}})
         reorder()
-        d.apply({"kind": "replace_data", "id": ids["rim_r_c1"], "data": {"type": "cel", "number": 1}})
+        d.apply({"kind": "replace_data", "id": ids[ck("rim_r")], "data": {"type": "cel", "number": CEL}})
         for sh, col in shapes:
-            d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": 0, "layer": rl, "shapes": [sh], "color": {"type": "direct", "rgba": col + [1.0]}})
+            d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": F0, "layer": rl, "shapes": [sh], "color": {"type": "direct", "rgba": col + [1.0]}})
     return log
 
 
