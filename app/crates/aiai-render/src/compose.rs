@@ -245,6 +245,7 @@ impl<'a> Renderer<'a> {
                     }
                     continue;
                 }
+                LayerType::Particles => self.particles_image(node, layer, cut, frame),
                 k if k.holds_cels() => self.layer_image(id, node, layer, cut, frame),
                 other => {
                     self.warnings.push(format!("camada '{}' do tipo {other:?} ainda não é renderizada", node.name));
@@ -317,7 +318,64 @@ impl<'a> Renderer<'a> {
         let NodeKind::Cel(cel) = &cel_node.data else { return None };
         let hide_trace = layer.params.get("hide_color_trace").and_then(|v| v.as_bool()).unwrap_or(false);
         let img = self.render_cel(cel, hide_trace, &node.name);
-        let [tx, ty, s, rot] = cel.transform;
+        Some(self.place(img, layer, frame, cel.transform))
+    }
+
+    /// Partículas: simuladas no canvas do corte no tempo do quadro; sprites de cels são recortados pelo alfa.
+    fn particles_image(&mut self, node: &Node, layer: &LayerData, _cut: &CutData, frame: u32) -> Option<Image> {
+        let sys: aiai_anim::particles::ParticleSystem = match layer.params.get("particles").map(|v| serde_json::from_value(v.clone())) {
+            Some(Ok(s)) => s,
+            Some(Err(e)) => {
+                self.warnings.push(format!("{}: params.particles inválido: {e}", node.name));
+                return None;
+            }
+            None => {
+                self.warnings.push(format!("{}: camada de partículas sem params.particles", node.name));
+                return None;
+            }
+        };
+        if let Err(e) = sys.validate() {
+            self.warnings.push(format!("{}: {e}", node.name));
+            return None;
+        }
+        let mut sprites = Vec::new();
+        if let aiai_anim::particles::Sprite::Cels { numbers } = &sys.sprite {
+            let project = self.project;
+            for n in numbers {
+                let Some(cn) = project.cel_by_number(&node.id, *n) else {
+                    self.warnings.push(format!("{}: sprite cel {n} não existe", node.name));
+                    continue;
+                };
+                let NodeKind::Cel(cel) = &cn.data else { continue };
+                let full = self.render_cel(cel, false, &node.name);
+                // recorta pela caixa do alfa
+                let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0u32, 0u32);
+                for y in 0..full.height {
+                    for x in 0..full.width {
+                        if full.get(x, y)[3] > 0.0 {
+                            x0 = x0.min(x);
+                            y0 = y0.min(y);
+                            x1 = x1.max(x);
+                            y1 = y1.max(y);
+                        }
+                    }
+                }
+                if x0 > x1 {
+                    continue;
+                }
+                let mut sp = Image::new(x1 - x0 + 1, y1 - y0 + 1);
+                sp.draw_over(&full, -(x0 as i32), -(y0 as i32), 1.0);
+                sprites.push(sp);
+            }
+        }
+        let fps = self.project.settings.fps() as f32;
+        let img = sys.render(self.width, self.height, frame as f32 / fps, fps, &sprites);
+        Some(self.place(img, layer, frame, [0.0, 0.0, 1.0, 0.0]))
+    }
+
+    /// Aplica transformação do cel, chaves da camada e câmera (multiplano) a uma imagem do canvas.
+    fn place(&self, img: Image, layer: &LayerData, frame: u32, cel_transform: [f32; 4]) -> Image {
+        let [tx, ty, s, rot] = cel_transform;
         let ox = layer_prop(layer, "offset_x", frame, layer.offset[0]);
         let oy = layer_prop(layer, "offset_y", frame, layer.offset[1]);
         let ks = layer_prop(layer, "scale", frame, 1.0);
@@ -327,9 +385,9 @@ impl<'a> Renderer<'a> {
             xf = compose_affine(cam.affine(layer.depth, self.out_w, self.out_h), xf);
         }
         if xf.is_identity() && self.out_w == self.width && self.out_h == self.height {
-            return Some(img);
+            return img;
         }
-        Some(transform_image(&img, xf, self.out_w, self.out_h))
+        transform_image(&img, xf, self.out_w, self.out_h)
     }
 
     pub fn resolve_color(&mut self, c: &ColorRef) -> [f32; 4] {

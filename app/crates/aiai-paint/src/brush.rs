@@ -50,6 +50,11 @@ pub enum TipShape {
 }
 
 /// Cobertura 0..1 de uma forma em coordenadas locais normalizadas (u, v ∈ [-1, 1]; v = -1 é a "ponta" superior).
+/// `aa` = largura da borda antisserrilhada em unidades locais (≈ 1/raio_px).
+pub fn shape_coverage(shape: TipShape, u: f32, v: f32, aa: f32) -> f32 {
+    shape_alpha(shape, u, v, aa)
+}
+
 fn shape_alpha(shape: TipShape, u: f32, v: f32, aa: f32) -> f32 {
     let edge = |d: f32| (0.5 - d / aa.max(1e-4)).clamp(0.0, 1.0); // d = distância com sinal (aprox.) em unidades locais
     match shape {

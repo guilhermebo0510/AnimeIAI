@@ -10,6 +10,8 @@
 //! 3. **Spacing**: os tempos t de cada intercalação vêm de uma tabela (gráfico de espaçamento do genga) ou de easing.
 //! 4. Traços sem par aparecem/somem na metade do caminho.
 
+pub mod particles;
+
 use aiai_core::{ColorRef, Ease, Id, Stroke, StrokeGeometry, StrokePoint};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
