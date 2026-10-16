@@ -5,9 +5,9 @@
 ## Agora
 
 - **Fase:** execução autônoma iniciada em 2026-10-15 22:50 (usuário liberou).
-- **Sprint atual:** agentes em paralelo — S02-B1 (bridge no app + ações de ferramenta no MCP), S17 (áudio), S13/S15 (efeitos/LUT). Opus: motor (S11 texturas/cenário a seguir).
-- **Fatia atual:** S11 — texturas procedurais, padrão em perspectiva, céu, pincéis de cenário.
-- **Próximo passo concreto:** após o B1: agente B2 (canvas interativo, painéis de Camadas/Cores/Timeline, ferramentas por mouse). Depois S10 (personagens), S14 (partículas/FX 2D/tipografia), S16/S18/S19.
+- **Sprint atual:** S21 calibração do corte C (#131) em andamento (projeto `calibracao/projetos/c131.aiai`, scripts `tools/calib/c131_*.py`); agentes: B2 (canvas interativo e painéis, aiai-studio) e B3 (todas as ferramentas na bridge/MCP).
+- **Fatia atual:** letreiro ゴン passada 1 feita (contorno + balde); aguardando MEASURE_EDGE/FILL_SHAPE no MCP (B3) para refinar bordas e começar as rosas com MEASURE_LINE.
+- **Próximo passo concreto:** quando o B3 entrar: refinar ゴン com MEASURE_EDGE + FILL_SHAPE (rugosidade), medir paleta das rosas (PROBE_COLOR), desenhar rosa a rosa no quadro 15, COMPARE com piso 0,0083, iterar; depois quadros 0–12.
 - **Bloqueios:** nenhum.
 - **Disco C: livre na última medição:** 43 GB (2026-10-15).
 
@@ -17,7 +17,7 @@
 |---|---|---|---|
 | S00 Fundação | concluída (2026-10-15) | evidencias/S00 (4 capturas) | shell egui, tema, i18n, ícones, prefs; teste de mouse feito pelo agente |
 | S01 Núcleo | concluída (2026-10-15) | evidencias/S01/command_schema.json | 8 testes + proptest 10k; exemplo .aiai será gerado pela CLI da S02 |
-| S02 Bridge/MCP/harness | em andamento | evidencias/S02/headless-demo.md | parte A concluída (27 testes, MCP stdio+CLI+headless); B1 em andamento |
+| S02 Bridge/MCP/harness | em andamento | evidencias/S02 (headless, ao vivo, mouse real) | A e B1 concluídas (21 ferramentas MCP, bridge no app, harness SendInput validado); B3 (demais ferramentas) em andamento |
 | S03 Canvas e camadas | em andamento | evidencias/S03/cena_basica.png | motor + compositor + golden prontos; falta canvas no app e painel de camadas |
 | S04 Olho do agente | concluída (2026-10-16) | evidencias/S04 (catálogo, sanidade, candidatos) | 327 cortes; candidatos A#138 B#245 C#131 D#218 E#292; piso de ruído FLIP medido (decisão 20); falta ação COMPARE na bridge |
 | S05 Vetorial | em andamento | evidencias/S07/rosto_linha_balde.png | motor de traço + curvas por MCP prontos; falta edição de pontos/borracha vetorial e UI |
@@ -31,12 +31,12 @@
 | S13 Câmera e composição | em andamento | evidencias/S13/contact_sheet.png | câmera/multiplano + 25 efeitos implementados; falta graph editor e UI |
 | S14 Partículas e FX 2D | em andamento | evidencias/S14/corte_gag.png | partículas, onomatopeia, linhas, fundos de gag; falta UI |
 | S15 Cor | em andamento | evidencias/S13 (grade, LUT, scopes) | grade, LUT .cube, scopes prontos; falta HSL qualificado e UI |
-| S16 Pré-produção | em andamento | — | agente: roteiro/storyboard/animatic/cortes |
-| S17 Áudio | em andamento | — | agente: motor de áudio, VOICEVOX, lip-sync |
-| S18 Edição e entrega | em andamento | — | aiai-media (FFmpeg) pronto; falta timeline de edição |
-| S19 Produção e revisão | em andamento | — | agente junto com S16 |
+| S16 Pré-produção | em andamento | evidencias/S16 (e-conte, animatic) | motor e ferramentas prontos; falta UI |
+| S17 Áudio | em andamento | evidencias/S17 (mix -24,0 LUFS, lip-sync) | motor, VOICEVOX, Kokoro, SFX, BGM, mix, loudness prontos; falta UI e saída ao vivo |
+| S18 Edição e entrega | em andamento | evidencias/S18 | edição (transições, legendas, créditos) + export MP4 prontos; falta UI |
+| S19 Produção e revisão | em andamento | evidencias/S19 | tracker, correções, retakes, relatório prontos; falta UI |
 | S20 UI/UX e identidade | pendente | — | |
-| S21 Calibração (A, B, C obrigatórios; D, E meta) | pendente | — | |
+| S21 Calibração (A, B, C obrigatórios; D, E meta) | em andamento | registro/calibracao/C131 | corte C começou; piso C = 0,0065–0,0083 |
 | S22 Micro anime | pendente | — | |
 | S23 Endurecimento e apresentação | pendente | — | |
 
@@ -57,3 +57,5 @@ Estados: pendente · em andamento · bloqueada (motivo) · concluída (data) · 
 | Data | Medida | Valor |
 |---|---|---|
 | 2026-10-15 | Disco livre | 43 GB |
+| 2026-10-16 | Disco livre | 33 GB (VOICEVOX 2,1 GB + modelos em sidecars/) |
+| 2026-10-16 | Piso de ruído FLIP | A#138 0,015–0,017; C#131 0,0065–0,0083; D#218 0,0047 |
