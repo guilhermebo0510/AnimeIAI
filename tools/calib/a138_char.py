@@ -177,6 +177,28 @@ LINES = {
     "l_borda_d": ([(860, 920), (880, 945), (900, 972), (915, 1000), (925, 1020), (922, 1035), (910, 1050), (890, 1055), (870, 1062)], 3.0, False),
     "p_vinco_d1": ([(1162, 1017), (1163, 1050), (1165, 1080)], 3.0, False),
     "p_vinco_d2": ([(1202, 1010), (1204, 1035), (1205, 1062)], 3.0, False),
+    # franja sobre a testa e sobrancelhas (recorte 2× 540–900 × 180–420)
+    "f_franja_baixo": ([(705, 377), (720, 366), (737, 355), (755, 345), (775, 335), (798, 320), (820, 305), (838, 288), (855, 270), (870, 252), (885, 235)], 2.0, False),
+    "f_ponta": ([(700, 377), (715, 383), (730, 390), (745, 398), (760, 405), (775, 411), (785, 415)], 2.0, False),
+    "f_ponta2": ([(740, 355), (745, 368), (750, 380), (762, 397), (775, 412)], 2.0, False),
+    "s_sobr_e": ([(597, 342), (620, 339), (645, 335), (670, 330)], 2.0, False),
+    "s_sobr_d": ([(795, 342), (808, 340), (822, 337)], 2.0, False),
+    "olho_e_dobra": ([(540, 385), (565, 378), (590, 375), (615, 375), (640, 377), (665, 383), (690, 390)], 2.0, False),
+}
+
+
+BG_POINTS = [(100, 300), (200, 700), (300, 150), (1150, 300), (1150, 700), (1500, 500), (1300, 850), (1700, 1000), (880, 780),
+             (1000, 800), (1080, 850), (560, 790), (450, 830), (20, 1050), (1250, 30)]
+
+# fechos do balde: camada vetorial oculta, só nas line_refs da cor (bordas de cor sem tinta na referência)
+FECHO = {
+    "iris_e_baixo": arc(609, 438, 41, 38.5, 200, 340, 16),
+    "iris_d_baixo": arc(862.5, 437.5, 40.5, 38.5, 200, 340, 16),
+    "branco_e": [(517, 440), (525, 437), (535, 460), (550, 475), (567, 482), (590, 486), (615, 486), (635, 484), (652, 475), (664, 462),
+                 (667, 450), (667, 435), (662, 422), (655, 415), (650, 410)],
+    "branco_d": [(797, 415), (800, 422), (802, 440), (807, 455), (817, 467), (835, 480), (860, 485), (885, 485), (905, 482), (922, 475),
+                 (935, 465), (944, 452), (947, 440), (949, 430), (950, 425)],
+    "pescoco_gola": [(636, 762), (660, 785), (680, 790), (700, 790), (735, 788), (760, 787), (790, 775), (832, 762)],
 }
 
 
@@ -212,16 +234,25 @@ def lines():
             cache[key] = measured(poly, w, closed, fine)
         curves.append(cache[key])
     json.dump(cache, open(CACHE_F, "w"))
-    return d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": F, "layer": ids["linha"], "curves": curves}).get("description")
+    r = d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": F, "layer": ids["linha"], "curves": curves}).get("description")
+    f = node("fecho", "Fecho do balde", {"type": "layer", "kind": "vector"}, ids["cut"])
+    node("fecho_c1", "1", {"type": "cel", "number": 1}, f)
+    d.apply({"kind": "set_props", "id": f, "data": {"visible": False}})
+    d.apply({"kind": "set_props", "id": ids["cor"], "data": {"line_refs": [ids["linha"], f]}})
+    d.apply({"kind": "replace_data", "id": ids["fecho_c1"], "data": {"type": "cel", "number": 1}})
+    fc = [{"points": [list(p) for p in c], "width": 2.0, "tip": "marker", "geometry": "spline",
+           "color": {"type": "direct", "rgba": [0, 0, 0, 1]}} for c in FECHO.values()]
+    d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": F, "layer": f, "curves": fc})
+    return r
 
 
 def fill(gap=4.0, min_area=40):
     """Mesma rotulagem do balde do app (fill.rs): núcleos = componentes de {D > gap/2} (D = distância à linha); cada pixel
     fora da linha vai para o núcleo mais próximo. Cor do núcleo = mediana da referência na região; semente no ponto mais
     interno; região que na referência é o nosso BG fica vazia."""
-    from scipy.ndimage import label, distance_transform_edt
+    from scipy.ndimage import label, distance_transform_edt, find_objects
     tl, tb = os.path.join(TMP, "a138_linhas.png"), os.path.join(TMP, "a138_bg.png")
-    d.call("RENDER", {"cut": ids["cut"], "frame": F, "out": tl, "layers": [ids["linha"]]})
+    d.call("RENDER", {"cut": ids["cut"], "frame": F, "out": tl, "layers": [ids["linha"]] + ([ids["fecho"]] if "fecho" in ids else [])})
     d.call("RENDER", {"cut": ids["cut"], "frame": F, "out": tb, "layers": [ids["bg"], ids["bg_foco"]]})
     line = np.asarray(Image.open(tl).convert("RGBA"))[..., 3] >= 0.35 * 255
     D = distance_transform_edt(~line)
@@ -231,6 +262,8 @@ def fill(gap=4.0, min_area=40):
     lab[line] = 0
     ref = np.asarray(Image.open(REF).convert("RGB")).astype(float)
     bgr = np.asarray(Image.open(tb).convert("RGB")).astype(float)
+    # fundo = regiões que contêm pontos digitados de fundo (cor parecida não serve: branco do olho ≈ parede creme)
+    bg_labels = {int(lab[y, x]) for x, y in BG_POINTS} - {0}
     seeds, skipped = [], 0
     flat, refl, bgl = lab.ravel(), ref.reshape(-1, 3), bgr.reshape(-1, 3)
     order = np.argsort(flat, kind="stable")
@@ -241,8 +274,7 @@ def fill(gap=4.0, min_area=40):
         idx = order[bounds[k - 1]:bounds[k]]
         if len(idx) < min_area:
             continue
-        close = np.sqrt(((refl[idx] - bgl[idx]) ** 2).sum(1)) < 30
-        if close.mean() > 0.5:
+        if k in bg_labels:  # região de fundo (o BG já está pintado embaixo)
             skipped += 1
             continue
         med = np.median(refl[idx], axis=0)
@@ -252,7 +284,26 @@ def fill(gap=4.0, min_area=40):
     if not seeds:
         return "sem regiões"
     r = d.call("FILL", {"cut": ids["cut"], "frame": F, "layer": ids["cor"], "seeds": seeds, "gap": gap}).get("description")
-    return f"{n} núcleos, {len(seeds)} sementes, {skipped} fundo; {r}"
+    # 2ª passada, folga pequena: regiões fechadas estreitas (íris entre contorno e pupila, branco do olho) não têm núcleo
+    # com D > gap/2 e ficam vazias na 1ª
+    tc = os.path.join(TMP, "a138_cor.png")
+    d.call("RENDER", {"cut": ids["cut"], "frame": F, "out": tc, "layers": [ids["cor"]]})
+    empty = np.asarray(Image.open(tc).convert("RGBA"))[..., 3] < 20
+    g2 = 4.0
+    lab2, n2 = label(~line & (D > g2 / 2))
+    bg2 = {int(lab2[y, x]) for x, y in BG_POINTS} - {0}
+    seeds2 = []
+    for k, sl in enumerate(find_objects(lab2), start=1):
+        m = lab2[sl] == k
+        if k in bg2 or m.sum() < min_area or empty[sl][m].mean() < 0.8:
+            continue
+        med = np.median(ref[sl][m], axis=0)
+        dt = distance_transform_edt(np.pad(m, 1))[1:-1, 1:-1]
+        y, x = np.unravel_index(np.argmax(dt), dt.shape)
+        seeds2.append({"x": int(x + sl[1].start), "y": int(y + sl[0].start), "color": {"type": "direct", "rgba": [float(v) / 255 for v in med] + [1.0]}})
+    if seeds2:
+        d.call("FILL", {"cut": ids["cut"], "frame": F, "layer": ids["cor"], "seeds": seeds2, "gap": g2})
+    return f"{n} núcleos, {len(seeds)} sementes, {skipped} fundo; {r}; 2ª passada {len(seeds2)}"
 
 
 if __name__ == "__main__":
