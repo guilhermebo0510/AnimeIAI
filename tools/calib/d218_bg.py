@@ -6,8 +6,10 @@ import meas
 from d218 import reorder, d, ids, node, REF0
 
 
-def column_stops(x, ys):
-    r = meas.first_list(d.call("PROBE_COLOR", {"reference": REF0, "points": [[x, y] for y in ys], "radius": 6}))
+def column_stops(x, ys, x_low=None, y_low=1081):
+    """Paradas de degradê medidas numa coluna; abaixo de `y_low` usa a coluna `x_low` (evita objeto desfocado do fundo)."""
+    pts = [[x if (x_low is None or y < y_low) else x_low, y] for y in ys]
+    r = meas.first_list(d.call("PROBE_COLOR", {"reference": REF0, "points": pts, "radius": 6}))
     st = [(round(y / 1080, 4), c["hex"]) for y, c in zip(ys, r)]
     return [(0.0, st[0][1])] + st + [(st[-1][0] + 0.001, st[-1][1])]
 
@@ -23,7 +25,7 @@ def run():
         d.apply({"kind": "replace_data", "id": ids[k], "data": {"type": "cel", "number": 1}})
     ys = list(range(15, 1080, 30))
     d.call("GRADIENT", {"cut": ids["cut"], "frame": 0, "layer": ids["bg"], "kind": "linear", "from": [0, 0], "to": [0, 1080],
-                        "stops": column_stops(60, ys)})
+                        "stops": column_stops(60, ys, x_low=140, y_low=880)})
     d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": 0, "layer": base, "shapes": [{"points": [[1560, 0], [1920, 0], [1920, 720], [1560, 720]],
                                                                                     "geometry": "polyline"}],
                           "color": {"type": "direct", "rgba": [1, 1, 1, 1]}})

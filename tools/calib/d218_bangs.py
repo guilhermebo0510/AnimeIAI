@@ -47,7 +47,7 @@ def run():
                         "stops": [(0.0, "#e25a5a"), (0.5, "#d94a50"), (1.0, "#b5374f")]})
     # topo do cabelo mais claro que a base (#b4344d em y≈0 → base em y≈380)
     d.call("GRADIENT", {"cut": ids["cut"], "frame": 0, "layer": ids["realce"], "kind": "linear", "from": [0, 0], "to": [0, 380],
-                        "stops": [(0.0, "#b5364eff"), (1.0, "#b5364e00")]})
+                        "stops": [(0.0, "#b2324bff"), (1.0, "#b2324b00")]})
     return log
 
 

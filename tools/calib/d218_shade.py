@@ -18,8 +18,9 @@ def shade():
     d.apply({"kind": "replace_data", "id": ids["sombra_c1"], "data": {"type": "cel", "number": 1}})
     out = []
     # base #a31f3c → embaixo #7f0a25 (y≈1000): fator por canal em sRGB ≈ (0,78; 0,32; 0,62)
-    out.append(d.call("GRADIENT", {"cut": ids["cut"], "frame": 0, "layer": ids["sombra"], "kind": "linear", "from": [0, 640], "to": [0, 1060],
-                                   "stops": [(0.0, "#ffffff"), (0.5, "#e6a3c4"), (1.0, "#c7529e")]}))
+    out.append(d.call("GRADIENT", {"cut": ids["cut"], "frame": 0, "layer": ids["sombra"], "kind": "linear", "from": [0, 0], "to": [0, 1080],
+                                   # fatores por canal medidos (cabelo da referência ÷ base #9c1b38) por faixa de altura
+                                   "stops": [(0.0, "#ffffff"), (0.5, "#ffffff"), (0.65, "#f7c4e3"), (0.93, "#cf62a3"), (1.0, "#c85a9a")]}))
     return out
 
 

@@ -8,7 +8,7 @@ from d218 import reorder, d, ids, node, REF0, render
 ROSTO = {"pele", "branco_olho", "boca", "laco"}  # não-cabelo: vão para `cor_rosto` (acima da sombra/realce do cabelo)
 
 PALETTE = {
-    "cabelo": "#a31f3c", "cabelo_franja": "#e15a5a", "cabelo_franja2": "#d94a4f", "cabelo_topo": "#b23a4c",
+    "cabelo": "#9d1837", "cabelo_franja": "#e15a5a", "cabelo_franja2": "#d94a4f", "cabelo_topo": "#b23a4c",
     "cabelo_rim": "#f49089", "cabelo_sombra": "#7b0922", "cabelo_tras": "#660821", "pele": "#f8d3cb",
     "branco_olho": "#f6f3f6", "boca": "#ea7582", "laco": "#f4f5dc",
 }
@@ -66,7 +66,23 @@ def fills(min_area=150, gap=6.0):
     for (x, y), name in MANUAL.items():
         seeds.append({"x": x, "y": y, "color": {"type": "direct", "rgba": [v / 255 for v in rgb(PALETTE[name])] + [1.0]}})
     res = d.call("FILL", {"cut": ids["cut"], "frame": 0, "layer": ids["cor"], "seeds": seeds, "gap": gap})
-    d.call("FILL", {"cut": ids["cut"], "frame": 0, "layer": rosto, "seeds": face, "gap": gap})
+    # pele numa camada própria com degradê vertical medido (topo mais claro); olhos/boca/laço ficam em `cor_rosto`
+    pele = node("pele", "Pele", {"type": "layer", "kind": "fill"}, ids["cut"])
+    node("pele_c1", "1", {"type": "cel", "number": 1}, pele)
+    luz = node("pele_luz", "Pele degradê", {"type": "layer", "kind": "raster"}, ids["cut"])
+    node("pele_luz_c1", "1", {"type": "cel", "number": 1}, luz)
+    d.apply({"kind": "set_props", "id": pele, "data": {"line_refs": [ids["linha"], ids["linha_massa"], ids["fecho"]]}})
+    d.apply({"kind": "set_props", "id": luz, "data": {"clip_to_below": True}})
+    reorder()
+    for k in ("pele_c1", "pele_luz_c1"):
+        d.apply({"kind": "replace_data", "id": ids[k], "data": {"type": "cel", "number": 1}})
+    skin = [sd for sd in face if abs(sd["color"]["rgba"][0] - 0xf8 / 255) < 1e-3 and abs(sd["color"]["rgba"][1] - 0xd3 / 255) < 1e-3]
+    rest = [sd for sd in face if sd not in skin]
+    d.call("FILL", {"cut": ids["cut"], "frame": 0, "layer": pele, "seeds": skin, "gap": gap})
+    if rest:
+        d.call("FILL", {"cut": ids["cut"], "frame": 0, "layer": rosto, "seeds": rest, "gap": gap})
+    d.call("GRADIENT", {"cut": ids["cut"], "frame": 0, "layer": luz, "kind": "linear", "from": [0, 120], "to": [0, 900],
+                        "stops": [(0.0, "#fad9d0"), (0.45, "#f8d2ca"), (1.0, "#f6cbc3")]})
     return rep["regions_total"], log, res
 
 
