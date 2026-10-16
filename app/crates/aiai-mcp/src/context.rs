@@ -61,7 +61,7 @@ impl Ctx {
     fn sanitize(&self, action: &str, params: &mut Value) -> Result<(), ToolError> {
         let keys: &[&str] = match action {
             "NEW_PROJECT" | "OPEN_PROJECT" | "SAVE_PROJECT" => &["path"],
-            "RENDER" => &["out"],
+            "RENDER" | "SCREENSHOT" => &["out"],
             "COMPARE" => &["out_diff"],
             _ => &[],
         };

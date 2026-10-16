@@ -29,8 +29,9 @@ pub const USAGE: &str = "uso:
   aiai-mcp                         servidor MCP (stdio)
   aiai-mcp call <AÇÃO> ['<json>'|@arquivo.json] [--png out.png] [--project <pasta .aiai>] [--timeout <s>]
   aiai-mcp info                    destino da bridge e se o app responde
-Ações: PING GET_STATUS APPLY_COMMAND QUERY UNDO REDO GET_LOG NEW_PROJECT OPEN_PROJECT SAVE_PROJECT (headless ou app) e
-SCREENSHOT INPUT GET_UI_STATE UI_ACTION RENDER COMPARE (só com o app aberto --bridge).
+Ações: PING GET_STATUS APPLY_COMMAND QUERY UNDO REDO GET_LOG NEW_PROJECT OPEN_PROJECT SAVE_PROJECT e as de ferramenta
+RENDER DRAW_CURVES FILL LINT PAINT GRADIENT TRANSFORM REPEAT BRUSH_PRESETS (headless ou app) e
+SCREENSHOT INPUT GET_UI_STATE UI_ACTION GET_METRICS COMPARE (só com o app aberto --bridge).
 Headless: sem app (ou com --project / AIAI_HEADLESS_PROJECT) as ações de documento rodam em processo e o projeto é salvo após cada mudança.";
 
 pub fn parse(args: &[String]) -> Result<Cmd, String> {

@@ -1,0 +1,10 @@
+﻿{
+    "physical":  0,
+    "injected":  16,
+    "moves_physical":  0,
+    "clicks_physical":  0,
+    "wheel_physical":  0,
+    "first_physical_ms":  -1,
+    "seconds":  72.4,
+    "contaminated":  false
+}

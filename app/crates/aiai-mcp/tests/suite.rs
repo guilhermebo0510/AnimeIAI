@@ -169,6 +169,7 @@ fn stdio_protocol_initialize_list_and_headless_apply_query_undo() {
     let names: Vec<&str> = tool_list.iter().map(|t| t["name"].as_str().unwrap()).collect();
     for want in [
         "aiai_status", "aiai_apply", "aiai_query", "aiai_undo", "aiai_redo", "aiai_log", "aiai_project", "aiai_render", "aiai_compare", "aiai_screenshot", "aiai_input", "aiai_ui", "aiai_schema",
+        "aiai_draw_curves", "aiai_fill", "aiai_lint", "aiai_paint", "aiai_gradient", "aiai_transform", "aiai_repeat", "aiai_brush_presets",
     ] {
         assert!(names.contains(&want), "falta a ferramenta {want}: {names:?}");
     }
@@ -237,7 +238,6 @@ fn stdio_protocol_initialize_list_and_headless_apply_query_undo() {
         ("aiai_screenshot", json!({})),
         ("aiai_input", json!({"events": [{"kind": "mouse_move", "x": 1, "y": 2}]})),
         ("aiai_ui", json!({"action": "get_state"})),
-        ("aiai_render", json!({"cut": "x", "frame": 0})),
         ("aiai_compare", json!({"a": "x", "b": "y"})),
     ] {
         let e = s.tool_err(tool, args);
@@ -550,7 +550,24 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
     assert!(plan("aiai_zzz", json!({})).is_err());
     // o catálogo é uma lista estável de ferramentas, todas com plano
     let defs = tools::definitions();
-    assert_eq!(defs.as_array().unwrap().len(), 13);
+    assert_eq!(defs.as_array().unwrap().len(), 21);
+    // ferramentas curadas: validam o essencial e mapeiam para a ação certa; `frame` ausente vira 0
+    let p = plan("aiai_draw_curves", json!({"cut": "c", "layer": "l", "curves": [{"points": [[0, 0], [1, 1]]}]})).unwrap();
+    assert_eq!((p.action, p.params["frame"].clone()), ("DRAW_CURVES", json!(0)));
+    assert!(plan("aiai_draw_curves", json!({"cut": "c", "layer": "l", "curves": []})).is_err());
+    assert!(plan("aiai_fill", json!({"cut": "c", "layer": "l"})).is_err(), "seeds é obrigatório");
+    assert_eq!(plan("aiai_lint", json!({"cut": "c", "layer": "l"})).unwrap().action, "LINT");
+    assert_eq!(plan("aiai_brush_presets", json!({})).unwrap().action, "BRUSH_PRESETS");
+    assert_eq!(plan("aiai_paint", json!({"cut": "c", "layer": "l", "preset": "Redondo duro", "color": {}, "strokes": []})).unwrap().action, "PAINT");
+    // o guia de desenho está na descrição e os schemas vêm dos tipos de requisição
+    let draw = defs.as_array().unwrap().iter().find(|t| t["name"] == "aiai_draw_curves").unwrap();
+    let d = draw["description"].as_str().unwrap();
+    for needle in ["origem no canto superior esquerdo", "y PARA BAIXO", "[x,y,pressão", "widths", "g_pen", "maru_pen", "marker", "pencil", "\"palette\"", "horária"] {
+        assert!(d.contains(needle), "o guia de aiai_draw_curves não cita {needle}");
+    }
+    assert!(draw["inputSchema"].to_string().contains("mirror_x"));
+    let paint = defs.as_array().unwrap().iter().find(|t| t["name"] == "aiai_paint").unwrap();
+    assert!(paint["inputSchema"]["properties"]["preset"]["anyOf"][0]["type"] == "string" && paint["inputSchema"]["properties"]["preset_overrides"].is_object());
 }
 
 #[test]
@@ -616,4 +633,107 @@ fn python_client_talks_to_the_bridge_over_http() {
     let down = py(&env, &["PING"]).unwrap();
     assert_eq!(down.status.code(), Some(1));
     assert!(stderr_of(&down).contains("não está aberto com --bridge"), "{}", stderr_of(&down));
+}
+
+// ------------------------------------------------------------------------------------------------ ferramentas curadas (headless)
+
+fn image_block(content: &[Value]) -> image::RgbaImage {
+    let img = content.iter().find(|c| c["type"] == "image").expect("conteúdo de imagem MCP");
+    assert_eq!(img["mimeType"], "image/png");
+    image::load_from_memory(&base64::engine::general_purpose::STANDARD.decode(img["data"].as_str().unwrap()).unwrap()).unwrap().to_rgba8()
+}
+
+#[test]
+fn curated_tools_draw_fill_paint_gradient_and_render_headless_over_stdio() {
+    let env = Env::new();
+    let mut s = env.mcp();
+    handshake(&mut s);
+    let proj = env.path("arte.aiai");
+    s.tool_ok("aiai_project", json!({"op": "new", "name": "Arte", "path": proj.to_str().unwrap(), "settings": {"width": 320, "height": 180}}));
+    let mk = |s: &mut McpSession, name: &str, parent: Option<&str>, data: Value| -> String {
+        s.tool_ok("aiai_apply", create_node(name, parent, data))["created"][0].as_str().unwrap().to_string()
+    };
+    let ep = mk(&mut s, "EP", None, json!({"type": "episode", "number": 1}));
+    let sc = mk(&mut s, "S", Some(&ep), json!({"type": "scene", "number": 1}));
+    let cut = mk(&mut s, "C001", Some(&sc), json!({"type": "cut", "number": 1, "duration": 24}));
+    let bg = mk(&mut s, "BG", Some(&cut), json!({"type": "layer", "kind": "raster"}));
+    let cor = mk(&mut s, "A-cor", Some(&cut), json!({"type": "layer", "kind": "fill"}));
+    let linha = mk(&mut s, "A-linha", Some(&cut), json!({"type": "layer", "kind": "vector"}));
+    for l in [&bg, &cor, &linha] {
+        mk(&mut s, "c1", Some(l), json!({"type": "cel", "number": 1}));
+    }
+    s.tool_ok("aiai_apply", json!({"command": {"kind": "set_props", "id": cor, "data": {"line_refs": [linha]}}}));
+
+    // paleta (nó) + cor por referência de paleta
+    let pal = mk(&mut s, "Settei", None, json!({"type": "palette", "colors": [{"id": "pele", "name": "pele", "group": "pele", "role": "normal", "rgba": [0.98, 0.89, 0.83, 1.0]}], "active_variant": ""}));
+
+    s.tool_ok("aiai_gradient", json!({"cut": cut, "layer": bg, "kind": "linear", "from": [0, 0], "to": [0, 180], "stops": [[0.0, "#2050d0ff"], [1.0, "#d0e8ffff"]]}));
+    s.tool_ok("aiai_draw_curves", json!({"cut": cut, "layer": linha, "curves": [
+        {"points": [[110, 40], [210, 40], [210, 140], [110, 140]], "closed": true, "geometry": "polyline", "width": 4}]}));
+    let lint = s.tool_ok("aiai_lint", json!({"cut": cut, "layer": cor}));
+    let pt = lint["unpainted"][0]["point"].clone();
+    s.tool_ok("aiai_fill", json!({"cut": cut, "layer": cor, "seeds": [{"x": pt[0], "y": pt[1], "color": {"type": "palette", "palette": pal, "color": "pele"}}]}));
+    assert_eq!(s.tool_ok("aiai_lint", json!({"cut": cut, "layer": cor}))["unpainted"], json!([]));
+    let presets = s.tool_ok("aiai_brush_presets", json!({}));
+    assert!(presets["names"].as_array().unwrap().iter().any(|n| n == "Redondo duro"));
+    s.tool_ok("aiai_paint", json!({"cut": cut, "layer": bg, "preset": "Redondo duro", "preset_overrides": {"size": 16}, "color": {"type": "direct", "rgba": [0.0, 0.5, 0.0, 1.0]}, "strokes": [{"points": [[20, 160], [80, 160]]}]}));
+
+    // render inline: vem como conteúdo de imagem MCP; o interior tem a cor da paleta, o céu o degradê
+    let (err, content) = s.tool("aiai_render", json!({"cut": cut, "frame": 0, "inline": true}));
+    assert!(!err, "{content:?}");
+    let meta: Value = serde_json::from_str(content[0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!((meta["width"].as_u64(), meta["height"].as_u64(), meta["warnings"].clone()), (Some(320), Some(180), json!([])));
+    let img = image_block(&content);
+    let inside = img.get_pixel(160, 90).0;
+    assert!(inside[0] > 230 && inside[1] > 200 && inside[2] > 190, "pele na paleta: {inside:?}");
+    let sky = img.get_pixel(20, 5).0;
+    assert!(sky[2] > sky[0] + 80, "céu azul: {sky:?}");
+    let grass = img.get_pixel(50, 160).0;
+    assert!(grass[1] > grass[0] + 60, "pincelada verde: {grass:?}");
+    let line = img.get_pixel(160, 40).0;
+    assert!(line[0] < 60 && line[1] < 60, "linha preta: {line:?}");
+
+    // render com out (sem inline): grava o arquivo no sandbox e não devolve imagem
+    let out = env.path("r/quadro.png");
+    let (err, content) = s.tool("aiai_render", json!({"cut": cut, "out": out.to_str().unwrap(), "size": [160, 90]}));
+    assert!(!err && content.iter().all(|c| c["type"] != "image"), "{content:?}");
+    assert_eq!(image::open(&out).unwrap().width(), 160);
+    // destino fora do sandbox: recusado
+    let outside = std::env::current_dir().unwrap().join("fora-render.png");
+    assert!(s.tool_err("aiai_render", json!({"cut": cut, "out": outside.to_str().unwrap()})).contains("fora das pastas permitidas"));
+    assert!(!outside.exists());
+
+    // undo da pintura (histórico do servidor) e confirmação pelo render
+    s.tool_ok("aiai_undo", json!({}));
+    let (_, content) = s.tool("aiai_render", json!({"cut": cut}));
+    let g = image_block(&content).get_pixel(50, 160).0;
+    assert!(g[1] <= g[0] + 60, "a pincelada verde sumiu com o undo: {g:?}");
+
+    // erros claros e com o código certo
+    assert!(s.tool_err("aiai_fill", json!({"cut": cut, "layer": cor, "seeds": [{"x": 999.0, "y": 40.0, "color": {"type": "direct", "rgba": [1, 0, 0, 1]}}]})).contains("fora do canvas"), "semente fora do canvas");
+    assert!(s.tool_err("aiai_paint", json!({"cut": cut, "layer": bg, "preset": "xyz", "color": {"type": "direct", "rgba": [0, 0, 0, 1]}, "strokes": []})).contains("preset desconhecido"));
+    assert!(s.tool_err("aiai_render", json!({"cut": "nao-existe"})).contains("corte"));
+}
+
+#[test]
+fn cli_headless_runs_tool_actions_and_saves_the_png() {
+    let env = Env::new();
+    let proj = env.path("cli.aiai");
+    let p = proj.to_str().unwrap();
+    env.cli_ok(&["call", "NEW_PROJECT", r#"{"name":"cli","settings":{"width":64,"height":36}}"#, "--project", p]);
+    let id = |v: Value| v["created"][0].as_str().unwrap().to_string();
+    let ap = |cmd: Value| id(env.cli_ok(&["call", "APPLY_COMMAND", &cmd.to_string(), "--project", p]));
+    let ep = ap(create_node("EP", None, json!({"type": "episode", "number": 1})));
+    let sc = ap(create_node("S", Some(&ep), json!({"type": "scene", "number": 1})));
+    let cut = ap(create_node("C", Some(&sc), json!({"type": "cut", "number": 1, "duration": 4})));
+    let bg = ap(create_node("BG", Some(&cut), json!({"type": "layer", "kind": "raster"})));
+    ap(create_node("c1", Some(&bg), json!({"type": "cel", "number": 1})));
+    let g = env.cli_ok(&["call", "GRADIENT", &json!({"cut": cut, "frame": 0, "layer": bg, "kind": "linear", "from": [0, 0], "to": [0, 36], "stops": [[0.0, "#ff0000ff"], [1.0, "#ff0000ff"]]}).to_string(), "--project", p]);
+    assert_eq!(g["_via"], "headless");
+    // outro processo lê do disco: render com --png grava o arquivo
+    let png = env.path("cli.png");
+    let r = env.cli_ok(&["call", "RENDER", &json!({"cut": cut, "frame": 0}).to_string(), "--png", png.to_str().unwrap(), "--project", p]);
+    assert_eq!((r["width"].as_u64(), r["height"].as_u64()), (Some(64), Some(36)));
+    assert!(r["png_base64"].as_str().unwrap().contains("bytes salvos"));
+    assert_eq!(image::open(&png).unwrap().to_rgba8().get_pixel(3, 3).0, [255, 0, 0, 255]);
 }

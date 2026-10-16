@@ -1,0 +1,4 @@
+S02 parte B1 - testes (cargo test -p <crate> -j 2, CARGO_INCREMENTAL=0), 2026-10-16
+aiai-bridge : tests/suite.rs  20 passed (inclui RENDER/DRAW_CURVES/FILL/LINT/PAINT/GRADIENT/TRANSFORM round trip, validacao, out/size, session.path)
+aiai-mcp    : tests/suite.rs  12 passed (stdio headless com as ferramentas curadas, CLI --png, sandbox, 21 ferramentas)
+aiai-studio : lib 38 passed (+1 ignored) ; tests/suite.rs 1 passed (app real num egui::Context + bridge TCP: cliques injetados em abas/menus/dialogo, Ctrl+Z/Y, UI_ACTION, ferramentas no app)

@@ -134,6 +134,15 @@ impl ToolId {
         ToolId::Zoom,
     ];
 
+    /// Identificador estável (bridge/UI_ACTION): `move`, `brush`, `pen`...
+    pub fn key(self) -> &'static str {
+        self.title_key().split('.').nth(1).unwrap_or("")
+    }
+
+    pub fn from_key(key: &str) -> Option<ToolId> {
+        Self::ALL.into_iter().find(|t| t.key() == key)
+    }
+
     pub fn title_key(self) -> &'static str {
         match self {
             ToolId::Move => "tool.move",
@@ -175,6 +184,15 @@ mod tests {
             assert!(seen.insert(w.key()));
         }
         assert_eq!(seen.len(), 13);
+    }
+
+    #[test]
+    fn tool_keys_round_trip() {
+        for t in ToolId::ALL {
+            assert_eq!(ToolId::from_key(t.key()), Some(t));
+        }
+        assert_eq!(ToolId::from_key("pen"), Some(ToolId::Pen));
+        assert_eq!(ToolId::from_key("tool.pen"), None);
     }
 
     #[test]

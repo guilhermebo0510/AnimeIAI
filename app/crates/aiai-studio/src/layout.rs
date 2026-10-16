@@ -50,6 +50,15 @@ impl PanelKind {
         PanelKind::Episodes,
     ];
 
+    /// Identificador estável (bridge/UI_ACTION): `canvas`, `layers`, `timeline`...
+    pub fn key(self) -> &'static str {
+        self.title_key().split('.').nth(1).unwrap_or("")
+    }
+
+    pub fn from_key(key: &str) -> Option<PanelKind> {
+        Self::ALL.into_iter().find(|p| p.key() == key)
+    }
+
     /// Chave i18n do título do painel.
     pub fn title_key(self) -> &'static str {
         match self {
@@ -209,6 +218,16 @@ pub fn panes_in_tabs(tree: &Tree<PanelKind>) -> std::collections::HashSet<TileId
 mod tests {
     use super::*;
     use crate::i18n::{self, Lang};
+
+    #[test]
+    fn panel_keys_round_trip_and_are_unique() {
+        let mut seen = std::collections::HashSet::new();
+        for p in PanelKind::ALL {
+            assert_eq!(PanelKind::from_key(p.key()), Some(p));
+            assert!(seen.insert(p.key()), "{}", p.key());
+        }
+        assert_eq!(PanelKind::Canvas.key(), "canvas");
+    }
 
     #[test]
     fn every_workspace_loads_a_layout_with_unique_panels() {

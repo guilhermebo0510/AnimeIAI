@@ -8,13 +8,15 @@
 //! * [`server`] — threads + limites + auth; NDJSON e HTTP na mesma porta; [`BridgeServer::start`];
 //! * [`host`] — ponte para a thread da UI (canal limitado, prazo, cancelamento): [`BridgeReceiver::try_recv_all`];
 //! * [`core_ops`] — ações de documento que só precisam da `CoreSession` ([`core_ops::handle_core_action`]);
+//! * [`core_tools`] — RENDER, DRAW_CURVES, FILL, LINT, PAINT, GRADIENT, TRANSFORM, REPEAT, BRUSH_PRESETS (também só o documento);
 //! * [`discovery`] — arquivo `bridge.json` (porta + token) com permissão restrita.
 //!
-//! Uso no app (parte B): ligar com `BridgeServer::start(BridgeConfig::from_env()...)`, guardar o `BridgeServer` e,
-//! no início de cada quadro, responder cada `HostRequest` do `BridgeReceiver` (ações de documento via
-//! `core_ops::handle_core_action`; SCREENSHOT, INPUT, GET_UI_STATE, UI_ACTION, RENDER, COMPARE, GET_STATUS pelo app).
+//! Uso no app: `BridgeServer::start(BridgeConfig::from_env()...)`, guardar o `BridgeServer` e, no início de cada quadro,
+//! responder cada `HostRequest` do `BridgeReceiver` (documento e ferramentas via `core_ops::handle_core_action`;
+//! SCREENSHOT, INPUT, GET_UI_STATE, UI_ACTION, COMPARE, GET_STATUS pelo app).
 
 pub mod core_ops;
+pub mod core_tools;
 pub mod discovery;
 pub mod host;
 pub mod http;

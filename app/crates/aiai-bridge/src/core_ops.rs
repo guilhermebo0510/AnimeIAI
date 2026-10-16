@@ -2,7 +2,9 @@
 //! usa para as ações do usuário. O studio chama [`handle_core_action`] da thread da UI; o `aiai-mcp` em modo headless e
 //! os testes de integração chamam de outras threads/processos.
 //!
-//! Ações: `PING`, `APPLY_COMMAND`, `QUERY`, `UNDO`, `REDO`, `GET_LOG`, `NEW_PROJECT`, `OPEN_PROJECT`, `SAVE_PROJECT`.
+//! Ações: `PING`, `APPLY_COMMAND`, `QUERY`, `UNDO`, `REDO`, `GET_LOG`, `NEW_PROJECT`, `OPEN_PROJECT`, `SAVE_PROJECT` e as
+//! ferramentas de [`crate::core_tools`] (`RENDER`, `DRAW_CURVES`, `FILL`, `LINT`, `PAINT`, `GRADIENT`, `TRANSFORM`, `REPEAT`,
+//! `BRUSH_PRESETS`), que só precisam do documento e portanto também rodam no modo headless.
 //! `NEW_PROJECT {name, settings?, path?, overwrite?}` com `path` já salva a pasta e recusa sobrescrever projeto existente.
 //! Ações de UI (SCREENSHOT, INPUT, GET_UI_STATE, UI_ACTION, RENDER, COMPARE, GET_STATUS) devolvem `None`: são do app.
 
@@ -17,12 +19,12 @@ pub const DEFAULT_AUTHOR: &str = "agent:claude";
 pub const CORE_ACTIONS: &[&str] = &["PING", "APPLY_COMMAND", "QUERY", "UNDO", "REDO", "GET_LOG", "NEW_PROJECT", "OPEN_PROJECT", "SAVE_PROJECT"];
 
 pub fn is_core_action(action: &str) -> bool {
-    CORE_ACTIONS.contains(&action)
+    CORE_ACTIONS.contains(&action) || crate::core_tools::TOOL_ACTIONS.contains(&action)
 }
 
 /// Ações que (quando bem-sucedidas) mudam o documento: o headless salva o projeto depois delas.
 pub fn is_mutating(action: &str) -> bool {
-    matches!(action, "APPLY_COMMAND" | "UNDO" | "REDO")
+    matches!(action, "APPLY_COMMAND" | "UNDO" | "REDO") || crate::core_tools::is_mutating_tool(action)
 }
 
 /// Traduz erros do núcleo para códigos da bridge.
@@ -34,7 +36,7 @@ pub fn core_error(e: CoreError) -> BridgeError {
     }
 }
 
-fn obj(params: &Value) -> Result<Map<String, Value>, BridgeError> {
+pub(crate) fn obj(params: &Value) -> Result<Map<String, Value>, BridgeError> {
     match params {
         Value::Null => Ok(Map::new()),
         Value::Object(m) => Ok(m.clone()),
@@ -42,21 +44,21 @@ fn obj(params: &Value) -> Result<Map<String, Value>, BridgeError> {
     }
 }
 
-fn opt_u64(p: &Map<String, Value>, key: &str) -> Result<Option<u64>, BridgeError> {
+pub(crate) fn opt_u64(p: &Map<String, Value>, key: &str) -> Result<Option<u64>, BridgeError> {
     match p.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(v) => v.as_u64().map(Some).ok_or_else(|| BridgeError::invalid_params(format!("'{key}' deve ser um inteiro não negativo"))),
     }
 }
 
-fn opt_bool(p: &Map<String, Value>, key: &str) -> Result<Option<bool>, BridgeError> {
+pub(crate) fn opt_bool(p: &Map<String, Value>, key: &str) -> Result<Option<bool>, BridgeError> {
     match p.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(v) => v.as_bool().map(Some).ok_or_else(|| BridgeError::invalid_params(format!("'{key}' deve ser booleano"))),
     }
 }
 
-fn opt_str<'a>(p: &'a Map<String, Value>, key: &str) -> Result<Option<&'a str>, BridgeError> {
+pub(crate) fn opt_str<'a>(p: &'a Map<String, Value>, key: &str) -> Result<Option<&'a str>, BridgeError> {
     match p.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(s)) if !s.trim().is_empty() => Ok(Some(s.as_str())),
@@ -73,7 +75,7 @@ pub fn parse_command(v: &Value) -> Result<Command, BridgeError> {
     serde_json::from_value::<Command>(v.clone()).map_err(|e| BridgeError::invalid_params(format!("command inválido: {e}")))
 }
 
-fn outcome_json(session: &CoreSession, o: &aiai_core::Outcome) -> Result<Value, BridgeError> {
+pub(crate) fn outcome_json(session: &CoreSession, o: &aiai_core::Outcome) -> Result<Value, BridgeError> {
     let mut v = serde_json::to_value(o).map_err(|e| BridgeError::failed(e.to_string()))?;
     if let Some(m) = v.as_object_mut() {
         m.insert("can_undo".into(), json!(session.can_undo()));
@@ -82,15 +84,27 @@ fn outcome_json(session: &CoreSession, o: &aiai_core::Outcome) -> Result<Value, 
     Ok(v)
 }
 
-/// Versão sem caminho de projeto: `SAVE_PROJECT` exige `path`. O app e o headless usam [`handle_core_action_with_path`].
+/// Versão sem caminho de projeto: `SAVE_PROJECT` usa `session.path` (definido por abrir/salvar) e exige `path` se não houver.
 pub fn handle_core_action(session: &mut CoreSession, action: &str, params: &Value) -> Option<Result<Value, BridgeError>> {
-    let mut path = None;
-    handle_core_action_with_path(session, &mut path, action, params)
+    dispatch(session, action, params)
 }
 
-/// Como [`handle_core_action`], mas acompanha o caminho (pasta `.aiai`) do projeto aberto: `NEW_PROJECT` (com `path`),
-/// `OPEN_PROJECT` e `SAVE_PROJECT` o atualizam, e `SAVE_PROJECT` sem `path` salva nele.
+/// Como [`handle_core_action`], para quem acompanha o caminho do projeto por fora (o headless guarda a pasta `--project`
+/// antes mesmo de o projeto existir). `project_path` com valor vira `session.path` antes da ação e recebe `session.path` depois.
+/// O app não precisa disto: usa [`handle_core_action`] e lê `session.path`.
 pub fn handle_core_action_with_path(session: &mut CoreSession, project_path: &mut Option<PathBuf>, action: &str, params: &Value) -> Option<Result<Value, BridgeError>> {
+    if project_path.is_some() {
+        session.path = project_path.clone();
+    }
+    let r = dispatch(session, action, params);
+    *project_path = session.path.clone();
+    r
+}
+
+fn dispatch(session: &mut CoreSession, action: &str, params: &Value) -> Option<Result<Value, BridgeError>> {
+    if let Some(r) = crate::core_tools::handle_tool_action(session, action, params) {
+        return Some(r);
+    }
     Some(match action {
         "PING" => Ok(json!({ "pong": true, "name": session.project.name, "revision": session.project.revision })),
         "APPLY_COMMAND" => apply_command(session, params),
@@ -98,9 +112,9 @@ pub fn handle_core_action_with_path(session: &mut CoreSession, project_path: &mu
         "UNDO" => undo_redo(session, params, true),
         "REDO" => undo_redo(session, params, false),
         "GET_LOG" => get_log(session, params),
-        "NEW_PROJECT" => new_project(session, project_path, params),
-        "OPEN_PROJECT" => open_project(session, project_path, params),
-        "SAVE_PROJECT" => save_project(session, project_path, params),
+        "NEW_PROJECT" => new_project(session, params),
+        "OPEN_PROJECT" => open_project(session, params),
+        "SAVE_PROJECT" => save_project(session, params),
         _ => return None,
     })
 }
@@ -147,7 +161,7 @@ fn path_param(p: &Map<String, Value>) -> Result<Option<PathBuf>, BridgeError> {
     Ok(opt_str(p, "path")?.map(PathBuf::from))
 }
 
-fn new_project(session: &mut CoreSession, project_path: &mut Option<PathBuf>, params: &Value) -> Result<Value, BridgeError> {
+fn new_project(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
     let p = obj(params)?;
     let name = opt_str(&p, "name")?.ok_or_else(|| BridgeError::invalid_params("'name' é obrigatório"))?;
     let mut project = Project::new(name);
@@ -182,11 +196,11 @@ fn new_project(session: &mut CoreSession, project_path: &mut Option<PathBuf>, pa
     if let Some(w) = wal {
         session.attach_wal(w);
     }
-    *project_path = dir.clone();
+    session.path = dir.clone();
     Ok(json!({ "name": session.project.name, "revision": session.project.revision, "path": dir.map(|d| d.display().to_string()), "settings": session.project.settings }))
 }
 
-fn open_project(session: &mut CoreSession, project_path: &mut Option<PathBuf>, params: &Value) -> Result<Value, BridgeError> {
+fn open_project(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
     let p = obj(params)?;
     let dir = path_param(&p)?.ok_or_else(|| BridgeError::invalid_params("'path' (pasta .aiai) é obrigatório"))?;
     let (mut opened, report) = persist::open(&dir).map_err(core_error)?;
@@ -197,21 +211,20 @@ fn open_project(session: &mut CoreSession, project_path: &mut Option<PathBuf>, p
     if let Some(w) = wal {
         session.attach_wal(w);
     }
-    *project_path = Some(dir.clone());
+    session.path = Some(dir.clone());
     Ok(json!({
         "name": session.project.name, "revision": session.project.revision, "path": dir.display().to_string(),
         "wal_replayed": report.replayed, "wal_truncated_at": report.wal_truncated_at, "wal_error": report.replay_error,
     }))
 }
 
-fn save_project(session: &mut CoreSession, project_path: &mut Option<PathBuf>, params: &Value) -> Result<Value, BridgeError> {
+fn save_project(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
     let p = obj(params)?;
     let dir = match path_param(&p)? {
         Some(d) => d,
-        None => project_path.clone().ok_or_else(|| BridgeError::invalid_params("o projeto ainda não tem pasta: informe 'path' (pasta .aiai)"))?,
+        None => session.path.clone().ok_or_else(|| BridgeError::invalid_params("o projeto ainda não tem pasta: informe 'path' (pasta .aiai)"))?,
     };
     persist::save(session, &dir).map_err(core_error)?;
-    *project_path = Some(dir.clone());
     Ok(json!({ "path": dir.display().to_string(), "revision": session.project.revision, "name": session.project.name }))
 }
 

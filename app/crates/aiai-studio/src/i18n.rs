@@ -125,7 +125,7 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("panel.episodes.title", "Episódios", "Episodes"),
     ("panel.episodes.empty", "Nenhum episódio cadastrado.", "No episodes registered."),
     // Menus
-    ("menu.soon", "disponível na S01", "available in S01"),
+    ("menu.soon", "disponível em breve", "coming soon"),
     ("menu.file", "Arquivo", "File"),
     ("menu.file.new", "Novo", "New"),
     ("menu.file.open", "Abrir", "Open"),
@@ -137,6 +137,7 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("menu.edit.undo", "Desfazer", "Undo"),
     ("menu.edit.redo", "Refazer", "Redo"),
     ("menu.edit.prefs", "Preferências", "Preferences"),
+    ("menu.edit.nothing", "Nada para desfazer", "Nothing to undo"),
     ("menu.view", "Exibir", "View"),
     ("menu.view.theme", "Tema", "Theme"),
     ("menu.view.theme.light", "Claro", "Light"),
@@ -154,6 +155,23 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("status.project", "Projeto", "Project"),
     ("status.no_project", "sem projeto", "no project"),
     ("status.memory", "Memória", "Memory"),
+    ("status.bridge", "Bridge", "Bridge"),
+    ("status.bridge.tip", "Bridge de automação ativa (somente loopback, com token). As ações entram no histórico e podem ser desfeitas.", "Automation bridge active (loopback only, token-protected). Actions enter the history and can be undone."),
+    ("status.revision", "revisão", "revision"),
+    ("doc.untitled", "Sem título", "Untitled"),
+    ("dialog.open_title", "Abrir projeto (pasta .aiai)", "Open project (.aiai folder)"),
+    ("dialog.save_title", "Salvar projeto como (pasta .aiai)", "Save project as (.aiai folder)"),
+    ("confirm.title", "Alterações não salvas", "Unsaved changes"),
+    ("confirm.text", "O projeto \"{name}\" tem alterações não salvas.", "Project \"{name}\" has unsaved changes."),
+    ("confirm.save", "Salvar", "Save"),
+    ("confirm.discard", "Descartar", "Discard"),
+    ("confirm.cancel", "Cancelar", "Cancel"),
+    ("msg.new", "Novo projeto", "New project"),
+    ("msg.opened", "Projeto aberto", "Project opened"),
+    ("msg.saved", "Projeto salvo", "Project saved"),
+    ("msg.error", "Erro", "Error"),
+    ("msg.undo", "Desfeito", "Undone"),
+    ("msg.redo", "Refeito", "Redone"),
     // Sobre
     ("about.title", "Sobre", "About"),
     ("about.version", "Versão", "Version"),
@@ -222,6 +240,9 @@ mod tests {
     fn used_keys_exist() {
         const SOURCES: &[(&str, &str)] = &[
             ("app.rs", include_str!("app.rs")),
+            ("app/doc.rs", include_str!("app/doc.rs")),
+            ("app/bridge_host.rs", include_str!("app/bridge_host.rs")),
+            ("app/ui_state.rs", include_str!("app/ui_state.rs")),
             ("layout.rs", include_str!("layout.rs")),
             ("workspace.rs", include_str!("workspace.rs")),
             ("brand.rs", include_str!("brand.rs")),
@@ -229,7 +250,7 @@ mod tests {
             ("cli.rs", include_str!("cli.rs")),
             ("prefs.rs", include_str!("prefs.rs")),
         ];
-        const PREFIXES: &[&str] = &["workspace.", "tool.", "panel.", "menu.", "status.", "about.", "prefs.", "lang."];
+        const PREFIXES: &[&str] = &["workspace.", "tool.", "panel.", "menu.", "status.", "about.", "prefs.", "lang.", "doc.", "dialog.", "confirm.", "msg."];
         let known: HashSet<&str> = TABLE.iter().map(|(k, _, _)| *k).collect();
         let mut used = 0;
         for (file, src) in SOURCES {

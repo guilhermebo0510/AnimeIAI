@@ -28,7 +28,7 @@ pub fn handle_message(ctx: &mut Ctx, msg: &Value) -> Option<Value> {
                     "serverInfo": { "name": "aiai-mcp", "version": env!("CARGO_PKG_VERSION") },
                     "capabilities": { "tools": { "listChanged": false } },
                     "instructions": "Operador do AnimeIAI Studio. Comece por aiai_status (app aberto ou headless), leia o documento com aiai_query, \
-                        mude só por aiai_apply (entra no undo) e confirme o efeito lendo de volta. aiai_schema {\"which\":\"commands\"} lista todos os comandos."
+                        mude por aiai_apply ou pelas ferramentas curadas (aiai_draw_curves, aiai_fill, aiai_lint, aiai_paint, aiai_gradient, aiai_transform, aiai_repeat; tudo entra no undo) e confirme o efeito com aiai_render (olhe a imagem) ou lendo de volta. aiai_schema {\"which\":\"commands\"} lista todos os comandos."
                 }),
             )
         }

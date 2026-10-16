@@ -1,8 +1,9 @@
 //! Catálogo das ferramentas MCP genéricas e estáveis (a lista não muda entre sprints, então a sessão do agente não precisa
 //! reiniciar) e o despacho delas para as ações da bridge. As descrições são em português: é o que o agente lê.
 //!
-//! Ferramentas curadas de alto nível (desenhar curva, preencher…) entram nas sprints seguintes como açúcar sobre
-//! comandos do Command Bus, nunca como caminho paralelo.
+//! Ferramentas curadas de alto nível (`aiai_draw_curves`, `aiai_fill`, `aiai_lint`, `aiai_paint`, `aiai_gradient`,
+//! `aiai_transform`, `aiai_repeat`, `aiai_brush_presets`, `aiai_render`): açúcar sobre comandos do Command Bus (nada de
+//! caminho paralelo), com o JSON Schema de entrada gerado dos tipos de requisição de `aiai-tools`. Rodam no app e no headless.
 
 use crate::context::{Ctx, ToolError, mcp_image, take_png};
 use serde_json::{Map, Value, json};
@@ -32,6 +33,57 @@ Cola dos comandos principais (campo `kind`):\n\
 - add_track {cut, track:{\"id\":\"\",\"name\":\"A\",\"kind\":\"drawing\",\"layer\":\"<id da camada>\"}}; set_cells {cut, track, cells:[{frame, cell:{\"type\":\"cel\",\"number\":1}|{\"type\":\"empty\"}|null}]} (quadro 0-based).\n\
 - batch {commands:[...], label?}: vários comandos num único passo de undo (ids dados explicitamente em create_node permitem referenciar dentro do lote).\n\
 `aiai_schema {\"which\":\"commands\"}` devolve o JSON Schema completo de todos os comandos.";
+
+const RENDER_DESC: &str = r##"Renderiza um quadro de um corte com o motor CPU real (a MESMA imagem que o app mostra) e devolve a imagem como conteúdo de imagem MCP (reduzida a 1280 px no lado maior) e/ou grava o PNG em `out`. É a forma de VER o que você desenhou: renderize depois de cada passo importante e olhe a imagem.
+Parâmetros: cut (id do corte, obrigatório), frame (0-based, padrão 0), layers (ids; só estas camadas, ex.: só a linha), background ("#rrggbb": achata sobre cor opaca; sem isso o fundo é transparente), include_guides / include_reference (mostram camadas de guia/referência), camera (padrão true = tamanho do projeto com a câmera do corte; false = canvas inteiro do corte, sem câmera), size [largura, altura] (reduz o PNG), out (caminho .png dentro das pastas permitidas), inline (true = devolve a imagem mesmo com out; sem out a imagem sempre volta).
+Devolve {width, height, warnings, path?}: `warnings` lista o que NÃO foi desenhado (nunca ignore). `range` (sequência) e backend gpu ainda não existem e dão erro claro."##;
+
+const DRAW_DESC: &str = r##"Desenha curvas vetoriais (traços de linha) no cel exposto de uma camada VETORIAL no quadro dado. Entra no undo e aparece ao vivo no app. Devolve o Outcome (revision, created, can_undo/can_redo).
+GUIA RÁPIDO
+- Coordenadas são pixels do canvas do corte: origem no canto superior esquerdo, x para a direita, y PARA BAIXO. Rotação positiva é horária.
+- Cada curva: {points: [[x,y] ou [x,y,pressão 0..1], ...], width (px, padrão 3), tip: g_pen (linha principal, afina nas pontas) | maru_pen (fina e uniforme) | marker (largura constante) | pencil, geometry: spline (padrão: passa pelos pontos, suave) | polyline (retas) | freehand | bezier, closed (fecha a curva), widths: [início, meio, fim] (multiplicadores da largura; ex. [0.3,1,0.3] afina as pontas), opacity, color}.
+- color: {"type":"direct","rgba":[r,g,b,a]} (0..1) ou {"type":"palette","palette":"<id da paleta>","color":"<id da cor>"} (trocar a cor na paleta recolore tudo).
+- A camada precisa ter um cel exposto no quadro (crie o cel com aiai_apply create_node {type:cel}). Camada travada recusa.
+- mirror_x: x do eixo; cada curva também é desenhada espelhada nesse eixo (olhos, simetria de rosto).
+- Poucos pontos bem escolhidos (4 a 8 por curva) com spline dão linhas limpas; feche formas com closed:true para o balde (aiai_fill) poder pintar o interior. Linha com buraco maior que `gap` do aiai_fill vaza a cor.
+- Confirme sempre com aiai_render (só a camada de linha: layers:[id], background:"#ffffff")."##;
+
+const FILL_DESC: &str = r##"Balde de tinta por paleta: pinta regiões fechadas pelas linhas. Para cada semente {x, y, color} acha a região fechada que contém (ou fica mais perto de) esse ponto, usando as camadas de linha da camada de cor (`line_refs` dela, ou `line_layers` se passado), fecha buracos de até `gap` px e expande `expand` px por baixo da linha (sem fresta branca). Grava a máscara no cel da camada de cor (camada fill; também aceita raster/vetor). Entra no undo.
+Fluxo: 1) desenhe a linha com aiai_draw_curves; 2) aiai_lint lista as regiões sem cor com um ponto de cada; 3) aiai_fill com esses pontos e as cores (color: {"type":"palette","palette":id,"color":id} ou direta {"type":"direct","rgba":[r,g,b,a]}); 4) aiai_lint de novo (deve vir vazio) e aiai_render para ver. Semente sobre a linha ou fora do canvas dá erro. Pintar de novo a mesma região troca a cor."##;
+
+const PAINT_DESC: &str = r##"Pintura raster com pincel (aquarela, guache, aerógrafo, lápis...) no cel de uma camada RASTER, por pontos de passagem. Entra no undo (só os tiles tocados).
+- preset: NOME de um preset de aiai_brush_presets (ex.: "Redondo duro"; sem diferenciar maiúsculas/acentos) ou o objeto completo do preset; `preset_overrides` (objeto) muda campos do preset (ex.: {"size": 40, "opacity": 0.6}).
+- color: {"type":"direct","rgba":[r,g,b,a]} ou de paleta.
+- strokes: [{points: [[x,y] ou [x,y,pressão], ...], smooth (padrão true: spline suave)}]; coordenadas em pixels do canvas (origem no canto superior esquerdo, y para baixo). seed: semente do ruído do pincel (mesma entrada = mesma pintura).
+Confirme com aiai_render."##;
+
+const GRADIENT_DESC: &str = r##"Preenche o cel de uma camada RASTER com um degradê linear ou radial (céu, fundo, luz). `kind`: linear (de `from` para `to`) ou radial (centro `from`, raio até `to`); `stops`: lista de [t de 0 a 1, "#rrggbbaa"]; `blend` (padrão normal) e `opacity`. Coordenadas em pixels do canvas (origem no canto superior esquerdo, y para baixo). Entra no undo. Confirme com aiai_render."##;
+
+const TRANSFORM_DESC: &str = r##"Transforma o conteúdo de uma camada (vetorial: traços; raster: pixels), opcionalmente só dentro de uma `selection`. `deform` (campo `type`): affine {translate:[dx,dy], scale:[sx,sy], rotate (graus, horário positivo), shear:[x,y], pivot:[x,y]} | perspective {from:[4 cantos], to:[4 cantos]} (cantos: sup-esq, sup-dir, inf-dir, inf-esq) | mesh | liquify | flip {horizontal, axis}.
+`selection`: {type: rect|ellipse {rect:[x,y,w,h]}, lasso {points}, wand {seed,tolerance}, color_range}. Vetor: `strokes` restringe a ids de traços; scale_width escala a largura junto. Coordenadas em pixels do canvas (y para baixo). Entra no undo. Confirme com aiai_render."##;
+
+const REPEAT_DESC: &str = r##"Repete traços vetoriais ao longo de um caminho (cerca, folhagem, janelas de prédio, fios de cabelo): copia os traços `strokes` (ids dos traços do cel; o motivo é centrado em `origin` [x,y]) em posições espaçadas de `spacing` px ao longo de `path` (pontos [x,y]), com `offset`, `follow` (gira o motivo seguindo a tangente do caminho) e `scale_range` [escala no início, escala no fim] (perspectiva simples). Coordenadas em pixels do canvas. Entra no undo. Confirme com aiai_render."##;
+
+const LINT_DESC: &str = r##"Confere o balde de tinta: lista as regiões fechadas pelas linhas (camadas em line_refs da camada de cor) que AINDA não têm cor. Devolve {regions_total, painted, unpainted:[{label, area, point:[x,y], bounds}]}; use `point` de cada região como semente de aiai_fill. Regiões que tocam a borda do quadro e menores que min_area são ignoradas. Se `unpainted` vier vazio, tudo está pintado. Se uma região sumiu ou virou uma só, há buraco na linha: aumente `gap` ou feche o traço."##;
+
+fn schema_of<T: schemars::JsonSchema>() -> Value {
+    serde_json::to_value(schemars::schema_for!(T)).unwrap_or_else(|_| json!({ "type": "object" }))
+}
+
+/// Schema de aiai_paint: `preset` aceita também o nome (texto) e há `preset_overrides`.
+fn paint_schema() -> Value {
+    let mut s = schema_of::<aiai_tools::paint::PaintRequest>();
+    let names: Vec<String> = aiai_paint::brush::BrushPreset::defaults().into_iter().map(|p| p.name).collect();
+    if let Some(props) = s.get_mut("properties").and_then(Value::as_object_mut) {
+        let full = props.get("preset").cloned().unwrap_or_else(|| json!({ "type": "object" }));
+        props.insert(
+            "preset".into(),
+            json!({ "description": "Nome de um preset (aiai_brush_presets) ou o objeto completo do preset.", "anyOf": [ { "type": "string", "examples": names }, full ] }),
+        );
+        props.insert("preset_overrides".into(), json!({ "type": "object", "description": "Campos do preset a sobrescrever (ex.: {\"size\": 40})." }));
+    }
+    s
+}
 
 pub fn definitions() -> Value {
     json!([
@@ -107,20 +159,23 @@ Só grava em pastas permitidas (AIAI_MCP_ALLOWED_DIRS; padrão producoes/, calib
         },
         {
             "name": "aiai_render",
-            "description": "Renderiza um quadro (ou intervalo) de um corte com o motor real e devolve a imagem (conteúdo de imagem MCP, reduzida) e/ou grava em `out`. Parâmetros: cut (id do corte), frame (0-based) ou range [início, fim], size [largura, altura], backend cpu|gpu, layers (ids), out (pasta/arquivo permitido). Exige o app aberto; enquanto a sprint de render não termina o app responde com erro claro.",
+            "description": RENDER_DESC,
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "cut": { "type": "string", "description": "Id do corte." },
-                    "frame": { "type": "integer", "minimum": 0 },
-                    "range": { "type": "array", "items": { "type": "integer", "minimum": 0 }, "minItems": 2, "maxItems": 2 },
-                    "size": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "minItems": 2, "maxItems": 2 },
-                    "backend": { "type": "string", "enum": ["cpu", "gpu"] },
-                    "layers": { "type": "array", "items": { "type": "string" } },
-                    "out": { "type": "string", "description": "Destino (dentro das pastas permitidas)." }
+                    "frame": { "type": "integer", "minimum": 0, "description": "Quadro 0-based (padrão 0)." },
+                    "layers": { "type": "array", "items": { "type": "string" }, "description": "Ids de camadas: renderiza só estas (e as pastas que as contêm)." },
+                    "background": { "type": "string", "description": "Cor de fundo opaca #rrggbb." },
+                    "include_guides": { "type": "boolean" },
+                    "include_reference": { "type": "boolean" },
+                    "camera": { "type": "boolean", "description": "Padrão true. false = canvas inteiro do corte (coordenadas de canvas, sem câmera/multiplano)." },
+                    "size": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "minItems": 2, "maxItems": 2, "description": "[largura, altura] do PNG de saída." },
+                    "out": { "type": "string", "description": "Destino .png (dentro das pastas permitidas)." },
+                    "inline": { "type": "boolean", "description": "Devolve a imagem MCP mesmo com `out`." }
                 },
                 "required": ["cut"],
-                "additionalProperties": true
+                "additionalProperties": false
             }
         },
         {
@@ -153,20 +208,20 @@ Só grava em pastas permitidas (AIAI_MCP_ALLOWED_DIRS; padrão producoes/, calib
         },
         {
             "name": "aiai_input",
-            "description": "Injeta eventos de entrada DENTRO do egui (sem tocar no cursor do SO), em pontos lógicos. `events` é uma lista de objetos com `kind`: mouse_move {x,y}, mouse_down/mouse_up {x,y,button: primary|secondary|middle}, wheel {dx,dy}, key {key, pressed, modifiers?}, text {text}, pen {x,y,pressure,phase: down|move|up} (caneta simulada com pressão). Os eventos entram no próximo quadro, em ordem. Exige o app aberto; depois confirme o efeito com aiai_ui get_state / aiai_screenshot.",
+            "description": "Injeta eventos de entrada DENTRO do egui (sem tocar no cursor do SO), em pontos lógicos da janela (os retângulos vêm de aiai_ui get_state). `events` é uma lista de objetos com `kind`: mouse_move {x,y}, mouse_down/mouse_up {x,y,button: primary|secondary|middle}, wheel {dx,dy}, key {key (nome do egui: A, Z, Enter, Escape, F5...), pressed? (sem pressed = aperta e solta), modifiers?: [ctrl,shift,alt]}, text {text}, pen {x,y,pressure 0..1,phase: down|move|up} (caneta simulada com pressão), wait {frames}. Um clique é mouse_move + mouse_down + mouse_up no mesmo ponto; o app dá um quadro de intervalo entre o movimento e o clique. `wait:true` só responde depois que a fila de eventos terminou. Depois confirme o efeito com aiai_ui get_state / aiai_screenshot.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "events": { "type": "array", "minItems": 1, "maxItems": 2000, "items": { "type": "object", "properties": { "kind": { "type": "string" } }, "required": ["kind"], "additionalProperties": true } } },
+                "properties": { "events": { "type": "array", "minItems": 1, "maxItems": 2000, "items": { "type": "object", "properties": { "kind": { "type": "string" } }, "required": ["kind"], "additionalProperties": true } }, "wait": { "type": "boolean", "description": "Responde só quando todos os eventos foram entregues." } },
                 "required": ["events"],
                 "additionalProperties": false
             }
         },
         {
             "name": "aiai_ui",
-            "description": "Estado e ações da interface. action=get_state devolve workspace, painéis com retângulos (lógicos e físicos), ferramenta ativa, foco, diálogos, escala de DPI e tamanho da janela. Outras ações (UI_ACTION): set_workspace {workspace}, open_panel {panel}, set_tool {tool}, open_dialog {dialog}... — os campos extras vão junto. Exige o app aberto.",
+            "description": "Estado e ações da interface. action=get_state devolve workspace, painéis (nome, visível, rect_logical/rect_physical/rect_screen), `widgets` (abas de workspace ws_tab:<chave>, menus menu:file|edit|view|window|help, itens abertos menu_item:..., ferramentas tool:<chave>, barras, diálogos), ferramenta ativa, foco, diálogos abertos, escala de DPI, tamanho/posição da janela e input_pending. Ações (UI_ACTION; campos extras vão junto): set_workspace {workspace}, select_tool {tool}, toggle_panel {panel, visible?}, set_theme {theme: light|dark}, set_language {language: pt|en}, open_dialog/close_dialog {dialog: about|prefs}. Exige o app aberto.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "action": { "type": "string", "description": "get_state | set_workspace | open_panel | set_tool | open_dialog | ..." } },
+                "properties": { "action": { "type": "string", "description": "get_state | set_workspace | select_tool | toggle_panel | set_theme | set_language | open_dialog | close_dialog" } },
                 "required": ["action"],
                 "additionalProperties": true
             }
@@ -179,6 +234,57 @@ Só grava em pastas permitidas (AIAI_MCP_ALLOWED_DIRS; padrão producoes/, calib
                 "properties": { "which": { "type": "string", "enum": ["commands", "queries", "project"] } },
                 "additionalProperties": false
             }
+        },
+        {
+            "name": "aiai_draw_curves",
+            "description": DRAW_DESC,
+            "inputSchema": schema_of::<aiai_tools::draw::DrawRequest>()
+        },
+        {
+            "name": "aiai_fill",
+            "description": FILL_DESC,
+            "inputSchema": schema_of::<aiai_tools::fill::FillRequest>()
+        },
+        {
+            "name": "aiai_lint",
+            "description": LINT_DESC,
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "cut": { "type": "string", "description": "Id do corte." },
+                    "frame": { "type": "integer", "minimum": 0 },
+                    "layer": { "type": "string", "description": "Id da camada de cor (fill) cujos line_refs delimitam as regiões." },
+                    "gap": { "type": "number", "minimum": 0, "description": "Buraco na linha (px) ainda fechado. Padrão 3." },
+                    "min_area": { "type": "integer", "minimum": 0, "description": "Área mínima (px) para listar uma região. Padrão 30." }
+                },
+                "required": ["cut", "layer"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "aiai_paint",
+            "description": PAINT_DESC,
+            "inputSchema": paint_schema()
+        },
+        {
+            "name": "aiai_gradient",
+            "description": GRADIENT_DESC,
+            "inputSchema": schema_of::<aiai_tools::paint::GradientRequest>()
+        },
+        {
+            "name": "aiai_transform",
+            "description": TRANSFORM_DESC,
+            "inputSchema": schema_of::<aiai_tools::transform::TransformRequest>()
+        },
+        {
+            "name": "aiai_repeat",
+            "description": REPEAT_DESC,
+            "inputSchema": schema_of::<aiai_tools::transform::RepeatRequest>()
+        },
+        {
+            "name": "aiai_brush_presets",
+            "description": "Lista os presets de pincel raster (nome + parâmetros completos: ponta, tamanho, espaçamento, opacidade, fluxo, pressão, textura...). Use o `name` em aiai_paint {preset: \"<nome>\"} e ajuste com preset_overrides. Não altera o documento.",
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
         }
     ])
 }
@@ -193,6 +299,19 @@ fn args_object(args: &Value) -> Result<Map<String, Value>, ToolError> {
 
 fn require<'a>(m: &'a Map<String, Value>, key: &str, what: &str) -> Result<&'a Value, ToolError> {
     m.get(key).filter(|v| !v.is_null()).ok_or_else(|| ToolError::invalid(format!("Missing '{key}': {what}")))
+}
+
+/// `frame` ausente = 0 (o primeiro quadro); os tipos de requisição o exigem.
+fn with_frame(mut m: Map<String, Value>) -> Value {
+    m.entry("frame").or_insert(json!(0));
+    Value::Object(m)
+}
+
+fn required(m: &Map<String, Value>, keys: &[&str]) -> Result<(), ToolError> {
+    for k in keys {
+        require(m, k, "veja a descrição da ferramenta")?;
+    }
+    Ok(())
 }
 
 /// Copia só as chaves presentes.
@@ -253,6 +372,38 @@ pub fn plan(name: &str, args: &Value) -> Result<Plan, ToolError> {
             simple("RENDER", Value::Object(m))
         }
         "aiai_compare" => simple("COMPARE", Value::Object(m)),
+        "aiai_draw_curves" => {
+            required(&m, &["cut", "layer", "curves"])?;
+            if !m.get("curves").is_some_and(|c| c.as_array().is_some_and(|a| !a.is_empty())) {
+                return Err(ToolError::invalid("'curves' deve ser uma lista não vazia de curvas {points, width, ...}"));
+            }
+            simple("DRAW_CURVES", with_frame(m))
+        }
+        "aiai_fill" => {
+            required(&m, &["cut", "layer", "seeds"])?;
+            simple("FILL", with_frame(m))
+        }
+        "aiai_lint" => {
+            required(&m, &["cut", "layer"])?;
+            simple("LINT", Value::Object(m))
+        }
+        "aiai_paint" => {
+            required(&m, &["cut", "layer", "preset", "color", "strokes"])?;
+            simple("PAINT", with_frame(m))
+        }
+        "aiai_gradient" => {
+            required(&m, &["cut", "layer", "kind", "from", "to", "stops"])?;
+            simple("GRADIENT", with_frame(m))
+        }
+        "aiai_transform" => {
+            required(&m, &["cut", "layer", "deform"])?;
+            simple("TRANSFORM", with_frame(m))
+        }
+        "aiai_repeat" => {
+            required(&m, &["cut", "layer", "strokes", "path"])?;
+            simple("REPEAT", with_frame(m))
+        }
+        "aiai_brush_presets" => simple("BRUSH_PRESETS", json!({})),
         "aiai_screenshot" => {
             let mut params = pick(&m, &["region", "panel"]);
             // o PNG volta em base64 e é o MCP quem grava em `out` (já validado pelo sandbox)
@@ -265,7 +416,7 @@ pub fn plan(name: &str, args: &Value) -> Result<Plan, ToolError> {
             if !ev.as_array().is_some_and(|a| !a.is_empty()) {
                 return Err(ToolError::invalid("'events' deve ser uma lista não vazia de objetos com `kind`"));
             }
-            simple("INPUT", pick(&m, &["events"]))
+            simple("INPUT", pick(&m, &["events", "wait"]))
         }
         "aiai_ui" => {
             let action = require(&m, "action", "get_state | set_workspace | ...")?.as_str().ok_or_else(|| ToolError::invalid("'action' deve ser texto"))?;

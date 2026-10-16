@@ -1,5 +1,15 @@
 //! `eframe::App` do AnimeIAI: barras (menu, workspaces, status), prateleira de ferramentas, dock por workspace,
-//! diálogos (Preferências, Sobre) e o mecanismo de screenshot (`--screenshot`).
+//! diálogos (Preferências, Sobre), o documento (`CoreSession`: Arquivo/Editar), a bridge de automação (`--bridge`) e o
+//! mecanismo de screenshot (`--screenshot`).
+//!
+//! Submódulos: `doc` (documento, arquivo, desfazer, atalhos), `bridge_host` (ações da bridge), `input_queue` (entrada
+//! sintética), `ui_state` (retângulos, GET_UI_STATE, UI_ACTION).
+
+mod bridge_host;
+pub(crate) mod doc;
+mod input_queue;
+mod preview;
+mod ui_state;
 
 use crate::brand;
 use crate::cli::Cli;
@@ -10,6 +20,7 @@ use crate::prefs::{self, Prefs, MAX_ZOOM, MIN_ZOOM};
 use crate::sysmem;
 use crate::theme::{self, ThemeKind, Tokens, CARD_GAP, CARD_RADIUS, HEADER_H, PANEL_MIN};
 use crate::workspace::{ToolId, WorkspaceId};
+use aiai_core::CoreSession;
 use egui::{Align, Align2, Color32, CornerRadius, FontId, Rect, RichText, Sense, Stroke, StrokeKind};
 use egui_tiles::{Behavior, TileId, Tiles, Tree, UiResponse};
 use std::collections::{HashMap, HashSet};
@@ -19,9 +30,6 @@ use std::time::{Duration, Instant};
 /// Zooms oferecidos no menu Exibir.
 const ZOOM_STEPS: [f32; 8] = [0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
 
-/// Quadro de câmera do projeto (a resolução real virá do projeto na S01).
-const CAMERA_W: f32 = 1920.0;
-const CAMERA_H: f32 = 1080.0;
 
 pub struct StudioApp {
     cli: Cli,
@@ -34,9 +42,23 @@ pub struct StudioApp {
     icons: Icons,
     tool: ToolId,
     script: String,
-    project_name: Option<String>,
     about_open: bool,
     prefs_open: bool,
+    /// O documento: a mesma `CoreSession` que a bridge usa (autor "human" para as ações do usuário).
+    core: CoreSession,
+    /// Tamanho do log da sessão no último novo/abrir/salvar: o "sujo" é calculado do que aconteceu depois (ver `doc_dirty`).
+    saved_log_len: usize,
+    bridge: Option<bridge_host::BridgeHost>,
+    input: input_queue::InputQueue,
+    rects: ui_state::UiRects,
+    preview: preview::CutPreview,
+    dialog: Option<doc::DialogJob>,
+    confirm: Option<doc::Pending>,
+    notice: Option<(String, Instant)>,
+    title: String,
+    quit_confirmed: bool,
+    ctx_close: bool,
+    gpu_name: Option<String>,
     // medidas da barra de status
     frame_count: u64,
     last_frame: Option<Instant>,
@@ -50,7 +72,11 @@ pub struct StudioApp {
 
 impl StudioApp {
     pub fn new(cc: &eframe::CreationContext<'_>, cli: Cli) -> Self {
-        let ctx = &cc.egui_ctx;
+        Self::build(&cc.egui_ctx, cli)
+    }
+
+    /// Monta o app a partir de um contexto egui (o eframe passa o dele; os testes, um contexto solto).
+    pub fn build(ctx: &egui::Context, cli: Cli) -> Self {
         theme::install_fonts(ctx);
         let prefs_path = if cli.no_session { None } else { cli.session_file.clone().map(PathBuf::from).or_else(prefs::default_path) };
         let mut prefs = prefs_path.as_deref().map(prefs::load).unwrap_or_default();
@@ -67,8 +93,10 @@ impl StudioApp {
         i18n::set_lang(prefs.lang);
         theme::apply(ctx, prefs.theme);
         ctx.set_zoom_factor(prefs.ui_zoom);
-        let project_name = cli.project.as_ref().and_then(|p| std::path::Path::new(p).file_name().map(|n| n.to_string_lossy().into_owned()));
-        StudioApp {
+        let mut core = CoreSession::new(aiai_core::Project::new(tr("doc.untitled")));
+        core.author = doc::AUTHOR.into();
+        let bridge = bridge_host::BridgeHost::start(&cli, ctx);
+        let mut app = StudioApp {
             ws: prefs.workspace,
             cli,
             prefs,
@@ -78,9 +106,21 @@ impl StudioApp {
             icons: Icons::default(),
             tool: ToolId::default(),
             script: String::new(),
-            project_name,
             about_open: false,
             prefs_open: false,
+            core,
+            saved_log_len: 0,
+            bridge,
+            input: input_queue::InputQueue::default(),
+            rects: ui_state::UiRects::default(),
+            preview: preview::CutPreview::default(),
+            dialog: None,
+            confirm: None,
+            notice: None,
+            title: String::new(),
+            quit_confirmed: false,
+            ctx_close: false,
+            gpu_name: None,
             frame_count: 0,
             last_frame: None,
             frame_ms: 16.7,
@@ -89,7 +129,11 @@ impl StudioApp {
             mem_sampled: None,
             gpu_logged: false,
             screenshot_requested: false,
+        };
+        if let Some(dir) = app.cli.project.clone() {
+            app.doc_open_path(std::path::Path::new(&dir));
         }
+        app
     }
 
     fn tokens(&self) -> Tokens {
@@ -185,7 +229,7 @@ impl StudioApp {
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         let t = self.tokens();
-        egui::Panel::top("menubar")
+        let r = egui::Panel::top("menubar")
             .exact_size(28.0)
             .frame(egui::Frame::NONE.fill(t.bg_header).inner_margin(egui::Margin::symmetric(8, 0)))
             .show(ui, |ui| {
@@ -202,6 +246,18 @@ impl StudioApp {
                     });
                 });
             });
+        self.rects.note("menubar", r.response.rect);
+    }
+
+    /// Item de menu com atalho e retângulo registrado (o harness de mouse real clica pelo `GET_UI_STATE`).
+    fn menu_item(&mut self, ui: &mut egui::Ui, name: &str, label_key: &str, shortcut: &str, enabled: bool) -> bool {
+        let mut b = egui::Button::new(tr(label_key));
+        if !shortcut.is_empty() {
+            b = b.shortcut_text(shortcut);
+        }
+        let r = ui.add_enabled(enabled, b);
+        self.rects.note(format!("menu_item:{name}"), r.rect);
+        r.clicked()
     }
 
     fn soon_item(ui: &mut egui::Ui, label_key: &str) {
@@ -209,32 +265,55 @@ impl StudioApp {
     }
 
     fn menu_file(&mut self, ui: &mut egui::Ui) {
-        ui.menu_button(tr("menu.file"), |ui| {
-            for key in ["menu.file.new", "menu.file.open", "menu.file.save", "menu.file.save_as", "menu.file.export"] {
-                Self::soon_item(ui, key);
+        let r = ui.menu_button(tr("menu.file"), |ui| {
+            if self.menu_item(ui, "file.new", "menu.file.new", "Ctrl+N", true) {
+                self.request_new();
+                ui.close();
             }
+            if self.menu_item(ui, "file.open", "menu.file.open", "Ctrl+O", true) {
+                self.request_open();
+                ui.close();
+            }
+            if self.menu_item(ui, "file.save", "menu.file.save", "Ctrl+S", true) {
+                self.request_save(None);
+                ui.close();
+            }
+            if self.menu_item(ui, "file.save_as", "menu.file.save_as", "Ctrl+Shift+S", true) {
+                self.request_save_as();
+                ui.close();
+            }
+            Self::soon_item(ui, "menu.file.export");
             ui.separator();
-            if ui.button(tr("menu.file.quit")).clicked() {
+            if self.menu_item(ui, "file.quit", "menu.file.quit", "", true) {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 ui.close();
             }
         });
+        self.rects.note("menu:file", r.response.rect);
     }
 
     fn menu_edit(&mut self, ui: &mut egui::Ui) {
-        ui.menu_button(tr("menu.edit"), |ui| {
-            Self::soon_item(ui, "menu.edit.undo");
-            Self::soon_item(ui, "menu.edit.redo");
+        let r = ui.menu_button(tr("menu.edit"), |ui| {
+            let (can_undo, can_redo) = (self.core.can_undo(), self.core.can_redo());
+            if self.menu_item(ui, "edit.undo", "menu.edit.undo", "Ctrl+Z", can_undo) {
+                self.doc_undo();
+                ui.close();
+            }
+            if self.menu_item(ui, "edit.redo", "menu.edit.redo", "Ctrl+Shift+Z", can_redo) {
+                self.doc_redo();
+                ui.close();
+            }
             ui.separator();
-            if ui.button(tr("menu.edit.prefs")).clicked() {
+            if self.menu_item(ui, "edit.prefs", "menu.edit.prefs", "", true) {
                 self.prefs_open = true;
                 ui.close();
             }
         });
+        self.rects.note("menu:edit", r.response.rect);
     }
 
     fn menu_view(&mut self, ui: &mut egui::Ui) {
-        ui.menu_button(tr("menu.view"), |ui| {
+        let r = ui.menu_button(tr("menu.view"), |ui| {
             ui.menu_button(tr("menu.view.theme"), |ui| {
                 for (k, key) in [(ThemeKind::Light, "menu.view.theme.light"), (ThemeKind::Dark, "menu.view.theme.dark")] {
                     if ui.radio(self.prefs.theme == k, tr(key)).clicked() {
@@ -263,16 +342,19 @@ impl StudioApp {
                 }
             });
         });
+        self.rects.note("menu:view", r.response.rect);
     }
 
     fn menu_window(&mut self, ui: &mut egui::Ui) {
-        ui.menu_button(tr("menu.window"), |ui| {
+        let r = ui.menu_button(tr("menu.window"), |ui| {
             let t = self.tokens();
             for w in WorkspaceId::ALL {
                 let tex = self.icons.texture(ui.ctx(), w.icon(), 16.0);
                 let selected = self.ws == w;
                 let img = egui::Image::new((tex, egui::vec2(16.0, 16.0))).tint(if selected { t.accent } else { t.text_dim });
-                if ui.add(egui::Button::image_and_text(img, tr(w.title_key())).selected(selected)).clicked() {
+                let item = ui.add(egui::Button::image_and_text(img, tr(w.title_key())).selected(selected));
+                self.rects.note(format!("menu_item:window.{}", w.key()), item.rect);
+                if item.clicked() {
                     self.switch_workspace(w);
                     ui.close();
                 }
@@ -287,21 +369,23 @@ impl StudioApp {
                 ui.close();
             }
         });
+        self.rects.note("menu:window", r.response.rect);
     }
 
     fn menu_help(&mut self, ui: &mut egui::Ui) {
-        ui.menu_button(tr("menu.help"), |ui| {
+        let r = ui.menu_button(tr("menu.help"), |ui| {
             if ui.button(tr("menu.help.about")).clicked() {
                 self.about_open = true;
                 ui.close();
             }
         });
+        self.rects.note("menu:help", r.response.rect);
     }
 
     /// Abas de workspace (como no Blender). Se não couberem com rótulo, só o ativo mostra o nome.
     fn workspace_bar(&mut self, ui: &mut egui::Ui) {
         let t = self.tokens();
-        egui::Panel::top("wsbar")
+        let bar = egui::Panel::top("wsbar")
             .exact_size(34.0)
             .frame(egui::Frame::NONE.fill(t.bg_frame).inner_margin(egui::Margin { left: 6, right: 6, top: 4, bottom: 0 }))
             .show(ui, |ui| {
@@ -323,6 +407,7 @@ impl StudioApp {
                         let show_label = !compact || selected;
                         let width = if show_label { full } else { pad * 2.0 + icon };
                         let (rect, resp) = ui.allocate_exact_size(egui::vec2(width, 30.0), Sense::click());
+                        self.rects.note(format!("ws_tab:{}", w.key()), rect);
                         let hovered = resp.hovered();
                         let p = ui.painter();
                         let top_round = CornerRadius { nw: 5, ne: 5, sw: 0, se: 0 };
@@ -345,11 +430,12 @@ impl StudioApp {
                     }
                 });
             });
+        self.rects.note("wsbar", bar.response.rect);
     }
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
         let t = self.tokens();
-        egui::Panel::bottom("statusbar")
+        let bar = egui::Panel::bottom("statusbar")
             .exact_size(24.0)
             .frame(egui::Frame::NONE.fill(t.bg_header).inner_margin(egui::Margin::symmetric(10, 0)))
             .show(ui, |ui| {
@@ -359,22 +445,34 @@ impl StudioApp {
                     self.icons.paint(ui.painter(), self.ws.icon(), r, t.text_dim);
                     ui.label(RichText::new(tr(self.ws.title_key())).size(12.0).color(t.text));
                     ui.separator();
-                    let project = self.project_name.clone().unwrap_or_else(|| tr("status.no_project").to_owned());
-                    ui.label(RichText::new(format!("{}: {}", tr("status.project"), project)).size(12.0).color(t.text_dim));
+                    let project = format!("{}{}", self.doc_name(), if self.doc_dirty() { "*" } else { "" });
+                    ui.label(RichText::new(format!("{}: {}  ({} {})", tr("status.project"), project, tr("status.revision"), self.core.project.revision)).size(12.0).color(t.text_dim));
+                    if let Some((msg, at)) = &self.notice {
+                        if at.elapsed() < Duration::from_secs(6) {
+                            ui.separator();
+                            ui.label(RichText::new(msg.as_str()).size(12.0).color(t.text));
+                        }
+                    }
                     ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                         ui.label(RichText::new(self.fps_text()).size(12.0).color(t.text_dim).monospace());
                         ui.separator();
                         let mem = self.mem_bytes.map(sysmem::format_bytes).unwrap_or_else(|| "—".to_owned());
                         ui.label(RichText::new(format!("{}: {}", tr("status.memory"), mem)).size(12.0).color(t.text_dim));
+                        if let Some(b) = &self.bridge {
+                            ui.separator();
+                            ui.label(RichText::new(format!("{} {}", tr("status.bridge"), b.addr())).size(12.0).color(t.accent))
+                                .on_hover_text(format!("{} ({})", tr("status.bridge.tip"), b.requests_total()));
+                        }
                     });
                 });
             });
+        self.rects.note("statusbar", bar.response.rect);
     }
 
     /// Prateleira de ferramentas dos workspaces de canvas (só seleção por enquanto).
     fn tool_shelf(&mut self, ui: &mut egui::Ui) {
         let t = self.tokens();
-        egui::Panel::left("toolshelf")
+        let shelf = egui::Panel::left("toolshelf")
             .exact_size(CARD_GAP + 46.0)
             .resizable(false)
             .frame(egui::Frame::NONE.fill(t.bg_frame).inner_margin(egui::Margin { left: CARD_GAP as i8, right: 0, top: CARD_GAP as i8, bottom: CARD_GAP as i8 }))
@@ -387,6 +485,7 @@ impl StudioApp {
                         for tool in ToolId::ALL {
                             let selected = self.tool == tool;
                             let (rect, resp) = ui.allocate_exact_size(egui::vec2(36.0, 36.0), Sense::click());
+                            self.rects.note(format!("tool:{}", tool.key()), rect);
                             let p = ui.painter();
                             if selected {
                                 p.rect(rect, 5.0, t.accent_dim, Stroke::new(1.0, t.accent), StrokeKind::Inside);
@@ -402,16 +501,24 @@ impl StudioApp {
                     });
                 });
             });
+        self.rects.note("toolshelf", shelf.response.rect);
     }
 
     fn workspace_ui(&mut self, ui: &mut egui::Ui) {
         let t = self.tokens();
         let ws = self.ws;
         let tree = self.trees.entry(ws).or_insert_with(|| layout::default_tree(ws));
-        let mut behavior = DockBehavior { t, script: &mut self.script, in_tabs: layout::panes_in_tabs(tree) };
+        let mut notes: Vec<(String, Rect)> = Vec::new();
+        let s = &self.core.project.settings;
+        let camera = (s.width.max(1) as f32, s.height.max(1) as f32);
+        let preview = self.preview.texture().map(|t| (t.id(), t.size_vec2()));
+        let mut behavior = DockBehavior { t, script: &mut self.script, in_tabs: layout::panes_in_tabs(tree), notes: &mut notes, camera, preview };
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.bg_frame).inner_margin(egui::Margin::same(CARD_GAP as i8))).show(ui, |ui| {
             tree.ui(&mut behavior, ui);
         });
+        for (name, rect) in notes {
+            self.rects.note(name, rect);
+        }
     }
 
     // ------------------------------------------------------------------------------------------ diálogos
@@ -422,7 +529,7 @@ impl StudioApp {
         }
         let t = self.tokens();
         let mut open = true;
-        egui::Window::new(tr("about.title"))
+        let win = egui::Window::new(tr("about.title"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -443,6 +550,9 @@ impl StudioApp {
                     ui.add_space(6.0);
                 });
             });
+        if let Some(w) = win {
+            self.rects.note("dialog:about", w.response.rect);
+        }
         self.about_open = open;
     }
 
@@ -452,7 +562,7 @@ impl StudioApp {
         }
         let t = self.tokens();
         let mut open = true;
-        egui::Window::new(tr("prefs.title"))
+        let win = egui::Window::new(tr("prefs.title"))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
@@ -497,6 +607,9 @@ impl StudioApp {
                 };
                 ui.label(RichText::new(where_).size(11.5).color(t.text_dim));
             });
+        if let Some(w) = win {
+            self.rects.note("dialog:prefs", w.response.rect);
+        }
         self.prefs_open = open;
     }
 
@@ -515,7 +628,8 @@ impl StudioApp {
             i.events
                 .iter()
                 .filter_map(|e| match e {
-                    egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                    // capturas pedidas pela bridge (user_data presente) não são do `--screenshot`
+                    egui::Event::Screenshot { image, user_data, .. } if user_data.data.is_none() => Some(image.clone()),
                     _ => None,
                 })
                 .collect()
@@ -534,18 +648,17 @@ impl StudioApp {
     }
 }
 
-impl eframe::App for StudioApp {
-    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+impl StudioApp {
+    /// Um quadro inteiro da interface (o `eframe::App::ui` só acrescenta o que depende do `Frame`).
+    pub fn frame(&mut self, ui: &mut egui::Ui) {
         self.frame_count += 1;
-        if !self.gpu_logged {
-            self.gpu_logged = true;
-            if let Some(rs) = frame.wgpu_render_state() {
-                let info = rs.adapter.get_info();
-                tracing::info!("GPU: {} ({:?}, {:?})", info.name, info.device_type, info.backend);
-            }
-        }
         let ctx = ui.ctx().clone();
         self.sample_frame(&ctx);
+        self.bridge_tick(&ctx);
+        self.preview.update(&ctx, &self.core);
+        self.poll_dialog(&ctx);
+        self.doc_shortcuts(&ctx);
+        self.handle_close_request(&ctx);
 
         self.menu_bar(ui);
         self.workspace_bar(ui);
@@ -556,8 +669,36 @@ impl eframe::App for StudioApp {
         self.workspace_ui(ui);
         self.about_window(&ctx);
         self.prefs_window(&ctx);
+        self.confirm_window(&ctx);
         self.persist();
         self.handle_screenshot(&ctx);
+        let title = self.window_title();
+        if title != self.title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.title = title;
+        }
+        if self.notice.as_ref().is_some_and(|(_, at)| at.elapsed() < Duration::from_secs(6)) {
+            ctx.request_repaint_after(Duration::from_millis(500));
+        }
+        self.rects.end_frame();
+    }
+}
+
+impl eframe::App for StudioApp {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.input.next_events(raw_input);
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        if !self.gpu_logged {
+            self.gpu_logged = true;
+            if let Some(rs) = frame.wgpu_render_state() {
+                let info = rs.adapter.get_info();
+                self.gpu_name = Some(info.name.clone());
+                tracing::info!("GPU: {} ({:?}, {:?})", info.name, info.device_type, info.backend);
+            }
+        }
+        self.frame(ui);
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
@@ -580,6 +721,12 @@ struct DockBehavior<'a> {
     t: Tokens,
     script: &'a mut String,
     in_tabs: HashSet<TileId>,
+    /// Retângulos dos painéis/elementos desenhados neste quadro (vão para o `GET_UI_STATE`).
+    notes: &'a mut Vec<(String, Rect)>,
+    /// Tamanho do quadro de câmera do projeto (pixels).
+    camera: (f32, f32),
+    /// Render do primeiro corte (textura + tamanho em pixels), se já houver.
+    preview: Option<(egui::TextureId, egui::Vec2)>,
 }
 
 impl DockBehavior<'_> {
@@ -610,17 +757,23 @@ impl DockBehavior<'_> {
         ui.painter().with_clip_rect(body).galley(pos, galley, self.t.text_dim);
     }
 
-    /// Placeholder do canvas: mesa neutra e o contorno do quadro de câmera 1920x1080, centralizado e escalado.
-    fn canvas(&self, ui: &egui::Ui, body: Rect) {
+    /// Canvas: mesa neutra e o quadro de câmera do projeto, centralizado e escalado; com um corte no documento mostra o render
+    /// real do quadro 0 (a mesma imagem do `RENDER` da bridge); sem corte, o contorno vazio.
+    fn canvas(&mut self, ui: &egui::Ui, body: Rect) {
         let p = ui.painter().with_clip_rect(body);
         p.rect_filled(body, CornerRadius { nw: 0, ne: 0, sw: CARD_RADIUS, se: CARD_RADIUS }, self.t.canvas_bg);
         let avail = body.shrink(28.0);
         if avail.width() < 60.0 || avail.height() < 40.0 {
             return;
         }
-        let scale = (avail.width() / CAMERA_W).min(avail.height() / CAMERA_H);
-        let frame = Rect::from_center_size(avail.center(), egui::vec2(CAMERA_W * scale, CAMERA_H * scale));
+        let (cw, ch) = self.preview.map(|(_, s)| (s.x, s.y)).unwrap_or(self.camera);
+        let scale = (avail.width() / cw).min(avail.height() / ch);
+        let frame = Rect::from_center_size(avail.center(), egui::vec2(cw * scale, ch * scale));
+        self.notes.push(("canvas_frame".into(), frame));
         p.rect_filled(frame, 0.0, self.t.canvas_frame_fill);
+        if let Some((tex, _)) = self.preview {
+            p.image(tex, frame, Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+        }
         p.rect_stroke(frame, 0.0, Stroke::new(1.5, self.t.canvas_frame_stroke), StrokeKind::Outside);
         // marcas de canto do quadro
         let tick = 10.0;
@@ -629,9 +782,9 @@ impl DockBehavior<'_> {
             p.line_segment([c, c + egui::vec2(tick * dx, 0.0)], s);
             p.line_segment([c, c + egui::vec2(0.0, tick * dy)], s);
         }
-        let label = format!("{}  {:.0} × {:.0}", tr("panel.canvas.camera"), CAMERA_W, CAMERA_H);
+        let label = format!("{}  {:.0} × {:.0}", tr("panel.canvas.camera"), cw, ch);
         p.text(frame.left_top() + egui::vec2(0.0, -6.0), Align2::LEFT_BOTTOM, label, FontId::proportional(11.5), self.t.text_dim);
-        if frame.width() > 260.0 {
+        if self.preview.is_none() && frame.width() > 260.0 {
             self.empty_state(ui, frame, tr(PanelKind::Canvas.empty_key()));
         }
     }
@@ -659,6 +812,7 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
     fn pane_ui(&mut self, ui: &mut egui::Ui, tile_id: TileId, pane: &mut PanelKind) -> UiResponse {
         let rect = ui.max_rect();
         let kind = *pane;
+        self.notes.push((format!("panel:{}", kind.key()), rect));
         ui.painter().rect_filled(rect, CARD_RADIUS, self.t.bg_panel);
         let mut resp = UiResponse::None;
         let mut body = rect;

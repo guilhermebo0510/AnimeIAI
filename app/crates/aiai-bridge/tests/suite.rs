@@ -508,3 +508,178 @@ fn core_actions_are_pure_functions_over_the_session() {
     let schema = handle_core_action(&mut s, "QUERY", &json!({"query": {"kind": "schema", "which": "commands"}})).unwrap().unwrap();
     assert!(schema.to_string().contains("create_node"));
 }
+
+// ------------------------------------------------------------------------------------------------ ferramentas (headless)
+
+fn act(s: &mut CoreSession, action: &str, params: Value) -> Value {
+    handle_core_action(s, action, &params).unwrap_or_else(|| panic!("{action} não é do núcleo")).unwrap_or_else(|e| panic!("{action}: {e}"))
+}
+
+fn act_err(s: &mut CoreSession, action: &str, params: Value) -> BridgeError {
+    handle_core_action(s, action, &params).unwrap().unwrap_err()
+}
+
+fn made(s: &mut CoreSession, name: &str, parent: Option<&str>, data: Value) -> String {
+    let o = act(s, "APPLY_COMMAND", create_node(name, parent, data));
+    o["created"][0].as_str().unwrap().to_string()
+}
+
+/// Corte 320x180 com linha (vetor), cor (fill -> linha), BG (raster), cada camada com cel 1.
+fn tool_doc() -> (CoreSession, String, String, String, String) {
+    let mut s = CoreSession::for_tests("tools");
+    act(&mut s, "NEW_PROJECT", json!({"name": "ferr", "settings": {"width": 320, "height": 180}}));
+    let ep = made(&mut s, "EP", None, json!({"type": "episode", "number": 1}));
+    let sc = made(&mut s, "S", Some(&ep), json!({"type": "scene", "number": 1}));
+    let cut = made(&mut s, "C001", Some(&sc), json!({"type": "cut", "number": 1, "duration": 24}));
+    // filhos de baixo para cima: BG primeiro (fundo), depois a cor, depois a linha por cima
+    let bg = made(&mut s, "BG", Some(&cut), json!({"type": "layer", "kind": "raster"}));
+    let fill = made(&mut s, "A-cor", Some(&cut), json!({"type": "layer", "kind": "fill"}));
+    let line = made(&mut s, "A-linha", Some(&cut), json!({"type": "layer", "kind": "vector"}));
+    for l in [&line, &fill, &bg] {
+        made(&mut s, "c1", Some(l), json!({"type": "cel", "number": 1}));
+    }
+    act(&mut s, "APPLY_COMMAND", json!({"command": {"kind": "set_props", "id": fill, "data": {"line_refs": [line]}}}));
+    (s, cut, line, fill, bg)
+}
+
+fn decode(b64: &str) -> image::RgbaImage {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+    image::load_from_memory_with_format(&bytes, image::ImageFormat::Png).unwrap().to_rgba8()
+}
+
+fn px(r: &Value, x: u32, y: u32) -> [u8; 4] {
+    decode(r["png_base64"].as_str().unwrap()).get_pixel(x, y).0
+}
+
+const WHITE: [u8; 4] = [255, 255, 255, 255];
+
+#[test]
+fn tool_actions_round_trip_render_draw_fill_paint_transform_and_undo() {
+    let (mut s, cut, line, fill, bg) = tool_doc();
+    let direct = |r: f32, g: f32, b: f32| json!({"type": "direct", "rgba": [r, g, b, 1.0]});
+
+    // RENDER vazio: fundo branco opaco, tamanho do projeto, sem avisos, PNG inline (sem out)
+    let r = act(&mut s, "RENDER", json!({"cut": cut, "frame": 0, "background": "#ffffff"}));
+    assert_eq!((r["width"].as_u64(), r["height"].as_u64()), (Some(320), Some(180)));
+    let img = decode(r["png_base64"].as_str().unwrap());
+    assert_eq!((img.width(), img.height()), (320, 180));
+    assert_eq!(px(&r, 10, 10), WHITE);
+    assert_eq!(r["warnings"], json!([]));
+
+    // GRADIENT no BG: azul em cima, branco embaixo
+    let rev0 = s.project.revision;
+    let o = act(&mut s, "GRADIENT", json!({"cut": cut, "frame": 0, "layer": bg, "kind": "linear", "from": [0.0, 0.0], "to": [0.0, 180.0], "stops": [[0.0, "#1030c0ff"], [1.0, "#ffffffff"]]}));
+    assert!(o["revision"].as_u64().unwrap() > rev0 && o["can_undo"] == true, "{o}");
+    let r = act(&mut s, "RENDER", json!({"cut": cut, "frame": 0}));
+    let top = px(&r, 160, 2);
+    assert!(top[2] > 150 && top[0] < 80, "topo azul: {top:?}");
+
+    // DRAW_CURVES: retângulo fechado de linha preta (sem preencher)
+    let o = act(&mut s, "DRAW_CURVES", json!({"cut": cut, "frame": 0, "layer": line, "curves": [
+        {"points": [[100, 50], [220, 50], [220, 130], [100, 130]], "width": 4, "closed": true, "geometry": "polyline", "color": direct(0.0, 0.0, 0.0)}]}));
+    assert_eq!(o["description"], "Desenhar 1 traço(s)");
+    let r = act(&mut s, "RENDER", json!({"cut": cut, "frame": 0, "layers": [line], "background": "#ffffff"}));
+    assert!(px(&r, 160, 50)[0] < 60, "linha de cima desenhada");
+    assert_eq!(px(&r, 160, 90), WHITE, "dentro ainda vazio");
+
+    // LINT acha a região; FILL pinta; LINT fica vazio
+    let l = act(&mut s, "LINT", json!({"cut": cut, "frame": 0, "layer": fill}));
+    let unpainted = l["unpainted"].as_array().unwrap();
+    assert_eq!(unpainted.len(), 1, "{l}");
+    let pt = unpainted[0]["point"].clone();
+    act(&mut s, "FILL", json!({"cut": cut, "frame": 0, "layer": fill, "seeds": [{"x": pt[0], "y": pt[1], "color": direct(1.0, 0.0, 0.0)}]}));
+    let l = act(&mut s, "LINT", json!({"cut": cut, "frame": 0, "layer": fill}));
+    assert_eq!((l["unpainted"].as_array().unwrap().len(), l["painted"].as_u64()), (0, Some(1)));
+    let r = act(&mut s, "RENDER", json!({"cut": cut, "frame": 0, "background": "#ffffff"}));
+    let inside = px(&r, 160, 90);
+    assert!(inside[0] > 200 && inside[1] < 60 && inside[2] < 60, "interior vermelho: {inside:?}");
+
+    // PAINT por nome de preset (sem diferenciar maiúsculas) + override, no BG
+    let presets = act(&mut s, "BRUSH_PRESETS", json!({}));
+    assert!(presets["names"].as_array().unwrap().len() >= 5 && presets["presets"][0]["size"].is_number());
+    act(&mut s, "PAINT", json!({"cut": cut, "frame": 0, "layer": bg, "preset": "redondo duro", "preset_overrides": {"size": 20}, "color": direct(0.0, 0.6, 0.0),
+        "strokes": [{"points": [[20, 150], [60, 150], [100, 160]]}]}));
+    let r = act(&mut s, "RENDER", json!({"cut": cut, "frame": 0, "layers": [bg], "background": "#ffffff"}));
+    let g = px(&r, 40, 150);
+    assert!(g[1] > g[0] + 60, "pincelada verde: {g:?}");
+    let e = act_err(&mut s, "PAINT", json!({"cut": cut, "frame": 0, "layer": bg, "preset": "nao existe", "color": direct(0.0, 0.0, 0.0), "strokes": []}));
+    assert_eq!(e.code, code::INVALID_PARAMS);
+    assert!(e.message.contains("Redondo duro"), "lista os presets: {}", e.message);
+
+    // TRANSFORM: desloca o retângulo 40 px para a direita; undo traz de volta; confirmado por render
+    let before = act(&mut s, "RENDER", json!({"cut": cut, "frame": 0, "layers": [line], "background": "#ffffff"}));
+    assert_eq!(px(&before, 250, 50), WHITE);
+    let o = act(&mut s, "TRANSFORM", json!({"cut": cut, "frame": 0, "layer": line, "deform": {"type": "affine", "translate": [40.0, 0.0], "pivot": [0.0, 0.0]}}));
+    assert_eq!(o["can_undo"], true);
+    let after = act(&mut s, "RENDER", json!({"cut": cut, "frame": 0, "layers": [line], "background": "#ffffff"}));
+    assert!(px(&after, 250, 50)[0] < 60, "linha deslocada até x=250");
+    act(&mut s, "UNDO", json!({}));
+    let undone = act(&mut s, "RENDER", json!({"cut": cut, "frame": 0, "layers": [line], "background": "#ffffff"}));
+    assert_eq!(px(&undone, 250, 50), WHITE);
+    act(&mut s, "REDO", json!({}));
+    let redone = act(&mut s, "RENDER", json!({"cut": cut, "frame": 0, "layers": [line], "background": "#ffffff"}));
+    assert!(px(&redone, 250, 50)[0] < 60);
+
+    // autor padrão agent:claude no log
+    let log = act(&mut s, "GET_LOG", json!({"limit": 1000}));
+    assert!(log.to_string().contains("agent:claude"));
+}
+
+#[test]
+fn tool_actions_validate_params_and_render_out_and_size() {
+    let (mut s, cut, line, _fill, _bg) = tool_doc();
+    for (action, params) in [
+        ("RENDER", json!({})),
+        ("RENDER", json!({"cut": cut, "background": "vermelho"})),
+        ("RENDER", json!({"cut": cut, "frame": 9999})),
+        ("RENDER", json!({"cut": "nao-existe"})),
+        ("DRAW_CURVES", json!({"cut": cut})),
+        ("DRAW_CURVES", json!({"cut": cut, "frame": 0, "layer": line, "curves": [{"points": [[1, 2, 3, 4]]}]})),
+        ("LINT", json!({"cut": cut})),
+        ("FILL", json!([1])),
+    ] {
+        let e = act_err(&mut s, action, params.clone());
+        assert!(e.code == code::INVALID_PARAMS || e.code == code::ACTION_FAILED, "{action} {params}: {e}");
+    }
+    assert_eq!(act_err(&mut s, "RENDER", json!({"cut": cut, "range": [0, 3]})).code, code::ACTION_FAILED, "range ainda não suportado: erro claro");
+    assert_eq!(act_err(&mut s, "RENDER", json!({"cut": cut, "out": "relativo.png"})).code, code::INVALID_PARAMS);
+    // if_revision velho: nada muda
+    let rev = s.project.revision;
+    let e = act_err(&mut s, "GRADIENT", json!({"cut": cut, "frame": 0, "layer": line, "kind": "linear", "from": [0, 0], "to": [1, 1], "stops": [[0.0, "#000000ff"], [1.0, "#ffffffff"]], "if_revision": rev + 5}));
+    assert!(e.code == code::STALE_REVISION || e.code == code::INVALID_PARAMS, "{e}");
+    assert_eq!(s.project.revision, rev);
+
+    // out + size: grava o arquivo, sem png inline; com inline também devolve o base64
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("sub").join("q.png");
+    let r = act(&mut s, "RENDER", json!({"cut": cut, "frame": 0, "size": [160, 90], "out": out.display().to_string(), "background": "#00ff00"}));
+    assert_eq!((r["width"].as_u64(), r["height"].as_u64()), (Some(160), Some(90)));
+    assert!(r.get("png_base64").is_none() && r["path"] == json!(out.display().to_string()));
+    let img = image::open(&out).unwrap().to_rgba8();
+    assert_eq!((img.width(), img.height(), img.get_pixel(5, 5).0), (160, 90, [0, 255, 0, 255]));
+    let r = act(&mut s, "RENDER", json!({"cut": cut, "out": out.display().to_string(), "inline": true}));
+    assert!(r["png_base64"].is_string());
+    // camera:false = canvas inteiro do corte
+    let r = act(&mut s, "RENDER", json!({"cut": cut, "camera": false}));
+    assert!(r["width"].as_u64().unwrap() > 0);
+}
+
+#[test]
+fn project_path_follows_the_session_not_the_caller() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("a.aiai");
+    let mut s = CoreSession::for_tests("p");
+    act(&mut s, "NEW_PROJECT", json!({"name": "a", "path": p.display().to_string()}));
+    assert_eq!(s.path.as_deref(), Some(p.as_path()));
+    made(&mut s, "EP", None, json!({"type": "episode", "number": 1}));
+    // SAVE sem path usa session.path; a variante antiga com path externo continua funcionando
+    act(&mut s, "SAVE_PROJECT", json!({}));
+    let mut ext = None;
+    assert!(handle_core_action_with_path(&mut s, &mut ext, "SAVE_PROJECT", &json!({})).unwrap().is_ok());
+    assert_eq!(ext.as_deref(), Some(p.as_path()));
+    // novo projeto sem pasta: path some (não grava por cima do anterior)
+    act(&mut s, "NEW_PROJECT", json!({"name": "b"}));
+    assert!(s.path.is_none());
+    assert_eq!(act_err(&mut s, "SAVE_PROJECT", json!({})).code, code::INVALID_PARAMS);
+}

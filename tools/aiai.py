@@ -33,7 +33,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-__all__ = ["BridgeError", "BridgeUnavailable", "call", "batch", "screenshot", "discovery_path", "is_live"]
+__all__ = ["BridgeError", "BridgeUnavailable", "call", "batch", "screenshot", "render", "ui_state", "click_widget", "discovery_path", "is_live"]
 
 _MAX_RESPONSE = 32 << 20
 _ids = itertools.count(1)
@@ -131,6 +131,33 @@ def screenshot(path: str | os.PathLike[str], params: dict[str, Any] | None = Non
     target.write_bytes(base64.b64decode(b64))
     data["saved_to"] = str(target)
     return data
+
+
+def render(path: str | os.PathLike[str], cut: str, frame: int = 0, **params: Any) -> dict[str, Any]:
+    """RENDER (motor CPU real) de ``cut``/``frame`` gravado em ``path``. Extras: ``layers``, ``background``, ``size``, ``camera``..."""
+    data = call("RENDER", {"cut": cut, "frame": frame, "inline": True, **params}, timeout=120.0)
+    b64 = data.pop("png_base64", None)
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(base64.b64decode(b64))
+    data["saved_to"] = str(target)
+    return data
+
+
+def ui_state() -> dict[str, Any]:
+    """GET_UI_STATE: workspace, painéis, ``widgets`` (retângulos lógicos/físicos/de tela), diálogos, DPI, janela."""
+    return call("GET_UI_STATE")
+
+
+def click_widget(name: str, button: str = "primary") -> dict[str, Any]:
+    """Clique injetado no egui (sem tocar no cursor do SO) no centro do elemento ``name`` de ``ui_state()['widgets']``."""
+    w = ui_state()["widgets"].get(name)
+    if w is None:
+        raise BridgeError(f"elemento desconhecido ou invisível: {name}")
+    x, y = (w["rect_logical"][0] + w["rect_logical"][2] / 2, w["rect_logical"][1] + w["rect_logical"][3] / 2)
+    ev = [{"kind": "mouse_move", "x": x, "y": y}, {"kind": "mouse_down", "x": x, "y": y, "button": button},
+          {"kind": "mouse_up", "x": x, "y": y, "button": button}, {"kind": "wait", "frames": 2}]
+    return call("INPUT", {"events": ev, "wait": True})
 
 
 def is_live() -> bool:

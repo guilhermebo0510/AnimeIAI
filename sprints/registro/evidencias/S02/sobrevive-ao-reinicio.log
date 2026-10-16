@@ -1,0 +1,12 @@
+# aiai-mcp call durante o relanca (app fechado -> compila -> abre)
+00:52:37 chamada 1 -> mode=headless
+00:52:46 chamada 2 -> mode=headless
+00:52:54 chamada 3 -> mode=headless
+00:53:02 chamada 4 -> mode=headless
+00:53:10 chamada 5 -> mode=headless
+00:53:18 chamada 6 -> mode=headless
+00:53:26 chamada 7 -> mode=app
+    Finished `dev` profile [optimized + debuginfo] target(s) in 43.74s
+[relanca] pid=23544 args=--bridge --no-session --size 1600x900
+[relanca] PING ok em 127.0.0.1:60115 -> {"data":{"engine":"AnimeIAI Studio","pong":true,"protocol":1,"ui_drawing":true,"ui_idle_ms":107,"version":"0.1.0"},"id":"relanca","success":true}
+depois: mode=app projeto=Sem título bridge=127.0.0.1:60115
