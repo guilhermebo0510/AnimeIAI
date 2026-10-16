@@ -88,3 +88,8 @@ Erros já pagos neste PC, nos projetos Smart Canvas e ANIGO do mesmo usuário. A
 51. **Cache de medidas por linha**: remedir 160 linhas leva 2,5 min; com cache (chave = estimativa + parâmetros) o ciclo editar → medir → balde → COMPARE cai para ~8 s, o que permite escolher por linha a VARIANTE de medição (meia altura × faixa, âncora, busca curta) pela régua (`c131_opt.py`) sem tocar na geometria digitada.
 52. **Experimentos globais pequenos enganam**: largura ×1,25, cor mais clara das linhas internas, tolerância de cor maior e busca curta pioraram o F1 no conjunto mesmo quando um caso local parecia pedir isso. Testar sempre no quadro inteiro e, para decisões locais, com `boxf1.py` na caixa.
 
+
+## Calibração do corte A (#138)
+
+53. **Antes de digitar fundo, ver se ele tem borda na régua**: no A o fundo desfocado (σ≈3) não gera NENHUMA aresta no Canny da referência (as 44 049 px de borda estão todas no personagem), então fundo e ornamentos só pesam em SSIM/FLIP — precisão de forma média basta, e o que importa é não criar aresta falsa (faixa nítida sem desfoque, borda de faixa passando por trás do personagem). Faixas verticais com cor por banda ajustada ao perfil (mínimos quadrados com o desfoque simulado) deram resíduo ~2 níveis.
+54. **PROBE_COLOR devolve `rgb` em 0–1**: dividir por 255 de novo pinta preto. E `MEASURE_EDGE` com busca 16 em peças separadas por vãos de ~8 px (pétalas) pula para a borda vizinha; busca 7→3 com estimativa digitada a ±5 px.
