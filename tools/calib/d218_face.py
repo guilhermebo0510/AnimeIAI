@@ -21,6 +21,11 @@ MOUTH_IN = [(1003, 707), (1040, 698), (1090, 693), (1122, 692), (1130, 705), (11
 # anéis dos olhos: centro e raio da borda externa, centro e raio da borda interna (estimativas; MEASURE_EDGE ajusta)
 RINGS = [(772, 446, 117, 772, 446, 78), (1288, 389, 112, 1288, 389, 77)]
 # redesenhos: extremos do anel lidos por varredura (runs.py) — no 7 a fresta rosada dentro do anel cresce e puxaria a borda
+# (desenho, cx do anel) → borda de fora do arco de baixo, da direita para a esquerda (fim do anel + 0,5 px nas varreduras por coluna)
+RING_LOWER_PTS = {(8, 773): [(888, 477.5), (880, 491.5), (872, 502.5), (864, 511.5), (856, 517.5), (848, 527.5), (840, 533.5), (832, 539.5),
+                             (824, 543.5), (816, 548.5), (808, 552.5), (800, 555.5), (792, 557.5), (784, 559.5), (776, 561.5), (768, 562.5),
+                             (760, 563.5), (752, 563.5), (744, 562.5), (736, 560.5), (728, 557.5), (720, 554.5), (712, 550.5), (704, 544.5),
+                             (696, 538.5), (688, 527.5), (680, 517.5), (672, 505.5), (664, 491.5), (656, 466.5)]}
 RING_DES = {7: [(770, 448, 120, 772, 438, 80), (1294, 395, 115, 1288, 386, 78)],
             8: [(773, 442, 119, 771, 437, 81), (1294, 387, 113, 1287, 378, 77)]}
 
@@ -33,7 +38,14 @@ def run():
     des = RING_DES.get(CEL)
     for cx, cy, ro, ix, iy, ri in des or RINGS:
         if des:  # anéis relidos no próprio desenho (runs.py): sem campo
-            outer = meas.measure_edge(d, REF0, meas.circle(cx, cy, ro, n=144))
+            circ = meas.circle(cx, cy, ro, n=144)
+            outer = meas.measure_edge(d, REF0, circ)
+            lower = RING_LOWER_PTS.get((CEL, round(cx)))
+            if lower:  # arco de baixo lido por varredura (a medição pulava para a fresta de dentro e cortava o anel)
+                cut = min(p[1] for p in lower)
+                k0 = next(i for i, m in enumerate(outer) if m[1] >= cut)
+                k1 = max(i for i, m in enumerate(outer) if m[1] >= cut)
+                outer = outer[:k0] + [list(p) for p in lower] + outer[k1 + 1:]
             inner = meas.measure_edge(d, REF0, meas.circle(ix, iy, ri, n=120))
         else:
             outer = max((meas.measure_edge(d, REF0, c) for c in candidates(meas.circle(cx, cy, ro, n=144))), key=edge_score)
