@@ -164,6 +164,19 @@ LINES = {
     "k_camisa_d": ([(740, 905), (742, 965), (747, 1020), (752, 1080)], 2.5, False),
     "k_camisa_e2": ([(705, 965), (697, 1020), (687, 1080)], 3.0, False),
     "k_camisa_d2": ([(752, 965), (762, 1020), (770, 1080)], 3.0, False),
+    # paletó (ink_grid 190–600 × 820–1080 e 860–1270 × 800–1080)
+    "p_ombro_e": ([(600, 837), (575, 846), (550, 857), (530, 880), (510, 887), (470, 900), (430, 910), (400, 917), (360, 926), (310, 940), (270, 945), (242, 948)], 2.0, False),
+    "p_braco_e": ([(242, 948), (225, 970), (215, 995), (207, 1030), (197, 1060), (192, 1080)], 2.0, False),
+    "p_lapela_e_longa": ([(540, 875), (500, 925), (470, 965), (445, 1010), (425, 1050), (415, 1080)], 2.0, False),
+    "l_borda_e": ([(600, 897), (590, 915), (570, 940), (550, 965), (535, 990), (522, 1012), (522, 1030), (540, 1045), (570, 1060), (600, 1075)], 3.0, False),
+    "p_vinco_e1": ([(262, 970), (263, 990), (264, 1012)], 3.0, False),
+    "p_vinco_e2": ([(265, 1027), (268, 1055), (270, 1080)], 3.0, False),
+    "p_vinco_e3": ([(295, 1012), (294, 1045), (293, 1080)], 3.0, False),
+    "p_lapela_d_longa": ([(860, 835), (880, 847), (900, 867), (920, 885), (935, 910), (952, 935), (970, 970), (990, 1000), (1005, 1025), (1020, 1050), (1032, 1077)], 2.0, False),
+    "p_ombro_d": ([(925, 887), (960, 897), (1000, 907), (1030, 915), (1070, 925), (1100, 934), (1140, 942), (1180, 950), (1210, 959), (1230, 967), (1240, 985), (1245, 1010), (1255, 1050), (1260, 1075)], 2.0, False),
+    "l_borda_d": ([(860, 920), (880, 945), (900, 972), (915, 1000), (925, 1020), (922, 1035), (910, 1050), (890, 1055), (870, 1062)], 3.0, False),
+    "p_vinco_d1": ([(1162, 1017), (1163, 1050), (1165, 1080)], 3.0, False),
+    "p_vinco_d2": ([(1202, 1010), (1204, 1035), (1205, 1062)], 3.0, False),
 }
 
 
@@ -203,31 +216,43 @@ def lines():
 
 
 def fill(gap=4.0, min_area=40):
-    from scipy.ndimage import label, binary_dilation, distance_transform_edt, find_objects
+    """Mesma rotulagem do balde do app (fill.rs): núcleos = componentes de {D > gap/2} (D = distância à linha); cada pixel
+    fora da linha vai para o núcleo mais próximo. Cor do núcleo = mediana da referência na região; semente no ponto mais
+    interno; região que na referência é o nosso BG fica vazia."""
+    from scipy.ndimage import label, distance_transform_edt
     tl, tb = os.path.join(TMP, "a138_linhas.png"), os.path.join(TMP, "a138_bg.png")
     d.call("RENDER", {"cut": ids["cut"], "frame": F, "out": tl, "layers": [ids["linha"]]})
     d.call("RENDER", {"cut": ids["cut"], "frame": F, "out": tb, "layers": [ids["bg"], ids["bg_foco"]]})
-    wall = binary_dilation(np.asarray(Image.open(tl).convert("RGBA"))[..., 3] > 40, iterations=max(1, int(gap / 2)))
-    lab, _ = label(~wall)
+    line = np.asarray(Image.open(tl).convert("RGBA"))[..., 3] >= 0.35 * 255
+    D = distance_transform_edt(~line)
+    cores, n = label(D > gap / 2)
+    _, (iy, ix) = distance_transform_edt(cores == 0, return_indices=True)
+    lab = cores[iy, ix]
+    lab[line] = 0
     ref = np.asarray(Image.open(REF).convert("RGB")).astype(float)
     bgr = np.asarray(Image.open(tb).convert("RGB")).astype(float)
-    seeds = []
+    seeds, skipped = [], 0
+    flat, refl, bgl = lab.ravel(), ref.reshape(-1, 3), bgr.reshape(-1, 3)
+    order = np.argsort(flat, kind="stable")
+    bounds = np.searchsorted(flat[order], np.arange(1, n + 2))
+    Dc = np.where(cores > 0, D, 0).ravel()
     d.apply({"kind": "replace_data", "id": ids["cor_c1"], "data": {"type": "cel", "number": 1}})
-    for i, sl in enumerate(find_objects(lab)):
-        m = lab[sl] == i + 1
-        if m.sum() < min_area:
+    for k in range(1, n + 1):
+        idx = order[bounds[k - 1]:bounds[k]]
+        if len(idx) < min_area:
             continue
-        med = np.median(ref[sl][m], axis=0)
-        # região que é fundo na referência (nosso BG já cobre): fração de pixels perto do BG renderizado
-        close = np.sqrt(((ref[sl][m] - bgr[sl][m]) ** 2).sum(1)) < 30
+        close = np.sqrt(((refl[idx] - bgl[idx]) ** 2).sum(1)) < 30
         if close.mean() > 0.5:
+            skipped += 1
             continue
-        dt = distance_transform_edt(np.pad(m, 1))[1:-1, 1:-1]
-        y, x = np.unravel_index(np.argmax(dt), dt.shape)
-        seeds.append({"x": int(x + sl[1].start), "y": int(y + sl[0].start), "color": {"type": "direct", "rgba": [float(v) / 255 for v in med] + [1.0]}})
+        med = np.median(refl[idx], axis=0)
+        ci = np.flatnonzero(cores.ravel() == k)
+        j = ci[np.argmax(Dc[ci])]
+        seeds.append({"x": int(j % line.shape[1]), "y": int(j // line.shape[1]), "color": {"type": "direct", "rgba": [float(v) / 255 for v in med] + [1.0]}})
     if not seeds:
         return "sem regiões"
-    return d.call("FILL", {"cut": ids["cut"], "frame": F, "layer": ids["cor"], "seeds": seeds, "gap": gap}).get("description")
+    r = d.call("FILL", {"cut": ids["cut"], "frame": F, "layer": ids["cor"], "seeds": seeds, "gap": gap}).get("description")
+    return f"{n} núcleos, {len(seeds)} sementes, {skipped} fundo; {r}"
 
 
 if __name__ == "__main__":
@@ -235,4 +260,4 @@ if __name__ == "__main__":
     if what in ("linhas", "tudo"):
         print(lines())
     if what in ("balde", "tudo"):
-        print(fill())
+        print(fill(float(sys.argv[2]) if len(sys.argv) > 2 else 4.0))
