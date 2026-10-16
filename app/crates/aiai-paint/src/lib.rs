@@ -3,6 +3,7 @@
 //!   no modo padrão; é o que faz multiplicar/tela/sobrepor baterem com a referência de anime.
 //! - Coordenadas em pixels do canvas do corte; o centro do pixel (x, y) é (x + 0.5, y + 0.5).
 
+pub mod adjust;
 pub mod blend;
 pub mod brush;
 pub mod curve;
@@ -11,9 +12,11 @@ pub mod image;
 pub mod mask;
 pub mod noise;
 pub mod poly;
+pub mod select;
 pub mod stroke_raster;
 pub mod tile;
 pub mod transform;
+pub mod warp;
 
 pub use crate::image::Image;
 pub use curve::{StrokeSample, sample_stroke};
