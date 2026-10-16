@@ -331,10 +331,11 @@ fn unique_layer_name(p: &Project, parent: &NodeId, base: &str) -> String {
 }
 
 /// Cria uma camada (e o cel 1 das que guardam cels) num passo só. Com `above` = camada ativa: entra logo acima dela (na
-/// pasta, se for uma pasta); sem ela, no topo do corte. Camada de preenchimento nasce ligada à camada vetorial mais próxima.
+/// pasta, se for uma pasta); sem ela, no topo do corte. A camada de preenchimento nasce ligada à camada vetorial mais próxima
+/// e entra logo ABAIXO dela (a cor fica sob a linha, como no tinta-e-pinta).
 pub(crate) fn add_layer(core: &mut CoreSession, cut: &NodeId, kind: LayerType, above: Option<&NodeId>) -> Result<NodeId, String> {
     let p = &core.project;
-    let (parent, index) = match above.and_then(|a| p.node(a).map(|n| (a, n))) {
+    let (mut parent, mut index) = match above.and_then(|a| p.node(a).map(|n| (a, n))) {
         Some((a, n)) if matches!(&n.data, NodeKind::Layer(l) if l.kind == LayerType::Group) => (a.clone(), None),
         Some((a, n)) => match &n.parent {
             Some(par) => {
@@ -347,9 +348,18 @@ pub(crate) fn add_layer(core: &mut CoreSession, cut: &NodeId, kind: LayerType, a
     };
     let mut data = LayerData::new(kind);
     if kind == LayerType::Fill {
+        // a tinta fica ABAIXO da linha (tinta-e-pinta): a camada de preenchimento entra logo embaixo da camada vetorial de referência
         let rows = layer_rows(p, cut);
-        let near = above.filter(|a| layer_data(p, a).is_some_and(|l| l.kind == LayerType::Vector)).cloned().or_else(|| rows.iter().find(|r| layer_data(p, &r.id).is_some_and(|l| l.kind == LayerType::Vector)).map(|r| r.id.clone()));
+        let is_vec = |id: &NodeId| layer_data(p, id).is_some_and(|l| l.kind == LayerType::Vector);
+        let near = above.filter(|a| is_vec(a)).cloned().or_else(|| rows.iter().find(|r| is_vec(&r.id)).map(|r| r.id.clone()));
         if let Some(v) = near {
+            if let Some(vn) = p.node(&v) {
+                if let Some(vp) = &vn.parent {
+                    let idx = p.node(vp).and_then(|pn| pn.children.iter().position(|c| *c == v));
+                    parent = vp.clone();
+                    index = idx;
+                }
+            }
             data.line_refs.push(v);
         }
     }
@@ -576,7 +586,7 @@ mod tests {
         let f = add_layer(&mut core, &cut, LayerType::Fill, Some(&a)).unwrap();
         let rows = layer_rows(&core.project, &cut);
         let order: Vec<&NodeId> = rows.iter().map(|r| &r.id).collect();
-        assert_eq!(order, vec![&b, &f, &a], "a camada nova entra logo acima da ativa (b estava acima de a; f entra entre as duas)");
+        assert_eq!(order, vec![&b, &a, &f], "raster entra acima da ativa; o preenchimento entra ABAIXO da linha que ele referencia");
         assert_eq!(layer_cels(&core.project, &a).len(), 1);
         assert_eq!(layer_data(&core.project, &f).unwrap().line_refs, vec![a.clone()], "o balde nasce ligado à camada vetorial");
         assert!(core.project.node(&a).unwrap().name.ends_with(" 1"));

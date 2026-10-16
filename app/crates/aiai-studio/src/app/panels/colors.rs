@@ -3,7 +3,7 @@
 //! amostra por `ReplaceData` na paleta (um passo de desfazer por ajuste, aplicado quando o ponteiro solta).
 
 use crate::app::commands::{self as cmds, NodeId};
-use crate::app::ui_kit::{Env, body_ui, color32_to_rgba, dim_label, rgba_to_color32, section};
+use crate::app::ui_kit::{Env, body_ui, color32_to_rgba, dim_label, rgba_to_color32};
 use crate::i18n::tr;
 use aiai_core::*;
 use egui::{Color32, Rect, Sense, Stroke, StrokeKind, Ui};
@@ -14,7 +14,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
     let ui = &mut child;
     egui::ScrollArea::vertical().id_salt("colors_scroll").auto_shrink([false, false]).show(ui, |ui| {
         current_color(env, ui);
-        section(ui, &t, "palette.palettes");
+        ui.add_space(2.0);
         palette_picker(env, ui);
         let Some(pal) = env.ed.palette.clone() else {
             ui.add_space(4.0);
@@ -31,10 +31,11 @@ fn current_color(env: &mut Env, ui: &mut Ui) {
     let rgba = cmds::resolve_color(&env.core.project, &env.ed.color);
     let c32 = rgba_to_color32(Rgba([rgba.0[0], rgba.0[1], rgba.0[2], 1.0]));
     ui.horizontal(|ui| {
-        let (r, _) = ui.allocate_exact_size(egui::vec2(44.0, 44.0), Sense::hover());
+        let (r, _) = ui.allocate_exact_size(egui::vec2(38.0, 38.0), Sense::hover());
         env.note("colors:current", r);
         ui.painter().rect(r, 6.0, c32, Stroke::new(1.5, t.border), StrokeKind::Inside);
         ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 3.0;
             let (label, tip) = match &env.ed.color {
                 ColorRef::Direct { .. } => (tr("palette.direct").to_owned(), String::new()),
                 ColorRef::Palette { palette, color } => {
@@ -42,8 +43,10 @@ fn current_color(env: &mut Env, ui: &mut Ui) {
                     (format!("{}: {name}", tr("palette.linked")), tr("palette.linked.tip").to_owned())
                 }
             };
-            ui.label(egui::RichText::new(label).size(13.0)).on_hover_text(tip);
-            ui.label(egui::RichText::new(rgba.to_hex()[..7].to_uppercase()).monospace().size(12.0).color(t.text_dim));
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(label).size(13.0)).on_hover_text(tip);
+                ui.label(egui::RichText::new(rgba.to_hex()[..7].to_uppercase()).monospace().size(12.0).color(t.text_dim));
+            });
             ui.horizontal(|ui| {
                 let mut edit = c32;
                 let r = egui::color_picker::color_edit_button_srgba(ui, &mut edit, egui::color_picker::Alpha::Opaque);
@@ -166,27 +169,22 @@ fn edit_selected(env: &mut Env, ui: &mut Ui, pal: &NodeId) {
     }
     let Some(pd) = cmds::palette_data(&env.core.project, pal).cloned() else { return };
     let Some(nc) = pd.color(&color).cloned() else { return };
-    section(ui, &t, "palette.edit");
+    ui.add_space(2.0);
     let key = (pal.clone(), color.clone());
     let (mut name, mut c32) = match &env.ed.color_edit {
         Some((p, c, n, col)) if (p, c) == (&key.0, &key.1) => (n.clone(), *col),
         _ => (nc.name.clone(), rgba_to_color32(Rgba([nc.rgba.0[0], nc.rgba.0[1], nc.rgba.0[2], 1.0]))),
     };
     let mut touched = false;
-    egui::Grid::new("palette_edit_grid").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+    ui.horizontal(|ui| {
         dim_label(ui, &t, tr("palette.color_name"));
-        let te = ui.add(egui::TextEdit::singleline(&mut name).desired_width(140.0));
+        let te = ui.add(egui::TextEdit::singleline(&mut name).desired_width(110.0));
         env.note("colors:name", te.rect);
         touched |= te.changed();
-        ui.end_row();
-        dim_label(ui, &t, tr("palette.color_value"));
-        ui.horizontal(|ui| {
-            let r = egui::color_picker::color_edit_button_srgba(ui, &mut c32, egui::color_picker::Alpha::Opaque);
-            env.note("colors:edit_picker", r.rect);
-            touched |= r.changed();
-            ui.label(egui::RichText::new(color32_to_rgba(c32).to_hex()[..7].to_uppercase()).monospace().size(12.0).color(t.text_dim));
-        });
-        ui.end_row();
+        let r = egui::color_picker::color_edit_button_srgba(ui, &mut c32, egui::color_picker::Alpha::Opaque);
+        env.note("colors:edit_picker", r.rect);
+        touched |= r.changed();
+        ui.label(egui::RichText::new(color32_to_rgba(c32).to_hex()[..7].to_uppercase()).monospace().size(12.0).color(t.text_dim));
     });
     if touched {
         env.ed.color_edit = Some((key.0.clone(), key.1.clone(), name.clone(), c32));

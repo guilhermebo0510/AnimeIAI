@@ -49,6 +49,11 @@ fn round(v: f32) -> f64 {
     (v as f64 * 100.0).round() / 100.0
 }
 
+/// Seis casas decimais (matriz do canvas: com 2 casas o erro cresce com a distância e desalinha o harness de mouse).
+fn fine(v: f32) -> f64 {
+    (v as f64 * 1_000_000.0).round() / 1_000_000.0
+}
+
 fn as_obj(v: &Value) -> Result<Map<String, Value>, BridgeError> {
     match v {
         Value::Null => Ok(Map::new()),
@@ -166,12 +171,12 @@ impl StudioApp {
             let size = ed.cut.as_ref().map(|c| cmds::canvas_size(p, c)).unwrap_or((0, 0));
             json!({
                 "rect_logical": rect4(r, 1.0),
-                "zoom": round(ed.view.zoom),
+                "zoom": fine(ed.view.zoom),
                 "rotation_deg": round(ed.view.rotation_deg()),
                 "flip": ed.view.flip,
-                "center": [round(ed.view.center.x), round(ed.view.center.y)],
-                "origin_logical": [round(xf.origin.x), round(xf.origin.y)],
-                "m": xf.m.iter().map(|v| round(*v)).collect::<Vec<_>>(),
+                "center": [fine(ed.view.center.x), fine(ed.view.center.y)],
+                "origin_logical": [fine(xf.origin.x), fine(xf.origin.y)],
+                "m": xf.m.iter().map(|v| fine(*v)).collect::<Vec<_>>(),
                 "size": [size.0, size.1],
                 "shown_frame": ed.shown.as_ref().map(|s| s.rendered.key.frame),
                 "shown_counter": ed.shown.as_ref().map(|s| s.rendered.key.counter),
@@ -201,6 +206,7 @@ impl StudioApp {
             "latency_log": ed.latency_log.iter().map(lat).collect::<Vec<_>>(),
             "selection": ed.selection.as_ref().map(|s| json!({ "whole": s.whole, "offset": [round(s.offset.x), round(s.offset.y)], "rect": s.rect_of() })),
             "gesture_active": !matches!(ed.gesture, super::editor::Gesture::None),
+            "cursor_logical": ed.cursor.map(|c| json!([round(c.x), round(c.y)])),
             "ghosts": ed.ghosts.len(),
             "tool_options": json!({ "pen_width": o.pen_width, "brush_size": o.brush_size, "brush_opacity": o.brush_opacity, "eraser_size": o.eraser_size, "fill_gap": o.fill_gap, "fill_expand": o.fill_expand }),
             "timeline": { "cell_w": ed.tl_cell_w, "scroll": [round(ed.tl_scroll.x), round(ed.tl_scroll.y)], "header_w": super::panels::timeline::HEADER_W, "ruler_h": super::panels::timeline::RULER_H, "row_h": super::panels::timeline::ROW_H },

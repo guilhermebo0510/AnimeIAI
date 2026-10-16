@@ -219,11 +219,15 @@ fn node_row(env: &mut Env, ui: &mut Ui, id: &NodeId, depth: usize, icon: IconId,
     let mut action_delete = false;
     let mut action_rename = false;
     resp.context_menu(|ui| {
-        if ui.button(tr("project.rename")).clicked() {
+        let b = ui.button(tr("project.rename"));
+        env.notes.push(("project:ctx.rename".into(), b.rect));
+        if b.clicked() {
             action_rename = true;
             ui.close();
         }
-        if ui.button(tr("project.delete")).clicked() {
+        let b = ui.button(tr("project.delete"));
+        env.notes.push(("project:ctx.delete".into(), b.rect));
+        if b.clicked() {
             action_delete = true;
             ui.close();
         }
@@ -260,11 +264,11 @@ fn project_settings(env: &mut Env, ui: &mut Ui) {
     let s = env.core.project.settings.clone();
     egui::Grid::new("project_settings_grid").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
         dim_label(ui, &t, tr("project.name"));
-        let mut name = env.core.project.name.clone();
-        let te = ui.add(egui::TextEdit::singleline(&mut name).desired_width(150.0));
+        let current = env.core.project.name.clone();
+        let (te, committed) = super::text_commit(ui, Id::new("project_name"), &current, 150.0);
         env.note("project:name", te.rect);
-        if te.lost_focus() && name.trim() != env.core.project.name && !name.trim().is_empty() {
-            let _ = cmds::set_project_props(env.core, json!({ "name": name.trim() }));
+        if let Some(name) = committed {
+            let _ = cmds::set_project_props(env.core, json!({ "name": name }));
         }
         ui.end_row();
         dim_label(ui, &t, tr("project.frame_size"));

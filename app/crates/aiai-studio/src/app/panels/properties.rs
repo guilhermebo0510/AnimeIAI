@@ -110,6 +110,7 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
                 }
             });
             ui.checkbox(&mut o.pen_aliased, tr("opt.aliased"));
+            ui.checkbox(&mut o.pen_autoclose, tr("opt.autoclose")).on_hover_text(tr("opt.autoclose.tip"));
         }
         ToolId::Brush => {
             let presets = tools::presets();
@@ -133,7 +134,7 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
             });
             row(ui, &t, compact, "opt.opacity", |ui| {
                 ui.spacing_mut().slider_width = if compact { 64.0 } else { 120.0 };
-                ui.add(egui::Slider::new(&mut o.brush_opacity, 0.05..=1.0).show_value(true).custom_formatter(|v, _| format!("{:.0}%", v * 100.0)).trailing_fill(true));
+                ui.add(egui::Slider::new(&mut o.brush_opacity, 0.05..=1.0).show_value(!compact).custom_formatter(|v, _| format!("{:.0}%", v * 100.0)).trailing_fill(true)).on_hover_text(tr("opt.opacity"));
             });
             stabilizer_row(ui, &t, compact, o);
         }

@@ -346,6 +346,8 @@ pub(crate) struct ToolOptions {
     pub pen_width: f32,
     pub pen_tip: VectorTip,
     pub pen_aliased: bool,
+    /// Terminar perto do começo fecha o traço (sem pontas afinadas abrindo vão para o balde).
+    pub pen_autoclose: bool,
     pub stab_mode: StabMode,
     pub stab_window: u32,
     /// Raio da corda do lazy brush em PONTOS da tela (vira pixels do desenho dividindo pela escala da visão).
@@ -365,6 +367,7 @@ impl Default for ToolOptions {
             pen_width: 3.0,
             pen_tip: VectorTip::GPen,
             pen_aliased: false,
+            pen_autoclose: true,
             stab_mode: StabMode::Average,
             stab_window: 4,
             stab_radius: 10.0,
@@ -491,6 +494,9 @@ pub(crate) struct Editor {
     pub opts: ToolOptions,
     pub view: View,
     pub fit_pending: bool,
+    /// A visão acompanha o tamanho da área (mantém o canvas inteiro visível) até o usuário dar zoom, mover ou girar.
+    pub auto_fit: bool,
+    pub last_canvas_size: Vec2,
     pub show_guides: bool,
     pub show_reference: bool,
     pub show_grid: bool,
@@ -540,6 +546,8 @@ impl Default for Editor {
             opts: ToolOptions::default(),
             view: View::default(),
             fit_pending: true,
+            auto_fit: true,
+            last_canvas_size: Vec2::ZERO,
             show_guides: true,
             show_reference: true,
             show_grid: false,

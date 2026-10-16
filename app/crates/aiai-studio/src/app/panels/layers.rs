@@ -132,7 +132,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
 
     // ---- tudo rola junto num painel pequeno; a lista tem altura própria (até ~45% do painel) com rolagem interna
     let total_h = ui.available_height();
-    let list_h = ((rows.len().max(1) as f32) * 27.0 + 4.0).clamp(54.0, (total_h * 0.45).max(54.0));
+    let list_h = ((rows.len().max(1) as f32) * 27.0 + 4.0).clamp(54.0, (total_h * 0.55).max(54.0));
     egui::ScrollArea::vertical().id_salt("layers_outer").auto_shrink([false, false]).show(ui, |ui| {
         egui::ScrollArea::vertical().id_salt("layers_list").max_height(list_h).auto_shrink([false, true]).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 1.0;

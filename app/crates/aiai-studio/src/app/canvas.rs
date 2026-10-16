@@ -50,16 +50,22 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
     env.note("canvas:area", rect);
     let canvas = cmds::canvas_size(&env.core.project, &cut);
 
-    if env.ed.fit_pending {
+    let resized = (rect.size() - env.ed.last_canvas_size).abs().max_elem() > 1.0;
+    env.ed.last_canvas_size = rect.size();
+    if env.ed.fit_pending || (env.ed.auto_fit && resized) {
         env.ed.fit_pending = false;
+        env.ed.auto_fit = true;
         env.ed.view.fit(rect, ppp, canvas, MARGIN);
     }
     update_render(env, &ctx, &cut, canvas);
 
     let resp = ui.interact(rect, ui.id().with("canvas_area"), Sense::click_and_drag());
-    let xf = env.ed.view.xf(rect, ppp);
+    let view_before = env.ed.view;
     handle_input(env, ui, rect, &resp, ppp);
-    let xf = if xf.origin == env.ed.view.xf(rect, ppp).origin { xf } else { env.ed.view.xf(rect, ppp) };
+    if env.ed.view != view_before {
+        env.ed.auto_fit = false;
+    }
+    let xf = env.ed.view.xf(rect, ppp);
 
     // a borracha vetorial destaca o que vai sair enquanto o cursor passa
     if matches!(env.ed.gesture, Gesture::Stroke(_)) {
@@ -133,6 +139,7 @@ fn toolbar(env: &mut Env, ui: &mut Ui, has_cut: bool) {
         if env.icon_button(ui, IconId::OneToOne, "canvas.actual", false, has_cut, "canvas:actual").clicked() {
             if let Some(r) = rect {
                 env.ed.view.set_zoom_at(r, ppp, r.center(), 1.0);
+                env.ed.auto_fit = false;
             }
         }
         // zoom em % (100% = 1 pixel do desenho por pixel físico)
@@ -142,20 +149,24 @@ fn toolbar(env: &mut Env, ui: &mut Ui, has_cut: bool) {
         if dv.changed() {
             if let Some(r) = rect {
                 env.ed.view.set_zoom_at(r, ppp, r.center(), pct / 100.0);
+                env.ed.auto_fit = false;
             }
         }
         sep(ui, &t);
         if env.icon_button_sized(ui, IconId::RotateView, "canvas.rotate_left", false, has_cut, "canvas:rot_left", 24.0, true).clicked() {
             env.ed.view.rotate_by(-15f32.to_radians());
+            env.ed.auto_fit = false;
         }
         if env.icon_button(ui, IconId::RotateView, "canvas.rotate_right", false, has_cut, "canvas:rot_right").clicked() {
             env.ed.view.rotate_by(15f32.to_radians());
+            env.ed.auto_fit = false;
         }
         let mut deg = env.ed.view.rotation_deg();
         let r = ui.add_enabled(has_cut, egui::DragValue::new(&mut deg).range(-180.0..=180.0).speed(0.5).suffix("°").max_decimals(0));
         env.note("canvas:rotation", r.rect);
         if r.changed() {
             env.ed.view.rot = deg.to_radians().rem_euclid(std::f32::consts::TAU);
+            env.ed.auto_fit = false;
         }
         let flip = env.ed.view.flip;
         if env.icon_button(ui, IconId::Flip, "canvas.flip", flip, has_cut, "canvas:flip").clicked() {

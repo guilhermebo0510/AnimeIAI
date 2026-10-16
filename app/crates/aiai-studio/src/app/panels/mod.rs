@@ -29,3 +29,20 @@ pub(crate) fn commit_on_release<T: Copy + Default + PartialEq + Send + Sync + 's
     }
     None
 }
+
+/// Campo de texto de uma linha que só entrega o texto ao terminar (Enter ou perder o foco; Esc descarta). O texto em edição
+/// fica na memória do egui: o documento só muda quando o usuário confirma, e digitar não é desfeito pelo redesenho do quadro.
+pub(crate) fn text_commit(ui: &mut Ui, id: Id, current: &str, width: f32) -> (Response, Option<String>) {
+    let mut buf: String = ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| current.to_owned());
+    let r = ui.add(egui::TextEdit::singleline(&mut buf).desired_width(width));
+    let mut out = None;
+    if r.has_focus() {
+        ui.data_mut(|d| d.insert_temp(id, buf.clone()));
+    } else {
+        ui.data_mut(|d| d.remove_temp::<String>(id));
+        if r.lost_focus() && !ui.input(|i| i.key_pressed(egui::Key::Escape)) && buf.trim() != current && !buf.trim().is_empty() {
+            out = Some(buf.trim().to_owned());
+        }
+    }
+    (r, out)
+}

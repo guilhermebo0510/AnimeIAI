@@ -147,6 +147,14 @@ fn commit_pen(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant
         points.push(StrokePoint { x: q.x + 0.01, ..q });
     }
     let o = &env.ed.opts;
+    // volta ao ponto de partida: fecha o traço (sem as pontas afinadas abrindo um vão que o balde não vê)
+    let closed = o.pen_autoclose && should_close(&points, o.pen_width, g.screen_scale);
+    if closed {
+        let (a, b) = (points[0], points[points.len() - 1]);
+        if (a.x - b.x).hypot(a.y - b.y) < 1.0 {
+            points.pop();
+        }
+    }
     let stroke = Stroke {
         id: Id(String::new()),
         points,
@@ -157,7 +165,7 @@ fn commit_pen(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant
         profile: WidthProfile::default(),
         color: env.ed.color.clone(),
         opacity: 1.0,
-        closed: false,
+        closed,
         aliased: o.pen_aliased,
         color_trace: false,
     };
@@ -171,6 +179,17 @@ fn commit_pen(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant
     });
     let color = ghost_color(env, 1.0);
     commit(env, planned, released_at, "pen", Some((ghost_pts, width, color)));
+}
+
+/// O traço termina perto de onde começou (a menos de 2 larguras ou 10 pontos da tela) depois de percorrer um caminho bem maior?
+pub(crate) fn should_close(points: &[StrokePoint], width: f32, screen_scale: f32) -> bool {
+    if points.len() < 8 {
+        return false;
+    }
+    let (a, b) = (points[0], points[points.len() - 1]);
+    let gap = (a.x - b.x).hypot(a.y - b.y);
+    let len: f32 = points.windows(2).map(|w| (w[1].x - w[0].x).hypot(w[1].y - w[0].y)).sum();
+    gap <= (width * 2.0).max(10.0 / screen_scale.max(1e-3)) && len > gap * 6.0 && len > width * 12.0
 }
 
 fn ghost_color(env: &Env, alpha: f32) -> egui::Color32 {
@@ -528,6 +547,7 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
         if let Some(rect) = env.ed.canvas_rect {
             let ppp = ctx.pixels_per_point();
             env.ed.view.set_zoom_at(rect, ppp, rect.center(), 1.0);
+            env.ed.auto_fit = false;
         }
     }
 }
@@ -567,6 +587,83 @@ mod tests {
         let cut3 = quick_start(&mut c3, 4, None).unwrap();
         let v = add_layer(&mut c3, &cut3, LayerType::Vector, None).unwrap();
         assert_eq!(fill_plan(&c3.project, &cut3, &v), None);
+    }
+
+    /// Quadrado desenhado como a caneta faz (amostras a cada 4 px, pressão 0,7, estabilizador): o balde precisa enxergar uma
+    /// região fechada, e a camada de preenchimento fica ABAIXO da linha.
+    #[test]
+    fn the_bucket_fills_a_square_drawn_like_the_pen_does() {
+        let (mut core, cut, line, fill, _) = doc();
+        core.project.settings.width = 320;
+        core.project.settings.height = 180;
+        let corners = [(80.0f32, 40.0f32), (240.0, 40.0), (240.0, 140.0), (80.0, 140.0), (80.0, 40.0)];
+        let mut stab = Stabilizer::new(StabMode::Average, 4, 0.0);
+        let mut pts: Vec<StrokePoint> = Vec::new();
+        let mut push = |p: Vec2, pr: f32, pts: &mut Vec<StrokePoint>| pts.push(StrokePoint { x: p.x, y: p.y, pressure: pr, tilt: None, t: None });
+        let mut raw = vec![];
+        for w in corners.windows(2) {
+            let (a, b) = (Vec2::new(w[0].0, w[0].1), Vec2::new(w[1].0, w[1].1));
+            let n = ((b - a).length() / 4.0).ceil() as usize;
+            for i in 0..=n {
+                raw.push(a + (b - a) * (i as f32 / n as f32));
+            }
+        }
+        for (i, p) in raw.iter().enumerate() {
+            if let Some(q) = stab.feed(*p) {
+                push(q, if i == 0 { 1.0 } else { 0.7 }, &mut pts);
+            }
+        }
+        for q in stab.finish() {
+            push(q, 0.7, &mut pts);
+        }
+        let closed = should_close(&pts, 3.0, 1.0);
+        if closed {
+            pts.pop();
+        }
+        let stroke = Stroke {
+            id: Id(String::new()),
+            points: pts,
+            geometry: StrokeGeometry::Freehand,
+            tension: 0.0,
+            tip: VectorTip::GPen,
+            width: 3.0,
+            profile: WidthProfile::default(),
+            color: ColorRef::default(),
+            opacity: 1.0,
+            closed,
+            aliased: false,
+            color_trace: false,
+        };
+        let cel = cmds::exposed_cel(&core.project, &cut, &line, 0).unwrap();
+        cmds::run(&mut core, Command::InsertStrokes { cel, items: vec![IndexedStroke { index: 0, stroke }] }).unwrap();
+        let (fill_layer, lines, _) = fill_plan(&core.project, &cut, &line).unwrap();
+        assert_eq!((fill_layer.clone(), lines), (fill.clone(), vec![line.clone()]));
+        let mut blobs = core.blobs.clone();
+        let req = tfill::FillRequest { cut: cut.clone(), frame: 0, layer: fill.clone(), seeds: vec![tfill::FillSeed { x: 160.0, y: 90.0, color: ColorRef::Direct { rgba: Rgba::rgb8(255, 0, 0) } }], line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35 };
+        let cmd = tfill::fill_command(&core.project, &mut blobs, &req).unwrap();
+        core.blobs = blobs;
+        cmds::run(&mut core, cmd).unwrap();
+        let fcel = cmds::exposed_cel(&core.project, &cut, &fill, 0).unwrap();
+        let region = &cmds::cel_data(&core.project, &fcel).unwrap().fills[0];
+        assert!(region.bounds[2] < 200 && region.bounds[3] < 130, "a região é só o interior do quadrado, não o canvas todo: {:?}", region.bounds);
+    }
+
+    fn sp(x: f32, y: f32) -> StrokePoint {
+        StrokePoint { x, y, pressure: 1.0, tilt: None, t: None }
+    }
+
+    #[test]
+    fn closing_pen_strokes() {
+        let ring: Vec<StrokePoint> = (0..=40)
+            .map(|i| {
+                let a = i as f32 / 40.0 * std::f32::consts::TAU;
+                sp(100.0 + 50.0 * a.cos(), 100.0 + 50.0 * a.sin())
+            })
+            .collect();
+        assert!(should_close(&ring, 3.0, 1.0), "um círculo que volta ao começo fecha");
+        let open: Vec<StrokePoint> = (0..=40).map(|i| sp(i as f32 * 5.0, 0.0)).collect();
+        assert!(!should_close(&open, 3.0, 1.0), "uma reta não fecha");
+        assert!(!should_close(&ring[..6], 3.0, 1.0), "poucos pontos não fecham");
     }
 
     #[test]

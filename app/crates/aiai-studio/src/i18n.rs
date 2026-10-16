@@ -272,6 +272,8 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("opt.tip", "Ponta", "Tip"),
     ("opt.stabilizer", "Estabilizador", "Stabilizer"),
     ("opt.aliased", "Sem antisserrilhado", "Aliased (no anti-aliasing)"),
+    ("opt.autoclose", "Fechar ao voltar", "Close on return"),
+    ("opt.autoclose.tip", "Terminar o traço perto de onde começou fecha a forma (o balde enxerga regiões fechadas)", "Ending the stroke near where it started closes the shape (the bucket sees closed regions)"),
     ("opt.preset", "Pincel", "Brush"),
     ("opt.size", "Tamanho", "Size"),
     ("opt.opacity", "Opacidade", "Opacity"),
