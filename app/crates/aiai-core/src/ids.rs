@@ -1,8 +1,9 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Identificador estável de nó/objeto (UUID v7 em texto; ordenável pelo tempo de criação).
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
+/// Identificador estável de nó/objeto (UUID v7 em texto; ordenável pelo tempo de criação). `Default` = vazio
+/// (a sessão gera um id novo ao aplicar o comando).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(transparent)]
 pub struct Id(pub String);
 
