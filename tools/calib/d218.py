@@ -33,6 +33,17 @@ def setup():
     return cut
 
 
+# ordem canônica das camadas do corte (de baixo para cima); só as que existem são movidas
+ORDER = ["bg", "bg_dir", "bg_dir_luz", "cor", "sombra", "realce", "franja", "franja_luz", "cor_rosto", "detalhe", "baixo", "linha_massa", "linha",
+         "brilho", "fx", "fecho"]
+
+
+def reorder():
+    present = [k for k in ORDER if k in ids]
+    for i, k in enumerate(present):
+        d.apply({"kind": "move_node", "id": ids[k], "parent": ids["cut"], "index": i})
+
+
 def probe(points, radius=5):
     return [p for p in meas.first_list(d.call("PROBE_COLOR", {"reference": REF0, "points": points, "radius": radius}))]
 

@@ -116,3 +116,47 @@ def curve_from_measure(pts, widths, color, closed=False, tip="marker", every=2):
         prof.append([k / max(1, n - 1), max(0.2, min(3.0, w / base))])
     return {"points": [pts[i] for i in sel], "width": round(base, 2), "tip": tip, "geometry": "spline",
             "profile": prof, "color": color, "closed": closed}
+
+
+def _normals(pts, closed=False):
+    n = len(pts)
+    out = []
+    for i in range(n):
+        a = pts[(i - 1) % n] if closed else pts[max(0, i - 1)]
+        b = pts[(i + 1) % n] if closed else pts[min(n - 1, i + 1)]
+        tx, ty = b[0] - a[0], b[1] - a[1]
+        L = math.hypot(tx, ty) or 1.0
+        out.append((-ty / L, tx / L))
+    return out
+
+
+def anchor_line(d, ref, pts, widths, w_nom, closed=False, search=4.0, strong=0.08):
+    """Ajusta centro/largura da linha pelas BORDAS medidas dos dois lados (MEASURE_EDGE em p ± n·w/2): com as duas bordas
+    fortes, centro = ponto médio e largura = distância; com uma só, ancora nela com a largura nominal."""
+    ns = _normals(pts, closed)
+    ws = [(w or w_nom) for w in widths]
+    plus = [[p[0] + n[0] * w / 2, p[1] + n[1] * w / 2] for p, n, w in zip(pts, ns, ws)]
+    minus = [[p[0] - n[0] * w / 2, p[1] - n[1] * w / 2] for p, n, w in zip(pts, ns, ws)]
+    rp = first_list(d.call("MEASURE_EDGE", {"reference": ref, "points": plus, "search": search, "min_strength": 0.02}))
+    rm = first_list(d.call("MEASURE_EDGE", {"reference": ref, "points": minus, "search": search, "min_strength": 0.02}))
+    new_pts, new_w = [], []
+    for i, (p, n, w) in enumerate(zip(pts, ns, ws)):
+        ep, em = rp[i], rm[i]
+        # projeção das bordas na normal (offset relativo ao centro atual)
+        op = (ep["edge"][0] - p[0]) * n[0] + (ep["edge"][1] - p[1]) * n[1]
+        om = (em["edge"][0] - p[0]) * n[0] + (em["edge"][1] - p[1]) * n[1]
+        sp, sm = ep["strength"] >= strong, em["strength"] >= strong
+        if sp and sm and op - om > 2:
+            c, wi = (op + om) / 2, op - om
+        elif sp:
+            c, wi = op - w / 2, w
+        elif sm:
+            c, wi = om + w / 2, w
+        else:
+            c, wi = 0.0, w
+        new_pts.append([p[0] + n[0] * c, p[1] + n[1] * c])
+        new_w.append(wi)
+    ox = _median_filter([q[0] - p[0] for q, p in zip(new_pts, pts)], closed)
+    oy = _median_filter([q[1] - p[1] for q, p in zip(new_pts, pts)], closed)
+    new_pts = [[p[0] + ox[i], p[1] + oy[i]] for i, p in enumerate(pts)]
+    return smooth_points(new_pts, closed, 2), _median_filter(new_w, closed)

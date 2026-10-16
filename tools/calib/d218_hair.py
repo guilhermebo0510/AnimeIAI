@@ -6,6 +6,7 @@ import meas
 from d218 import d, ids, REF0, draw, render
 
 MIN_W = 11.0
+ANCHOR = "--sem-ancora" not in sys.argv
 LINE = {"type": "direct", "rgba": [0x5c / 255, 0x2e / 255, 0x2e / 255, 1.0]}
 
 HAIR = {
@@ -64,6 +65,13 @@ def measured_curves(table, step=8, closed=False):
         # linhas do chibi são quase uniformes (11–15 px); onde a tinta funde numa massa escura a meia altura subestima:
         # piso de 11 px e variação do perfil limitada (leitura do agente nos recortes ampliados)
         c["width"] = max(c["width"], MIN_W)
+        if ANCHOR:
+            # refino pelas bordas (lado da pele/fundo é nítido): centro e largura locais
+            ws = [max(w or 0, MIN_W) for w in ws]
+            for search in (6.0, 3.0):
+                pts, ws = meas.anchor_line(d, REF0, pts, ws, c["width"], closed=closed, search=search)
+            c = meas.curve_from_measure(pts, ws, LINE, closed=closed)
+            c["width"] = max(c["width"], MIN_W - 1)
         c["profile"] = [[t, max(0.7, min(1.3, w))] for t, w in c["profile"]]
         curves.append(c)
         log[name] = c["width"]
@@ -78,6 +86,7 @@ FECHO = [
     [(372, 705), (390, 702)],          # contorno esquerdo ↔ mecha e
     [(1915, 720), (1925, 730)],        # contorno n5 ↔ borda direita
     [(241, 662), (247, 645)],          # cacho esquerdo ↔ contorno esquerdo
+    [(737, 95), (800, 70), (880, 50), (965, 40), (1065, 35), (1150, 35), (1228, 35)],  # topo da franja (região do degradê claro)
 ]
 
 
