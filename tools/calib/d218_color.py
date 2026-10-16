@@ -76,6 +76,8 @@ def fills(min_area=150, gap=6.0):
         if name == "cabelo_rim":  # realces ficam na camada `rim`; a região do balde é cabelo
             name, hexc, dist = "cabelo", PALETTE["cabelo"], 0
         log.append((r["point"], r["area"], p["hex"], name, round(dist)))
+        if r["area"] > 300000:
+            continue  # rosto inteiro / fundo: o ponto mais interno cai em qualquer coisa (boca etc.); sementes manuais decidem
         if name == "pele" and dist > 20:
             continue  # pele automática só quando a amostra é pele mesmo (a fita creme no alto cai perto da pele)
         if name in ROSTO and name != "pele" and r["area"] > 100000:

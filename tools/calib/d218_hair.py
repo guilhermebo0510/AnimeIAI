@@ -113,9 +113,28 @@ DIRECT_DES = {7: {"alca": ([(1486, 947), (1480, 960), (1467, 980), (1452, 1000),
                   # fim do contorno direito: mais grosso no 7 (~24 px pela extensão vertical a 45°, runs.py) e desce até a borda
                   "contorno_n5": ([(1832, 640), (1850, 652), (1870, 672), (1890, 697), (1910, 722), (1925, 738)], 24.0)}}
 TAPER_DES = {7: {"franja_h2", "franja_i1"}}
+DIRECT_W_DES = {8: {"queixo": 25.0}}  # no 8 o queixo engrossa (~25 px pela varredura por colunas, borda da pele igual)
 # larguras fixas por desenho (lidas por varredura): no alto do quadro a tinta clareia e o paquímetro de faixa estreita a linha
 FIXED_W.update({7: {"mecha_n": 20.0}}.get(CEL, {}))
 INK.update({7: {"alca": "#3e1d1c"}}.get(CEL, {}))  # alça curta (sem trechos coloridos): cor medida no desenho
+DIRECT_DES[8] = {"alca": ([(1494, 952), (1486, 960), (1480, 970), (1469, 980), (1459, 990), (1449, 1000), (1441, 1010), (1433, 1020), (1424, 1030),
+                           (1417, 1040), (1411, 1050), (1404, 1060), (1400, 1070), (1395, 1082)], 27.0),  # borda direita da alça (runs.py) − 13,5
+                 # contorno esquerdo do 8 (centros das varreduras; sem pontos de campo no alto à esquerda)
+                 "contorno_esq": ([(298, 100), (288, 125), (277, 150), (273, 170), (270, 190), (265, 210), (259, 230), (249, 250), (237, 270),
+                                   (223, 290), (206, 310), (194, 330), (199, 350), (209, 370), (221, 390), (236, 410), (244, 420), (240, 440),
+                                   (235, 460), (227, 480), (218, 500), (209, 520), (201, 540), (195, 571), (205, 600), (220, 611), (250, 637),
+                                   (270, 652), (300, 672), (330, 689), (360, 703), (372, 708)], 16.0),
+                 # contorno do alto à direita: no 8 começa ~60 px mais alto (centros das varreduras), resto pelo campo
+                 "contorno_n2": ([(1605, 45), (1622, 60), (1636, 70), (1649, 80), (1665, 100), (1682, 120), (1697, 140), (1711, 160), (1724, 180),
+                                  (1734, 200), (1733, 220), (1728, 240), (1723, 255), (1703, 299), (1674, 354), (1635, 384)], 16.0)}
+# linhas do cabelo relidas no próprio desenho (varreduras runs.py; coordenadas do desenho, sem campo)
+HAIR_DES = {8: {"laco": [(163, 0), (162, 15), (168, 28), (180, 40), (195, 52), (210, 64), (226, 75), (245, 86), (265, 94), (285, 99), (300, 104)],
+                "mecha_f": [(333, 0), (326, 20), (317, 40), (309, 60), (302, 80), (298, 100)],
+                "mecha_n": [(1585, 0), (1590, 20), (1597, 40), (1602, 60), (1606, 80), (1610, 100), (1615, 120), (1619, 140), (1622, 160),
+                            (1626, 180), (1628, 200), (1631, 240), (1633, 261), (1635, 338), (1630, 439), (1606, 515), (1591, 565), (1574, 616),
+                            (1559, 642)]}}
+HAIR_RAW = set(HAIR_DES.get(CEL, {}))
+HAIR.update(HAIR_DES.get(CEL, {}))
 RAW = set(DIRECT_DES.get(CEL, {}))
 DIRECT.update(DIRECT_DES.get(CEL, {}))
 SKIN_SIDE = {"queixo": -1, "contorno_esq": 1, "contorno_n2": -1, "contorno_n3a": -1, "contorno_n4a": -1, "contorno_n5": -1}
@@ -168,7 +187,8 @@ def measured_curves(table, step=3, closed=False, ref=None):
             # paquímetro de faixa pela cor da tinta: separa a tinta do cabelo, do realce e da sombra sem viés de meia altura;
             # redesenho: mede a estimativa do desenho 1 e a do campo e fica com a que cai mais na tinta
             best = None
-            for cand in (candidates(poly, field_first=False) if ref is None else [[tuple(p) for p in poly]]):  # empate: desenho 1 (medido melhor assim)  # ref dada: dados lidos no próprio desenho (d218_dyn)
+            raw = ref is not None or name in HAIR_RAW
+            for cand in ([[tuple(p) for p in poly]] if raw else candidates(poly, field_first=False)):  # empate: desenho 1 (medido melhor assim)  # ref dada: dados lidos no próprio desenho (d218_dyn)
                 cp, cw = meas.measure_band(d, REF, meas.densify(cand, step, closed=closed), "#5c2e2e", 0.09, closed=closed,
                                            passes=(16.0, 10.0), smooth=SMOOTH)
                 sc = color_score(cp, "#5c2e2e", 55) if CEL != 1 else 0
@@ -250,6 +270,7 @@ if __name__ == "__main__":
     curves, log = measured_curves(HAIR)
     c2, l2 = measured_curves(CLOSED, closed=True)
     for name, (poly, w) in DIRECT.items():
+        w = DIRECT_W_DES.get(CEL, {}).get(name, w)
         best = None
         for cand in ([[tuple(p) for p in poly]] if name in RAW else [W(poly)]):  # escolher pela tinta no centro piorou (F1 −0,002 a −0,005)
             cp = meas.densify(cand, 4)
