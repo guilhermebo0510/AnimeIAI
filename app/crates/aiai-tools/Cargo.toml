@@ -10,6 +10,7 @@ aiai-core = { workspace = true }
 aiai-paint = { workspace = true }
 aiai-render = { workspace = true }
 aiai-anim = { workspace = true }
+aiai-metrics = { workspace = true }
 aiai-audio = { workspace = true }
 aiai-guide3d = { workspace = true }
 serde = { workspace = true }
