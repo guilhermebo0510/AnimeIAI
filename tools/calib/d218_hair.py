@@ -95,6 +95,36 @@ SKIN_SIDE = {"queixo": -1, "contorno_esq": 1, "contorno_n2": -1, "contorno_n3a":
 CLOSED = {}  # a boca virou anel medido na linha-massa (d218_face.py)
 
 
+SEGMENT_INK = True
+
+
+def colored_segments(pts, ws, base_w, seg_len=180.0):
+    """Divide a linha em trechos de ~`seg_len` px e dá a cada um a cor da tinta medida nos seus centros (a tinta clareia
+    no alto do quadro e escurece sobre o cabelo de trás ao longo de uma mesma linha)."""
+    import math
+    acc, cuts = 0.0, [0]
+    for i in range(1, len(pts)):
+        acc += math.dist(pts[i - 1], pts[i])
+        if acc >= seg_len and len(pts) - i > 3:
+            cuts.append(i)
+            acc = 0.0
+    cuts.append(len(pts) - 1)
+    if len(cuts) < 3:
+        return None
+    out = []
+    for a, b in zip(cuts[:-1], cuts[1:]):
+        sp, sw = pts[a:b + 1], ws[a:b + 1]
+        probe = [[round(p[0]), round(p[1])] for p in sp[::2]]
+        pr = meas.first_list(d.call("PROBE_COLOR", {"reference": REF0, "points": probe, "radius": 1}))
+        rgb = sorted([p["rgb"] for p in pr], key=sum)
+        col = {"type": "direct", "rgba": list(rgb[len(rgb) // 2]) + [1.0]}
+        c = meas.curve_from_measure(sp, sw, col, every=1)
+        c["width"] = base_w
+        c["profile"] = [[t, max(0.7, min(1.3, (w or base_w) / base_w))] for t, w in zip([k / max(1, len(sw) - 1) for k in range(len(sw))], sw)]
+        out.append(c)
+    return out
+
+
 def measured_curves(table, step=8, closed=False):
     curves, log = [], {}
     for name, poly in table.items():
@@ -120,6 +150,12 @@ def measured_curves(table, step=8, closed=False):
             c = meas.curve_from_measure(pts, ws, ink_of(name, poly), closed=closed)
             c["width"] = max(c["width"], MIN_W - 1)
         c["profile"] = [[t, max(0.7, min(1.3, w))] for t, w in c["profile"]]
+        if SEGMENT_INK and not closed and name in INK:
+            segs = colored_segments(pts, ws, c["width"])
+            if segs:
+                curves.extend(segs)
+                log[name] = c["width"]
+                continue
         curves.append(c)
         log[name] = c["width"]
     return curves, log
@@ -159,8 +195,11 @@ if __name__ == "__main__":
         pts = meas.densify(poly, 8)
         if name in SKIN_SIDE:  # encosta na pele: a borda da pele é nítida, ancora nela
             pts = meas.edge_offset_line(d, REF0, pts, SKIN_SIDE[name], w / 2)
-        color = ink_of(name, poly)
-        c2.append({"points": pts, "width": w, "tip": "marker", "geometry": "spline", "color": color})
+        segs = colored_segments(pts, [w] * len(pts), w) if SEGMENT_INK else None
+        if segs:
+            c2.extend(segs)
+        else:
+            c2.append({"points": pts, "width": w, "tip": "marker", "geometry": "spline", "color": ink_of(name, poly)})
     curves += c2; log.update(l2)
     json.dump(curves, open(os.path.join(os.path.dirname(__file__), "..", "..", "calibracao", "projetos", "d218_hair_curves.json"), "w"))
     print(json.dumps(log))
