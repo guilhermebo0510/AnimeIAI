@@ -47,6 +47,9 @@ def run():
     # vertical: alto vermelho-escuro → franja clara a partir de y≈170 (a mecha entre h2 e i1 é clara até embaixo)
     d.call("GRADIENT", {"cut": ids["cut"], "frame": 0, "layer": fl, "kind": "linear", "from": [0, 40], "to": [0, 175],
                         "stops": [(0.0, "#ad3047"), (1.0, "#da4a4e")]})
+    # a franja escurece também para a esquerda na mesma altura (x 760 → 900), medido acima de h3
+    d.call("GRADIENT", {"cut": ids["cut"], "frame": 0, "layer": fl, "kind": "linear", "from": [760, 0], "to": [900, 0],
+                        "stops": [(0.0, "#ad3047cc"), (1.0, "#ad304700")]})
     # brilho do miolo, à direita do centro
     d.call("GRADIENT", {"cut": ids["cut"], "frame": 0, "layer": fl, "kind": "radial", "from": [1080, 170], "to": [1230, 170],
                         "stops": [(0.0, "#e3595bff"), (1.0, "#e3595b00")]})

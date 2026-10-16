@@ -10,7 +10,7 @@ MIN_W = 11.0
 PIN_START = {"queixo"}
 # linhas coladas a um realce: a borda realce→cabelo engana a ancoragem (pega a borda errada e alarga a linha)
 NO_ANCHOR = {"mecha_e", "mecha_n"}
-FIXED_W = { "queixo": 14.0, "tras_b": 13.0, "tras_c": 13.0, "tras_d1": 12.0, "tras_d2": 12.0, "tras_e": 12.0, "base_g": 14.0}
+FIXED_W = {"franja_l1": 22.0,  "queixo": 14.0, "tras_b": 13.0, "tras_c": 13.0, "tras_d1": 12.0, "tras_d2": 12.0, "tras_e": 12.0, "base_g": 14.0}
 ANCHOR = "--sem-ancora" not in sys.argv
 _INK_F = os.path.join(os.path.dirname(__file__), "..", "..", "calibracao", "projetos", "d218_ink.json")
 INK = json.load(open(_INK_F)) if os.path.exists(_INK_F) else {}  # cor da tinta medida por linha (d218_inkcolors.py)
@@ -84,7 +84,7 @@ DIRECT = {
     # contornos externos que encostam no fundo: ancorados na borda do fundo (nítida), 16 px medidos nos perfis
     "contorno_esq": ([(290, 140), (270, 210), (250, 280), (220, 340), (211, 360), (225, 390), (250, 425), (237, 450), (225, 490), (210, 530),
                       (197, 580), (205, 605), (230, 630), (270, 660), (320, 688), (372, 705)], 16.0),
-    "contorno_n2": ([(1610, 110), (1624, 120), (1640, 128), (1656, 137), (1672, 147), (1690, 160), (1705, 172), (1720, 185), (1732, 210), (1722, 260), (1705, 310), (1675, 365), (1635, 395)], 16.0),
+    "contorno_n2": ([(1610, 108), (1624, 117.5), (1640, 125.5), (1656, 134.5), (1672, 145), (1690, 159), (1705, 172), (1720, 185), (1732, 210), (1722, 260), (1705, 310), (1675, 365), (1635, 395)], 16.0),
     "contorno_n3a": ([(1720, 280), (1755, 325), (1790, 375), (1775, 425), (1760, 480), (1750, 500)], 16.0),
     "contorno_n4a": ([(1752, 494), (1764, 500), (1772, 504), (1785, 520), (1797, 536), (1810, 552), (1830, 570), (1835, 600), (1825, 640)], 16.0),
     "contorno_n5": ([(1830, 640), (1875, 685), (1915, 720)], 16.0),

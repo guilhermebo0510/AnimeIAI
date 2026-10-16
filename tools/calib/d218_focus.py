@@ -36,7 +36,13 @@ def tras(radius=12.0):
                                  "color": {"type": "direct", "rgba": [1, 1, 1, 1]}})
 
 
+def satsuei(radius=1.8):
+    """Suavização geral do satsuei (camada `fx`): 1,8 px escolhido por varredura (1,5 → SSIM 0,9626; 2,0 → F1 cai)."""
+    return d.apply({"kind": "set_props", "id": ids["fx"], "data": {"params": {"effects": [{"effect": {"type": "gaussian_blur", "radius": radius}}]}}})
+
+
 if __name__ == "__main__":
+    satsuei()
     a = [float(x) for x in sys.argv[1:4]]
     print(run(*a).get("description"))
     print(tras().get("description"))
