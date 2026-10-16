@@ -9,6 +9,7 @@ pub mod character;
 pub mod context;
 pub mod draw;
 pub mod fill;
+pub mod fx2d;
 pub mod guide;
 pub mod paint;
 pub mod transform;
