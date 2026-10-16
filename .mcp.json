@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "animeiai": {
+      "command": "C:\\AnimeIAI\\app\\target\\release\\aiai-mcp.exe",
+      "args": [],
+      "env": {
+        "AIAI_MCP_ALLOWED_DIRS": "C:\\AnimeIAI\\producoes;C:\\AnimeIAI\\calibracao;C:\\AnimeIAI\\sprints\\registro\\evidencias"
+      }
+    }
+  }
+}

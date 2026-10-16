@@ -3,5 +3,29 @@ name = "aiai-mcp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Servidor MCP (stdio) + CLI + modo headless do AnimeIAI: o agente opera o estudio so por ferramentas (ADR-004)"
+
+[lib]
+name = "aiai_mcp"
+path = "src/lib.rs"
+doctest = false
+test = false
+
+[[bin]]
+name = "aiai-mcp"
+path = "src/main.rs"
+test = false
 
 [dependencies]
+aiai-core = { workspace = true }
+aiai-bridge = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = { workspace = true }
+image = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

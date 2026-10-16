@@ -1,0 +1,185 @@
+{
+  "bible": {
+    "logline": "",
+    "synopsis": "",
+    "themes": [],
+    "tone": "",
+    "world": ""
+  },
+  "format": 1,
+  "name": "exemplo-s01",
+  "nodes": {
+    "01a14293-b7dd-7736-8a2f-874739fbdbc6": {
+      "children": [
+        "01a14293-b8c3-73b9-b05b-f616e6cf1f18"
+      ],
+      "data": {
+        "number": 1,
+        "type": "episode"
+      },
+      "id": "01a14293-b7dd-7736-8a2f-874739fbdbc6",
+      "name": "EP01",
+      "provenance": {
+        "created_by": "agent:claude",
+        "modified_by": "agent:claude",
+        "revision": 1
+      }
+    },
+    "01a14293-b8c3-73b9-b05b-f616e6cf1f18": {
+      "children": [
+        "01a14293-b98b-7308-999d-d90c9f8a4930"
+      ],
+      "data": {
+        "description": "",
+        "number": 1,
+        "type": "scene"
+      },
+      "id": "01a14293-b8c3-73b9-b05b-f616e6cf1f18",
+      "name": "Cena 1",
+      "parent": "01a14293-b7dd-7736-8a2f-874739fbdbc6",
+      "provenance": {
+        "created_by": "agent:claude",
+        "modified_by": "agent:claude",
+        "revision": 2
+      }
+    },
+    "01a14293-b98b-7308-999d-d90c9f8a4930": {
+      "children": [
+        "01a14293-ba5b-74cf-956f-fe871de184c5"
+      ],
+      "data": {
+        "camera": {
+          "center": [
+            960.0,
+            540.0
+          ],
+          "rotation": 0.0,
+          "zoom": 1.0
+        },
+        "duration": 48,
+        "notes": "",
+        "number": 1,
+        "stages": {},
+        "type": "cut",
+        "xsheet": {
+          "tracks": []
+        }
+      },
+      "id": "01a14293-b98b-7308-999d-d90c9f8a4930",
+      "name": "C001",
+      "parent": "01a14293-b8c3-73b9-b05b-f616e6cf1f18",
+      "provenance": {
+        "created_by": "agent:claude",
+        "modified_by": "agent:claude",
+        "revision": 3
+      }
+    },
+    "01a14293-ba5b-74cf-956f-fe871de184c5": {
+      "children": [
+        "01a14293-bb1c-7086-99b7-aaba5605eb0a"
+      ],
+      "data": {
+        "blend": "normal",
+        "clip_to_below": false,
+        "depth": 0.0,
+        "kind": "vector",
+        "locked": false,
+        "offset": [
+          0.0,
+          0.0
+        ],
+        "opacity": 1.0,
+        "role": "none",
+        "type": "layer",
+        "visible": true
+      },
+      "id": "01a14293-ba5b-74cf-956f-fe871de184c5",
+      "name": "A",
+      "parent": "01a14293-b98b-7308-999d-d90c9f8a4930",
+      "provenance": {
+        "created_by": "agent:claude",
+        "modified_by": "agent:claude",
+        "revision": 4
+      }
+    },
+    "01a14293-bb1c-7086-99b7-aaba5605eb0a": {
+      "data": {
+        "number": 1,
+        "role": "key",
+        "strokes": [
+          {
+            "aliased": false,
+            "closed": false,
+            "color": {
+              "rgba": [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ],
+              "type": "direct"
+            },
+            "color_trace": false,
+            "geometry": "spline",
+            "id": "01a14293-bbc9-75fe-b463-b493f442e811",
+            "opacity": 1.0,
+            "points": [
+              {
+                "pressure": 0.4000000059604645,
+                "x": 200.0,
+                "y": 300.0
+              },
+              {
+                "pressure": 1.0,
+                "x": 600.0,
+                "y": 420.0
+              },
+              {
+                "pressure": 0.6000000238418579,
+                "x": 1000.0,
+                "y": 330.0
+              }
+            ],
+            "tension": 0.0,
+            "tip": "g_pen",
+            "width": 6.0
+          }
+        ],
+        "transform": [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        "type": "cel"
+      },
+      "id": "01a14293-bb1c-7086-99b7-aaba5605eb0a",
+      "name": "A1",
+      "parent": "01a14293-ba5b-74cf-956f-fe871de184c5",
+      "provenance": {
+        "created_by": "agent:claude",
+        "modified_by": "agent:claude",
+        "revision": 6
+      }
+    }
+  },
+  "revision": 6,
+  "roots": {
+    "assets": [],
+    "characters": [],
+    "documents": [],
+    "episodes": [
+      "01a14293-b7dd-7736-8a2f-874739fbdbc6"
+    ],
+    "palettes": []
+  },
+  "settings": {
+    "audio_sample_rate": 48000,
+    "dialogue_language": "ja",
+    "fps_den": 1001,
+    "fps_num": 24000,
+    "height": 1080,
+    "subtitle_language": "pt-BR",
+    "width": 1920
+  }
+}
