@@ -3,5 +3,12 @@ name = "aiai-fx"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Efeitos de satsuei do AnimeIAI (desfoques, glow, difusão, luz transmitida, rim, aberração, grão, LUT, grade...) e partículas — CPU determinístico"
 
 [dependencies]
+aiai-core = { workspace = true }
+aiai-paint = { workspace = true }
+rayon = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }

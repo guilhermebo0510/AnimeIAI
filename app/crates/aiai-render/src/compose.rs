@@ -103,6 +103,11 @@ impl CameraState {
     }
 }
 
+/// Semente estável por camada (efeitos aleatórios como grão).
+fn fx_seed(id: &Id) -> u64 {
+    id.0.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
+}
+
 fn compose_affine(m2: Affine, m1: Affine) -> Affine {
     let [a1, b1, c1, d1, e1, f1] = m1.0;
     let [a2, b2, c2, d2, e2, f2] = m2.0;
@@ -197,6 +202,30 @@ impl<'a> Renderer<'a> {
                     self.composite_children(&mut g, &node.children, cut, frame, opts, allowed);
                     Some(g)
                 }
+                LayerType::Effect => {
+                    // Camada de efeito: aplica params.effects ao que está composto abaixo, misturado pela opacidade/máscara.
+                    match aiai_fx::stack_from_params(&layer.params) {
+                        Ok(stack) => {
+                            let before = buf.clone();
+                            let mut processed = buf.clone();
+                            let ctx = aiai_fx::FxContext { frame, below: Some(&before), blobs: self.blobs, seed: fx_seed(id) };
+                            for w in aiai_fx::apply_stack(&mut processed, &stack, &ctx) {
+                                self.warnings.push(format!("{}: {w}", node.name));
+                            }
+                            let mask = layer.mask.as_ref().and_then(|m| self.mask_values(m, cut, frame));
+                            let opacity = layer_prop(layer, "opacity", frame, layer.opacity).clamp(0.0, 1.0);
+                            buf.data.par_iter_mut().enumerate().for_each(|(i, d)| {
+                                let k = opacity * mask.as_ref().map_or(1.0, |m| m[i]);
+                                let s = processed.data[i];
+                                for c in 0..4 {
+                                    d[c] += (s[c] - d[c]) * k;
+                                }
+                            });
+                        }
+                        Err(e) => self.warnings.push(format!("{}: {e}", node.name)),
+                    }
+                    continue;
+                }
                 LayerType::Adjustment => {
                     // Camada de ajuste: altera o que já foi composto abaixo dela (dentro da mesma pasta).
                     match layer.params.get("adjustment").map(|v| serde_json::from_value::<aiai_paint::adjust::Adjustment>(v.clone())) {
@@ -221,6 +250,21 @@ impl<'a> Renderer<'a> {
                     self.warnings.push(format!("camada '{}' do tipo {other:?} ainda não é renderizada", node.name));
                     None
                 }
+            };
+            let content = match (content, aiai_fx::stack_from_params(&layer.params)) {
+                (Some(mut img), Ok(stack)) if !stack.is_empty() => {
+                    let below = buf.clone();
+                    let ctx = aiai_fx::FxContext { frame, below: Some(&below), blobs: self.blobs, seed: fx_seed(id) };
+                    for w in aiai_fx::apply_stack(&mut img, &stack, &ctx) {
+                        self.warnings.push(format!("{}: {w}", node.name));
+                    }
+                    Some(img)
+                }
+                (c, Err(e)) => {
+                    self.warnings.push(format!("{}: {e}", node.name));
+                    c
+                }
+                (c, _) => c,
             };
             let Some(img) = content else {
                 if !layer.clip_to_below {

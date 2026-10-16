@@ -8,6 +8,7 @@ description = "Compositor do AnimeIAI: árvore de camadas → quadro (CPU determ
 [dependencies]
 aiai-core = { workspace = true }
 aiai-paint = { workspace = true }
+aiai-fx = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
