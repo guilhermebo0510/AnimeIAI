@@ -7,7 +7,7 @@ from c131 import d, ids, F, node, reorder
 CX, CY, RATIO, R = 960, 560, 1.8, 640.0
 
 
-def run(radius=3.0, t0=0.55):
+def run(radius=1.5, t0=0.55):
     m = node("foco_mascara", "Máscara do foco", {"type": "layer", "kind": "raster"}, ids["cut"])
     node("foco_mascara_c1", "1", {"type": "cel", "number": 1}, m)
     f = node("foco", "Foco suave da periferia", {"type": "layer", "kind": "effect"}, ids["cut"])

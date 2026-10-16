@@ -3,7 +3,10 @@ import json, os, sys
 sys.path.insert(0, os.path.dirname(__file__))
 from c131 import d, ids, F, measured
 from c131_rosas import LINES, FECHO
-from c131 import node, reorder
+from c131 import node, reorder, QLINE
+for _n in os.environ.get("C131_QLIST", "").split(","):
+    if _n:
+        QLINE[_n] = float(os.environ.get("C131_QL", "0.5"))
 
 if __name__ == "__main__":
     d.apply({"kind": "replace_data", "id": ids["moldura_linha_c1"], "data": {"type": "cel", "number": 1}})
