@@ -41,6 +41,26 @@ DATA[2] = dict(D1, brows={"franja_h3": [(696, 191), (710, 186), (720, 182), (730
                           "franja_l1": [(1122, 117), (1130, 114.5), (1150, 111.5), (1170, 111.5), (1190, 112.5), (1220, 118), (1240, 122.5),
                                         (1258, 127)]})
 
+# desenho 3 (q9): sobrancelhas bem mais baixas, boca maior (trapézio) e uma gota nova à direita, cortada pelo rosto
+DATA[3] = dict(D1,
+    brows={"franja_h3": [(698, 202), (710, 199.5), (720, 197.5), (730, 196), (740, 194), (750, 192), (760, 190.5), (780, 186), (800, 180.5),
+                         (810, 176), (820, 171), (832, 167)],
+           "franja_l1": [(1118, 133), (1130, 136), (1150, 138.5), (1170, 139), (1190, 138), (1220, 135), (1240, 133.5), (1258, 132)]},
+    mouth_out=[(1093, 676), (1127, 676), (1132, 680), (1135, 684), (1137, 689), (1140, 697), (1144, 705), (1146, 713), (1148, 721), (1149.5, 729),
+               (1149.5, 733), (1146, 737), (1134, 741), (1120, 745), (1096, 749), (1076, 753), (1049, 757), (1019, 761), (990, 764), (983, 757),
+               (981, 749), (981.5, 741), (983, 733), (986, 729), (989, 721), (991, 713), (995, 705), (998, 701), (999, 697), (1003, 693),
+               (1011, 689), (1026, 685), (1057, 681)],
+    mouth_in=[(1123, 688.5), (1086, 688.5), (1056, 692.5), (1024, 696.5), (1013, 700.5), (1010, 704.5), (1008, 708.5), (1006, 712.5), (1004, 716.5),
+              (1003, 720.5), (1001, 724.5), (1000, 728.5), (998, 732.5), (997, 736.5), (996, 740.5), (996, 744.5), (997, 748.5), (1006, 749),
+              (1047, 745.5), (1074, 741.5), (1092, 737.5), (1120, 733.5), (1135, 729.5), (1138, 725), (1137, 721), (1135, 717), (1135, 713),
+              (1133, 709), (1133, 705), (1131, 701), (1130, 697), (1127, 693)],
+    drops=D1["drops"] + [
+        {"poly": [(1347, 569), (1353, 575), (1353, 595), (1351, 599), (1349, 603), (1351, 606), (1356, 609), (1363, 609), (1367, 606),
+                  (1370, 607), (1369, 612), (1367, 616), (1360, 620), (1350, 621), (1343, 619), (1339, 615), (1336, 611), (1334, 607),
+                  (1332, 603), (1332, 591), (1333, 587), (1334, 583), (1336, 579), (1339, 575), (1344, 571)],
+         "inner": [(1353, 598), (1362, 599), (1365, 603), (1363, 608), (1355, 608), (1351, 604)],
+         "shadow": [(1331, 611), (1337, 615), (1345, 619), (1359, 623), (1358, 627), (1348, 631), (1340, 629), (1333, 623)]}])
+
 WHITE = [0xf6 / 255, 0xf2 / 255, 0xf6 / 255, 1.0]
 PINK_SHADOW = [0xd7 / 255, 0x78 / 255, 0x82 / 255, 1.0]
 MOUTH_PINK = [0xea / 255, 0x75 / 255, 0x82 / 255, 1.0]
@@ -53,7 +73,7 @@ def area(poly):
 def layers():
     out = {}
     for key, name, kind in [("sobrancelha", "Sobrancelhas", "vector"), ("boca", "Boca", "raster"), ("gota", "Gotas", "vector"),
-                            ("gota_r", "Gotas (sombra)", "raster")]:
+                            ("gota_r", "Gotas (sombra)", "raster"), ("gota_r2", "Gotas (miolo)", "raster")]:
         lay = node(key, name, {"type": "layer", "kind": kind}, ids["cut"])
         for k in FRAMES:
             node(f"{key}_c{k}", str(k), {"type": "cel", "number": k}, lay)
@@ -82,10 +102,16 @@ def draw_drawing(k, lay):
     d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": fr, "layer": lay["sobrancelha"], "curves": curves})
     # boca: anel de tinta com furo + rosa por dentro (+ extras da boca aberta)
     outer, inner = [list(p) for p in data["mouth_out"]], [list(p) for p in data["mouth_in"]]
-    pr = meas.first_list(d.call("PROBE_COLOR", {"reference": ref, "points": [[round((a[0] + b[0]) / 2), round((a[1] + b[1]) / 2)]
-                                                                            for a, b in zip(meas.densify(data["mouth_out"], 20, closed=True),
-                                                                                            meas.densify(data["mouth_in"], 20, closed=True))],
-                                                 "radius": 1}))
+    # cor da tinta da boca: amostras 5 px para dentro do contorno externo (rumo ao centro), só as com cara de tinta
+    cx = sum(p[0] for p in outer) / len(outer)
+    cy = sum(p[1] for p in outer) / len(outer)
+    probe_pts = []
+    for p in meas.densify(data["mouth_out"], 12, closed=True):
+        vx, vy = cx - p[0], cy - p[1]
+        n = (vx * vx + vy * vy) ** 0.5 or 1.0
+        probe_pts.append([round(p[0] + vx / n * 5), round(p[1] + vy / n * 5)])
+    pr = meas.first_list(d.call("PROBE_COLOR", {"reference": ref, "points": probe_pts, "radius": 1}))
+    pr = [p for p in pr if sum((p["rgb"][k] * 255 - (92, 46, 46)[k]) ** 2 for k in range(3)) ** 0.5 < 60] or pr
     rgb = sorted([p["rgb"] for p in pr], key=sum)
     ink = list(rgb[len(rgb) // 2]) + [1.0]
     d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": fr, "layer": lay["boca"], "shapes": [{"points": inner, "geometry": "polyline"}],
@@ -104,13 +130,23 @@ def draw_drawing(k, lay):
         d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": fr, "layer": lay["gota_r"], "shapes": [{"points": [list(p) for p in drop["shadow"]],
                                                                                                     "geometry": "polyline"}],
                               "color": {"type": "direct", "rgba": PINK_SHADOW}})
-        gc.append({"points": [list(p) for p in drop["u"]], "width": drop.get("w", 17.0), "tip": "marker", "geometry": "spline",
-                   "color": {"type": "direct", "rgba": WHITE}})
+        if drop.get("u"):
+            gc.append({"points": [list(p) for p in drop["u"]], "width": drop.get("w", 17.0), "tip": "marker", "geometry": "spline",
+                       "color": {"type": "direct", "rgba": WHITE}})
         if drop.get("dot"):
             gc.append({"points": [list(p) for p in drop["dot"]], "width": drop.get("dot_w", 8.0), "tip": "marker", "geometry": "polyline",
                        "color": {"type": "direct", "rgba": WHITE}})
     if gc:
         d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": fr, "layer": lay["gota"], "curves": gc})
+    for drop in data["drops"]:
+        if drop.get("poly"):  # gota em crescente desenhada como forma branca (antes do miolo rosa, na mesma camada)
+            d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": fr, "layer": lay["gota_r2"], "shapes": [{"points": [list(p) for p in drop["poly"]],
+                                                                                                         "geometry": "polyline"}],
+                                  "color": {"type": "direct", "rgba": WHITE}})
+        if drop.get("inner"):  # miolo rosado da gota (por cima do branco): camada `gota_r2`
+            d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": fr, "layer": lay["gota_r2"], "shapes": [{"points": [list(p) for p in drop["inner"]],
+                                                                                                         "geometry": "polyline"}],
+                                  "color": {"type": "direct", "rgba": PINK_SHADOW}})
 
 
 def run(which=None):
