@@ -103,7 +103,10 @@ def grow(poly, g):
     return out
 
 
-SCAN_GROW = {8: 1.0}  # desenhos cujas formas relidas por varredura ganham o meio pixel de borda
+SCAN_GROW = {8: 1.0}
+# folga por forma (escolhida pela régua em d218_optgrow.py): {nome: px}, por desenho
+_GF = os.path.join(os.path.dirname(os.path.abspath(__file__)), "d218_grow.json")
+GROW_BY_NAME = (json.load(open(_GF)) if os.path.exists(_GF) else {}).get(str(CEL), {})  # desenhos cujas formas relidas por varredura ganham o meio pixel de borda
 
 
 def candidates(poly, field_first=True):
