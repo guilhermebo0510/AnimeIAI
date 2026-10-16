@@ -29,6 +29,10 @@ NO_TRIM = set()
 TAILS = {"mecha_e_cauda": ([(394, 706), (392, 718), (390, 730), (388, 742), (386, 754), (384, 766)], 2.5, "#e47a74"),
          "dir3_cauda": ([(1745, 456), (1742, 464), (1738, 472), (1735, 480), (1732, 488)], 4.0, "#e98a82"),
          "mecha_e_meio": ([(398, 660), (397.5, 672), (396.5, 684), (395.5, 696), (394, 708)], 8.0, "#f18682")}  # pontas finas e mais escuras: a cor da faixa muda e o corte comeria a ponta real
+# redesenhos: quantos pontos de cada cauda existem (cor lida nos pontos levados pelo campo); 0 = não existe
+TAIL_KEEP = {7: {"mecha_e_cauda": 3, "dir3_cauda": 0}, 8: {"mecha_e_cauda": 0, "dir3_cauda": 0, "mecha_e_meio": 0}}
+# caudas relidas por varredura no próprio desenho (runs.py): pontos já no desenho
+TAILS_DES = {7: {"mecha_e_cauda": ([(389, 690), (388, 705), (387, 718), (386, 730), (385, 740), (383, 750)], 3.5, "#e47a74")}}
 AS_SHAPE = "--formas" in sys.argv  # polígonos pelas bordas da faixa pioraram o F1 (0,904 × 0,9075)
 
 
@@ -76,7 +80,17 @@ def run():
         else:
             curves.append(c)
         log[name] = (round(c["width"], 1), "#%02x%02x%02x" % tuple(round(v * 255) for v in mid))
-    for name, (poly, w, hexc) in TAILS.items():
+    for name, (poly, w, hexc) in {**TAILS, **TAILS_DES.get(CEL, {})}.items():
+        if name in TAILS_DES.get(CEL, {}):  # relida no desenho (sem campo)
+            col = [int(hexc[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+            curves.append({"points": [list(p) for p in poly], "width": w, "tip": "marker", "geometry": "spline",
+                           "color": {"type": "direct", "rgba": col + [1.0]}, "profile": [[0, 1.2], [1, 0.4]]})
+            continue
+        keep = TAIL_KEEP.get(CEL, {}).get(name)
+        if keep is not None:
+            if keep < 2:
+                continue
+            poly = poly[:keep]
         col = [int(hexc[i:i + 2], 16) / 255 for i in (1, 3, 5)]
         curves.append({"points": [list(p) for p in W(poly)], "width": w, "tip": "marker", "geometry": "spline",
                        "color": {"type": "direct", "rgba": col + [1.0]}, "profile": [[0, 1.2], [1, 0.4]]})

@@ -109,7 +109,10 @@ DIRECT_DES = {7: {"alca": ([(1486, 947), (1480, 960), (1467, 980), (1452, 1000),
                   # contorno esquerdo: alto levado pelo campo; o trecho de baixo (junção com o cacho) relido por colunas (~8 px abaixo do 1)
                   "contorno_esq": ([(290, 135), (267, 206), (247, 278), (218, 337), (209, 357), (222, 385), (247, 419), (234, 444), (222, 484),
                                     (207, 524), (195, 577), (205, 607), (222, 628), (240, 650), (260, 667), (280, 682), (300, 694), (320, 704),
-                                    (345, 715), (372, 721)], 16.0)}}
+                                    (345, 715), (372, 721)], 16.0),
+                  # fim do contorno direito: mais grosso no 7 (~24 px pela extensão vertical a 45°, runs.py) e desce até a borda
+                  "contorno_n5": ([(1832, 640), (1850, 652), (1870, 672), (1890, 697), (1910, 722), (1925, 738)], 24.0)}}
+TAPER_DES = {7: {"franja_h2", "franja_i1"}}
 # larguras fixas por desenho (lidas por varredura): no alto do quadro a tinta clareia e o paquímetro de faixa estreita a linha
 FIXED_W.update({7: {"mecha_n": 20.0}}.get(CEL, {}))
 INK.update({7: {"alca": "#3e1d1c"}}.get(CEL, {}))  # alça curta (sem trechos coloridos): cor medida no desenho
@@ -195,8 +198,17 @@ def measured_curves(table, step=3, closed=False, ref=None):
             c = meas.curve_from_measure(pts, ws, ink_of(name, poly), closed=closed, every=1)
             c["width"] = max(c["width"], MIN_W - 1)
         c["profile"] = [[t, max(0.7, min(1.3, w))] for t, w in c["profile"]]
+        taper = name in TAPER_DES.get(CEL, set())
+        if taper:  # ponta fina no fim (as mechas da franja terminam em bico no redesenho)
+            n = len(ws)
+            k = max(3, n // 5)
+            ws = [w if i < n - k else (w or c["width"]) * (0.35 + 0.65 * (n - 1 - i) / k) for i, w in enumerate(ws)]
+            base = c["width"]
+            c = meas.curve_from_measure(pts, ws, ink_of(name, poly), closed=closed, every=1)
+            c["width"] = base
+            c["profile"] = [[t, max(0.3, min(1.3, (w or base) / base))] for t, w in zip([i / max(1, n - 1) for i in range(n)], ws)]
         if SEGMENT_INK and not closed and name in INK:
-            segs = colored_segments(pts, ws, c["width"], ref=REF)
+            segs = colored_segments(pts, ws, c["width"], ref=REF, clamp=(0.3, 1.3) if taper else (0.7, 1.3))
             if segs:
                 curves.extend(segs)
                 log[name] = c["width"]

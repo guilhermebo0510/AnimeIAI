@@ -2,7 +2,7 @@
 pelo agente (ao longo das estimativas das linhas e no rosto), mede o deslocamento local por correlação de uma janela da
 referência 1 dentro da referência do desenho (busca limitada). Só move as ESTIMATIVAS do desenho 1 para perto das linhas
 do outro desenho; a geometria final continua vindo das medições de sempre (paquímetro, bordas).
-uso: python d218_campo.py desenho [--mapa saida.png]   → grava d218_campo_<desenho>.json"""
+uso: python d218_campo.py desenho [--mapa saida.png] [--busca px]   → grava d218_campo_<desenho>.json"""
 import json, os, sys
 import numpy as np
 from PIL import Image, ImageDraw
@@ -18,7 +18,7 @@ import d218_details as DT
 from d218 import FIRST
 
 k = int(sys.argv[1])
-HALF, SEARCH, MIN_NCC = 32, 26, 0.85
+HALF, SEARCH, MIN_NCC = 32, int(sys.argv[sys.argv.index("--busca") + 1]) if "--busca" in sys.argv else 26, 0.85
 P = r"C:\AnimeIAI\calibracao\ref\cut_218\frames\f_%04d.png"
 A = np.asarray(Image.open(P % 1).convert("L")).astype(float)
 B = np.asarray(Image.open(P % (FIRST[k] + 1)).convert("L")).astype(float)
