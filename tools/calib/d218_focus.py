@@ -36,6 +36,20 @@ def tras(radius=12.0):
                                  "color": {"type": "direct", "rgba": [1, 1, 1, 1]}})
 
 
+def no_laco(radius=3.0):
+    """O nó do laço tem bordas macias na referência (fora de foco): desfoque só nele, por máscara."""
+    m = node("foco_no_mascara", "Máscara do nó", {"type": "layer", "kind": "raster"}, ids["cut"])
+    node("foco_no_mascara_c1", "1", {"type": "cel", "number": 1}, m)
+    f = node("foco_no", "Desfoque do nó do laço", {"type": "layer", "kind": "effect"}, ids["cut"])
+    d.apply({"kind": "set_props", "id": m, "data": {"visible": False}})
+    d.apply({"kind": "set_props", "id": f, "data": {"mask": m, "params": {"effects": [{"effect": {"type": "gaussian_blur", "radius": radius}}]}}})
+    reorder()
+    d.apply({"kind": "replace_data", "id": ids["foco_no_mascara_c1"], "data": {"type": "cel", "number": 1}})
+    return d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": 0, "layer": m,
+                                 "shapes": [{"points": [[1100, 986], [1140, 984], [1143, 1054], [1104, 1056]], "geometry": "polyline"}],
+                                 "color": {"type": "direct", "rgba": [1, 1, 1, 1]}})
+
+
 def satsuei(radius=1.8):
     """Suavização geral do satsuei (camada `fx`): 1,8 px escolhido por varredura (1,5 → SSIM 0,9626; 2,0 → F1 cai)."""
     return d.apply({"kind": "set_props", "id": ids["fx"], "data": {"params": {"effects": [{"effect": {"type": "gaussian_blur", "radius": radius}}]}}})
@@ -46,3 +60,4 @@ if __name__ == "__main__":
     a = [float(x) for x in sys.argv[1:4]]
     print(run(*a).get("description"))
     print(tras().get("description"))
+    print(no_laco().get("description"))
