@@ -39,7 +39,7 @@ fn gag_cut_with_text_lines_and_particles() {
     let tr = TextRequest {
         cut: cut.clone(), frame: 0, fill_layer: txt_fill, outline_layer: Some(txt_line), text: "ゴゴゴ".into(), font: None, size: 120.0,
         center: [800.0, 270.0], vertical: true, letter_spacing: -10.0, rotation: 8.0, skew: 0.15, scale: [1.2, 1.0],
-        color: ColorRef::Direct { rgba: Rgba::from_hex("#e8213a").unwrap() }, outline_width: 6.0, outline_color: Some(ColorRef::Direct { rgba: Rgba::from_hex("#1a0f14").unwrap() }),
+        color: ColorRef::Direct { rgba: Rgba::from_hex("#e8213a").unwrap() }, outline_width: 6.0, outline_color: Some(ColorRef::Direct { rgba: Rgba::from_hex("#1a0f14").unwrap() }), roughness: 2.5, roughness_wavelength: 16.0, seed: 3,
     };
     let c = text_command(&s.project, &mut s.blobs, &tr).unwrap();
     s.apply(c).unwrap();

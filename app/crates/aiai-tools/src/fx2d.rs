@@ -50,6 +50,17 @@ pub struct TextRequest {
     pub outline_width: f32,
     #[serde(default)]
     pub outline_color: Option<ColorRef>,
+    /// Borda irregular de letreiro à mão: amplitude (px) e comprimento de onda (px). 0 = fonte limpa.
+    #[serde(default)]
+    pub roughness: f32,
+    #[serde(default = "d_wave")]
+    pub roughness_wavelength: f32,
+    #[serde(default)]
+    pub seed: u32,
+}
+
+fn d_wave() -> f32 {
+    18.0
 }
 
 fn unit2() -> [f32; 2] {
@@ -70,7 +81,8 @@ pub fn text_command(p: &Project, blobs: &mut BlobStore, req: &TextRequest) -> To
         }
     };
     let opt = TextOptions { size: req.size, letter_spacing: req.letter_spacing, vertical: req.vertical, center: req.center, rotation: req.rotation, skew: req.skew, scale: req.scale };
-    let outline = text_outline(font, &req.text, &opt).map_err(ToolError::Invalid)?;
+    let mut outline = text_outline(font, &req.text, &opt).map_err(ToolError::Invalid)?;
+    aiai_paint::text::roughen(&mut outline, req.roughness, req.roughness_wavelength, req.seed);
     let fl = layer_data(p, &req.fill_layer)?;
     if fl.kind != LayerType::Raster {
         return Err(ToolError::Invalid("fill_layer precisa ser raster".into()));

@@ -25,6 +25,48 @@ pub struct TextOptions {
     pub scale: [f32; 2],
 }
 
+/// Bordas irregulares de letreiro feito à mão: desloca os pontos do contorno ao longo da normal por ruído
+/// (amplitude em px, comprimento de onda em px). Reamostra antes para a irregularidade não depender dos vértices da fonte.
+pub fn roughen(outline: &mut TextOutline, amplitude: f32, wavelength: f32, seed: u32) {
+    if amplitude <= 0.0 {
+        return;
+    }
+    let step = (wavelength / 6.0).clamp(0.75, 6.0);
+    for c in &mut outline.contours {
+        // reamostra o contorno fechado a cada `step` px
+        let n = c.len();
+        let mut res = Vec::new();
+        for i in 0..n {
+            let (a, b) = (c[i], c[(i + 1) % n]);
+            let len = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
+            let k = (len / step).ceil().max(1.0) as usize;
+            for j in 0..k {
+                let t = j as f32 / k as f32;
+                res.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+            }
+        }
+        let m = res.len();
+        if m < 3 {
+            continue;
+        }
+        let mut out = Vec::with_capacity(m);
+        let mut s_acc = 0.0f32;
+        for i in 0..m {
+            let (p0, p1, p2) = (res[(i + m - 1) % m], res[i], res[(i + 1) % m]);
+            let (tx, ty) = (p2[0] - p0[0], p2[1] - p0[1]);
+            let tl = (tx * tx + ty * ty).sqrt().max(1e-6);
+            let (nx, ny) = (-ty / tl, tx / tl);
+            if i > 0 {
+                s_acc += ((p1[0] - res[i - 1][0]).powi(2) + (p1[1] - res[i - 1][1]).powi(2)).sqrt();
+            }
+            let u = s_acc / wavelength.max(1.0);
+            let d = amplitude * (0.65 * crate::noise::perlin(u, 0.5, seed) + 0.35 * crate::noise::perlin(u * 3.1, 1.7, seed ^ 0x77));
+            out.push([p1[0] + nx * d, p1[1] + ny * d]);
+        }
+        *c = out;
+    }
+}
+
 fn flatten_quad(out: &mut Vec<[f32; 2]>, p0: [f32; 2], p1: [f32; 2], p2: [f32; 2], n: usize) {
     for k in 1..=n {
         let t = k as f32 / n as f32;
