@@ -3,6 +3,11 @@ name = "aiai-studio"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "AnimeIAI Studio: UI nativa (egui + wgpu) do estudio de animacao 2D"
+
+[lib]
+name = "aiai_studio"
+path = "src/lib.rs"
 
 [[bin]]
 name = "aiai-studio"
@@ -19,3 +24,11 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+image = { workspace = true }
+# Rasterizacao dos icones SVG. Sem as features padrao: nao precisamos de texto nem de imagens raster dentro dos SVGs
+# (evita fontdb/rustybuzz/memmap e deixa o build mais leve; a regra do workspace "resvg = 0.45" continua valendo).
+resvg = { version = "0.45", default-features = false }
+
+[target.'cfg(windows)'.dependencies]
+# memoria do processo na barra de status (GetProcessMemoryInfo); 0.61.2 ja esta no Cargo.lock
+windows-sys = { version = "0.61", features = ["Win32_System_ProcessStatus", "Win32_System_Threading"] }

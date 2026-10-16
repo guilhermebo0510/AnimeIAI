@@ -1,0 +1,206 @@
+//! Ícones SVG originais -> textura egui.
+//!
+//! Os SVG (grade de 24 px, traço de 1,75 px, `currentColor`) vivem em `assets/icons/`. Cada ícone é rasterizado com
+//! resvg em branco no tamanho exato `pontos x pixels_per_point` (nítido em qualquer DPI/zoom), guardado em cache e
+//! pintado com `tint` = a cor do tema (é o "currentColor recolorido por tema"). Nada de emoji nem fonte de ícones.
+
+use egui::{Color32, ColorImage, Rect, TextureHandle, TextureOptions};
+use resvg::{tiny_skia, usvg};
+use std::collections::HashMap;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IconId {
+    WsRoteiro,
+    WsPersonagens,
+    WsStoryboard,
+    WsLayout,
+    WsAnimacao,
+    WsPintura,
+    WsCenario,
+    WsComposicao,
+    WsCor,
+    WsAudio,
+    WsEdicao,
+    WsEntrega,
+    WsProducao,
+    ToolMove,
+    ToolBrush,
+    ToolPen,
+    ToolEraser,
+    ToolFill,
+    ToolLasso,
+    ToolEyedropper,
+    ToolHand,
+    ToolZoom,
+    /// Marca do app (colorida, não é recolorida).
+    Logo,
+}
+
+impl IconId {
+    pub const ALL: [IconId; 23] = [
+        IconId::WsRoteiro,
+        IconId::WsPersonagens,
+        IconId::WsStoryboard,
+        IconId::WsLayout,
+        IconId::WsAnimacao,
+        IconId::WsPintura,
+        IconId::WsCenario,
+        IconId::WsComposicao,
+        IconId::WsCor,
+        IconId::WsAudio,
+        IconId::WsEdicao,
+        IconId::WsEntrega,
+        IconId::WsProducao,
+        IconId::ToolMove,
+        IconId::ToolBrush,
+        IconId::ToolPen,
+        IconId::ToolEraser,
+        IconId::ToolFill,
+        IconId::ToolLasso,
+        IconId::ToolEyedropper,
+        IconId::ToolHand,
+        IconId::ToolZoom,
+        IconId::Logo,
+    ];
+
+    pub fn svg(self) -> &'static str {
+        match self {
+            IconId::WsRoteiro => include_str!("../assets/icons/ws-roteiro.svg"),
+            IconId::WsPersonagens => include_str!("../assets/icons/ws-personagens.svg"),
+            IconId::WsStoryboard => include_str!("../assets/icons/ws-storyboard.svg"),
+            IconId::WsLayout => include_str!("../assets/icons/ws-layout.svg"),
+            IconId::WsAnimacao => include_str!("../assets/icons/ws-animacao.svg"),
+            IconId::WsPintura => include_str!("../assets/icons/ws-pintura.svg"),
+            IconId::WsCenario => include_str!("../assets/icons/ws-cenario.svg"),
+            IconId::WsComposicao => include_str!("../assets/icons/ws-composicao.svg"),
+            IconId::WsCor => include_str!("../assets/icons/ws-cor.svg"),
+            IconId::WsAudio => include_str!("../assets/icons/ws-audio.svg"),
+            IconId::WsEdicao => include_str!("../assets/icons/ws-edicao.svg"),
+            IconId::WsEntrega => include_str!("../assets/icons/ws-entrega.svg"),
+            IconId::WsProducao => include_str!("../assets/icons/ws-producao.svg"),
+            IconId::ToolMove => include_str!("../assets/icons/tool-move.svg"),
+            IconId::ToolBrush => include_str!("../assets/icons/tool-brush.svg"),
+            IconId::ToolPen => include_str!("../assets/icons/tool-pen.svg"),
+            IconId::ToolEraser => include_str!("../assets/icons/tool-eraser.svg"),
+            IconId::ToolFill => include_str!("../assets/icons/tool-fill.svg"),
+            IconId::ToolLasso => include_str!("../assets/icons/tool-lasso.svg"),
+            IconId::ToolEyedropper => include_str!("../assets/icons/tool-eyedropper.svg"),
+            IconId::ToolHand => include_str!("../assets/icons/tool-hand.svg"),
+            IconId::ToolZoom => include_str!("../assets/icons/tool-zoom.svg"),
+            IconId::Logo => include_str!("../assets/brand/logo.svg"),
+        }
+    }
+}
+
+/// Rasteriza `svg` em `px` x `px` (RGBA premultiplicado). `currentColor` vira branco: o recolorido é feito na pintura.
+pub fn rasterize(svg: &str, px: u32) -> Result<(u32, Vec<u8>), String> {
+    let px = px.clamp(1, 2048);
+    let svg = svg.replace("currentColor", "#ffffff");
+    let tree = usvg::Tree::from_str(&svg, &usvg::Options::default()).map_err(|e| e.to_string())?;
+    let mut pixmap = tiny_skia::Pixmap::new(px, px).ok_or("pixmap inválido")?;
+    let size = tree.size();
+    let scale = px as f32 / size.width().max(size.height());
+    resvg::render(&tree, tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
+    Ok((px, pixmap.take()))
+}
+
+/// Cache de texturas de ícones por (ícone, tamanho em pixels).
+#[derive(Default)]
+pub struct Icons {
+    cache: HashMap<(IconId, u32), TextureHandle>,
+}
+
+impl Icons {
+    /// Textura do ícone para `size_pts` pontos de lado no `pixels_per_point` atual.
+    pub fn texture(&mut self, ctx: &egui::Context, id: IconId, size_pts: f32) -> egui::TextureId {
+        let px = ((size_pts * ctx.pixels_per_point()).round() as u32).max(1);
+        let tex = self.cache.entry((id, px)).or_insert_with(|| {
+            let img = match rasterize(id.svg(), px) {
+                Ok((px, data)) => ColorImage::from_rgba_premultiplied([px as usize, px as usize], &data),
+                Err(e) => {
+                    tracing::error!("ícone {id:?}: {e}");
+                    ColorImage::filled([px as usize, px as usize], Color32::MAGENTA)
+                }
+            };
+            ctx.load_texture(format!("icon-{id:?}-{px}"), img, TextureOptions::LINEAR)
+        });
+        tex.id()
+    }
+
+    /// Pinta o ícone centrado em `rect` (lado = menor dimensão) com a cor `tint`.
+    pub fn paint(&mut self, painter: &egui::Painter, id: IconId, rect: Rect, tint: Color32) {
+        let side = rect.width().min(rect.height());
+        let r = Rect::from_center_size(rect.center(), egui::vec2(side, side));
+        let tex = self.texture(painter.ctx(), id, side);
+        painter.image(tex, r, Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), tint);
+    }
+
+    pub fn cached(&self) -> usize {
+        self.cache.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_svg_parses_and_draws_something() {
+        for id in IconId::ALL {
+            let (px, data) = rasterize(id.svg(), 48).unwrap_or_else(|e| panic!("{id:?}: {e}"));
+            assert_eq!(data.len(), (px * px * 4) as usize);
+            let opaque = data.chunks_exact(4).filter(|p| p[3] > 8).count();
+            assert!(opaque > 40, "{id:?} ficou vazio ({opaque} px)");
+            assert!(opaque < (48 * 48) as usize * 9 / 10, "{id:?} ficou um bloco cheio");
+        }
+    }
+
+    #[test]
+    fn monochrome_icons_follow_the_24px_grid_with_current_color() {
+        for id in IconId::ALL {
+            if id == IconId::Logo {
+                continue;
+            }
+            let s = id.svg();
+            assert!(s.contains("viewBox=\"0 0 24 24\""), "{id:?}");
+            assert!(s.contains("stroke=\"currentColor\"") && s.contains("stroke-width=\"1.75\""), "{id:?}");
+            assert!(!s.contains("#"), "{id:?}: cor fixa em ícone monocromático");
+        }
+    }
+
+    #[test]
+    fn raster_size_follows_the_request() {
+        let (a, _) = rasterize(IconId::ToolMove.svg(), 20).unwrap();
+        let (b, d) = rasterize(IconId::ToolMove.svg(), 60).unwrap();
+        assert_eq!((a, b), (20, 60));
+        assert_eq!(d.len(), 60 * 60 * 4);
+    }
+
+    /// Gera uma folha de contato para inspeção visual: `AIAI_ICON_SHEET=<png> cargo test -p aiai-studio icon_sheet -- --ignored`.
+    #[test]
+    #[ignore]
+    fn icon_sheet() {
+        let Some(out) = std::env::var_os("AIAI_ICON_SHEET") else { return };
+        let cell = 96u32;
+        let cols = 8u32;
+        let rows = (IconId::ALL.len() as u32).div_ceil(cols);
+        let (w, h) = (cols * cell, rows * cell);
+        let mut img = image::RgbaImage::from_pixel(w, h, image::Rgba([0x22, 0x23, 0x27, 255]));
+        for (i, id) in IconId::ALL.iter().enumerate() {
+            let (px, data) = rasterize(id.svg(), 72).unwrap();
+            let (ox, oy) = ((i as u32 % cols) * cell + 12, (i as u32 / cols) * cell + 12);
+            for y in 0..px {
+                for x in 0..px {
+                    let p = &data[((y * px + x) * 4) as usize..][..4];
+                    let a = p[3] as f32 / 255.0;
+                    let dst = img.get_pixel_mut(ox + x, oy + y);
+                    for c in 0..3 {
+                        let src = if *id == IconId::Logo { p[c] as f32 } else { p[c] as f32 * 0.87 };
+                        dst.0[c] = (src + dst.0[c] as f32 * (1.0 - a)).min(255.0) as u8;
+                    }
+                }
+            }
+        }
+        img.save(out).unwrap();
+    }
+}
