@@ -25,16 +25,16 @@
 | S07 Preenchimento e paletas | em andamento | evidencias/S07 | balde com fechamento, paleta indexada, lint; falta UI |
 | S08 Seleção e transformação | em andamento | evidencias/S08 | motor + operações; falta UI |
 | S09 Réguas, grades, guias 3D | em andamento | evidencias/S09/layout_guia3d.png | guia 3D + régua de perspectiva; falta snap no traço e UI |
-| S10 Personagens e settei | pendente | — | |
-| S11 Cenários e texturas | pendente | — | |
+| S10 Personagens e settei | em andamento | evidencias/S10/model_sheet_guias.png | model sheet + turnaround do manequim + checagem de proporção; falta UI |
+| S11 Cenários e texturas | em andamento | evidencias/S11/cenario_externo.png | 15 texturas, céu, padrão em perspectiva, pincéis de cenário; falta UI |
 | S12 Animação e timesheet | em andamento | evidencias/S12/intercalacao_tira.png | keyframes, intercalação, propagação do balde; falta UI timeline/timesheet e playback |
-| S13 Câmera e composição | em andamento | — | câmera+multiplano no render; efeitos com agente |
-| S14 Partículas e FX 2D | pendente | — | |
-| S15 Cor | pendente | — | |
-| S16 Pré-produção | pendente | — | |
-| S17 Áudio | pendente | — | |
-| S18 Edição e entrega | pendente | — | |
-| S19 Produção e revisão | pendente | — | |
+| S13 Câmera e composição | em andamento | evidencias/S13/contact_sheet.png | câmera/multiplano + 25 efeitos implementados; falta graph editor e UI |
+| S14 Partículas e FX 2D | em andamento | evidencias/S14/corte_gag.png | partículas, onomatopeia, linhas, fundos de gag; falta UI |
+| S15 Cor | em andamento | evidencias/S13 (grade, LUT, scopes) | grade, LUT .cube, scopes prontos; falta HSL qualificado e UI |
+| S16 Pré-produção | em andamento | — | agente: roteiro/storyboard/animatic/cortes |
+| S17 Áudio | em andamento | — | agente: motor de áudio, VOICEVOX, lip-sync |
+| S18 Edição e entrega | em andamento | — | aiai-media (FFmpeg) pronto; falta timeline de edição |
+| S19 Produção e revisão | em andamento | — | agente junto com S16 |
 | S20 UI/UX e identidade | pendente | — | |
 | S21 Calibração (A, B, C obrigatórios; D, E meta) | pendente | — | |
 | S22 Micro anime | pendente | — | |
