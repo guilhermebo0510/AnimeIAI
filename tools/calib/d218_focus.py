@@ -23,6 +23,23 @@ def run(radius=8.0, top=130, bottom=2000):
     return d.call("GRADIENT", {"cut": ids["cut"], "frame": 0, "layer": m, "kind": "linear", "from": [0, 0], "to": [0, 1080], "stops": stops})
 
 
+# cabelo de trás, sob o queixo à esquerda: camada de trás desfocada na referência (as linhas não dão borda nítida)
+TRAS = [(450, 790), (545, 800), (600, 815), (650, 850), (700, 880), (760, 912), (840, 950), (930, 975), (942, 1082), (440, 1082)]
+
+
+def tras(radius=5.0):
+    m = node("foco_tras_mascara", "Máscara do foco de trás", {"type": "layer", "kind": "raster"}, ids["cut"])
+    node("foco_tras_mascara_c1", "1", {"type": "cel", "number": 1}, m)
+    f = node("foco_tras", "Desfoque do cabelo de trás", {"type": "layer", "kind": "effect"}, ids["cut"])
+    d.apply({"kind": "set_props", "id": m, "data": {"visible": False}})
+    d.apply({"kind": "set_props", "id": f, "data": {"mask": m, "params": {"effects": [{"effect": {"type": "gaussian_blur", "radius": radius}}]}}})
+    reorder()
+    d.apply({"kind": "replace_data", "id": ids["foco_tras_mascara_c1"], "data": {"type": "cel", "number": 1}})
+    return d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": 0, "layer": m, "shapes": [{"points": [list(p) for p in TRAS], "geometry": "polyline"}],
+                                 "color": {"type": "direct", "rgba": [1, 1, 1, 1]}})
+
+
 if __name__ == "__main__":
     a = [float(x) for x in sys.argv[1:4]]
     print(run(*a).get("description"))
+    print(tras().get("description"))

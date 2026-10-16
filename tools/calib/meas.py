@@ -149,7 +149,8 @@ def anchor_line(d, ref, pts, widths, w_nom, closed=False, search=4.0, strong=0.0
         proj.append((op, om, ep["strength"] >= strong, em["strength"] >= strong))
         clear.append(max(ep["strength"], em["strength"]) >= clear_side)
     # linha sem nenhum lado nítido (cabelo sobre cabelo, sombra): a borda medida não é confiável — fica como está
-    if sum(clear) < 0.3 * len(clear):
+    both_found = sum(1 for op, om, sp, sm in proj if sp and sm and w_range[0] <= op - om <= w_range[1])
+    if sum(clear) < 0.3 * len(clear) and both_found < 0.3 * len(proj):
         return pts, widths
     # largura da própria curva onde as duas bordas são confiáveis: vale para os pontos com um lado só
     ok = lambda op, om: w_range[0] <= op - om <= w_range[1]
@@ -173,3 +174,28 @@ def anchor_line(d, ref, pts, widths, w_nom, closed=False, search=4.0, strong=0.0
     oy = _median_filter([q[1] - p[1] for q, p in zip(new_pts, pts)], closed)
     new_pts = [[p[0] + ox[i], p[1] + oy[i]] for i, p in enumerate(pts)]
     return smooth_points(new_pts, closed, 2), _median_filter(new_w, closed)
+
+
+def edge_offset_line(d, ref, pts, side, half_w, search=6.0, passes=2):
+    """Linha cujo lado `side` (+1/−1 na normal) encosta numa massa clara e nítida (pele): mede essa borda com MEASURE_EDGE
+    e põe o centro a `half_w` dela, para dentro da linha. Pontas mantêm a posição estimada (normal pouco confiável)."""
+    cur = [list(p) for p in pts]
+    for _ in range(passes):
+        ns = _normals(cur)
+        probe = [[p[0] + side * n[0] * half_w, p[1] + side * n[1] * half_w] for p, n in zip(cur, ns)]
+        r = first_list(d.call("MEASURE_EDGE", {"reference": ref, "points": probe, "search": search, "min_strength": 0.05}))
+        off = []
+        for p, n, m in zip(cur, ns, r):
+            if m["strength"] <= 0:
+                off.append(None)
+                continue
+            o = (m["edge"][0] - p[0]) * n[0] + (m["edge"][1] - p[1]) * n[1]  # posição da borda na normal
+            off.append(o - side * half_w)
+        off = _median_filter(off, False)
+        nxt = []
+        for i, (p, n) in enumerate(zip(cur, ns)):
+            o = off[i] if (off[i] is not None and 0 < i < len(cur) - 1) else 0.0
+            nxt.append([p[0] + n[0] * o, p[1] + n[1] * o])
+        cur = smooth_points(nxt, False, 2)
+        search = max(3.0, search / 2)
+    return cur

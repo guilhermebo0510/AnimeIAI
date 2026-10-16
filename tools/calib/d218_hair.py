@@ -7,7 +7,8 @@ from d218 import d, ids, REF0, draw, render
 
 MIN_W = 11.0
 # larguras lidas nos perfis da referência onde um lado da linha funde numa massa escura (a medição não acha a 2ª borda)
-FIXED_W = {"queixo": 14.0, "tras_b": 9.0, "tras_c": 9.0, "tras_d1": 9.0, "tras_d2": 9.0, "tras_e": 9.0}
+PIN_START = {"queixo"}
+FIXED_W = {"queixo": 14.0, "tras_b": 13.0, "tras_c": 13.0, "tras_d1": 12.0, "tras_d2": 12.0, "tras_e": 12.0, "base_g": 14.0}
 ANCHOR = "--sem-ancora" not in sys.argv
 LINE = {"type": "direct", "rgba": [0x5c / 255, 0x2e / 255, 0x2e / 255, 1.0]}
 
@@ -60,17 +61,18 @@ HAIR = {
     "no_c3": [(332, 108), (353, 121), (375, 135)],
     "mecha_f": [(352, 0), (338, 60), (318, 115), (300, 138)],
     "borda_inf_esq": [(190, 800), (200, 860), (207, 930), (212, 1000), (216, 1078)],
-    "tras_b": [(600, 802), (650, 838), (700, 868), (765, 890), (830, 902)],
+    "tras_b": [(600, 802), (650, 838), (695, 862)],
     "tras_c": [(616, 802), (615, 880), (614, 960), (612, 1080)],
     "tras_d1": [(460, 910), (510, 912), (560, 916), (600, 925)],
     "tras_d2": [(460, 912), (452, 945), (452, 985), (472, 1015), (502, 1042), (552, 1080)],
     "tras_e": [(842, 950), (838, 1010), (832, 1080)],
-    "queixo": [(697, 855), (760, 895), (840, 935), (960, 962), (1080, 955), (1190, 928), (1250, 905), (1300, 875), (1345, 840), (1380, 805),
-               (1405, 775)],
 }
 # trechos onde duas linhas correm coladas (a medição pula de uma para a outra): desenhados direto da leitura ampliada
-DIRECT = {"queixo_a": ([(549, 560), (550, 602), (566, 655), (586, 703), (612, 752), (644, 804), (697, 855)], 14.0)}
-CLOSED = {"boca": [(992, 703), (1030, 694), (1080, 689), (1130, 688), (1140, 700), (1142, 722), (1110, 733), (1060, 740), (1000, 748), (990, 726)]}
+DIRECT = {"queixo": ([(549, 560), (550, 602), (566, 655), (586, 703), (612, 752), (644, 804), (697, 858), (760, 898), (840, 937),
+                       (960, 964), (1080, 957), (1190, 930), (1250, 906), (1300, 876), (1345, 841), (1380, 806), (1405, 775)], 14.0)}
+# lado da normal (−ty, tx) onde fica a pele: o queixo desce para a direita, a pele fica à esquerda da normal → −1
+SKIN_SIDE = {"queixo": -1}
+CLOSED = {}  # a boca virou anel medido na linha-massa (d218_face.py)
 
 
 def measured_curves(table, step=8, closed=False):
@@ -78,6 +80,8 @@ def measured_curves(table, step=8, closed=False):
     for name, poly in table.items():
         pts, ws = meas.measure_line(d, REF0, meas.densify(poly, step, closed=closed), closed=closed, line_color="#5c2e2e",
                                     passes=((14.0, 0.08), (9.0, 0.08)), smooth=3)
+        if name in PIN_START:  # emenda exata com o trecho desenhado direto
+            pts[0] = list(poly[0])
         c = meas.curve_from_measure(pts, ws, LINE, closed=closed)
         # linhas do chibi são quase uniformes (11–15 px); onde a tinta funde numa massa escura a meia altura subestima:
         # piso de 11 px e variação do perfil limitada (leitura do agente nos recortes ampliados)
@@ -91,6 +95,8 @@ def measured_curves(table, step=8, closed=False):
             for search in (10.0, 4.0):
                 pts, ws2 = meas.anchor_line(d, REF0, pts, ws, c["width"], closed=closed, search=search)
                 ws = ws if name in FIXED_W else ws2
+                if name in PIN_START:
+                    pts[0] = list(poly[0])
             c = meas.curve_from_measure(pts, ws, LINE, closed=closed)
             c["width"] = max(c["width"], MIN_W - 1)
         c["profile"] = [[t, max(0.7, min(1.3, w))] for t, w in c["profile"]]
@@ -130,7 +136,10 @@ if __name__ == "__main__":
     curves, log = measured_curves(HAIR)
     c2, l2 = measured_curves(CLOSED, closed=True)
     for name, (poly, w) in DIRECT.items():
-        c2.append({"points": [list(p) for p in poly], "width": w, "tip": "marker", "geometry": "spline", "color": LINE})
+        pts = meas.densify(poly, 8)
+        if name in SKIN_SIDE:  # encosta na pele: a borda da pele é nítida, ancora nela
+            pts = meas.edge_offset_line(d, REF0, pts, SKIN_SIDE[name], w / 2)
+        c2.append({"points": pts, "width": w, "tip": "marker", "geometry": "spline", "color": LINE})
     curves += c2; log.update(l2)
     json.dump(curves, open(os.path.join(os.path.dirname(__file__), "..", "..", "calibracao", "projetos", "d218_hair_curves.json"), "w"))
     print(json.dumps(log))

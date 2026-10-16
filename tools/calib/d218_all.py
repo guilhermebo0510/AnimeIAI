@@ -13,7 +13,7 @@ def run(script, *args):
         raise SystemExit(f"{script} falhou")
 
 
-steps = (["d218_hair.py"] if "--linhas" in sys.argv else ["d218_hair.py --so-fecho"]) + [
+steps = (["d218_face.py", "d218_hair.py"] if "--linhas" in sys.argv else ["d218_hair.py --so-fecho"]) + [
     "d218_color.py", "d218_bg.py", "d218_shade.py", "d218_bangs.py", "d218_rim.py", "d218_low.py", "d218_details.py", "d218_focus.py"]
 for s in steps:
     name, *a = s.split()

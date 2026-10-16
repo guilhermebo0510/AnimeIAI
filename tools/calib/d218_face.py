@@ -1,38 +1,31 @@
-"""Corte D, quadro 0: olhos (anéis grossos = forma com furo, bordas medidas), boca e queixo (linhas medidas)."""
+"""Corte D, quadro 0: anéis grossos do rosto (olhos e boca) como formas com furo na camada raster `linha_massa`:
+borda externa (pele) e interna (branco do olho / boca) medidas com MEASURE_EDGE a partir do contorno estimado."""
 import json, os, sys
 sys.path.insert(0, os.path.dirname(__file__))
 import meas
-from d218 import d, ids, node, REF0, draw, render
+from d218 import d, ids, node, REF0
 
 LINE = {"type": "direct", "rgba": [0x5c / 255, 0x2e / 255, 0x2e / 255, 1.0]}
 
-# camada raster para linhas-massa (anéis dos olhos etc.), também fronteira do balde
-massa = node("linha_massa", "Linha-massa", {"type": "layer", "kind": "raster"}, ids["cut"])
-node("linha_massa_c1", "1", {"type": "cel", "number": 1}, massa)
-d.apply({"kind": "set_props", "id": ids["cor"], "data": {"line_refs": [ids["linha"], massa]}})
-# recomeça os cels de linha deste quadro
-d.apply({"kind": "replace_data", "id": ids["linha_c1"], "data": {"type": "cel", "number": 1}})
-d.apply({"kind": "replace_data", "id": ids["linha_massa_c1"], "data": {"type": "cel", "number": 1}})
+MOUTH_OUT = [(988, 700), (1030, 688), (1080, 682), (1125, 680), (1138, 690), (1145, 715), (1140, 730), (1100, 738), (1050, 745), (1000, 752),
+             (988, 740), (985, 720)]
+MOUTH_IN = [(1003, 707), (1040, 698), (1090, 693), (1122, 692), (1130, 705), (1128, 720), (1095, 727), (1050, 733), (1008, 738), (1002, 725)]
 
-log = {}
-shapes = []
-for name, (cx, cy, ro, ri) in {"olho_esq": (772, 446, 117, 78), "olho_dir": (1288, 389, 112, 77)}.items():
-    outer = meas.measure_edge(d, REF0, meas.circle(cx, cy, ro, n=72))
-    inner = meas.measure_edge(d, REF0, meas.circle(cx, cy, ri, n=60))
-    shapes.append({"points": outer, "geometry": "polyline"})
-    shapes.append({"points": list(reversed(inner)), "geometry": "polyline"})
-    log[name] = "ok"
-print(d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": 0, "layer": massa, "shapes": shapes, "color": LINE}).get("description"))
 
-curves = []
-mouth = [(992, 703), (1030, 694), (1080, 689), (1130, 688), (1140, 700), (1142, 722), (1110, 733), (1060, 740), (1000, 748), (990, 726)]
-pts, ws = meas.measure_line(d, REF0, meas.densify(mouth, 8, closed=True), closed=True)
-curves.append(meas.curve_from_measure(pts, ws, LINE, closed=True))
-log["boca"] = curves[-1]["width"]
-chin = [(560, 600), (575, 680), (610, 750), (665, 820), (740, 885), (840, 935), (960, 962), (1080, 955), (1190, 925), (1280, 870), (1345, 800), (1390, 720)]
-pts, ws = meas.measure_line(d, REF0, meas.densify(chin, 8))
-curves.append(meas.curve_from_measure(pts, ws, LINE))
-log["queixo"] = curves[-1]["width"]
-print(json.dumps(log))
-print(draw(curves).get("description"))
-print(render("q0_rosto"))
+def run():
+    massa = node("linha_massa", "Linha-massa", {"type": "layer", "kind": "raster"}, ids["cut"])
+    node("linha_massa_c1", "1", {"type": "cel", "number": 1}, massa)
+    d.apply({"kind": "replace_data", "id": ids["linha_massa_c1"], "data": {"type": "cel", "number": 1}})
+    shapes = []
+    for cx, cy, ro, ri in [(772, 446, 117, 78), (1288, 389, 112, 77)]:
+        outer = meas.measure_edge(d, REF0, meas.circle(cx, cy, ro, n=72))
+        inner = meas.measure_edge(d, REF0, meas.circle(cx, cy, ri, n=60))
+        shapes += [{"points": outer, "geometry": "polyline"}, {"points": list(reversed(inner)), "geometry": "polyline"}]
+    outer = meas.measure_edge(d, REF0, meas.densify(MOUTH_OUT, 5, closed=True), passes=((8.0, 0.03), (4.0, 0.03)))
+    inner = meas.measure_edge(d, REF0, meas.densify(MOUTH_IN, 5, closed=True), passes=((8.0, 0.03), (4.0, 0.03)))
+    shapes += [{"points": outer, "geometry": "polyline"}, {"points": list(reversed(inner)), "geometry": "polyline"}]
+    return d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": 0, "layer": massa, "shapes": shapes, "color": LINE})
+
+
+if __name__ == "__main__":
+    print(run().get("description"))
