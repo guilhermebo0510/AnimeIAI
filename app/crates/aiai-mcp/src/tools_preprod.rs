@@ -1,6 +1,7 @@
-//! Ferramentas curadas de pré-produção (S16): roteiro, beats, storyboard/e-conte, animatic e cortes a partir do
-//! storyboard. Cada uma é açúcar sobre uma ação da bridge (`aiai_bridge::preprod_tools`); as de documento escolhem a
-//! operação por `op`. Rodam no app e no headless.
+//! Ferramentas curadas de pré-produção (S16: roteiro, beats, storyboard/e-conte, animatic e cortes a partir do
+//! storyboard) e de produção/revisão (S19: tabela de cortes, etapas, lint de todos os quadros, correções, retakes,
+//! relatório). Cada uma é açúcar sobre uma ação da bridge (`aiai_bridge::preprod_tools` / `review_tools`); as de
+//! documento escolhem a operação por `op`. Rodam no app e no headless.
 
 use crate::context::ToolError;
 use crate::tools::{Plan, schema_of};
@@ -38,6 +39,27 @@ Exemplo: {"storyboard":"<id>","out":"C:\\AnimeIAI\\saida\\animatic.mp4","width":
 const CUTS_FROM_STORYBOARD_DESC: &str = r##"Gera as cenas e os cortes de produção a partir do storyboard, num passo de undo: um corte por painel com número, duração (segundos × fps), nota = ação, falas vinculadas, câmera inicial (e chaves de pan/zoom se o painel tiver `to`) e uma camada de REFERÊNCIA com o desenho do painel escalado ao tamanho do projeto (para o layout decalcar). `scene_per_panel_group`: uma cena por grupo de painéis consecutivos com a mesma `scene` (senão uma cena só); `script`: nomeia as cenas pelo cabeçalho do roteiro; `fps` opcional. Devolve {scenes, cuts:[{panel, cut}]}.
 Exemplo: {"storyboard":"<id>","episode":"<episódio>","scene_per_panel_group":true,"script":"<roteiro>"}"##;
 
+const PRODUCTION_DESC: &str = r##"Estado da produção (S19). `op`:
+- cut_table → カット表: cortes na ordem (número, cena, duração, as 8 etapas layout/genga/douga/shiage/background/satsuei/color/sound com estado not_started|in_progress|review|approved|retake, correções e retakes abertos) + total em segundos
+- set_stage {cut, stage, status}
+- suggest_stages {cut, apply?} → avanços de etapa deduzidos do conteúdo do corte (nunca rebaixa aprovadas/retake); apply grava num passo de undo
+- lint_cut {cut} → lint de TODAS as camadas de preenchimento em todos os quadros expostos (regiões sem cor; clean = true se nenhuma). Use antes de exportar.
+- provenance {id, history?} → quem criou/mudou o nó (+ últimas entradas do log que o tocam)
+- report {out?: .md} → relatório de produção em Markdown (progresso, bloqueios, correções, retakes, lint)
+Exemplo: {"op":"lint_cut","cut":"<corte>"}"##;
+
+const CORRECTION_DESC: &str = r##"Correção de revisão: traços em VERMELHO numa camada de guia "correção" do corte (não aparece no render final) + nota no documento "Produção". `op`:
+- add {cut, frame (0-based), note, strokes?:[curvas como em aiai_draw_curves: {points,width,...}; a cor é sempre vermelha], author?} → {correction}
+- resolve {correction, resolved? (padrão true; false reabre), by?, retake?}
+- list {cut}
+Exemplo: {"op":"add","cut":"<corte>","frame":12,"note":"olho esquerdo maior que o model sheet","strokes":[{"points":[[900,400],[960,380],[1000,420]],"width":4}]}"##;
+
+const RETAKE_DESC: &str = r##"Retake: guarda o render atual de um quadro como snapshot (antes da refeitura) e compara depois. `op`:
+- create {cut, frame, reason, author?} → {retake}
+- compare {retake, frame?, out?: .png, panel_w?} → fração de pixels mudados, média/máx. da diferença; com `out`, folha ANTES | DEPOIS | DIFERENÇA (olhe a imagem)
+- resolve {retake, resolved?} / list
+Exemplo: {"op":"compare","retake":"<id>","out":"C:\\AnimeIAI\\producoes\\curta\\retake1.png"}"##;
+
 /// Schema de tipo-união (`oneOf` por `op`) com `type: object` no topo (os clientes MCP exigem).
 fn object_schema<T: schemars::JsonSchema>() -> Value {
     let mut s = schema_of::<T>();
@@ -55,6 +77,9 @@ pub fn definitions() -> Vec<Value> {
         json!({ "name": "aiai_storyboard", "description": STORYBOARD_DESC, "inputSchema": object_schema::<pp::StoryboardRequest>() }),
         json!({ "name": "aiai_animatic", "description": ANIMATIC_DESC, "inputSchema": object_schema::<pp::AnimaticRequest>() }),
         json!({ "name": "aiai_cuts_from_storyboard", "description": CUTS_FROM_STORYBOARD_DESC, "inputSchema": object_schema::<aiai_tools::preprod::CutsFromStoryboardRequest>() }),
+        json!({ "name": "aiai_production", "description": PRODUCTION_DESC, "inputSchema": object_schema::<aiai_bridge::review_tools::ProductionRequest>() }),
+        json!({ "name": "aiai_correction", "description": CORRECTION_DESC, "inputSchema": object_schema::<aiai_bridge::review_tools::CorrectionOp>() }),
+        json!({ "name": "aiai_retake", "description": RETAKE_DESC, "inputSchema": object_schema::<aiai_bridge::review_tools::RetakeOp>() }),
     ]
 }
 
@@ -79,6 +104,9 @@ pub fn plan(name: &str, m: &Map<String, Value>) -> Option<Result<Plan, ToolError
         "aiai_storyboard" => with_req(&["op"], "STORYBOARD"),
         "aiai_animatic" => with_req(&["storyboard", "out"], "ANIMATIC"),
         "aiai_cuts_from_storyboard" => with_req(&["storyboard", "episode"], "CUTS_FROM_STORYBOARD"),
+        "aiai_production" => with_req(&["op"], "PRODUCTION"),
+        "aiai_correction" => with_req(&["op"], "CORRECTION"),
+        "aiai_retake" => with_req(&["op"], "RETAKE"),
         _ => return None,
     })
 }

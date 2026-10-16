@@ -40,7 +40,9 @@ Começar por cortes curtos (1–3 s) e com pouca animação; subir a dificuldade
 
 Comparação sempre entre o **render CPU determinístico** do app e o frame de referência, em 1920×1080, por quadro, sobre todos os quadros do corte. "5%" é aplicado de forma consistente: cada métrica normalizada tem de ficar a no máximo 5% do ideal.
 
-**Régua por quadro (decisão 24, vigente):** os limites de FLIP, SSIM e F1 de bordas não são fixos; saem de uma perturbação
+**Régua por quadro (decisão 25, vigente desde 2026-10-16):** perceptual — F1 de bordas ≥ 0,90 com tolerância de 4 px, SSIM ≥ min(limite P5T do quadro, 0,93), FLIP ≤ limite P5T; ΔE, paleta e espessura como na tabela abaixo; corte aprovado com ≥ 95% dos quadros. A régua da decisão 24 (abaixo) media o decalque pixel a pixel e custava dias por imagem sem melhorar o programa; fica como histórico.
+
+**Régua por quadro (decisão 24, substituída):** os limites de FLIP, SSIM e F1 de bordas não são fixos; saem de uma perturbação
 imperceptível da própria referência ("P5T": brilho e saturação ×1,05 ou ×0,95, deslocamento de 1 px e deformação suave
 gaussiana σ = 40 px com 1 px RMS por eixo; média de 6 sementes por direção, vale a direção mais exigente por métrica). O
 limite de cada métrica é o valor que essa cópia perturbada obtém contra a referência; fica guardado em `<quadro>.p5t.json`

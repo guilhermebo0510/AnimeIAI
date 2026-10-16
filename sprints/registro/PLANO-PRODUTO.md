@@ -18,7 +18,7 @@ para o produto: **funções no MCP, interface e o micro anime original**.
 | # | Fatia | Conteúdo | Pronto quando |
 |---|---|---|---|
 | P1 | MCP S16 | `aiai_script`, `aiai_beats`, `aiai_storyboard` (painéis, desenho do painel, folha de e-conte), `aiai_animatic`, `aiai_cuts_from_storyboard` | teste da bridge da cadeia inteira + fumaça headless olhando a folha e o corte gerado — **feito 2026-10-16** |
-| P2 | MCP S19 | tabela de cortes (カット表) com miniaturas, etapas + sugestão automática + lint de todos os quadros expostos, correções, retakes (comparar/folha de diferença), relatório de produção | teste da bridge + fumaça headless |
+| P2 | MCP S19 | tabela de cortes (カット表) com miniaturas, etapas + sugestão automática + lint de todos os quadros expostos, correções, retakes (comparar/folha de diferença), relatório de produção | teste da bridge (lint do corte, etapas, correção, retake com folha) — **feito 2026-10-16** |
 | P3 | MCP satsuei/câmera/cor | ferramentas curadas com schema tipado: efeitos por camada/camada de efeito (`aiai_effects`), câmera do corte com chaves e tremor (`aiai_camera`), chaves/profundidade de camada (multiplano), ajustes e grade (`aiai_grade`) | o agente monta um corte com pan multiplano + glow/difusão + grade só pelas ferramentas, conferido no render |
 | P4 | Prévia e entrega | `aiai_render` com faixa/folha de contato, prévia de quadro da edição, `.srt` ao lado do MP4, `tts_regenerate`, mixagem da edição em WAV | uma conferência de legenda sem exportar o vídeo |
 | P5 | Micro anime (S22) | produzir pelo MCP, do roteiro ao MP4, o curta original de 30–60 s com os critérios da seção 7 do protocolo; cada falta de ferramenta vira lacuna e é corrigida na hora | MP4 final + checagem dos critérios |

@@ -998,7 +998,7 @@ fn production_calibration_measure_and_compare() {
     let outd = dir.path().join("cmp");
     let c = act(&mut d.s, "COMPARE", json!({"cut": cut, "frame": 0, "reference": reference, "out_dir": outd.display().to_string()}));
     assert_eq!(c["pass"], true, "{c}");
-    assert!(c["report"].is_object() && c["files"].as_array().unwrap().len() == 4, "{c}");
+    assert!(c["report"].is_object() && c["files"].as_array().unwrap().len() == 5, "{c}");
     for f in c["files"].as_array().unwrap() {
         assert!(std::path::Path::new(f.as_str().unwrap()).is_file(), "{f}");
     }
@@ -1214,4 +1214,47 @@ fn preprod_script_storyboard_sheet_animatic_and_cuts() {
     assert!(c1.to_string().contains("center_x"), "pan vira chaves de câmera: {c1}");
     let undo = act(&mut d.s, "UNDO", json!({}));
     assert_eq!(undo["can_undo"], true, "cortes do storyboard = um passo de undo");
+}
+
+#[test]
+fn review_cut_table_stages_lint_corrections_and_retakes() {
+    let (mut s, cut, line, fill, _bg) = tool_doc();
+    let dir = tempfile::tempdir().unwrap();
+    // círculo fechado na linha: uma região sem cor até o balde
+    act(&mut s, "DRAW_CURVES", json!({"cut": cut, "frame": 0, "layer": line, "curves": [{"points": [[100.0, 60.0], [160.0, 40.0], [220.0, 60.0], [220.0, 120.0], [160.0, 140.0], [100.0, 120.0]], "closed": true, "width": 3.0, "color": black()}]}));
+    let l = act(&mut s, "PRODUCTION", json!({"op": "lint_cut", "cut": cut}));
+    assert!(l["fill_layers"][0]["frames_checked"].as_u64().unwrap() > 0, "{l}");
+    assert!(l["unpainted_regions"].as_u64().unwrap() >= 1 && l["clean"] == false, "{l}");
+    act(&mut s, "FILL", json!({"cut": cut, "frame": 0, "layer": fill, "seeds": [{"x": 160, "y": 90, "color": {"type": "direct", "rgba": [1.0, 0.8, 0.7, 1.0]}}]}));
+    let l2 = act(&mut s, "PRODUCTION", json!({"op": "lint_cut", "cut": cut}));
+    assert!(l2["unpainted_regions"].as_u64().unwrap() < l["unpainted_regions"].as_u64().unwrap(), "{l2}");
+
+    // etapas: manual e sugestão automática
+    act(&mut s, "PRODUCTION", json!({"op": "set_stage", "cut": cut, "stage": "layout", "status": "approved"}));
+    let sg = act(&mut s, "PRODUCTION", json!({"op": "suggest_stages", "cut": cut, "apply": true}));
+    assert!(sg["suggestions"].is_array(), "{sg}");
+    let t = act(&mut s, "PRODUCTION", json!({"op": "cut_table"}));
+    assert_eq!(t["cuts"][0]["stages"]["layout"], "approved", "{t}");
+
+    // correção em vermelho + retake + comparação depois de mudar o quadro
+    let c = act(&mut s, "CORRECTION", json!({"op": "add", "cut": cut, "frame": 0, "note": "fechar o traço", "strokes": [{"points": [[90.0, 50.0], [230.0, 50.0]], "width": 3.0}]}));
+    let cid = c["correction"].as_str().unwrap().to_string();
+    assert_eq!(act(&mut s, "PRODUCTION", json!({"op": "cut_table"}))["cuts"][0]["open_corrections"], 1);
+    let r = act(&mut s, "RETAKE", json!({"op": "create", "cut": cut, "frame": 0, "reason": "cor da pele"}));
+    let rid = r["retake"].as_str().unwrap().to_string();
+    act(&mut s, "FILL", json!({"cut": cut, "frame": 0, "layer": fill, "seeds": [{"x": 160, "y": 90, "color": {"type": "direct", "rgba": [0.2, 0.4, 1.0, 1.0]}}]}));
+    let sheet = dir.path().join("retake.png");
+    let cmp = act(&mut s, "RETAKE", json!({"op": "compare", "retake": rid, "out": sheet.display().to_string()}));
+    assert!(cmp["changed_fraction"].as_f64().unwrap() > 0.01 && sheet.exists(), "{cmp}");
+    act(&mut s, "CORRECTION", json!({"op": "resolve", "correction": cid, "retake": rid}));
+    act(&mut s, "RETAKE", json!({"op": "resolve", "retake": rid}));
+    let t = act(&mut s, "PRODUCTION", json!({"op": "cut_table"}));
+    assert_eq!(t["cuts"][0]["open_corrections"], 0);
+    assert_eq!(t["cuts"][0]["open_retakes"], 0);
+
+    let pv = act(&mut s, "PRODUCTION", json!({"op": "provenance", "id": fill, "history": 5}));
+    assert!(pv["history"].as_array().unwrap().len() >= 1, "{pv}");
+    let md = act(&mut s, "PRODUCTION", json!({"op": "report"}));
+    assert!(md["markdown"].as_str().unwrap().contains("Relatório de produção"));
+    assert_eq!(act_err(&mut s, "RETAKE", json!({"op": "compare", "retake": "nao-existe"})).code, code::INVALID_PARAMS);
 }
