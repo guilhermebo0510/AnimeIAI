@@ -79,3 +79,12 @@ Erros já pagos neste PC, nos projetos Smart Canvas e ANIGO do mesmo usuário. A
 45. **Tolerância frouxa na varredura engana**: carmim escuro do cabelo fica a ~55 da tinta e entrou como tinta (forma errada na gola do 7); usar tolerância justa (≤ 30) e conferir a cor nos pixels.
 46. **Borda medida pode pular para uma estrutura interna** (o anel do olho do 8 tinha a borda de fora puxada para a fresta rosada, cortando 15–20 px do anel); trocar o círculo inteiro piorou (o anel não é círculo) — o que funcionou foi o arco lido por varredura por coluna. E toda mudança em linha que serve de borda do balde (anel, contorno) pode abrir vazamento: conferir FLIP/ΔE junto com o F1.
 
+## Calibração do corte C (rosas, quadro 15)
+
+47. **Ler as bordas da referência, não só a tinta**: o Canny da régua não vê as linhas vermelho-escuras suaves dentro das rosas (gradiente 4–9, abaixo do limiar ~11); o que conta são as fronteiras salmão × vermelho das pétalas e as linhas contra áreas claras. `edge_grid.py` (bordas da referência + as nossas por cima, com grade) é o melhor auxílio de leitura; o recorte só de tinta (`ink_grid.py`) engana nessas áreas.
+48. **O balde precisa fechar as pétalas**: linhas de pétala soltas deixam salmão e vermelho na mesma região e a mediana pinta tudo de uma cor só — perde-se a borda mais forte da rosa. Folga 8 no balde (em vez de 4) fechou as pontas e deu F1 +0,026 de uma vez; `c131_mixed.py` lista as regiões de cor misturada (vazamentos) e `barrier_view.py` mostra onde fechar.
+49. **Cor da região = mediana da referência sobre a região inteira** (não no ponto mais interno) e fundo elíptico medido por anéis de raio: FLIP 0,32 → 0,25 sem tocar nas linhas.
+50. **Satsuei medido pela borda**: ajuste de erf numa borda limpa da referência deu σ ≈ 0,9–1,1 contra 0,6 nosso; desfoque 3,0 no quadro + foco suave na periferia subiu SSIM e F1 juntos.
+51. **Cache de medidas por linha**: remedir 160 linhas leva 2,5 min; com cache (chave = estimativa + parâmetros) o ciclo editar → medir → balde → COMPARE cai para ~8 s, o que permite escolher por linha a VARIANTE de medição (meia altura × faixa, âncora, busca curta) pela régua (`c131_opt.py`) sem tocar na geometria digitada.
+52. **Experimentos globais pequenos enganam**: largura ×1,25, cor mais clara das linhas internas, tolerância de cor maior e busca curta pioraram o F1 no conjunto mesmo quando um caso local parecia pedir isso. Testar sempre no quadro inteiro e, para decisões locais, com `boxf1.py` na caixa.
+
