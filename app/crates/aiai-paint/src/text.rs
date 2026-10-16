@@ -1,0 +1,120 @@
+//! Texto como contornos (onomatopeias, títulos, créditos, legendas queimadas): glifos de uma fonte OpenType/TrueType
+//! (ab_glyph) achatados em polígonos no canvas. Horizontal ou vertical (tategaki simples: um glifo por linha).
+
+use ab_glyph::{Font, FontRef, OutlineCurve, PxScale, ScaleFont};
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextOutline {
+    /// Contornos fechados (regra não-zero: buracos têm orientação oposta).
+    pub contours: Vec<Vec<[f32; 2]>>,
+    /// Caixa [x0, y0, x1, y1].
+    pub bounds: [f32; 4],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TextOptions {
+    pub size: f32,
+    pub letter_spacing: f32,
+    pub vertical: bool,
+    /// Centro do bloco de texto no canvas.
+    pub center: [f32; 2],
+    /// Rotação (graus, horário) e cisalhamento horizontal (itálico) em torno do centro.
+    pub rotation: f32,
+    pub skew: f32,
+    /// Escala não uniforme (largura, altura).
+    pub scale: [f32; 2],
+}
+
+fn flatten_quad(out: &mut Vec<[f32; 2]>, p0: [f32; 2], p1: [f32; 2], p2: [f32; 2], n: usize) {
+    for k in 1..=n {
+        let t = k as f32 / n as f32;
+        let u = 1.0 - t;
+        out.push([u * u * p0[0] + 2.0 * u * t * p1[0] + t * t * p2[0], u * u * p0[1] + 2.0 * u * t * p1[1] + t * t * p2[1]]);
+    }
+}
+
+fn flatten_cubic(out: &mut Vec<[f32; 2]>, p0: [f32; 2], p1: [f32; 2], p2: [f32; 2], p3: [f32; 2], n: usize) {
+    for k in 1..=n {
+        let t = k as f32 / n as f32;
+        let u = 1.0 - t;
+        let (a, b, c, d) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
+        out.push([a * p0[0] + b * p1[0] + c * p2[0] + d * p3[0], a * p0[1] + b * p1[1] + c * p2[1] + d * p3[1]]);
+    }
+}
+
+/// Contornos do texto posicionado.
+pub fn text_outline(font_bytes: &[u8], text: &str, opt: &TextOptions) -> Result<TextOutline, String> {
+    let font = FontRef::try_from_slice(font_bytes).map_err(|e| format!("fonte inválida: {e}"))?;
+    let scale = PxScale::from(opt.size);
+    let sf = font.as_scaled(scale);
+    let upem = font.units_per_em().unwrap_or(1000.0);
+    let k = opt.size / upem;
+    let mut contours: Vec<Vec<[f32; 2]>> = Vec::new();
+    let mut pen = 0.0f32;
+    let chars: Vec<char> = text.chars().collect();
+    for ch in &chars {
+        let id = font.glyph_id(*ch);
+        let adv = if opt.vertical { opt.size } else { sf.h_advance(id) };
+        // origem do glifo: horizontal = linha de base em y=0; vertical = centrado em x, caixa de "size" de altura
+        let (gx, gy) = if opt.vertical { (-sf.h_advance(id) / 2.0, pen + opt.size * 0.88) } else { (pen, 0.0) };
+        if let Some(outline) = font.outline(id) {
+            let mut cur: Vec<[f32; 2]> = Vec::new();
+            let mut last: Option<[f32; 2]> = None;
+            for c in &outline.curves {
+                let tp = |p: ab_glyph::Point| [gx + p.x * k, gy - p.y * k];
+                let (start, end) = match c {
+                    OutlineCurve::Line(a, b) => (tp(*a), tp(*b)),
+                    OutlineCurve::Quad(a, _, c2) => (tp(*a), tp(*c2)),
+                    OutlineCurve::Cubic(a, _, _, d) => (tp(*a), tp(*d)),
+                };
+                let continuous = last.is_some_and(|l| (l[0] - start[0]).abs() < 1e-3 && (l[1] - start[1]).abs() < 1e-3);
+                if !continuous {
+                    if cur.len() >= 3 {
+                        contours.push(std::mem::take(&mut cur));
+                    }
+                    cur.clear();
+                    cur.push(start);
+                }
+                match c {
+                    OutlineCurve::Line(_, _) => cur.push(end),
+                    OutlineCurve::Quad(a, b, c2) => flatten_quad(&mut cur, tp(*a), tp(*b), tp(*c2), 8),
+                    OutlineCurve::Cubic(a, b, c2, d) => flatten_cubic(&mut cur, tp(*a), tp(*b), tp(*c2), tp(*d), 10),
+                }
+                last = Some(end);
+            }
+            if cur.len() >= 3 {
+                contours.push(cur);
+            }
+        }
+        pen += adv + opt.letter_spacing;
+    }
+    if contours.is_empty() {
+        return Err("texto sem glifos desenháveis nesta fonte".into());
+    }
+    // centraliza o bloco e aplica escala, cisalhamento e rotação em torno do centro
+    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for c in &contours {
+        for p in c {
+            x0 = x0.min(p[0]);
+            y0 = y0.min(p[1]);
+            x1 = x1.max(p[0]);
+            y1 = y1.max(p[1]);
+        }
+    }
+    let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+    let (sn, cs) = opt.rotation.to_radians().sin_cos();
+    let (mut bx0, mut by0, mut bx1, mut by1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for c in &mut contours {
+        for p in c.iter_mut() {
+            let (mut x, y) = ((p[0] - cx) * opt.scale[0], (p[1] - cy) * opt.scale[1]);
+            x += -y * opt.skew;
+            let (rx, ry) = (x * cs - y * sn, x * sn + y * cs);
+            *p = [opt.center[0] + rx, opt.center[1] + ry];
+            bx0 = bx0.min(p[0]);
+            by0 = by0.min(p[1]);
+            bx1 = bx1.max(p[0]);
+            by1 = by1.max(p[1]);
+        }
+    }
+    Ok(TextOutline { contours, bounds: [bx0, by0, bx1, by1] })
+}

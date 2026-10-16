@@ -14,6 +14,7 @@ pub mod noise;
 pub mod poly;
 pub mod select;
 pub mod stroke_raster;
+pub mod text;
 pub mod texture;
 pub mod tile;
 pub mod transform;
