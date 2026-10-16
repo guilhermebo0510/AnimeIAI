@@ -33,12 +33,12 @@ def run():
     curves, log = [], {}
     for name, poly in CENTERS.items():
         # paquímetro de faixa: a cor do realce varia por dentro (borda salmão, miolo mais claro)
-        pts, ws = meas.measure_band(d, REF0, meas.densify(poly, 6), RIM, 0.09)
+        pts, ws = meas.measure_band(d, REF0, meas.densify(poly, 4), RIM, 0.09, smooth=1)
         probes = meas.first_list(d.call("PROBE_COLOR", {"reference": REF0, "points": [[round(p[0]), round(p[1])] for p in pts[1:-1:2]],
                                                         "radius": 1}))
         cs = sorted(probes, key=lambda c: sum(c["rgb"]))
         mid = cs[len(cs) // 2]["rgb"] if cs else [0xf4 / 255, 0xa0 / 255, 0x97 / 255]
-        c = meas.curve_from_measure(pts, ws, {"type": "direct", "rgba": list(mid) + [1.0]}, tip="marker")
+        c = meas.curve_from_measure(pts, ws, {"type": "direct", "rgba": list(mid) + [1.0]}, tip="marker", every=1)
         c["profile"] = [[t, max(0.1, min(1.8, w))] for t, w in c["profile"]]
         curves.append(c)
         log[name] = (round(c["width"], 1), "#%02x%02x%02x" % tuple(round(v * 255) for v in mid))

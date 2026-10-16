@@ -46,12 +46,10 @@ def run():
                "profile": [[0, 0.4], [0.5, 1.0], [1, 0.4]]} for h in HIGHLIGHTS]
     # gota de suor: traço branco grosso enrolado (centro cor de pele), lido no recorte ampliado 4×
     gw = {"type": "direct", "rgba": [0xf6 / 255, 0xf2 / 255, 0xf6 / 255, 1.0]}
-    gota = meas.densify([(692, 707), (689, 725), (692, 744), (704, 754), (719, 754), (729, 746), (733, 734), (731, 726)], 4)
-    gpts, gws = meas.measure_band(d, REF0, gota, "#f6f2f6", 0.06, passes=(8.0, 5.0), smooth=1)
-    gc = meas.curve_from_measure(gpts, gws, gw, every=1)
-    gc["profile"] = [[t, max(0.5, min(1.4, w))] for t, w in gc["profile"]]
-    curves.append(gc)
-    curves.append({"points": [[705, 730], [706, 735]], "width": 7.0, "tip": "marker", "geometry": "polyline", "color": gw})
+    # gota: "U" grosso (braço esquerdo mais alto), lido no recorte 4× e conferido nas bordas
+    curves.append({"points": [[691, 707], [688, 725], [692, 744], [705, 755], [720, 755], [731, 746], [735, 734], [733, 722]],
+                   "width": 17.0, "tip": "marker", "geometry": "spline", "color": gw})
+    curves.append({"points": [[705, 729], [707, 735]], "width": 9.0, "tip": "marker", "geometry": "polyline", "color": gw})
     return d.call("DRAW_CURVES", {"cut": ids["cut"], "frame": 0, "layer": bri, "curves": curves})
 
 
