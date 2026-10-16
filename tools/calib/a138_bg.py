@@ -13,7 +13,7 @@ from a138 import d, ids, node, F, REF
 SIGMA = 3.0
 BAND = 60
 # bordas digitadas (x) das faixas da direita, lidas do perfil mediano das linhas 560–660 (`a138_bg.py perfil`)
-EDGES = [860, 886, 892, 898, 934, 944, 1178, 1186, 1196, 1222, 1238, 1394, 1412, 1444, 1468, 1480, 1709, 1736, 1767, 1795, 1882,
+EDGES = [860, 886, 892, 898, 934, 944, 1177, 1188, 1196, 1222, 1238, 1394, 1412, 1444, 1468, 1480, 1709, 1736, 1767, 1795, 1882,
          1892, 1920]
 WALL_X1 = 606   # papel de parede lilás até aqui; filete dourado até 632; atrás do personagem até 860 (coberto)
 GOLD_X1 = 632
