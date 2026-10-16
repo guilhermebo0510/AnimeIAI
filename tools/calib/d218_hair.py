@@ -120,7 +120,7 @@ WIDTH_SCALE = {}  # testado no 8 com 1,06: F1 0,9106 → 0,9082
 # larguras fixas por desenho (lidas por varredura): no alto do quadro a tinta clareia e o paquímetro de faixa estreita a linha
 FIXED_W.update({7: {"mecha_n": 20.0}, 8: {"mecha_n": 22.0, "mecha_yy": 23.0}}.get(CEL, {}))
 INK.update({7: {"alca": "#3e1d1c"}, 8: {"alca": "#3e1d1c"}}.get(CEL, {}))  # alça curta (sem trechos coloridos): cor medida no desenho
-DIRECT_DES[8] = {"alca": ([(1491, 953), (1483, 960), (1476, 970), (1466, 980), (1456, 990), (1446, 1000), (1438, 1010), (1430, 1020), (1422, 1030),
+DIRECT_DES[8] = {"alca": ([(1488, 960), (1482, 966), (1476, 970), (1466, 980), (1456, 990), (1446, 1000), (1438, 1010), (1430, 1020), (1422, 1030),
                            (1415, 1040), (1408, 1050), (1402, 1060), (1397, 1070), (1392, 1082)], 24.0),  # centros das varreduras de tinta (runs.py)
                  # contorno de baixo à esquerda: no 8 a ponta do cacho fecha embaixo (curva até a mecha da direita)
                  "borda_inf_esq": ([(172, 801), (181, 811), (189, 821), (201, 844), (210, 866), (212, 880), (209, 892), (205, 904), (200, 916),
@@ -130,6 +130,11 @@ DIRECT_DES[8] = {"alca": ([(1491, 953), (1483, 960), (1476, 970), (1466, 980), (
                  "queixo": ([(541, 560), (544, 590), (548, 620), (556, 650), (568, 680), (582, 710), (596, 740), (614, 770), (636, 800), (666, 830),
                              (708, 857), (745, 876), (800, 900), (860, 922), (920, 935), (980, 941), (1040, 942), (1100, 935), (1160, 923),
                              (1220, 907), (1280, 882), (1340, 846), (1385, 806), (1410, 770)], 25.0),
+                 # junção do contorno direito (n3a desce, n4a sai para a direita): centros das varreduras por linha, linhas mais grossas no 8
+                 "contorno_n3a": ([(1722, 274), (1751, 316), (1786, 365), (1781, 380), (1778, 400), (1772, 420), (1765, 440), (1757, 460),
+                                   (1748, 475)], 22.0),
+                 "contorno_n4a": ([(1752, 478), (1765, 488), (1772, 490), (1778, 500), (1786, 510), (1793, 520), (1800, 530), (1807, 540),
+                                   (1814, 550), (1820, 560), (1826, 570), (1832, 585), (1838, 600), (1831, 635)], 18.0),
                  # contorno esquerdo do 8 (centros das varreduras; sem pontos de campo no alto à esquerda)
                  "contorno_esq": ([(298, 100), (288, 125), (277, 150), (273, 170), (270, 190), (265, 210), (259, 230), (249, 250), (237, 270),
                                    (223, 290), (206, 310), (194, 330), (199, 350), (209, 370), (221, 390), (236, 410), (244, 420), (240, 440),
