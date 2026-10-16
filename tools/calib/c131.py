@@ -21,7 +21,7 @@ def node(key, name, data, parent=None):
     return ids[key]
 
 
-ORDER = ["bg", "letreiro", "moldura_cor", "moldura_luz", "moldura_linha", "fx", "fecho"]
+ORDER = ["bg", "letreiro", "caules", "moldura_cor", "moldura_luz", "moldura_linha", "fx", "fecho"]
 
 
 def reorder():
