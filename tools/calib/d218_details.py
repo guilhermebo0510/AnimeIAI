@@ -27,7 +27,11 @@ SHAPES_DES = {7: {
                              (794, 40), (789, 57), (782, 57), (776, 44), (770, 25)], False),
     "fita_dir2": ("#f5e0c7", [(886, 0), (919, 0), (917, 22), (908, 22), (900, 24), (896, 36), (890, 26), (886, 6)], False)}}
 # fresta rosada (cor da pele) entre as duas voltas do anel de baixo do olho esquerdo, quando ela cresce no redesenho
-GAP_DES = {7: [([(708, 523), (718, 529), (730, 534), (744, 538), (758, 540), (770, 541)], 7.0)]}
+GAP_DES = {7: [([(708, 523), (718, 529), (730, 534), (744, 538), (758, 540), (770, 541)], 7.0),
+               # frestinhas do anel lidas nos recortes do desenho 7 (no lugar dos brilhos do desenho 1)
+               ([(676, 415), (674, 423), (673, 431)], 3.0), ([(1331, 303), (1337, 307), (1343, 312)], 3.0),
+               ([(1203, 345), (1203, 350), (1203, 356)], 3.0), ([(1390, 365), (1390, 370), (1390, 376)], 2.5)]}
+HIGHLIGHTS_DES = {7: []}
 HIGHLIGHTS = [
     [(747, 351), (755, 349), (762, 347)],
     [(737, 537), (751, 539), (765, 540), (778, 539), (790, 537)],
@@ -62,7 +66,7 @@ def run():
                               "color": {"type": "direct", "rgba": c + [1.0]}})
     w = [int(WHITE[i:i + 2], 16) / 255 for i in (1, 3, 5)]
     curves = [{"points": [list(p) for p in W(h)], "width": 4.0, "tip": "marker", "geometry": "spline", "color": {"type": "direct", "rgba": w + [1.0]},
-               "profile": [[0, 0.4], [0.5, 1.0], [1, 0.4]]} for h in HIGHLIGHTS]
+               "profile": [[0, 0.4], [0.5, 1.0], [1, 0.4]]} for h in HIGHLIGHTS_DES.get(CEL, HIGHLIGHTS)]
     pele = [0xf8 / 255, 0xd3 / 255, 0xcb / 255, 1.0]
     for pts, wd in GAP_DES.get(CEL, []):
         curves.append({"points": [list(p) for p in pts], "width": wd, "tip": "marker", "geometry": "spline", "color": {"type": "direct", "rgba": pele},

@@ -56,13 +56,38 @@ SHAPES = {
     "rosa_peq": ("#e07a86", [(1105, 972), (1150, 962), (1145, 976), (1110, 982)], True),
 }
 
+# redesenhos: formas relidas no próprio desenho (varreduras runs.py), sem campo
+SHAPES_DES = {7: {
+    "laco_luz_1": ("#ca5f28", [(1016, 1027), (1020, 1029), (1030, 1035), (1040, 1038), (1050, 1042), (1060, 1044), (1070, 1047), (1080, 1048),
+                               (1090, 1049), (1101, 1049), (1102, 1060), (1103, 1080), (1022, 1080), (1018, 1060), (1017, 1040)], False),
+    "laco_luz_2": ("#ca5f28", [(1160, 1046), (1170, 1043), (1180, 1039), (1190, 1036), (1200, 1031), (1210, 1026), (1220, 1021), (1230, 1016),
+                               (1240, 1010), (1250, 1003), (1255, 1004), (1260, 1018), (1269, 1040), (1274, 1060), (1280, 1080), (1193, 1080),
+                               (1166, 1062)], False),
+    "gola_esq_luz": ("#f0f4cc", [(955, 1009), (961, 1011), (968, 1016), (975, 1022), (983, 1028), (990, 1032), (994, 1036), (996, 1041), (998, 1047),
+                                 (999, 1053), (996, 1057), (985, 1056), (970, 1052), (964, 1047), (962, 1041), (960, 1035), (958, 1025), (956, 1015)], False),
+    "vestido_meio": ("#dce25c", [(1386, 1008), (1440, 1000), (1440, 1080), (1381, 1080), (1381, 1060), (1383, 1040), (1385, 1020)], False),
+    "laco_3": ("#8e361a", [(1112, 1000), (1137, 993), (1139, 1007), (1136, 1030), (1128, 1034), (1118, 1026), (1114, 1013)], True),
+    "vestido": ("#eaf07c", [(1392, 1080), (1391, 1014), (1416, 1013), (1424, 1006), (1432, 995), (1438, 986), (1450, 960), (1495, 925), (1530, 900),
+                            (1560, 860), (1600, 836), (1630, 820), (1660, 840), (1705, 905), (1728, 950), (1736, 970), (1744, 990), (1749, 1010),
+                            (1755, 1030), (1761, 1050), (1762, 1080)], True),
+    "rosa": ("#d65aa6", [(1812, 906), (1824, 910), (1834, 922), (1837, 932), (1833, 946), (1827, 956), (1818, 970), (1811, 980), (1801, 990),
+                         (1792, 998), (1789, 1006), (1794, 1014), (1802, 1020), (1807, 1022), (1828, 1025), (1848, 1022), (1861, 1018), (1874, 1010),
+                         (1885, 1002), (1895, 994), (1906, 980), (1914, 970), (1922, 964), (1922, 1082), (1794, 1082), (1792, 1070), (1789, 1060),
+                         (1786, 1050), (1784, 1040), (1781, 1030), (1778, 1020), (1774, 1010), (1771, 998), (1768, 990), (1772, 980), (1777, 970),
+                         (1782, 960), (1786, 950), (1790, 940), (1796, 926), (1802, 914)], False)}}
+
+# redesenhos: peças que ficaram idênticas às do desenho 1 (varreduras iguais nas duas referências) — sem campo
+KEEP_DES = {}  # testado no 7 com as peças da gola: não ajudou (F1 0,9124 → 0,9116)
+
 
 def draw_shapes(measure=True):
     d.apply({"kind": "replace_data", "id": ids[ck("baixo")], "data": {"type": "cel", "number": CEL}})
     out = {}
-    for name, (color, poly, do_measure) in SHAPES.items():
+    raw = SHAPES_DES.get(CEL, {})
+    for name, (color, poly, do_measure) in {**SHAPES, **raw}.items():
         best = None
-        for cand in candidates(poly):  # redesenho: a estimativa do desenho 1 ou a do campo, a que encaixar melhor depois de medida
+        keep = name in raw or name in KEEP_DES.get(CEL, set())
+        for cand in ([[tuple(p) for p in poly]] if keep else candidates(poly)):  # redesenho: a estimativa do desenho 1 ou a do campo, a que encaixar melhor depois de medida
             pts = meas.densify(cand, 3, closed=True)
             if measure and do_measure:
                 pts = meas.measure_edge(d, REF0, pts, passes=((4.0, 0.03), (2.5, 0.03)))

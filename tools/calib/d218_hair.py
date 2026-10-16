@@ -105,7 +105,14 @@ WIDTH_FN = {"contorno_n3a": lambda p, w: w + max(0.0, min(8.0, (p[1] - 400) * 0.
             "queixo": lambda p, w: 25.0 if (p[0] < 675 and 690 < p[1] < 830) else (20.0 if (p[0] < 675 and 650 < p[1] <= 690) else w)}
 # redesenhos de tremor: linhas que o campo de deslocamento não leva para o lugar certo, relidas pelo agente no desenho
 # (coordenadas já do desenho; não passam pelo campo)
-DIRECT_DES = {7: {"alca": ([(1494, 945), (1481, 960), (1467, 980), (1452, 1000), (1440, 1020), (1427, 1040), (1416, 1060), (1404, 1082)], 27.0)}}  # runs.py
+DIRECT_DES = {7: {"alca": ([(1486, 947), (1480, 960), (1467, 980), (1452, 1000), (1440, 1020), (1427, 1040), (1416, 1060), (1404, 1082)], 27.0),  # runs.py
+                  # contorno esquerdo: alto levado pelo campo; o trecho de baixo (junção com o cacho) relido por colunas (~8 px abaixo do 1)
+                  "contorno_esq": ([(290, 135), (267, 206), (247, 278), (218, 337), (209, 357), (222, 385), (247, 419), (234, 444), (222, 484),
+                                    (207, 524), (195, 577), (205, 607), (222, 628), (240, 650), (260, 667), (280, 682), (300, 694), (320, 704),
+                                    (345, 715), (372, 721)], 16.0)}}
+# larguras fixas por desenho (lidas por varredura): no alto do quadro a tinta clareia e o paquímetro de faixa estreita a linha
+FIXED_W.update({7: {"mecha_n": 20.0}}.get(CEL, {}))
+INK.update({7: {"alca": "#3e1d1c"}}.get(CEL, {}))  # alça curta (sem trechos coloridos): cor medida no desenho
 RAW = set(DIRECT_DES.get(CEL, {}))
 DIRECT.update(DIRECT_DES.get(CEL, {}))
 SKIN_SIDE = {"queixo": -1, "contorno_esq": 1, "contorno_n2": -1, "contorno_n3a": -1, "contorno_n4a": -1, "contorno_n5": -1}
@@ -158,7 +165,7 @@ def measured_curves(table, step=3, closed=False, ref=None):
             # paquímetro de faixa pela cor da tinta: separa a tinta do cabelo, do realce e da sombra sem viés de meia altura;
             # redesenho: mede a estimativa do desenho 1 e a do campo e fica com a que cai mais na tinta
             best = None
-            for cand in (candidates(poly) if ref is None else [[tuple(p) for p in poly]]):  # ref dada: dados lidos no próprio desenho (d218_dyn)
+            for cand in (candidates(poly, field_first=False) if ref is None else [[tuple(p) for p in poly]]):  # empate: desenho 1 (medido melhor assim)  # ref dada: dados lidos no próprio desenho (d218_dyn)
                 cp, cw = meas.measure_band(d, REF, meas.densify(cand, step, closed=closed), "#5c2e2e", 0.09, closed=closed,
                                            passes=(16.0, 10.0), smooth=SMOOTH)
                 sc = color_score(cp, "#5c2e2e", 55) if CEL != 1 else 0
@@ -232,7 +239,7 @@ if __name__ == "__main__":
     c2, l2 = measured_curves(CLOSED, closed=True)
     for name, (poly, w) in DIRECT.items():
         best = None
-        for cand in ([[tuple(p) for p in poly]] if name in RAW else [W(poly)]):  # escolha entre as duas piorou aqui (F1 −0,005)
+        for cand in ([[tuple(p) for p in poly]] if name in RAW else [W(poly)]):  # escolher pela tinta no centro piorou (F1 −0,002 a −0,005)
             cp = meas.densify(cand, 4)
             if name in SKIN_SIDE:  # encosta na pele: a borda da pele é nítida, ancora nela
                 cp = meas.edge_offset_line(d, REF0, cp, SKIN_SIDE[name], w / 2, search=16.0 if name == "queixo" else 10.0)

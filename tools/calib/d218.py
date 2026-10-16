@@ -43,7 +43,13 @@ def W(pts):
         for cx, cy, dx, dy, _ in _FIELD:
             w = 2.718281828 ** (-((x - cx) ** 2 + (y - cy) ** 2) / (2 * 60.0 ** 2)) + 1e-12
             ws += w; sx += w * dx; sy += w * dy
-        out.append((x + sx / ws, y + sy / ws))
+        nx, ny = x + sx / ws, y + sy / ws
+        # pontos na borda do quadro (ou além) continuam nela: a forma não pode descolar da borda
+        if x <= 0 or x >= 1919:
+            nx = x
+        if y <= 0 or y >= 1079:
+            ny = y
+        out.append((nx, ny))
     return out
 
 
@@ -80,11 +86,11 @@ def color_score(pts, color, tol):
     return ok / max(1, n)
 
 
-def candidates(poly):
-    """Estimativas a testar no desenho atual: a do desenho 1 e, nos redesenhos com campo, a levada pelo campo."""
+def candidates(poly, field_first=True):
+    """Estimativas a testar no desenho atual: nos redesenhos com campo, a levada pelo campo e a do desenho 1."""
     a = [tuple(p) for p in poly]
     b = W(poly)
-    return [a] if b == a else [a, b]
+    return [a] if b == a else ([b, a] if field_first else [a, b])  # empate fica com a primeira
 
 
 def ck(key):
