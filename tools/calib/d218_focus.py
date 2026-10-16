@@ -36,7 +36,7 @@ def tras(radius=12.0):
                                  "color": {"type": "direct", "rgba": [1, 1, 1, 1]}})
 
 
-def no_laco(radius=3.0):
+def no_laco(radius=0.3):  # desfoque desligado: na maioria dos quadros o nó tem borda detectável
     """O nó do laço tem bordas macias na referência (fora de foco): desfoque só nele, por máscara."""
     m = node("foco_no_mascara", "Máscara do nó", {"type": "layer", "kind": "raster"}, ids["cut"])
     node("foco_no_mascara_c1", "1", {"type": "cel", "number": 1}, m)
