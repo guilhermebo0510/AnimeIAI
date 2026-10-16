@@ -44,6 +44,12 @@ dependencies = [
 [[package]]
 name = "aiai-anim"
 version = "0.1.0"
+dependencies = [
+ "aiai-core",
+ "aiai-paint",
+ "schemars",
+ "serde",
+]
 
 [[package]]
 name = "aiai-audio"
@@ -54,8 +60,13 @@ name = "aiai-bridge"
 version = "0.1.0"
 dependencies = [
  "aiai-core",
+ "aiai-paint",
+ "aiai-render",
+ "aiai-tools",
+ "base64",
  "crossbeam-channel",
  "getrandom 0.3.4",
+ "image",
  "serde",
  "serde_json",
  "tempfile",
@@ -78,10 +89,26 @@ dependencies = [
 [[package]]
 name = "aiai-fx"
 version = "0.1.0"
+dependencies = [
+ "aiai-core",
+ "aiai-paint",
+ "rayon",
+ "schemars",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "aiai-guide3d"
 version = "0.1.0"
+dependencies = [
+ "aiai-core",
+ "aiai-paint",
+ "glam",
+ "schemars",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "aiai-mcp"
@@ -89,9 +116,12 @@ version = "0.1.0"
 dependencies = [
  "aiai-bridge",
  "aiai-core",
+ "aiai-paint",
+ "aiai-tools",
  "anyhow",
  "base64",
  "image",
+ "schemars",
  "serde",
  "serde_json",
  "tempfile",
@@ -123,6 +153,8 @@ dependencies = [
  "image",
  "lz4_flex",
  "rayon",
+ "schemars",
+ "serde",
  "thiserror 2.0.21",
 ]
 
@@ -131,6 +163,7 @@ name = "aiai-render"
 version = "0.1.0"
 dependencies = [
  "aiai-core",
+ "aiai-fx",
  "aiai-paint",
  "rayon",
  "serde",
@@ -142,15 +175,21 @@ dependencies = [
 name = "aiai-studio"
 version = "0.1.0"
 dependencies = [
+ "aiai-bridge",
+ "aiai-core",
  "anyhow",
+ "base64",
+ "crossbeam-channel",
  "eframe",
  "egui",
  "egui-wgpu",
  "egui_tiles",
  "image",
  "resvg",
+ "rfd",
  "serde",
  "serde_json",
+ "tempfile",
  "tracing",
  "tracing-subscriber",
  "wgpu",
@@ -161,7 +200,9 @@ dependencies = [
 name = "aiai-tools"
 version = "0.1.0"
 dependencies = [
+ "aiai-anim",
  "aiai-core",
+ "aiai-guide3d",
  "aiai-paint",
  "aiai-render",
  "schemars",
@@ -673,6 +714,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e0e367e4e7da84520dedcac1901e4da967309406d1e51017ae1abfb97adbd38"
 dependencies = [
  "bitflags 2.13.2",
+ "block2 0.6.2",
+ "libc",
  "objc2 0.6.5",
 ]
 
@@ -1088,6 +1131,15 @@ dependencies = [
  "khronos_api",
  "log",
  "xml-rs",
+]
+
+[[package]]
+name = "glam"
+version = "0.29.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8babf46d4c1c9d92deac9f7be466f76dfc4482b6452fc5024b5e8daf6ffeb3ee"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -1704,6 +1756,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d49e936b501e5c5bf01fda3a9452ff86dc3ea98ad5f283e1455153142d97518c"
 dependencies = [
  "bitflags 2.13.2",
+ "block2 0.6.2",
  "objc2 0.6.5",
  "objc2-core-graphics",
  "objc2-foundation 0.3.2",
@@ -2395,6 +2448,27 @@ dependencies = [
  "svgtypes",
  "tiny-skia",
  "usvg",
+]
+
+[[package]]
+name = "rfd"
+version = "0.15.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef2bee61e6cffa4635c72d7d81a84294e28f0930db0ddcb0f66d10244674ebed"
+dependencies = [
+ "block2 0.6.2",
+ "dispatch2",
+ "js-sys",
+ "log",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "raw-window-handle",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

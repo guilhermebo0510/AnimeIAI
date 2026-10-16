@@ -42,14 +42,14 @@ Comparação sempre entre o **render CPU determinístico** do app e o frame de r
 
 | Métrica | Mede | Aprovação por quadro |
 |---|---|---|
-| **FLIP** (NVIDIA ꟻLIP, média) | Diferença perceptual geral | ≤ 0,05 |
+| **FLIP** (NVIDIA ꟻLIP, média, PPD 67) | Diferença perceptual geral | ≤ piso de ruído do corte + 0,05 (decisão 20) |
 | **SSIM** (luma, janela gaussiana 11 px) | Estrutura/forma | ≥ 0,95 |
 | **ΔE2000** médio nas regiões chapadas (máscara de cel) | Cor da pintura | ≤ 5,0; e cada cor do settei do corte casa com a da referência com ΔE ≤ 3 |
 | **F1 de bordas** (mapa de linha extraído dos dois, tolerância de 2 px) | Traço: posição e cobertura das linhas | ≥ 0,95 |
-| **Espessura de linha** (distribuição da largura medida por transformada de distância) | Peso do traço | mediana dentro de ±5% |
+| **Espessura de linha** (largura por transformada de distância) | Peso do traço | média dentro de ±5% ou ≤ 0,3 px de diferença (decisão 21) |
 | **Timing** | Quadros em que o desenho muda; posição da câmera | Mapa de exposição idêntico (0 quadros de erro); erro de câmera ≤ 0,5% da largura do quadro |
 
-**Corte aprovado** quando ≥ 95% dos quadros passam em todas as métricas e nenhum quadro tem FLIP > 0,10. Um relatório por tentativa: `sprints/registro/calibracao/<corte>/<tentativa>/` com referência, render, mapa de diferença FLIP, overlay de bordas, tabela de números e a lista de comandos usados.
+**Corte aprovado** quando ≥ 95% dos quadros passam em todas as métricas e nenhum quadro tem FLIP > piso + 0,10. O piso de ruído é o FLIP entre dois quadros idênticos de uma mesma exposição do próprio corte (medido e registrado em cada relatório). Um relatório por tentativa: `sprints/registro/calibracao/<corte>/<tentativa>/` com referência, render, mapa de diferença FLIP, overlay de bordas, tabela de números e a lista de comandos usados.
 
 ### Áudio na calibração
 
