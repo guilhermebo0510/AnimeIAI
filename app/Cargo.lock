@@ -213,7 +213,9 @@ version = "0.1.0"
 dependencies = [
  "aiai-bridge",
  "aiai-core",
+ "aiai-paint",
  "aiai-render",
+ "aiai-tools",
  "anyhow",
  "base64",
  "crossbeam-channel",

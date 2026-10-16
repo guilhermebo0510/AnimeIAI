@@ -30,6 +30,8 @@ crossbeam-channel = { workspace = true }
 aiai-core = { workspace = true }
 aiai-render = { workspace = true }
 aiai-bridge = { workspace = true }
+aiai-paint = { workspace = true }
+aiai-tools = { workspace = true }
 # dialogos nativos de abrir/salvar pasta de projeto (Arquivo > Abrir/Salvar como)
 rfd = { version = "0.15", default-features = false }
 # Rasterizacao dos icones SVG. Sem as features padrao: nao precisamos de texto nem de imagens raster dentro dos SVGs

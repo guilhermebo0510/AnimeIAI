@@ -146,13 +146,71 @@ impl StudioApp {
                 "minimized": vp.minimized,
                 "title": self.window_title(),
             },
+            "editor": self.editor_state(ctx),
+            "notice": self.notice.as_ref().filter(|(_, at)| at.elapsed().as_secs() < 6).map(|(m, _)| m.clone()),
             "input_pending": self.input.pending(),
             "project": { "name": self.doc_name(), "path": self.core.path.as_ref().map(|p| p.display().to_string()), "revision": self.core.project.revision, "dirty": self.doc_dirty() },
         })
     }
 
+    /// Estado do editor para a bridge e para o harness de mouse real: corte/camada/quadro ativos, a transformação do canvas
+    /// (`origin_logical` = onde o pixel (0,0) do desenho cai na janela, `m` = pontos lógicos por pixel do desenho; some o
+    /// canto da área cliente em pixels físicos para chegar à tela), as camadas, a reprodução e as medidas de latência.
+    pub(crate) fn editor_state(&self, ctx: &egui::Context) -> Value {
+        use super::commands as cmds;
+        let ed = &self.ed;
+        let p = &self.core.project;
+        let ppp = ctx.pixels_per_point();
+        let canvas = ed.canvas_rect.map(|r| {
+            let xf = ed.view.xf(r, ppp);
+            let size = ed.cut.as_ref().map(|c| cmds::canvas_size(p, c)).unwrap_or((0, 0));
+            json!({
+                "rect_logical": rect4(r, 1.0),
+                "zoom": round(ed.view.zoom),
+                "rotation_deg": round(ed.view.rotation_deg()),
+                "flip": ed.view.flip,
+                "center": [round(ed.view.center.x), round(ed.view.center.y)],
+                "origin_logical": [round(xf.origin.x), round(xf.origin.y)],
+                "m": xf.m.iter().map(|v| round(*v)).collect::<Vec<_>>(),
+                "size": [size.0, size.1],
+                "shown_frame": ed.shown.as_ref().map(|s| s.rendered.key.frame),
+                "shown_counter": ed.shown.as_ref().map(|s| s.rendered.key.counter),
+            })
+        });
+        let layers: Vec<Value> = ed.cut.as_ref().map(|cut| {
+            cmds::layer_rows(p, cut).into_iter().filter_map(|r| {
+                let n = p.node(&r.id)?;
+                let l = cmds::layer_data(p, &r.id)?;
+                let cel = cmds::exposed_number(p, cut, &r.id, ed.frame);
+                Some(json!({ "id": r.id.0, "name": n.name, "kind": super::panels::layers::kind_id(l.kind), "depth": r.depth, "visible": l.visible, "locked": l.locked, "opacity": l.opacity, "exposed_cel": cel }))
+            }).collect()
+        }).unwrap_or_default();
+        let lat = |l: &super::editor::Latency| json!({ "label": l.label, "tool_ms": round(l.tool_ms), "render_ms": round(l.render_ms), "total_ms": round(l.total_ms) });
+        let o = &ed.opts;
+        let render = ed.render.as_ref().map(|r| json!({ "avg_ms": round(r.avg_ms), "renders_done": r.renders_done, "cached_bytes": r.cached_bytes(), "busy": r.busy(), "error": r.last_error.as_ref().map(|(_, m)| m.clone()), "warnings": self.ed.shown.as_ref().map(|s| s.rendered.warnings.clone()) }));
+        json!({
+            "cut": ed.cut.as_ref().map(|c| c.0.clone()),
+            "layer": ed.layer.as_ref().map(|c| c.0.clone()),
+            "frame": ed.frame,
+            "cel_number": ed.cel_number,
+            "color": cmds::resolve_color(p, &ed.color).to_hex(),
+            "canvas": canvas,
+            "layers": layers,
+            "playback": { "playing": ed.playback.playing, "fps_real": round(ed.playback.fps_real), "looping": ed.playback.looping, "loop_in": ed.playback.loop_in, "loop_out": ed.playback.loop_out },
+            "latency": ed.latency.as_ref().map(lat),
+            "latency_log": ed.latency_log.iter().map(lat).collect::<Vec<_>>(),
+            "selection": ed.selection.as_ref().map(|s| json!({ "whole": s.whole, "offset": [round(s.offset.x), round(s.offset.y)], "rect": s.rect_of() })),
+            "gesture_active": !matches!(ed.gesture, super::editor::Gesture::None),
+            "ghosts": ed.ghosts.len(),
+            "tool_options": json!({ "pen_width": o.pen_width, "brush_size": o.brush_size, "brush_opacity": o.brush_opacity, "eraser_size": o.eraser_size, "fill_gap": o.fill_gap, "fill_expand": o.fill_expand }),
+            "timeline": { "cell_w": ed.tl_cell_w, "scroll": [round(ed.tl_scroll.x), round(ed.tl_scroll.y)], "header_w": super::panels::timeline::HEADER_W, "ruler_h": super::panels::timeline::RULER_H, "row_h": super::panels::timeline::ROW_H },
+            "render": render,
+        })
+    }
+
     /// `UI_ACTION {action, ...}`: set_workspace {workspace}, select_tool {tool}, toggle_panel {panel, visible?},
-    /// set_theme {theme: light|dark}, set_language {language: pt|en}, open_dialog/close_dialog {dialog: about|prefs}.
+    /// set_theme {theme: light|dark}, set_language {language: pt|en}, open_dialog/close_dialog {dialog: about|prefs},
+    /// select_layer {layer}, select_cut {cut}, set_frame {frame}, set_color {color}, fit_view.
     /// Apelidos aceitos: set_tool = select_tool; open_panel = toggle_panel com visible=true.
     pub(crate) fn bridge_ui_action(&mut self, ctx: &egui::Context, params: &Value) -> BridgeResult {
         let m = as_obj(params)?;
@@ -170,6 +228,41 @@ impl StudioApp {
                 let t = ToolId::from_key(key).ok_or_else(|| BridgeError::invalid_params(format!("ferramenta desconhecida: {key}; válidas: {}", ToolId::ALL.map(|t| t.key()).join(", "))))?;
                 self.tool = t;
                 json!({ "active_tool": self.tool.key() })
+            }
+            "select_layer" => {
+                let id = text(&m, &["layer", "id", "value"]).ok_or_else(|| BridgeError::invalid_params("select_layer exige 'layer' (id)"))?;
+                let id = aiai_core::Id(id.to_string());
+                if super::commands::layer_data(&self.core.project, &id).is_none() {
+                    return Err(BridgeError::invalid_params(format!("camada desconhecida: {id}")));
+                }
+                self.ed.layer = Some(id.clone());
+                self.ed.cel_number = None;
+                json!({ "layer": id.0 })
+            }
+            "select_cut" => {
+                let id = text(&m, &["cut", "id", "value"]).ok_or_else(|| BridgeError::invalid_params("select_cut exige 'cut' (id)"))?;
+                let id = aiai_core::Id(id.to_string());
+                if !super::commands::is_cut(&self.core.project, &id) {
+                    return Err(BridgeError::invalid_params(format!("corte desconhecido: {id}")));
+                }
+                self.ed.set_cut(id.clone());
+                json!({ "cut": id.0 })
+            }
+            "set_frame" => {
+                let f = m.get("frame").and_then(Value::as_u64).ok_or_else(|| BridgeError::invalid_params("set_frame exige 'frame' (inteiro, 0-based)"))?;
+                self.ed.playback.playing = false;
+                self.ed.frame = f as u32;
+                json!({ "frame": self.ed.frame })
+            }
+            "set_color" => {
+                let hex = text(&m, &["color", "value"]).ok_or_else(|| BridgeError::invalid_params("set_color exige 'color' (#rrggbb)"))?;
+                let c = aiai_core::Rgba::from_hex(hex).ok_or_else(|| BridgeError::invalid_params(format!("cor inválida: {hex}")))?;
+                self.ed.set_color_direct(c);
+                json!({ "color": c.to_hex() })
+            }
+            "fit_view" => {
+                self.ed.fit_pending = true;
+                json!({ "fit": true })
             }
             "toggle_panel" | "open_panel" => {
                 let key = text(&m, &["panel", "value"]).ok_or_else(|| BridgeError::invalid_params("toggle_panel exige 'panel'"))?;
@@ -210,7 +303,7 @@ impl StudioApp {
             }
             other => {
                 return Err(BridgeError::invalid_params(format!(
-                    "UI_ACTION desconhecida: {other}; use set_workspace, select_tool, toggle_panel, set_theme, set_language, open_dialog, close_dialog"
+                    "UI_ACTION desconhecida: {other}; use set_workspace, select_tool, toggle_panel, set_theme, set_language, open_dialog, close_dialog, select_layer, select_cut, set_frame, set_color, fit_view"
                 )));
             }
         };

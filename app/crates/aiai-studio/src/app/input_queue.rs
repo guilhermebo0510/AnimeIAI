@@ -51,6 +51,8 @@ pub(crate) struct InputQueue {
     wait: u32,
     /// Quadros em que algo foi injetado (diagnóstico).
     pub(crate) injected_frames: u64,
+    /// Modificadores atuais do teclado injetado (para emitir `ModifiersChanged` só quando mudam).
+    mods: Modifiers,
 }
 
 impl InputQueue {
@@ -98,6 +100,21 @@ impl InputQueue {
         }
         if raw.events.len() > before {
             self.injected_frames += 1;
+            // o estado de modificadores acompanha o que os eventos injetados declaram (o egui 0.36 lê `ModifiersChanged`)
+            let fresh: Vec<Event> = raw.events.drain(before..).collect();
+            for e in fresh {
+                let em = match &e {
+                    Event::PointerButton { modifiers, .. } | Event::MouseWheel { modifiers, .. } | Event::Key { modifiers, .. } => Some(*modifiers),
+                    _ => None,
+                };
+                if let Some(em) = em {
+                    if em != self.mods {
+                        raw.events.push(Event::ModifiersChanged(em));
+                        self.mods = em;
+                    }
+                }
+                raw.events.push(e);
+            }
         }
     }
 }
@@ -294,9 +311,11 @@ mod tests {
             {"kind":"wait","frames":3},
             {"kind":"text","text":"olá"},
             {"kind":"wheel","dx":0,"dy":-40}]));
-        let n: usize = f.iter().map(Vec::len).sum();
+        let n: usize = f.iter().flatten().filter(|e| !matches!(e, Event::ModifiersChanged(_))).count();
         assert_eq!(n, 4, "press, release, texto, roda: {f:?}");
-        assert!(matches!(&f[0][0], Event::Key { key: egui::Key::Z, pressed: true, modifiers, .. } if modifiers.ctrl && modifiers.command));
+        assert!(matches!(&f[0][0], Event::ModifiersChanged(m) if m.ctrl && m.command), "o estado dos modificadores muda antes da tecla: {f:?}");
+        assert!(matches!(&f[0][1], Event::Key { key: egui::Key::Z, pressed: true, modifiers, .. } if modifiers.ctrl && modifiers.command));
+        assert!(f.iter().flatten().any(|e| matches!(e, Event::ModifiersChanged(m) if *m == egui::Modifiers::NONE)), "e volta a nenhum depois");
         assert!(f.iter().flatten().any(|e| matches!(e, Event::Text(t) if t == "olá")));
         assert!(f.iter().flatten().any(|e| matches!(e, Event::MouseWheel { delta, .. } if *delta == Vec2::new(0.0, -40.0))));
     }

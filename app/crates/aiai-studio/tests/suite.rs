@@ -65,6 +65,86 @@ impl Client {
         let (x, y) = self.center(name);
         self.click(x, y);
     }
+
+    fn input(&self, events: Value) {
+        let d = self.ok("INPUT", json!({ "wait": true, "events": events }));
+        assert_eq!(d["done"], true);
+    }
+
+    /// Ponto do desenho (pixels do canvas) -> pontos lógicos da janela, pela matriz que o app publica.
+    fn canvas_pt(&self, x: f64, y: f64) -> (f64, f64) {
+        let st = self.state();
+        let c = &st["editor"]["canvas"];
+        let o = (c["origin_logical"][0].as_f64().unwrap(), c["origin_logical"][1].as_f64().unwrap());
+        let m: Vec<f64> = c["m"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+        (o.0 + m[0] * x + m[1] * y, o.1 + m[2] * x + m[3] * y)
+    }
+
+    /// Arrasto pelo caminho (pontos do desenho), botão apertado o tempo todo; `pen` = caneta com pressão.
+    fn drag_canvas(&self, path: &[(f64, f64)], pen: bool) {
+        // como um mouse de verdade: amostras a cada ~4 px do desenho ao longo do caminho
+        let mut dense: Vec<(f64, f64)> = vec![path[0]];
+        for w in path.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            let n = (((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt() / 4.0).ceil().max(1.0) as usize;
+            for i in 1..=n {
+                dense.push((a.0 + (b.0 - a.0) * i as f64 / n as f64, a.1 + (b.1 - a.1) * i as f64 / n as f64));
+            }
+        }
+        let pts: Vec<(f64, f64)> = dense.iter().map(|(x, y)| self.canvas_pt(*x, *y)).collect();
+        let mut ev = vec![json!({"kind": "mouse_move", "x": pts[0].0, "y": pts[0].1}), json!({"kind": "wait", "frames": 1})];
+        if pen {
+            ev.push(json!({"kind": "pen", "x": pts[0].0, "y": pts[0].1, "pressure": 0.7, "phase": "down"}));
+            for p in &pts[1..] {
+                ev.push(json!({"kind": "pen", "x": p.0, "y": p.1, "pressure": 0.7, "phase": "move"}));
+            }
+            let l = pts.last().unwrap();
+            ev.push(json!({"kind": "pen", "x": l.0, "y": l.1, "pressure": 0.7, "phase": "up"}));
+        } else {
+            ev.push(json!({"kind": "mouse_down", "x": pts[0].0, "y": pts[0].1, "button": "primary"}));
+            for p in &pts[1..] {
+                ev.push(json!({"kind": "mouse_move", "x": p.0, "y": p.1}));
+            }
+            let l = pts.last().unwrap();
+            ev.push(json!({"kind": "mouse_up", "x": l.0, "y": l.1, "button": "primary"}));
+        }
+        ev.push(json!({"kind": "wait", "frames": 2}));
+        self.input(Value::Array(ev));
+    }
+
+    fn click_canvas(&self, x: f64, y: f64) {
+        let (lx, ly) = self.canvas_pt(x, y);
+        self.click(lx, ly);
+    }
+
+    fn latency_count(&self) -> usize {
+        self.state()["editor"]["latency_log"].as_array().map(|a| a.len()).unwrap_or(0)
+    }
+
+    /// Espera o canvas mostrar o documento depois de uma edição (a medida de latência fecha quando a textura nova chega).
+    fn wait_canvas(&self, before: usize) {
+        let t0 = Instant::now();
+        while self.latency_count() <= before {
+            assert!(t0.elapsed() < Duration::from_secs(20), "o canvas não atualizou depois da edição: {}", self.state()["editor"]["render"]);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn render_px(&self, cut: &str, frame: u32, x: usize, y: usize) -> [u8; 4] {
+        use base64::Engine as _;
+        let r = self.ok("RENDER", json!({"cut": cut, "frame": frame, "inline": true}));
+        let png = base64::engine::general_purpose::STANDARD.decode(r["png_base64"].as_str().unwrap()).unwrap();
+        image::load_from_memory(&png).unwrap().to_rgba8().get_pixel(x as u32, y as u32).0
+    }
+
+    fn strokes(&self, cel: &str) -> Vec<Value> {
+        self.node(cel)["strokes"].as_array().cloned().unwrap_or_default()
+    }
+
+    /// Dados de um nó (sem o envelope com id/pai/proveniência).
+    fn node(&self, id: &str) -> Value {
+        self.ok("QUERY", json!({"query": {"kind": "node", "id": id}}))["data"].clone()
+    }
 }
 
 fn create_node(name: &str, parent: Option<&str>, data: Value) -> Value {
@@ -132,7 +212,7 @@ fn script(c: &Client) {
     assert_eq!(c.err_code("SCREENSHOT", json!({"region": [1, 2, 3]})), -32602);
     assert_eq!(c.err_code("SCREENSHOT", json!({"panel": "nao-existe"})), -32602);
     assert_eq!(c.err_code("SCREENSHOT", json!({"out": "relativo.png"})), -32602);
-    assert_eq!(c.err_code("COMPARE", json!({})), -32000, "COMPARE ainda não existe: erro claro");
+    assert_eq!(c.err_code("COMPARE", json!({})), -32602, "COMPARE existe (S21) e valida os parâmetros");
     assert_eq!(c.err_code("VOAR", json!({})), -32601);
 
     // --- documento pela bridge: aparece no app (sujo, título com *, status) e os atalhos/menus desfazem
@@ -196,6 +276,221 @@ fn script(c: &Client) {
     assert_eq!(image::load_from_memory(&png).unwrap().to_rgba8().get_pixel(80, 45).0[3], 0, "sem o gradiente o quadro é transparente");
 }
 
+/// O editor de verdade pelo caminho do usuário: projeto, camadas, caneta (com pressão), balde, pincel, borracha, mover,
+/// conta-gotas, visibilidade, desfazer, zoom/pan e linha do tempo — tudo conferido pelo documento e pelo render.
+fn editor_script(c: &Client) {
+    c.ok("NEW_PROJECT", json!({"name": "editor", "settings": {"width": 320, "height": 180}}));
+    c.ok("UI_ACTION", json!({"action": "set_workspace", "workspace": "animacao"}));
+    // projeto vazio: o painel Projeto oferece começar com episódio, cena e corte (um passo de undo)
+    c.click_widget("project:quick_start");
+    let cut = c.state()["editor"]["cut"].as_str().expect("corte ativo depois de começar").to_string();
+    assert_eq!(c.ok("GET_STATUS", json!({}))["undo_steps"], 1, "começar = um passo");
+
+    // menu de nova camada: vetor, preenchimento, raster (cada uma entra acima da ativa)
+    for kind in ["vector", "fill", "raster"] {
+        c.click_widget("layers:add");
+        c.click_widget(&format!("layers:add.{kind}"));
+    }
+    let st = c.state();
+    let kinds: Vec<&str> = st["editor"]["layers"].as_array().unwrap().iter().map(|l| l["kind"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["raster", "fill", "vector"], "{kinds:?}");
+    let id_of = |st: &Value, i: usize| st["editor"]["layers"][i]["id"].as_str().unwrap().to_string();
+    let (fill, vector) = (id_of(&st, 1), id_of(&st, 2));
+    let cel_of = |layer: &str, nth: usize| c.ok("QUERY", json!({"query": {"kind": "tree", "id": layer}}))["children"][nth]["id"].as_str().unwrap().to_string();
+
+    // caneta: um quadrado fechado por arrasto (caneta com pressão 0,7); o traço cai onde o cursor passou
+    c.click_widget("layers:row:2");
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "pen"}));
+    let n = c.latency_count();
+    let square = [(80.0, 40.0), (160.0, 40.0), (240.0, 40.0), (240.0, 90.0), (240.0, 140.0), (160.0, 140.0), (80.0, 140.0), (80.0, 90.0), (80.0, 40.0)];
+    c.drag_canvas(&square, true);
+    c.wait_canvas(n);
+    let vcel = cel_of(&vector, 0);
+    let node = c.node(&vcel);
+    let strokes = node["strokes"].as_array().unwrap_or_else(|| panic!("o cel não tem traços: {node} (editor: {})", c.state()["editor"]));
+    assert_eq!(strokes.len(), 1, "um arrasto = um traço");
+    let pts = strokes[0]["points"].as_array().unwrap();
+    let (fx, fy) = (pts[0]["x"].as_f64().unwrap(), pts[0]["y"].as_f64().unwrap());
+    assert!((fx - 80.0).abs() < 1.0 && (fy - 40.0).abs() < 1.0, "o traço começa onde o cursor apertou: ({fx}, {fy})");
+    let xs: Vec<f64> = pts.iter().map(|p| p["x"].as_f64().unwrap()).collect();
+    assert!(xs.iter().cloned().fold(f64::MIN, f64::max) > 236.0, "e vai até o outro lado do quadrado");
+    assert!(pts.iter().any(|p| (p["pressure"].as_f64().unwrap() - 0.7).abs() < 0.01), "a pressão da caneta entra nas amostras");
+    assert!(c.render_px(&cut, 0, 160, 40)[3] > 0, "o render mostra a linha");
+    assert_eq!(c.render_px(&cut, 0, 160, 90)[3], 0, "dentro do quadrado ainda é transparente");
+
+    // balde: cor vermelha, clique dentro do quadrado, vai para a camada de preenchimento ligada à linha
+    c.ok("UI_ACTION", json!({"action": "set_color", "color": "#ff0000"}));
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "fill"}));
+    let n = c.latency_count();
+    c.click_canvas(160.0, 90.0);
+    c.wait_canvas(n);
+    assert_eq!(c.render_px(&cut, 0, 160, 90), [255, 0, 0, 255], "o balde pintou o interior de vermelho");
+    assert_eq!(c.render_px(&cut, 0, 20, 20)[3], 0, "fora do quadrado nada muda");
+    let fcel = cel_of(&fill, 0);
+    assert_eq!(c.node(&fcel)["fills"].as_array().unwrap().len(), 1);
+
+    // conta-gotas: troca a cor e copia do canvas
+    c.ok("UI_ACTION", json!({"action": "set_color", "color": "#00ff00"}));
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "eyedropper"}));
+    c.click_canvas(160.0, 90.0);
+    assert_eq!(c.state()["editor"]["color"], "#ff0000ff", "o conta-gotas amostrou o vermelho renderizado");
+
+    // pincel raster: cor azul, traço fora do quadrado
+    c.ok("UI_ACTION", json!({"action": "set_color", "color": "#0000ff"}));
+    c.click_widget("layers:row:0");
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "brush"}));
+    let n = c.latency_count();
+    c.drag_canvas(&[(20.0, 160.0), (40.0, 162.0), (60.0, 160.0), (90.0, 164.0)], false);
+    c.wait_canvas(n);
+    let px = c.render_px(&cut, 0, 40, 162);
+    assert!(px[3] > 200 && px[2] > 200 && px[0] < 60, "pincel azul no raster: {px:?}");
+
+    // visibilidade: o olho da camada de preenchimento some com o vermelho e volta
+    c.click_widget("layers:eye:1");
+    assert_eq!(c.render_px(&cut, 0, 160, 90)[3], 0, "camada oculta não aparece no render");
+    c.click_widget("layers:eye:1");
+    assert_eq!(c.render_px(&cut, 0, 160, 90), [255, 0, 0, 255]);
+
+    // desfazer/refazer pelo teclado: o pincel some e volta
+    let rev = c.ok("GET_STATUS", json!({}))["revision"].as_u64().unwrap();
+    c.input(json!([{"kind": "key", "key": "Z", "modifiers": ["ctrl"]}, {"kind": "wait", "frames": 2}]));
+    c.click_widget("layers:eye:1");
+    c.click_widget("layers:eye:1");
+    c.input(json!([{"kind": "key", "key": "z", "modifiers": ["ctrl", "shift"]}, {"kind": "wait", "frames": 2}]));
+    assert!(c.ok("GET_STATUS", json!({}))["revision"].as_u64().unwrap() > rev);
+
+    // borracha vetorial: atravessa o lado de cima do quadrado; some o traço inteiro; um passo de undo
+    c.click_widget("layers:row:2");
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "eraser"}));
+    c.drag_canvas(&[(160.0, 30.0), (160.0, 50.0)], false);
+    let t0 = Instant::now();
+    while !c.strokes(&vcel).is_empty() {
+        assert!(t0.elapsed() < Duration::from_secs(10), "a borracha não apagou");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    c.input(json!([{"kind": "key", "key": "Z", "modifiers": ["ctrl"]}, {"kind": "wait", "frames": 2}]));
+    assert_eq!(c.strokes(&vcel).len(), 1, "Ctrl+Z devolve o traço apagado");
+
+    // selecionar (retângulo) + mover (Enter aplica): o traço anda 30 px para a direita
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "lasso"}));
+    c.drag_canvas(&[(60.0, 20.0), (260.0, 160.0)], false);
+    assert!(c.state()["editor"]["selection"].is_object(), "seleção criada");
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "move"}));
+    c.drag_canvas(&[(100.0, 60.0), (115.0, 60.0), (130.0, 60.0)], false);
+    let sel = c.state()["editor"]["selection"].clone();
+    assert!((sel["offset"][0].as_f64().unwrap() - 30.0).abs() < 1.5, "deslocamento pendente ~30: {sel}");
+    assert!((c.node(&vcel)["strokes"][0]["points"][0]["x"].as_f64().unwrap() - 80.0).abs() < 1.0, "nada muda antes do Enter");
+    c.input(json!([{"kind": "key", "key": "Enter"}, {"kind": "wait", "frames": 3}]));
+    let moved = c.node(&vcel)["strokes"][0]["points"][0]["x"].as_f64().unwrap();
+    assert!((moved - 110.0).abs() < 1.5, "Enter aplicou o movimento: x = {moved}");
+    c.input(json!([{"kind": "key", "key": "Z", "modifiers": ["ctrl"]}, {"kind": "wait", "frames": 2}]));
+    assert!((c.node(&vcel)["strokes"][0]["points"][0]["x"].as_f64().unwrap() - 80.0).abs() < 1.0, "um Ctrl+Z desfaz o mover");
+    c.input(json!([{"kind": "key", "key": "Escape"}, {"kind": "wait", "frames": 2}]));
+    assert!(c.state()["editor"]["selection"].is_null(), "Esc limpa a seleção");
+
+    // zoom pela roda ancorado no cursor e pan com o botão do meio / espaço
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "pen"}));
+    let before = c.state()["editor"]["canvas"].clone();
+    let (ax, ay) = c.canvas_pt(100.0, 60.0);
+    c.input(json!([{"kind": "mouse_move", "x": ax, "y": ay}, {"kind": "wheel", "dx": 0.0, "dy": 50.0}, {"kind": "wait", "frames": 2}]));
+    let after = c.state()["editor"]["canvas"].clone();
+    assert!(after["zoom"].as_f64().unwrap() > before["zoom"].as_f64().unwrap() * 1.05, "a roda aproximou: {} -> {}", before["zoom"], after["zoom"]);
+    let (ax2, ay2) = c.canvas_pt(100.0, 60.0);
+    assert!((ax2 - ax).abs() < 1.5 && (ay2 - ay).abs() < 1.5, "o ponto sob o cursor ficou parado: ({ax}, {ay}) -> ({ax2}, {ay2})");
+    c.input(json!([
+        {"kind": "mouse_move", "x": ax, "y": ay},
+        {"kind": "mouse_down", "x": ax, "y": ay, "button": "middle"},
+        {"kind": "mouse_move", "x": ax + 40.0, "y": ay + 20.0},
+        {"kind": "mouse_up", "x": ax + 40.0, "y": ay + 20.0, "button": "middle"},
+        {"kind": "wait", "frames": 2}
+    ]));
+    let (bx, by) = c.canvas_pt(100.0, 60.0);
+    assert!((bx - ax - 40.0).abs() < 1.5 && (by - ay - 20.0).abs() < 1.5, "pan pelo botão do meio: ({ax}, {ay}) -> ({bx}, {by})");
+    c.input(json!([
+        {"kind": "key", "key": "Space", "pressed": true},
+        {"kind": "mouse_move", "x": bx, "y": by},
+        {"kind": "mouse_down", "x": bx, "y": by, "button": "primary"},
+        {"kind": "mouse_move", "x": bx - 30.0, "y": by},
+        {"kind": "mouse_up", "x": bx - 30.0, "y": by, "button": "primary"},
+        {"kind": "key", "key": "Space", "pressed": false},
+        {"kind": "wait", "frames": 2}
+    ]));
+    let (cx, _) = c.canvas_pt(100.0, 60.0);
+    assert!((cx - bx + 30.0).abs() < 1.5, "pan com espaço + arrastar: {bx} -> {cx}");
+    assert_eq!(c.strokes(&vcel).len(), 1, "pan não desenha");
+    c.click_widget("canvas:fit");
+    assert!(c.state()["editor"]["canvas"]["zoom"].as_f64().unwrap() < after["zoom"].as_f64().unwrap(), "Ajustar volta ao enquadramento");
+    c.click_widget("canvas:flip");
+    assert_eq!(c.state()["editor"]["canvas"]["flip"], true);
+    // com a visão espelhada o traço ainda cai onde o cursor passa
+    let n = c.latency_count();
+    c.drag_canvas(&[(100.0, 70.0), (140.0, 75.0), (180.0, 70.0)], false);
+    c.wait_canvas(n);
+    let node = c.node(&vcel);
+    let all = node["strokes"].as_array().unwrap();
+    assert_eq!(all.len(), 2);
+    let first = &all[1]["points"][0];
+    assert!((first["x"].as_f64().unwrap() - 100.0).abs() < 1.5 && (first["y"].as_f64().unwrap() - 70.0).abs() < 1.5, "o espelho da visão não desalinha o traço: {first}");
+    c.click_widget("canvas:flip");
+    c.input(json!([{"kind": "key", "key": "Z", "modifiers": ["ctrl"]}, {"kind": "wait", "frames": 2}]));
+    assert_eq!(c.strokes(&vcel).len(), 1);
+
+    // timeline: quadro pela régua, 2º cel na lista de cels, exposição por clique na célula, desenhar no cel certo, scrub
+    c.click_widget("timeline:step_forward");
+    assert_eq!(c.state()["editor"]["frame"], 1);
+    let ui = c.state();
+    let area = ui["widgets"]["timeline:area"]["rect_logical"].clone();
+    let (cell_w, hdr) = (ui["editor"]["timeline"]["cell_w"].as_f64().unwrap(), ui["editor"]["timeline"]["header_w"].as_f64().unwrap());
+    let frame_x = |f: f64| area[0].as_f64().unwrap() + hdr + (f + 0.5) * cell_w;
+    let ruler_y = area[1].as_f64().unwrap() + 8.0;
+    c.click(frame_x(5.0), ruler_y);
+    assert_eq!(c.state()["editor"]["frame"], 5, "clicar na régua leva o cabeçote");
+    c.click_widget("layers:row:2");
+    c.click_widget("cels:add");
+    assert_eq!(c.state()["editor"]["cel_number"], 2);
+    let row = c.state()["widgets"]["timeline:row:2"]["rect_logical"].clone();
+    let (rx, ry) = (frame_x(6.0), row[1].as_f64().unwrap() + row[3].as_f64().unwrap() / 2.0);
+    c.click(rx, ry);
+    let ex = |f: u32| c.ok("QUERY", json!({"query": {"kind": "exposure", "cut": cut, "frame": f}})).to_string();
+    let cel2 = cel_of(&vector, 1);
+    assert!(ex(6).contains(&cel2), "o quadro 6 expõe o cel 2: {}", ex(6));
+    assert!(ex(5).contains(&vcel), "o quadro 5 continua no cel 1: {}", ex(5));
+    // desenhar no quadro 7 vai para o cel 2
+    c.click(frame_x(7.0), ruler_y);
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "pen"}));
+    let n = c.latency_count();
+    c.drag_canvas(&[(120.0, 100.0), (160.0, 110.0), (200.0, 100.0)], false);
+    c.wait_canvas(n);
+    assert_eq!(c.strokes(&cel2).len(), 1, "o traço do quadro 7 entrou no cel 2");
+    // scrub: o render do quadro 7 tem o traço novo; o do quadro 1 não
+    assert!(c.render_px(&cut, 7, 160, 110)[3] > 0 && c.render_px(&cut, 1, 160, 110)[3] == 0);
+    // Ctrl+clique = Segurar: remove a mudança do quadro 6 (volta ao cel 1)
+    c.input(json!([
+        {"kind": "mouse_move", "x": rx, "y": ry},
+        {"kind": "mouse_down", "x": rx, "y": ry, "button": "primary", "modifiers": ["ctrl"]},
+        {"kind": "mouse_up", "x": rx, "y": ry, "button": "primary", "modifiers": ["ctrl"]},
+        {"kind": "wait", "frames": 2}
+    ]));
+    assert!(ex(6).contains(&vcel), "Segurar removeu a mudança do quadro 6: {}", ex(6));
+
+    // reprodução: toca na taxa do projeto, o quadro avança e pausa
+    c.click_widget("timeline:step_back");
+    c.click_widget("timeline:play");
+    assert_eq!(c.state()["editor"]["playback"]["playing"], true);
+    std::thread::sleep(Duration::from_millis(700));
+    let f_play = c.state()["editor"]["frame"].as_u64().unwrap();
+    assert!(f_play >= 3, "o cabeçote andou na reprodução: {f_play}");
+    c.click_widget("timeline:play");
+    assert_eq!(c.state()["editor"]["playback"]["playing"], false);
+
+    // idioma e tema não quebram os painéis novos
+    c.ok("UI_ACTION", json!({"action": "set_language", "language": "en"}));
+    c.ok("UI_ACTION", json!({"action": "set_theme", "theme": "light"}));
+    assert_eq!(c.state()["editor"]["layers"].as_array().unwrap().len(), 3);
+    c.ok("UI_ACTION", json!({"action": "set_language", "language": "pt"}));
+    c.ok("UI_ACTION", json!({"action": "set_theme", "theme": "dark"}));
+}
+
 #[test]
 fn the_app_serves_the_bridge_and_reacts_to_real_egui_input() {
     let dir = tempfile::tempdir().unwrap();
@@ -215,7 +510,10 @@ fn the_app_serves_the_bridge_and_reacts_to_real_egui_input() {
     let done = Arc::new(AtomicBool::new(false));
     let done2 = Arc::clone(&done);
     let worker = std::thread::spawn(move || {
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| script(&client)));
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            script(&client);
+            editor_script(&client);
+        }));
         done2.store(true, Ordering::SeqCst);
         r
     });

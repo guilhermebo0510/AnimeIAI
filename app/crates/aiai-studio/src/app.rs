@@ -3,12 +3,20 @@
 //! mecanismo de screenshot (`--screenshot`).
 //!
 //! Submódulos: `doc` (documento, arquivo, desfazer, atalhos), `bridge_host` (ações da bridge), `input_queue` (entrada
-//! sintética), `ui_state` (retângulos, GET_UI_STATE, UI_ACTION).
+//! sintética), `ui_state` (retângulos, GET_UI_STATE, UI_ACTION), e o editor: `editor` (estado), `commands` (comandos do
+//! documento), `render_service` (render em segundo plano), `canvas`, `tools` (ferramentas) e `panels` (Projeto, Camadas,
+//! Cores, Linha do tempo, Propriedades).
 
 mod bridge_host;
+mod canvas;
+mod commands;
 pub(crate) mod doc;
+mod editor;
 mod input_queue;
-mod preview;
+mod panels;
+mod render_service;
+mod tools;
+mod ui_kit;
 mod ui_state;
 
 use crate::brand;
@@ -51,7 +59,7 @@ pub struct StudioApp {
     bridge: Option<bridge_host::BridgeHost>,
     input: input_queue::InputQueue,
     rects: ui_state::UiRects,
-    preview: preview::CutPreview,
+    ed: editor::Editor,
     dialog: Option<doc::DialogJob>,
     confirm: Option<doc::Pending>,
     notice: Option<(String, Instant)>,
@@ -113,7 +121,7 @@ impl StudioApp {
             bridge,
             input: input_queue::InputQueue::default(),
             rects: ui_state::UiRects::default(),
-            preview: preview::CutPreview::default(),
+            ed: editor::Editor::default(),
             dialog: None,
             confirm: None,
             notice: None,
@@ -509,16 +517,28 @@ impl StudioApp {
         let ws = self.ws;
         let tree = self.trees.entry(ws).or_insert_with(|| layout::default_tree(ws));
         let mut notes: Vec<(String, Rect)> = Vec::new();
-        let s = &self.core.project.settings;
-        let camera = (s.width.max(1) as f32, s.height.max(1) as f32);
-        let preview = self.preview.texture().map(|t| (t.id(), t.size_vec2()));
-        let mut behavior = DockBehavior { t, script: &mut self.script, in_tabs: layout::panes_in_tabs(tree), notes: &mut notes, camera, preview };
+        let env = ui_kit::Env { t, core: &mut self.core, ed: &mut self.ed, icons: &mut self.icons, notes: &mut notes, tool: &mut self.tool };
+        let mut behavior = DockBehavior { t, script: &mut self.script, in_tabs: layout::panes_in_tabs(tree), env };
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.bg_frame).inner_margin(egui::Margin::same(CARD_GAP as i8))).show(ui, |ui| {
             tree.ui(&mut behavior, ui);
         });
         for (name, rect) in notes {
             self.rects.note(name, rect);
         }
+        if let Some(msg) = self.ed.toast.take() {
+            self.notice(msg);
+        }
+    }
+
+    /// Atalhos do editor (ferramentas, tamanho do pincel, Enter/Esc do mover, quadros, ajustar visão).
+    fn editor_shortcuts(&mut self, ctx: &egui::Context) {
+        if !(self.ws.has_canvas() || matches!(self.ws, WorkspaceId::Storyboard | WorkspaceId::Audio | WorkspaceId::Edicao)) {
+            return;
+        }
+        let t = self.tokens();
+        let mut notes = Vec::new();
+        let mut env = ui_kit::Env { t, core: &mut self.core, ed: &mut self.ed, icons: &mut self.icons, notes: &mut notes, tool: &mut self.tool };
+        tools::shortcuts(ctx, &mut env);
     }
 
     // ------------------------------------------------------------------------------------------ diálogos
@@ -655,7 +675,8 @@ impl StudioApp {
         let ctx = ui.ctx().clone();
         self.sample_frame(&ctx);
         self.bridge_tick(&ctx);
-        self.preview.update(&ctx, &self.core);
+        panels::timeline::tick(&self.core, &mut self.ed, &ctx);
+        self.editor_shortcuts(&ctx);
         self.poll_dialog(&ctx);
         self.doc_shortcuts(&ctx);
         self.handle_close_request(&ctx);
@@ -721,12 +742,8 @@ struct DockBehavior<'a> {
     t: Tokens,
     script: &'a mut String,
     in_tabs: HashSet<TileId>,
-    /// Retângulos dos painéis/elementos desenhados neste quadro (vão para o `GET_UI_STATE`).
-    notes: &'a mut Vec<(String, Rect)>,
-    /// Tamanho do quadro de câmera do projeto (pixels).
-    camera: (f32, f32),
-    /// Render do primeiro corte (textura + tamanho em pixels), se já houver.
-    preview: Option<(egui::TextureId, egui::Vec2)>,
+    /// Documento, estado do editor, ícones e os retângulos desenhados neste quadro (vão para o `GET_UI_STATE`).
+    env: ui_kit::Env<'a>,
 }
 
 impl DockBehavior<'_> {
@@ -757,38 +774,6 @@ impl DockBehavior<'_> {
         ui.painter().with_clip_rect(body).galley(pos, galley, self.t.text_dim);
     }
 
-    /// Canvas: mesa neutra e o quadro de câmera do projeto, centralizado e escalado; com um corte no documento mostra o render
-    /// real do quadro 0 (a mesma imagem do `RENDER` da bridge); sem corte, o contorno vazio.
-    fn canvas(&mut self, ui: &egui::Ui, body: Rect) {
-        let p = ui.painter().with_clip_rect(body);
-        p.rect_filled(body, CornerRadius { nw: 0, ne: 0, sw: CARD_RADIUS, se: CARD_RADIUS }, self.t.canvas_bg);
-        let avail = body.shrink(28.0);
-        if avail.width() < 60.0 || avail.height() < 40.0 {
-            return;
-        }
-        let (cw, ch) = self.preview.map(|(_, s)| (s.x, s.y)).unwrap_or(self.camera);
-        let scale = (avail.width() / cw).min(avail.height() / ch);
-        let frame = Rect::from_center_size(avail.center(), egui::vec2(cw * scale, ch * scale));
-        self.notes.push(("canvas_frame".into(), frame));
-        p.rect_filled(frame, 0.0, self.t.canvas_frame_fill);
-        if let Some((tex, _)) = self.preview {
-            p.image(tex, frame, Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
-        }
-        p.rect_stroke(frame, 0.0, Stroke::new(1.5, self.t.canvas_frame_stroke), StrokeKind::Outside);
-        // marcas de canto do quadro
-        let tick = 10.0;
-        let s = Stroke::new(2.0, self.t.accent);
-        for (c, dx, dy) in [(frame.left_top(), 1.0, 1.0), (frame.right_top(), -1.0, 1.0), (frame.left_bottom(), 1.0, -1.0), (frame.right_bottom(), -1.0, -1.0)] {
-            p.line_segment([c, c + egui::vec2(tick * dx, 0.0)], s);
-            p.line_segment([c, c + egui::vec2(0.0, tick * dy)], s);
-        }
-        let label = format!("{}  {:.0} × {:.0}", tr("panel.canvas.camera"), cw, ch);
-        p.text(frame.left_top() + egui::vec2(0.0, -6.0), Align2::LEFT_BOTTOM, label, FontId::proportional(11.5), self.t.text_dim);
-        if self.preview.is_none() && frame.width() > 260.0 {
-            self.empty_state(ui, frame, tr(PanelKind::Canvas.empty_key()));
-        }
-    }
-
     /// Área de texto central do Roteiro (placeholder editável; a persistência vem com o projeto, S01).
     fn script(&mut self, ui: &mut egui::Ui, body: Rect) {
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body.shrink2(egui::vec2(18.0, 12.0))));
@@ -812,7 +797,7 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
     fn pane_ui(&mut self, ui: &mut egui::Ui, tile_id: TileId, pane: &mut PanelKind) -> UiResponse {
         let rect = ui.max_rect();
         let kind = *pane;
-        self.notes.push((format!("panel:{}", kind.key()), rect));
+        self.env.note(format!("panel:{}", kind.key()), rect);
         ui.painter().rect_filled(rect, CARD_RADIUS, self.t.bg_panel);
         let mut resp = UiResponse::None;
         let mut body = rect;
@@ -821,7 +806,12 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             body.min.y += HEADER_H + 1.0;
         }
         match kind {
-            PanelKind::Canvas => self.canvas(ui, body),
+            PanelKind::Canvas => canvas::show(&mut self.env, ui, body),
+            PanelKind::Layers => panels::layers::show(&mut self.env, ui, body),
+            PanelKind::Palette => panels::colors::show(&mut self.env, ui, body),
+            PanelKind::Timeline => panels::timeline::show(&mut self.env, ui, body),
+            PanelKind::Properties => panels::properties::show(&mut self.env, ui, body),
+            PanelKind::Project => panels::project::show(&mut self.env, ui, body),
             PanelKind::Script => self.script(ui, body),
             _ => self.empty_state(ui, body, tr(kind.empty_key())),
         }

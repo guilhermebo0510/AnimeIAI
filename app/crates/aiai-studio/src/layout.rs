@@ -25,10 +25,11 @@ pub enum PanelKind {
     Queue,
     Tasks,
     Episodes,
+    Project,
 }
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 19] = [
+    pub const ALL: [PanelKind; 20] = [
         PanelKind::Canvas,
         PanelKind::Layers,
         PanelKind::Properties,
@@ -48,6 +49,7 @@ impl PanelKind {
         PanelKind::Queue,
         PanelKind::Tasks,
         PanelKind::Episodes,
+        PanelKind::Project,
     ];
 
     /// Identificador estável (bridge/UI_ACTION): `canvas`, `layers`, `timeline`...
@@ -81,6 +83,7 @@ impl PanelKind {
             PanelKind::Queue => "panel.queue.title",
             PanelKind::Tasks => "panel.tasks.title",
             PanelKind::Episodes => "panel.episodes.title",
+            PanelKind::Project => "panel.project.title",
         }
     }
 
@@ -106,6 +109,7 @@ impl PanelKind {
             PanelKind::Queue => "panel.queue.empty",
             PanelKind::Tasks => "panel.tasks.empty",
             PanelKind::Episodes => "panel.episodes.empty",
+            PanelKind::Project => "panel.project.empty",
         }
     }
 }
@@ -136,20 +140,34 @@ fn default_node(ws: WorkspaceId) -> Node {
             (0.72, Row(vec![(0.20, Pane(P::Shots)), (0.56, Pane(P::Board)), (0.24, Pane(P::Properties))])),
             (0.28, Pane(P::Timeline)),
         ]),
-        WorkspaceId::Layout => Row(vec![(0.72, Pane(P::Canvas)), (0.28, Col(vec![(0.30, Pane(P::Navigator)), (0.70, TabsOf(&[P::Layers, P::Properties]))]))]),
+        WorkspaceId::Layout => Row(vec![
+            (0.18, Col(vec![(0.62, Pane(P::Project)), (0.38, Pane(P::Navigator))])),
+            (0.54, Pane(P::Canvas)),
+            (0.28, Col(vec![(0.36, Pane(P::Palette)), (0.64, TabsOf(&[P::Layers, P::Properties]))])),
+        ]),
         WorkspaceId::Animacao => Col(vec![
-            (0.70, Row(vec![(0.72, Pane(P::Canvas)), (0.28, Col(vec![(0.34, Pane(P::Palette)), (0.66, TabsOf(&[P::Layers, P::Properties]))]))])),
-            (0.30, Pane(P::Timeline)),
+            (0.66, Row(vec![
+                (0.17, Pane(P::Project)),
+                (0.55, Pane(P::Canvas)),
+                (0.28, Col(vec![(0.38, Pane(P::Palette)), (0.62, TabsOf(&[P::Layers, P::Properties]))])),
+            ])),
+            (0.34, Pane(P::Timeline)),
         ]),
         WorkspaceId::Pintura => Row(vec![
-            (0.70, Pane(P::Canvas)),
-            (0.30, Col(vec![(0.22, Pane(P::Navigator)), (0.30, Pane(P::Palette)), (0.48, TabsOf(&[P::Layers, P::Properties]))])),
+            (0.17, Col(vec![(0.62, Pane(P::Project)), (0.38, Pane(P::Navigator))])),
+            (0.55, Pane(P::Canvas)),
+            (0.28, Col(vec![(0.36, Pane(P::Palette)), (0.64, TabsOf(&[P::Layers, P::Properties]))])),
         ]),
         WorkspaceId::Cenario => Row(vec![
-            (0.70, Pane(P::Canvas)),
-            (0.30, Col(vec![(0.26, Pane(P::Navigator)), (0.22, Pane(P::Palette)), (0.52, TabsOf(&[P::Layers, P::Properties]))])),
+            (0.17, Col(vec![(0.62, Pane(P::Project)), (0.38, Pane(P::Navigator))])),
+            (0.55, Pane(P::Canvas)),
+            (0.28, Col(vec![(0.36, Pane(P::Palette)), (0.64, TabsOf(&[P::Layers, P::Properties]))])),
         ]),
-        WorkspaceId::Composicao => Row(vec![(0.72, Pane(P::Canvas)), (0.28, Col(vec![(0.26, Pane(P::Navigator)), (0.40, Pane(P::Layers)), (0.34, Pane(P::Properties))]))]),
+        WorkspaceId::Composicao => Row(vec![
+            (0.17, Col(vec![(0.62, Pane(P::Project)), (0.38, Pane(P::Navigator))])),
+            (0.55, Pane(P::Canvas)),
+            (0.28, Col(vec![(0.24, Pane(P::Palette)), (0.40, Pane(P::Layers)), (0.36, Pane(P::Properties))])),
+        ]),
         WorkspaceId::Cor => Row(vec![(0.28, Pane(P::Navigator)), (0.44, Pane(P::Palette)), (0.28, Pane(P::Properties))]),
         WorkspaceId::Audio => Col(vec![
             (0.55, Row(vec![(0.22, Pane(P::Media)), (0.50, Pane(P::Preview)), (0.28, Pane(P::Mixer))])),
