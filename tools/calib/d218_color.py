@@ -15,7 +15,7 @@ PALETTE = {
 BG = {"bg_bege": "#c1a083", "bg_escuro": "#4d2418", "bg_madeira": "#5e3619", "bg_topo": "#5a3423"}
 
 
-MANUAL = {(450, 400): "cabelo", (1500, 420): "cabelo", (1480, 640): "cabelo", (575, 750): "bochecha"}  # a roupa fica na camada `baixo`
+MANUAL = {(450, 400): "cabelo", (1500, 420): "cabelo", (1480, 640): "cabelo", (575, 750): "bochecha", (372, 800): "cabelo"}  # a roupa fica na camada `baixo`
 
 
 def rgb(h):
@@ -57,6 +57,8 @@ def fills(min_area=150, gap=6.0):
     seeds, face, log = [], [], []
     for r, p in zip(regs, probes):
         name, hexc, dist = nearest(p["hex"])
+        if name == "cabelo_rim":  # realces ficam na camada `rim`; a região do balde é cabelo
+            name, hexc, dist = "cabelo", PALETTE["cabelo"], 0
         log.append((r["point"], r["area"], p["hex"], name, round(dist)))
         if name in BG or dist > 45 or (name in ROSTO and dist > (30 if r["area"] < 30000 else 15)):
             continue  # fundo, ou ambígua (fica para a leitura manual abaixo)

@@ -8,7 +8,9 @@ from d218 import d, ids, REF0, draw, render
 MIN_W = 11.0
 # larguras lidas nos perfis da referência onde um lado da linha funde numa massa escura (a medição não acha a 2ª borda)
 PIN_START = {"queixo"}
-FIXED_W = { "queixo": 14.0, "tras_b": 13.0, "tras_c": 13.0, "tras_d1": 12.0, "tras_d2": 12.0, "tras_e": 12.0, "base_g": 14.0}
+# linhas coladas a um realce: a borda realce→cabelo engana a ancoragem (pega a borda errada e alarga a linha)
+NO_ANCHOR = {"mecha_e", "mecha_n"}
+FIXED_W = {"mecha_e": 16.0, "mecha_n": 16.0, "mecha_g": 15.0,  "queixo": 14.0, "tras_b": 13.0, "tras_c": 13.0, "tras_d1": 12.0, "tras_d2": 12.0, "tras_e": 12.0, "base_g": 14.0}
 ANCHOR = "--sem-ancora" not in sys.argv
 _INK_F = os.path.join(os.path.dirname(__file__), "..", "..", "calibracao", "projetos", "d218_ink.json")
 INK = json.load(open(_INK_F)) if os.path.exists(_INK_F) else {}  # cor da tinta medida por linha (d218_inkcolors.py)
@@ -96,6 +98,7 @@ CLOSED = {}  # a boca virou anel medido na linha-massa (d218_face.py)
 
 
 SEGMENT_INK = True
+BAND = "--meia-altura" not in sys.argv
 
 
 def colored_segments(pts, ws, base_w, seg_len=180.0):
@@ -116,8 +119,13 @@ def colored_segments(pts, ws, base_w, seg_len=180.0):
         sp, sw = pts[a:b + 1], ws[a:b + 1]
         probe = [[round(p[0]), round(p[1])] for p in sp[::2]]
         pr = meas.first_list(d.call("PROBE_COLOR", {"reference": REF0, "points": probe, "radius": 1}))
-        rgb = sorted([p["rgb"] for p in pr], key=sum)
-        col = {"type": "direct", "rgba": list(rgb[len(rgb) // 2]) + [1.0]}
+        # só amostras com cara de tinta (o centro medido pode cair no realce ou no cabelo ao lado)
+        inkish = [p["rgb"] for p in pr if sum((p["rgb"][k] * 255 - (92, 46, 46)[k]) ** 2 for k in range(3)) ** 0.5 < 55]
+        if len(inkish) >= 2:
+            rgb = sorted(inkish, key=sum)
+            col = {"type": "direct", "rgba": list(rgb[len(rgb) // 2]) + [1.0]}
+        else:
+            col = LINE
         c = meas.curve_from_measure(sp, sw, col, every=1)
         c["width"] = base_w
         c["profile"] = [[t, max(0.7, min(1.3, (w or base_w) / base_w))] for t, w in zip([k / max(1, len(sw) - 1) for k in range(len(sw))], sw)]
@@ -128,8 +136,13 @@ def colored_segments(pts, ws, base_w, seg_len=180.0):
 def measured_curves(table, step=8, closed=False):
     curves, log = [], {}
     for name, poly in table.items():
-        pts, ws = meas.measure_line(d, REF0, meas.densify(poly, step, closed=closed), closed=closed, line_color="#5c2e2e",
-                                    passes=((14.0, 0.08), (9.0, 0.08)), smooth=3)
+        if BAND:
+            # paquímetro de faixa pela cor da tinta: separa a tinta do cabelo, do realce e da sombra sem viés de meia altura
+            pts, ws = meas.measure_band(d, REF0, meas.densify(poly, step, closed=closed), "#5c2e2e", 0.09, closed=closed,
+                                        passes=(16.0, 10.0), smooth=3)
+        else:
+            pts, ws = meas.measure_line(d, REF0, meas.densify(poly, step, closed=closed), closed=closed, line_color="#5c2e2e",
+                                        passes=((14.0, 0.08), (9.0, 0.08)), smooth=3)
         if name in PIN_START:  # emenda exata com o trecho desenhado direto
             pts[0] = list(poly[0])
         c = meas.curve_from_measure(pts, ws, ink_of(name, poly), closed=closed)
@@ -139,7 +152,7 @@ def measured_curves(table, step=8, closed=False):
         if name in FIXED_W:
             c["width"] = FIXED_W[name]
             ws = [FIXED_W[name]] * len(ws)
-        if ANCHOR:
+        if ANCHOR and name not in NO_ANCHOR:
             # refino pelas bordas (lado da pele/fundo é nítido): centro e largura locais
             ws = [max(w or 0, MIN_W) for w in ws]
             for search in (10.0, 4.0):
