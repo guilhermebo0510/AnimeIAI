@@ -213,7 +213,7 @@ if __name__ == "__main__":
     for name, (poly, w) in DIRECT.items():
         pts = meas.densify(poly, 4)
         if name in SKIN_SIDE:  # encosta na pele: a borda da pele é nítida, ancora nela
-            pts = meas.edge_offset_line(d, REF0, pts, SKIN_SIDE[name], w / 2)
+            pts = meas.edge_offset_line(d, REF0, pts, SKIN_SIDE[name], w / 2, search=16.0 if name == "queixo" else 10.0)
         wl = [WIDTH_FN[name](p, w) for p in pts] if name in WIDTH_FN else [w] * len(pts)
         if name in SKIN_SIDE and name in WIDTH_FN:  # largura variável: reancora pela borda da pele com a meia largura local
             pts = [[p[0] - SKIN_SIDE[name] * n[0] * (wi - w) / 2, p[1] - SKIN_SIDE[name] * n[1] * (wi - w) / 2]
