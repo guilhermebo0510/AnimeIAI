@@ -184,6 +184,9 @@ LINES = {
     "s_sobr_e": ([(597, 342), (620, 339), (645, 335), (670, 330)], 2.0, False),
     "s_sobr_d": ([(795, 342), (808, 340), (822, 337)], 2.0, False),
     "olho_e_dobra": ([(540, 385), (565, 378), (590, 375), (615, 375), (640, 377), (665, 383), (690, 390)], 2.0, False),
+    # boca (traços suaves, recorte 6×)
+    "boca_e": ([(711.7, 636), (716.7, 633.7), (723.3, 632.5)], 2.5, False, {"raw": "#7f5a50"}),
+    "boca_d": ([(735.8, 632.2), (743.3, 634.2), (749.2, 635.8)], 2.5, False, {"raw": "#7f5a50"}),
 }
 
 
@@ -200,6 +203,35 @@ FECHO = {
                  (935, 465), (944, 452), (947, 440), (949, 430), (950, 425)],
     "pescoco_gola": [(636, 762), (660, 785), (680, 790), (700, 790), (735, 788), (760, 787), (790, 775), (832, 762)],
 }
+
+
+# formas chapadas sem contorno (camada raster `detalhe`, entre a cor e a linha): contorno digitado + MEASURE_EDGE
+SHAPES = {
+    "nariz": ([(724, 525), (729, 532), (731, 540), (731, 548), (729, 554), (725, 557.5), (720, 557), (713, 552), (707.5, 546),
+               (706.7, 541), (709, 536), (715, 529), (720, 526)], "#d9918a"),
+    "narina": ([(728, 549.5), (731, 550.5), (731, 554), (728.5, 555)], "#8a4236"),
+}
+ORDER = ["bg", "bg_foco", "cor", "detalhe", "linha", "fx", "fecho"]
+
+
+def reorder():
+    present = [k for k in ORDER if k in ids]
+    for i, k in enumerate(present):
+        d.apply({"kind": "move_node", "id": ids[k], "parent": ids["cut"], "index": i})
+
+
+def shapes():
+    node("detalhe", "Detalhes chapados", {"type": "layer", "kind": "raster"}, ids["cut"])
+    node("detalhe_c1", "1", {"type": "cel", "number": 1}, ids["detalhe"])
+    reorder()
+    d.apply({"kind": "replace_data", "id": ids["detalhe_c1"], "data": {"type": "cel", "number": 1}})
+    for name, (poly, col) in SHAPES.items():
+        pts = meas.densify([list(p) for p in poly], 2.0, closed=True)
+        if len(poly) > 6:  # contornos maiores: borda medida; detalhes de poucos px ficam como digitados
+            pts = meas.measure_edge(d, REF, pts, passes=((4.0, 0.03), (2.0, 0.03)))
+        d.call("FILL_SHAPE", {"cut": ids["cut"], "frame": F, "layer": ids["detalhe"], "shapes": [{"points": pts, "geometry": "polyline"}],
+                              "color": {"type": "direct", "rgba": [int(col[i:i + 2], 16) / 255 for i in (1, 3, 5)] + [1.0]}})
+    return len(SHAPES)
 
 
 def measured(poly, w_nom, closed=False, fine=False):
@@ -310,5 +342,7 @@ if __name__ == "__main__":
     what = sys.argv[1] if len(sys.argv) > 1 else "tudo"
     if what in ("linhas", "tudo"):
         print(lines())
+    if what in ("formas", "tudo"):
+        print("formas", shapes())
     if what in ("balde", "tudo"):
         print(fill(float(sys.argv[2]) if len(sys.argv) > 2 else 4.0))
