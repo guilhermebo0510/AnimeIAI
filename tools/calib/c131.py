@@ -12,6 +12,7 @@ ids = json.load(open(IDS))
 F = int(os.environ.get("C131_Q", "15"))
 REF = rf"C:\AnimeIAI\calibracao\ref\cut_131\frames\f_{F + 1:04d}.png"
 INK = "#1a0508"
+FLOOR = float(os.environ.get("C131_PISO", "0.9"))
 
 
 def node(key, name, data, parent=None):
@@ -21,7 +22,7 @@ def node(key, name, data, parent=None):
     return ids[key]
 
 
-ORDER = ["bg", "letreiro", "caules", "moldura_cor", "moldura_luz", "moldura_linha", "fx", "fecho"]
+ORDER = ["bg", "letreiro", "caules", "moldura_cor", "moldura_luz", "moldura_linha", "fx", "foco", "foco_mascara", "fecho"]
 
 
 def reorder():
@@ -33,6 +34,8 @@ def reorder():
 def measured(name, poly, w_nom, closed=False, step=3, search=(16.0, 10.0), ink=INK, tol=0.12):
     """Centro e largura da tinta ao longo da estimativa (paquímetro de faixa na cor da tinta)."""
     pts, ws = meas.measure_band(d, REF, meas.densify(poly, step, closed=closed), ink, tol, closed=closed, passes=search, smooth=1)
+    # largura lida por ponto oscila (1–10 px) onde a normal cruza a linha de viés ou pega a ponta: piso na largura nominal
+    ws = [max(wv or 0.0, FLOOR * w_nom) for wv in ws]
     # cor própria da linha: mediana medida nos centros (as linhas de dentro das rosas são vermelho-escuras, não pretas)
     pr = meas.first_list(d.call("PROBE_COLOR", {"reference": REF, "points": [[round(p[0]), round(p[1])] for p in pts[::2]], "radius": 0}))
     cs = sorted([p["rgb"] for p in pr], key=sum)
