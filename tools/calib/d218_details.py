@@ -15,6 +15,8 @@ SHAPES = {
     # respiro rosado ao lado do queixo: bordas medidas (rosa × tinta é nítido); cobre a fresta que o balde deixa
     "bochecha": ("#ce6f74", [(558, 668), (565, 690), (580, 715), (597, 745), (612, 770), (628, 797), (600, 800), (570, 795), (552, 788),
                              (551, 750), (553, 700)], True),
+    # cunha de tinta entre o braço de k3 e l1 (as duas linhas se fundem numa massa)
+    "cunha_k3_l1": ("#6f413c", [(1222, 80), (1240, 86), (1250, 100), (1232, 101), (1224, 97)], False),
     "sombra_l2": ("#872637", [(1330, 92), (1355, 104), (1380, 116), (1392, 122), (1395, 145), (1375, 140), (1350, 125)], True),
 }
 HIGHLIGHTS = [

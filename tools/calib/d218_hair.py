@@ -102,7 +102,7 @@ DIRECT = {
 WIDTH_FN = {"contorno_n3a": lambda p, w: w + max(0.0, min(8.0, (p[1] - 400) * 0.1)),
             "contorno_n2": lambda p, w: 20.0 if p[0] < 1700 and p[1] < 175 else w,
             "borda_inf_esq": lambda p, w: max(5.0, min(14.0, 14.0 - (p[1] - 880) * 9.0 / 160.0)),
-            "queixo": lambda p, w: 27.0 if (p[0] < 675 and 690 < p[1] < 830) else (20.0 if (p[0] < 675 and 650 < p[1] <= 690) else w)}
+            "queixo": lambda p, w: 25.0 if (p[0] < 675 and 690 < p[1] < 830) else (20.0 if (p[0] < 675 and 650 < p[1] <= 690) else w)}
 SKIN_SIDE = {"queixo": -1, "contorno_esq": 1, "contorno_n2": -1, "contorno_n3a": -1, "contorno_n4a": -1, "contorno_n5": -1}
 CLOSED = {}  # a boca virou anel medido na linha-massa (d218_face.py)
 
