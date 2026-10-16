@@ -3,5 +3,14 @@ name = "aiai-metrics"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+description = "Metricas objetivas do protocolo de validacao: FLIP, SSIM, deltaE2000, bordas, espessura de linha, paleta, correlacao de fase"
 
 [dependencies]
+aiai-paint = { workspace = true }
+rayon = { workspace = true }
+serde = { workspace = true }
+nv-flip = "0.1.2"
+rustfft = "6.4.1"
+
+[dev-dependencies]
+serde_json = { workspace = true }

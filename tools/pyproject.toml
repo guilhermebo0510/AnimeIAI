@@ -1,0 +1,16 @@
+[project]
+name = "aiai-tools"
+version = "0.1.0"
+description = "Ferramentas de QA do AnimeIAI (referencia, metricas). Nao fazem parte do produto."
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "pillow",
+    "scikit-image",
+    "opencv-python-headless",
+    "scipy",
+    "scikit-learn",
+]
+
+[tool.uv]
+package = false

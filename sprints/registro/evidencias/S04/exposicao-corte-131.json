@@ -1,0 +1,128 @@
+{
+ "method": "luma 960x540 gauss sigma 1.2; changed if frac(|diff|>10) >= 0.0015",
+ "pix_thr": 10,
+ "frac_thr": 0.0015,
+ "frames": 17,
+ "changed": [
+  true,
+  false,
+  false,
+  true,
+  false,
+  false,
+  true,
+  false,
+  false,
+  true,
+  false,
+  false,
+  true,
+  false,
+  false,
+  true,
+  false
+ ],
+ "frac": [
+  null,
+  0.0,
+  0.0,
+  0.303086,
+  0.0,
+  0.0,
+  0.166125,
+  0.0,
+  0.0,
+  0.074273,
+  0.0,
+  0.0,
+  0.053976,
+  0.0,
+  0.0,
+  0.112647,
+  0.0
+ ],
+ "mad": [
+  null,
+  0.0401,
+  0.0433,
+  24.8853,
+  0.0356,
+  0.0315,
+  10.4734,
+  0.0276,
+  0.0438,
+  4.6373,
+  0.0296,
+  0.0356,
+  3.8579,
+  0.051,
+  0.0591,
+  4.0933,
+  0.058
+ ],
+ "change_bbox": [
+  null,
+  null,
+  null,
+  [
+   0,
+   0,
+   1919,
+   1079
+  ],
+  null,
+  null,
+  [
+   0,
+   0,
+   1919,
+   1079
+  ],
+  null,
+  null,
+  [
+   0,
+   0,
+   1919,
+   1079
+  ],
+  null,
+  null,
+  [
+   0,
+   0,
+   1919,
+   1079
+  ],
+  null,
+  null,
+  [
+   0,
+   0,
+   1919,
+   1079
+  ],
+  null
+ ],
+ "drawing_starts": [
+  0,
+  3,
+  6,
+  9,
+  12,
+  15
+ ],
+ "pattern": [
+  3,
+  3,
+  3,
+  3,
+  3,
+  2
+ ],
+ "mode_hold": 3,
+ "n_new_drawings": 6,
+ "cut": 131,
+ "start_frame": 12414,
+ "start_time": 517.7672
+}
