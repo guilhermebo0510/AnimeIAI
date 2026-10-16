@@ -160,3 +160,19 @@ pub fn text_outline(font_bytes: &[u8], text: &str, opt: &TextOptions) -> Result<
     }
     Ok(TextOutline { contours, bounds: [bx0, by0, bx1, by1] })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spaces_advance_the_pen() {
+        let font = std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../aiai-studio/assets/fonts/NotoSansJP-Regular.otf")).unwrap();
+        let opt = TextOptions { size: 40.0, letter_spacing: 0.0, vertical: false, center: [200.0, 50.0], rotation: 0.0, skew: 0.0, scale: [1.0, 1.0] };
+        let a = text_outline(&font, "ab", &opt).unwrap();
+        let b = text_outline(&font, "a b", &opt).unwrap();
+        let wa = a.bounds[2] - a.bounds[0];
+        let wb = b.bounds[2] - b.bounds[0];
+        assert!(wb > wa + 6.0, "espaço avança a caneta: {wa} vs {wb}");
+    }
+}
