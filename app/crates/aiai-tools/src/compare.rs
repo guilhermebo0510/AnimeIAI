@@ -38,7 +38,7 @@ pub struct FrameVerdict {
     pub noise_floor: f32,
     pub flip_limit: f64,
     pub flip_hard_limit: f64,
-    /// SSIM e F1 mínimos desta referência (decisão 24).
+    /// SSIM e F1 mínimos aplicados (decisão 25: F1 ≥ 0,90 a 4 px; SSIM ≥ min(P5T, 0,93)).
     pub ssim_limit: f64,
     pub edge_f1_limit: f64,
     pub line_width_ok: bool,
@@ -174,6 +174,11 @@ fn line_width_ok(r: &CompareReport) -> bool {
     }
 }
 
+/// Régua perceptual (decisão 25): tolerância de bordas, F1 mínimo e teto do SSIM exigido.
+pub const EDGE_TOLERANCE_PX: f32 = 4.0;
+pub const EDGE_F1_MIN_PERCEPTUAL: f64 = 0.90;
+pub const SSIM_MIN_PERCEPTUAL: f64 = 0.93;
+
 pub fn compare_frame(p: &Project, blobs: &BlobStore, req: &CompareRequest) -> ToolResult<FrameVerdict> {
     let reference = load_reference(&req.reference)?;
     let out = render_frame(p, blobs, &req.cut, req.frame, &RenderOptions { background: Some(req.background), ..Default::default() }).map_err(|e| ToolError::Render(e.to_string()))?;
@@ -185,8 +190,12 @@ pub fn compare_frame(p: &Project, blobs: &BlobStore, req: &CompareRequest) -> To
     let (flip_limit, flip_hard_limit) = (lim.flip_mean_max, lim.flip_hard_max);
     opts.thresholds.flip_mean_max = flip_limit;
     opts.thresholds.flip_mean_hard_max = flip_hard_limit;
-    opts.thresholds.ssim_min = lim.ssim_min;
-    opts.thresholds.edge_f1_min = lim.edge_f1_min;
+    // decisão 25 (régua perceptual): bordas com tolerância de 4 px (≈0,4 % da altura, invisível em movimento) e F1 ≥ 0,90;
+    // SSIM ≥ min(limite P5T, 0,93); FLIP continua no limite P5T da própria referência
+    opts.edge_tolerance_px = EDGE_TOLERANCE_PX;
+    let ssim_min = lim.ssim_min.min(SSIM_MIN_PERCEPTUAL);
+    opts.thresholds.ssim_min = ssim_min;
+    opts.thresholds.edge_f1_min = EDGE_F1_MIN_PERCEPTUAL;
     let (report, art) = compare_with_artifacts(&reference, &out.image, &opts).map_err(ToolError::Invalid)?;
     let lw_ok = line_width_ok(&report);
     let v = &report.verdict;
@@ -215,6 +224,6 @@ pub fn compare_frame(p: &Project, blobs: &BlobStore, req: &CompareRequest) -> To
         std::fs::write(&rep_path, serde_json::to_string_pretty(&report).unwrap_or_default()).map_err(|e| ToolError::Invalid(e.to_string()))?;
         files.push(rep_path.to_string_lossy().to_string());
     }
-    Ok(FrameVerdict { flip_limit, flip_hard_limit, ssim_limit: lim.ssim_min, edge_f1_limit: lim.edge_f1_min, noise_floor: req.noise_floor,
+    Ok(FrameVerdict { flip_limit, flip_hard_limit, ssim_limit: ssim_min, edge_f1_limit: EDGE_F1_MIN_PERCEPTUAL, noise_floor: req.noise_floor,
                       line_width_ok: lw_ok, pass, report, files })
 }
