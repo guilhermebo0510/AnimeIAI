@@ -549,6 +549,8 @@ pub(crate) struct Editor {
     pub thumbs: super::panels::board::ThumbCache,
     /// Workspace Produção: filtro, caches da tabela de cortes, lint, comparação de retake e formulários.
     pub prod: super::panels::production::ProdState,
+    /// Workspace Edição: documento aberto, cabeçote, seleção, prévia em segundo plano, zoom da linha do tempo.
+    pub edit: super::panels::edit::EditState,
     /// Pedido de troca de workspace feito por um painel (o app atende no fim do quadro).
     pub want_workspace: Option<crate::workspace::WorkspaceId>,
 }
@@ -608,6 +610,7 @@ impl Default for Editor {
             docs: Default::default(),
             thumbs: Default::default(),
             prod: Default::default(),
+            edit: Default::default(),
             want_workspace: None,
         }
     }

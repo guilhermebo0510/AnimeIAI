@@ -60,12 +60,15 @@ pub(crate) enum DocKind {
     Storyboard,
     /// Quadro de beats: documento Notes com `schema: "beats"`.
     Beats,
+    /// Documento de edição (sequência de cortes, transições, legendas, créditos).
+    Edit,
 }
 
 pub(crate) fn doc_kind(d: &DocumentData) -> Option<DocKind> {
     match d.doc {
         DocumentType::Script => Some(DocKind::Script),
         DocumentType::Storyboard => Some(DocKind::Storyboard),
+        DocumentType::Edit => Some(DocKind::Edit),
         DocumentType::Notes if d.content.get("schema").and_then(Value::as_str) == Some("beats") => Some(DocKind::Beats),
         _ => None,
     }
