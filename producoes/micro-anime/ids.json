@@ -1,0 +1,16 @@
+{
+ "beats": "01a1474a-de22-72f8-b126-a6642a696f06",
+ "pal_hana": "01a1474a-de51-7161-abba-7b8504e6a848",
+ "char_hana": "01a1474a-de68-739e-a857-afe0d55a73ea",
+ "pal_ren": "01a1474a-de7f-72a3-87f9-43a44a25669a",
+ "char_ren": "01a1474a-de97-7558-ab13-aab3c38dd65b",
+ "script": "01a1474a-dedf-760b-acc3-dc03144e94c7",
+ "tts_f3": "01a1474b-12cf-7000-adb1-94367bcc53d2",
+ "tts_f3_s": 2.474666666666667,
+ "tts_f4": "01a1474b-2027-773f-a45b-505cc7cb685b",
+ "tts_f4_s": 2.7093333333333334,
+ "tts_f5": "01a1474b-230d-7781-bffa-b2bea6ddaf3a",
+ "tts_f5_s": 0.8746666666666667,
+ "tts_f6": "01a1474b-2862-76ce-b81d-08a75c8cd76c",
+ "tts_f6_s": 2.2826666666666666
+}
