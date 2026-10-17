@@ -127900,7 +127900,9 @@
       "children": [
         "01a14765-b6f9-72c9-9b83-dbd50bb41848",
         "01a147c6-3bc7-7149-b449-b0cea5988ac3",
-        "01a147c6-4301-71a2-91f0-ea5afadfbd91"
+        "01a147c6-4301-71a2-91f0-ea5afadfbd91",
+        "01a14815-dfef-76c0-a9fe-0451bc838ea4",
+        "01a14815-e4f6-75ad-96f9-831b7c5143f9"
       ],
       "data": {
         "camera": {
@@ -416424,9 +416426,227 @@
         "modified_by": "agent:claude",
         "revision": 7248
       }
+    },
+    "01a14815-dfef-76c0-a9fe-0451bc838ea4": {
+      "data": {
+        "blend": "normal",
+        "clip_to_below": false,
+        "depth": 0.0,
+        "kind": "particles",
+        "locked": false,
+        "offset": [
+          0.0,
+          0.0
+        ],
+        "opacity": 1.0,
+        "params": {
+          "effects": [
+            {
+              "effect": {
+                "color": null,
+                "intensity": 0.3499999940395355,
+                "radius": 10.0,
+                "screen": false,
+                "threshold": 0.30000001192092896,
+                "type": "glow"
+              },
+              "enabled": true,
+              "posterize_time": 1
+            }
+          ],
+          "particles": {
+            "bursts": [
+              [
+                18,
+                45
+              ],
+              [
+                40,
+                20
+              ]
+            ],
+            "colors": [
+              [
+                0.7699999809265137,
+                0.18000000715255737,
+                0.23999999463558197,
+                1.0
+              ],
+              [
+                0.8799999952316284,
+                0.3199999928474426,
+                0.36000001430511475,
+                1.0
+              ],
+              [
+                0.6200000047683716,
+                0.10000000149011612,
+                0.1599999964237213,
+                1.0
+              ],
+              [
+                0.949999988079071,
+                0.550000011920929,
+                0.550000011920929,
+                1.0
+              ]
+            ],
+            "direction": 268.0,
+            "drag": 0.15000000596046448,
+            "emitter": {
+              "rect": [
+                0.0,
+                1000.0,
+                1920.0,
+                80.0
+              ],
+              "type": "rect"
+            },
+            "gravity": [
+              0.0,
+              -25.0
+            ],
+            "lifetime": [
+              4.5,
+              6.5
+            ],
+            "max_particles": 3000,
+            "opacity_over_life": [
+              [
+                0.0,
+                0.0
+              ],
+              [
+                0.10000000149011612,
+                1.0
+              ],
+              [
+                0.8500000238418579,
+                1.0
+              ],
+              [
+                1.0,
+                0.0
+              ]
+            ],
+            "prewarm": 0.800000011920929,
+            "rate": 20.0,
+            "rotation": [
+              0.0,
+              360.0
+            ],
+            "seed": 7,
+            "size": [
+              24.0,
+              40.0
+            ],
+            "size_over_life": [],
+            "speed": [
+              140.0,
+              260.0
+            ],
+            "spin": [
+              -90.0,
+              90.0
+            ],
+            "spread": 30.0,
+            "sprite": {
+              "shape": "petal",
+              "type": "shape"
+            },
+            "tumble": [
+              0.4000000059604645,
+              1.2000000476837158
+            ],
+            "turbulence": [
+              90.0,
+              180.0
+            ],
+            "twinkle": 0.0,
+            "wind": [
+              70.0,
+              0.0
+            ]
+          }
+        },
+        "role": "none",
+        "type": "layer",
+        "visible": true
+      },
+      "id": "01a14815-dfef-76c0-a9fe-0451bc838ea4",
+      "name": "petalas",
+      "parent": "01a14765-b6d8-74bf-b765-4c8ae1781f27",
+      "provenance": {
+        "created_by": "agent:claude",
+        "modified_by": "agent:claude",
+        "revision": 7427
+      }
+    },
+    "01a14815-e4f6-75ad-96f9-831b7c5143f9": {
+      "data": {
+        "blend": "normal",
+        "clip_to_below": false,
+        "depth": 0.0,
+        "kind": "effect",
+        "locked": false,
+        "offset": [
+          0.0,
+          0.0
+        ],
+        "opacity": 1.0,
+        "params": {
+          "effects": [
+            {
+              "effect": {
+                "center": [
+                  1180.0,
+                  250.0
+                ],
+                "intensity": 0.44999998807907104,
+                "length": 0.3499999940395355,
+                "threshold": 0.8500000238418579,
+                "type": "god_rays"
+              },
+              "enabled": true,
+              "posterize_time": 1
+            },
+            {
+              "effect": {
+                "amount": 0.2199999988079071,
+                "radius": 18.0,
+                "threshold": 0.550000011920929,
+                "type": "diffusion"
+              },
+              "enabled": true,
+              "posterize_time": 1
+            },
+            {
+              "effect": {
+                "amount": 0.2800000011920929,
+                "color": null,
+                "softness": 0.6000000238418579,
+                "type": "vignette"
+              },
+              "enabled": true,
+              "posterize_time": 1
+            }
+          ]
+        },
+        "role": "none",
+        "type": "layer",
+        "visible": true
+      },
+      "id": "01a14815-e4f6-75ad-96f9-831b7c5143f9",
+      "name": "satsuei",
+      "parent": "01a14765-b6d8-74bf-b765-4c8ae1781f27",
+      "provenance": {
+        "created_by": "agent:claude",
+        "modified_by": "agent:claude",
+        "revision": 7428
+      }
     }
   },
-  "revision": 7416,
+  "revision": 7428,
   "roots": {
     "assets": [
       "01a1474b-12cf-7000-adb1-94367bcc53d2",
