@@ -125666,13 +125666,15 @@
     },
     "01a14765-b6d8-74bf-b765-4c8ae1781f27": {
       "children": [
-        "01a14765-b6f9-72c9-9b83-dbd50bb41848"
+        "01a14765-b6f9-72c9-9b83-dbd50bb41848",
+        "01a147c6-3bc7-7149-b449-b0cea5988ac3",
+        "01a147c6-4301-71a2-91f0-ea5afadfbd91"
       ],
       "data": {
         "camera": {
           "center": [
             960.0,
-            669.5999755859375
+            740.0
           ],
           "keys": {
             "center_x": [
@@ -125697,14 +125699,14 @@
                   "type": "ease_in_out"
                 },
                 "frame": 0,
-                "value": 669.5999755859375
+                "value": 740.0
               },
               {
                 "ease": {
                   "type": "linear"
                 },
                 "frame": 131,
-                "value": 432.0
+                "value": 340.0
               }
             ],
             "zoom": [
@@ -125713,20 +125715,20 @@
                   "type": "ease_in_out"
                 },
                 "frame": 0,
-                "value": 1.25
+                "value": 1.600000023841858
               },
               {
                 "ease": {
                   "type": "linear"
                 },
                 "frame": 131,
-                "value": 1.25
+                "value": 1.600000023841858
               }
             ]
           },
           "rotation": 0.0,
           "shake_seed": 0,
-          "zoom": 1.25
+          "zoom": 1.600000023841858
         },
         "duration": 132,
         "notes": "Vento; pétalas sobem ao céu; câmera inclina para cima.",
@@ -125744,7 +125746,7 @@
       "provenance": {
         "created_by": "agent:claude",
         "modified_by": "agent:claude",
-        "revision": 1349
+        "revision": 2758
       }
     },
     "01a14765-b6f9-72c9-9b83-dbd50bb41848": {
@@ -135864,9 +135866,427 @@
         "modified_by": "agent:claude",
         "revision": 2677
       }
+    },
+    "01a147c6-3bc7-7149-b449-b0cea5988ac3": {
+      "children": [
+        "01a147c6-3dc7-77a9-ac99-04d6025663a7"
+      ],
+      "data": {
+        "blend": "normal",
+        "clip_to_below": false,
+        "depth": 2.0,
+        "keys": {
+          "scale": [
+            {
+              "ease": {
+                "type": "linear"
+              },
+              "frame": 0,
+              "value": 1.2096999883651733
+            }
+          ]
+        },
+        "kind": "raster",
+        "locked": false,
+        "offset": [
+          0.0,
+          0.0
+        ],
+        "opacity": 1.0,
+        "role": "none",
+        "type": "layer",
+        "visible": true
+      },
+      "id": "01a147c6-3bc7-7149-b449-b0cea5988ac3",
+      "name": "bg_ceu",
+      "parent": "01a14765-b6d8-74bf-b765-4c8ae1781f27",
+      "provenance": {
+        "created_by": "agent:claude",
+        "modified_by": "agent:claude",
+        "revision": 2760
+      }
+    },
+    "01a147c6-3dc7-77a9-ac99-04d6025663a7": {
+      "data": {
+        "number": 1,
+        "role": "key",
+        "tiles": [
+          {
+            "blob": "cf46793453ae25fb44579a734794985b1c4de422219eebb553f2db9294c3ea4b",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "blob": "aaf7d52c535e5489119bb073abe7f57b0d1914e940e97b3e0278f0b41839a0ce",
+            "x": 1,
+            "y": 0
+          },
+          {
+            "blob": "abcef6598680867ba94c0575a7079c6b24db890d618bcc34001608348d3d8538",
+            "x": 2,
+            "y": 0
+          },
+          {
+            "blob": "6df13819184fecc5adaf727216e95de4ee864176c61f8370dae7ee983c6d7cea",
+            "x": 3,
+            "y": 0
+          },
+          {
+            "blob": "a6ebbd5979038418619adf150a0112f3c249896801753e620c718b5ac0441bbf",
+            "x": 4,
+            "y": 0
+          },
+          {
+            "blob": "9d1432f86dfc4b9ed1db96e1355e69e9ba010a90d931368859aa36a28a090e36",
+            "x": 5,
+            "y": 0
+          },
+          {
+            "blob": "00b940610bf5ccc72d2397d8e4a39dfadf587d812de511aeaefc643837879024",
+            "x": 6,
+            "y": 0
+          },
+          {
+            "blob": "f0043001f419d0e94cd02bc49170945554aacc561cc60002f96f90a5a7df0c99",
+            "x": 7,
+            "y": 0
+          },
+          {
+            "blob": "398276e3b5af7750be599ce823d9591bf6afabc2c7d63ef40c07ee15741cfa5a",
+            "x": 0,
+            "y": 1
+          },
+          {
+            "blob": "4b8ab441f4145111ad6b6fd77f57939c96cdc463f73d83a0bc0f8ec89d8185ed",
+            "x": 1,
+            "y": 1
+          },
+          {
+            "blob": "52b783f273b4e0ca338bd95dabf46d139fcd44594ee698f46c8c5bfcf3e458b1",
+            "x": 2,
+            "y": 1
+          },
+          {
+            "blob": "f6160741cfeb104e869fdce36cb485eadde66f90cf4598d1749a122261273405",
+            "x": 3,
+            "y": 1
+          },
+          {
+            "blob": "44f6ece74d2ddc9665a41dc6176f1c44ad41d109cf74a7442776c48d6e36d47d",
+            "x": 4,
+            "y": 1
+          },
+          {
+            "blob": "588ae825368eabc47a36bc93ae0b34abdbe070ec2c6bb495b1e14b0fb1289070",
+            "x": 5,
+            "y": 1
+          },
+          {
+            "blob": "ee2292be02a3ed185860f263fc7399ae533c1499d5e0601ea33dc878a02fde76",
+            "x": 6,
+            "y": 1
+          },
+          {
+            "blob": "9529e8247455790cdd37b1691e31dfd0b864f3cce5096b34dc2a9d2eb467f813",
+            "x": 7,
+            "y": 1
+          },
+          {
+            "blob": "d7841ce492b8690ff19146736d671ae8f250d4c6080f7a595f58771b7f88a956",
+            "x": 0,
+            "y": 2
+          },
+          {
+            "blob": "cf397a45caf2b1543cb73c2e8f6282c4d38e3c6618f904232277ffb4a5311b30",
+            "x": 1,
+            "y": 2
+          },
+          {
+            "blob": "57b0a8d9ca829d66c2760480c6634863c803e0c51f2a6264433848e56c50079e",
+            "x": 2,
+            "y": 2
+          },
+          {
+            "blob": "dd958575be0c2c1376d329aefe6ae37803a10dc61f8375bc7f0e73247156318d",
+            "x": 3,
+            "y": 2
+          },
+          {
+            "blob": "883a37efbd67ef191359f738be3d530d597fa56aa63939d7097742b360a37fdf",
+            "x": 4,
+            "y": 2
+          },
+          {
+            "blob": "d9e0674aea23dfbbb2aa412df95e6bff5abcfaf675039755af98af0f81955bbb",
+            "x": 5,
+            "y": 2
+          },
+          {
+            "blob": "1f8ce495fb69eba8546eca233b71de5a8fdc34b2d00d626610aebd7bc6a051dc",
+            "x": 6,
+            "y": 2
+          },
+          {
+            "blob": "e5b5739aff1165f43cdde13a914a3cb10a9e2e999695302900cc0b0b90ecd2de",
+            "x": 7,
+            "y": 2
+          },
+          {
+            "blob": "9deaaaf7a297b6dc4e42c7c9735be382705000d76b2bb1b0272b1b7eb30a720b",
+            "x": 0,
+            "y": 3
+          },
+          {
+            "blob": "575c7539b3f86b8c844349cac7c132fe707942c6cea5e8021795983b43258d34",
+            "x": 1,
+            "y": 3
+          },
+          {
+            "blob": "03ea245aad59bee9b0dd2d63b003f45208e98518022cd21206d3dd3ac563d651",
+            "x": 2,
+            "y": 3
+          },
+          {
+            "blob": "88d7fdcff99abb53785c34a7a118bffc3397b1493a3adb549b80bea81c74711d",
+            "x": 3,
+            "y": 3
+          },
+          {
+            "blob": "222f1d73b4c738d6525ed3397dd80120e596339a6f4725915627d2c9b51eafd3",
+            "x": 4,
+            "y": 3
+          },
+          {
+            "blob": "3a343be25d39270af1d0f1b967ec2a305fc100c3692e35f2f68225745b44b78a",
+            "x": 5,
+            "y": 3
+          },
+          {
+            "blob": "7db39ac5de82ba11626c7c127afc99401366b21f5d17d00d411c05c3dfa57d6e",
+            "x": 6,
+            "y": 3
+          },
+          {
+            "blob": "b22d05938e34508c51494cae0e0311f401214db7d9f7f51d28f699e5b4a0b18e",
+            "x": 7,
+            "y": 3
+          },
+          {
+            "blob": "f08cfe86149a7c1eb8c81f4044d4c9b1b339553fe7a5ac79ed1198870a72f7e3",
+            "x": 0,
+            "y": 4
+          },
+          {
+            "blob": "e2a3467a25d5f268950cb9f8a736abac39cc1500379cbf4094d23fe696ee65b8",
+            "x": 1,
+            "y": 4
+          },
+          {
+            "blob": "d4d18a33dd5765f92a95e89a7a23045ee8c396e804cbe682caf7e34404ed8697",
+            "x": 2,
+            "y": 4
+          },
+          {
+            "blob": "08d66ab575c103d8ee2bea21574e2d16a9bebf6cb30841c3b81968561cab724b",
+            "x": 3,
+            "y": 4
+          },
+          {
+            "blob": "7da783010cf93fc7dc6dbacb17294daf1ed307b53698ce1728bb00be4ba09134",
+            "x": 4,
+            "y": 4
+          },
+          {
+            "blob": "7731845a37ecd3fe6a85c43717e00f8e33e699b2cab68e019d4407afacfc95c6",
+            "x": 5,
+            "y": 4
+          },
+          {
+            "blob": "e0b87dfc2a9ac53bfad86c724044a6dd5808801430d144a507fdcea8d2020f30",
+            "x": 6,
+            "y": 4
+          },
+          {
+            "blob": "e648b3ba1d5f7c91bdf7c2535e634000ec2a261702deb62306ef5923c38244ab",
+            "x": 7,
+            "y": 4
+          }
+        ],
+        "transform": [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        "type": "cel"
+      },
+      "id": "01a147c6-3dc7-77a9-ac99-04d6025663a7",
+      "name": "1",
+      "parent": "01a147c6-3bc7-7149-b449-b0cea5988ac3",
+      "provenance": {
+        "created_by": "agent:claude",
+        "modified_by": "agent:claude",
+        "revision": 2729
+      }
+    },
+    "01a147c6-4301-71a2-91f0-ea5afadfbd91": {
+      "children": [
+        "01a147c6-452e-70e9-b72d-92f1cb87bd32"
+      ],
+      "data": {
+        "blend": "normal",
+        "clip_to_below": false,
+        "depth": 0.0,
+        "kind": "raster",
+        "locked": false,
+        "offset": [
+          0.0,
+          0.0
+        ],
+        "opacity": 1.0,
+        "role": "none",
+        "type": "layer",
+        "visible": true
+      },
+      "id": "01a147c6-4301-71a2-91f0-ea5afadfbd91",
+      "name": "bg_chao",
+      "parent": "01a14765-b6d8-74bf-b765-4c8ae1781f27",
+      "provenance": {
+        "created_by": "agent:claude",
+        "modified_by": "agent:claude",
+        "revision": 2762
+      }
+    },
+    "01a147c6-452e-70e9-b72d-92f1cb87bd32": {
+      "data": {
+        "number": 1,
+        "role": "key",
+        "tiles": [
+          {
+            "blob": "e89fc78652f62f089107008d190b4670369e91ff3f25acfe248e497565d385e6",
+            "x": 0,
+            "y": 2
+          },
+          {
+            "blob": "1e33b90360872f7b26f324ec4e1bf5d07d32e78f2ee8b632b716656a6b2e04af",
+            "x": 1,
+            "y": 2
+          },
+          {
+            "blob": "78730cca81a870ff4e8f23c933e9598259ea920c6e9d3d0ea83c5affc869eba6",
+            "x": 5,
+            "y": 2
+          },
+          {
+            "blob": "ffaef1bc1bf4b8c69b55c741897c3ce7d1b99c11e0727a7bfd3d1eb162f0c9a6",
+            "x": 6,
+            "y": 2
+          },
+          {
+            "blob": "4dc4628f4abe306aea92c70e99f786743f2cfe28f9b953c76170f483f925382d",
+            "x": 7,
+            "y": 2
+          },
+          {
+            "blob": "331a7ba3c23259843bf8a61cb143e9ba4edcb74339648e169a5cb0b97c6c80b7",
+            "x": 0,
+            "y": 3
+          },
+          {
+            "blob": "79a9860834e5b8f01388541a7ffa71c77ca62e098ff01802fcd61e7a02e557b5",
+            "x": 1,
+            "y": 3
+          },
+          {
+            "blob": "7f2b1becd87f87fb1df0efcfaa91d0cef06536bdf4100ba9cbc19202366974fa",
+            "x": 2,
+            "y": 3
+          },
+          {
+            "blob": "1f5ddc48ed9b483a5f90277121ca254c0612de30334877e84c9556586f82bbc2",
+            "x": 3,
+            "y": 3
+          },
+          {
+            "blob": "6a437d90cbcdd03e0213f836f57b6f6af554235e760ac298bb65156550f77c17",
+            "x": 4,
+            "y": 3
+          },
+          {
+            "blob": "313f47ea585bb8d299d877ce2abd39035e4e46a1938e54457b6d3d3db729e49d",
+            "x": 5,
+            "y": 3
+          },
+          {
+            "blob": "08b224b90bb27ccf335d48b0bfcfc05941d291a8136ead347df1786b95797b53",
+            "x": 6,
+            "y": 3
+          },
+          {
+            "blob": "8db05e725df2af199a70bd50d648f8df798b4a0310f30a22d2c471f219c6dd06",
+            "x": 7,
+            "y": 3
+          },
+          {
+            "blob": "c9cb90f3bf2bc06040cb96fc464749b97b8dbd33dbf801b071fed133f6f963f8",
+            "x": 0,
+            "y": 4
+          },
+          {
+            "blob": "748c6af2383b9d1e25aae71ef2f22419f1ebb743ad6d1d11ef358a6d2efeeccf",
+            "x": 1,
+            "y": 4
+          },
+          {
+            "blob": "811be3003072739940864504b899bfce8e03c7ac21be6fd37dfcd57a280892c5",
+            "x": 2,
+            "y": 4
+          },
+          {
+            "blob": "d3d77df9842ba08700f9704fefe2edba4e74f748bb7ae31d744eb3ea11eac333",
+            "x": 3,
+            "y": 4
+          },
+          {
+            "blob": "8ce6aa3ab5746ae96b66464079f2dab6479ddf79878f26892ab3221e21d6d962",
+            "x": 4,
+            "y": 4
+          },
+          {
+            "blob": "f63c60bbe6f1921231ce5b927f0424ab380dd36a6dd0e6bc211394eedd0f5993",
+            "x": 5,
+            "y": 4
+          },
+          {
+            "blob": "3b7d246be52e1cb7320e2162f666e1f4a895373f158f22c8a5d55f1bdbdae5f5",
+            "x": 6,
+            "y": 4
+          },
+          {
+            "blob": "7e782a22214c9c879f65aec1887ba962cecc0a2897da3b7cdc4f7f4c2f64d3ad",
+            "x": 7,
+            "y": 4
+          }
+        ],
+        "transform": [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        "type": "cel"
+      },
+      "id": "01a147c6-452e-70e9-b72d-92f1cb87bd32",
+      "name": "1",
+      "parent": "01a147c6-4301-71a2-91f0-ea5afadfbd91",
+      "provenance": {
+        "created_by": "agent:claude",
+        "modified_by": "agent:claude",
+        "revision": 2756
+      }
     }
   },
-  "revision": 2700,
+  "revision": 2762,
   "roots": {
     "assets": [
       "01a1474b-12cf-7000-adb1-94367bcc53d2",
