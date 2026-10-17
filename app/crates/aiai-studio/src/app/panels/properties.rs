@@ -23,6 +23,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: egui::Rect) {
             WorkspaceId::Storyboard => return super::shots::properties(env, ui),
             WorkspaceId::Producao => return super::production::properties(env, ui),
             WorkspaceId::Edicao => return super::edit::properties(env, ui),
+            WorkspaceId::Entrega => return super::deliver::properties(env, ui),
             _ => {}
         }
         let tool = *env.tool;

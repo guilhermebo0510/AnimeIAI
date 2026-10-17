@@ -551,6 +551,8 @@ pub(crate) struct Editor {
     pub prod: super::panels::production::ProdState,
     /// Workspace Edição: documento aberto, cabeçote, seleção, prévia em segundo plano, zoom da linha do tempo.
     pub edit: super::panels::edit::EditState,
+    /// Workspace Entrega: preset, pedido e fila de exportação (uma por vez, em segundo plano).
+    pub deliver: super::panels::deliver::DeliverState,
     /// Pedido de troca de workspace feito por um painel (o app atende no fim do quadro).
     pub want_workspace: Option<crate::workspace::WorkspaceId>,
 }
@@ -611,6 +613,7 @@ impl Default for Editor {
             thumbs: Default::default(),
             prod: Default::default(),
             edit: Default::default(),
+            deliver: Default::default(),
             want_workspace: None,
         }
     }

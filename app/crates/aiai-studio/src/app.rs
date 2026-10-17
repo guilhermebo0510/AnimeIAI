@@ -39,6 +39,8 @@ use std::time::{Duration, Instant};
 /// Zooms oferecidos no menu Exibir.
 const ZOOM_STEPS: [f32; 8] = [0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
 
+/// Largura reservada à direita da barra de status (bridge, memória, fps): o aviso nunca passa por cima.
+const STATUS_RIGHT_W: f32 = 360.0;
 
 pub struct StudioApp {
     cli: Cli,
@@ -457,7 +459,13 @@ impl StudioApp {
                     if let Some((msg, at)) = &self.notice {
                         if at.elapsed() < Duration::from_secs(6) {
                             ui.separator();
-                            ui.label(RichText::new(msg.as_str()).size(12.0).color(t.text));
+                            // o aviso não passa por cima do lado direito (bridge, memória, fps): corta com reticências
+                            // e mostra o texto inteiro ao passar o mouse
+                            let w = (ui.available_width() - STATUS_RIGHT_W).max(40.0);
+                            ui.allocate_ui_with_layout(egui::vec2(w, 18.0), egui::Layout::left_to_right(Align::Center), |ui| {
+                                ui.set_max_width(w);
+                                ui.add(egui::Label::new(RichText::new(msg.as_str()).size(12.0).color(t.text)).truncate()).on_hover_text(msg.as_str());
+                            });
                         }
                     }
                     ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
@@ -796,6 +804,8 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::Timeline if self.env.ws == WorkspaceId::Edicao => panels::edit::timeline(&mut self.env, ui, body),
             PanelKind::Timeline => panels::timeline::show(&mut self.env, ui, body),
             PanelKind::Media => panels::edit::media(&mut self.env, ui, body),
+            PanelKind::Presets => panels::deliver::presets(&mut self.env, ui, body),
+            PanelKind::Queue => panels::deliver::queue(&mut self.env, ui, body),
             PanelKind::Preview => panels::edit::preview(&mut self.env, ui, body),
             PanelKind::Properties => panels::properties::show(&mut self.env, ui, body),
             PanelKind::Project => panels::project::show(&mut self.env, ui, body),
