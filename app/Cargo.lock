@@ -86,6 +86,7 @@ dependencies = [
  "aiai-anim",
  "aiai-audio",
  "aiai-core",
+ "aiai-fx",
  "aiai-media",
  "aiai-paint",
  "aiai-render",
