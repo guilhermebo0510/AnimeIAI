@@ -13,6 +13,7 @@ test = false
 aiai-core = { workspace = true }
 aiai-anim = { workspace = true }
 aiai-audio = { workspace = true }
+aiai-fx = { workspace = true }
 aiai-media = { workspace = true }
 aiai-paint = { workspace = true }
 aiai-render = { workspace = true }

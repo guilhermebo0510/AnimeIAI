@@ -277,11 +277,12 @@ Só grava em pastas permitidas (AIAI_MCP_ALLOWED_DIRS; padrão producoes/, calib
 }
 
 /// Catálogo completo: ferramentas genéricas + curadas de desenho + de produção (`tools_production`) + de pré-produção
-/// (`tools_preprod`).
+/// (`tools_preprod`) + de satsuei/câmera/cor (`tools_satsuei`).
 pub fn definitions() -> Value {
     let mut list = base_definitions().as_array().cloned().unwrap_or_default();
     list.extend(crate::tools_production::definitions());
     list.extend(crate::tools_preprod::definitions());
+    list.extend(crate::tools_satsuei::definitions());
     Value::Array(list)
 }
 
@@ -335,6 +336,9 @@ pub fn plan(name: &str, args: &Value) -> Result<Plan, ToolError> {
         return p;
     }
     if let Some(p) = crate::tools_preprod::plan(name, &m) {
+        return p;
+    }
+    if let Some(p) = crate::tools_satsuei::plan(name, &m) {
         return p;
     }
     match name {

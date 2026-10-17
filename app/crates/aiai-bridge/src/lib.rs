@@ -10,6 +10,7 @@
 //! * [`core_ops`] — ações de documento que só precisam da `CoreSession` ([`core_ops::handle_core_action`]);
 //! * [`core_tools`] — RENDER, DRAW_CURVES, FILL, LINT, PAINT, GRADIENT, TRANSFORM, REPEAT, BRUSH_PRESETS (também só o documento);
 //! * [`preprod_tools`] — pré-produção (S16): SCRIPT, BEATS, STORYBOARD, ANIMATIC, CUTS_FROM_STORYBOARD;
+//! * [`satsuei_tools`] — satsuei, câmera e cor tipados (S13/S15): EFFECTS, GRADE, CAMERA, LAYER_MOTION;
 //! * [`review_tools`] — produção e revisão (S19): PRODUCTION, CORRECTION, RETAKE;
 //! * [`production_tools`] — SKY, PATTERN_FILL, TEXT, LINES, GAG_BG, PARTICLES, GUIDE3D, PERSPECTIVE, MODEL_SHEET, CONSISTENCY, INBETWEEN, PROPAGATE_FILLS, áudio (TTS, LIPSYNC, SFX, BGM, MIX_CUT, LOUDNESS), COMPARE, PROBE_COLOR, MEASURE_LINE, EXPORT_VIDEO;
 //! * [`discovery`] — arquivo `bridge.json` (porta + token) com permissão restrita.
@@ -26,6 +27,7 @@ pub mod http;
 pub mod preprod_tools;
 pub mod production_tools;
 pub mod review_tools;
+pub mod satsuei_tools;
 pub mod protocol;
 pub mod server;
 

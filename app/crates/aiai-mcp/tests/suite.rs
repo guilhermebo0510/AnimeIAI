@@ -552,7 +552,7 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
     assert!(plan("aiai_zzz", json!({})).is_err());
     // o catálogo é uma lista estável de ferramentas, todas com plano
     let defs = tools::definitions();
-    assert_eq!(defs.as_array().unwrap().len(), 55);
+    assert_eq!(defs.as_array().unwrap().len(), 59);
     // todas as ferramentas de produção: descrição com exemplo de uma linha, schema de objeto, plano com a ação certa e frame 0 por padrão
     for t in defs.as_array().unwrap() {
         let n = t["name"].as_str().unwrap();
@@ -597,6 +597,10 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
         ("aiai_production", json!({"op": "cut_table"}), "PRODUCTION"),
         ("aiai_correction", json!({"op": "list", "cut": "c"}), "CORRECTION"),
         ("aiai_retake", json!({"op": "list"}), "RETAKE"),
+        ("aiai_effects", json!({"op": "list", "layer": "l"}), "EFFECTS"),
+        ("aiai_grade", json!({"cut": "c", "effects": []}), "GRADE"),
+        ("aiai_camera", json!({"op": "read", "cut": "c"}), "CAMERA"),
+        ("aiai_layer_motion", json!({"op": "read", "layer": "l"}), "LAYER_MOTION"),
     ] {
         let p = plan(tool, args.clone()).unwrap_or_else(|e| panic!("{tool}: {e}"));
         assert_eq!(p.action, action, "{tool}");

@@ -1258,3 +1258,68 @@ fn review_cut_table_stages_lint_corrections_and_retakes() {
     assert!(md["markdown"].as_str().unwrap().contains("Relatório de produção"));
     assert_eq!(act_err(&mut s, "RETAKE", json!({"op": "compare", "retake": "nao-existe"})).code, code::INVALID_PARAMS);
 }
+
+/// Coluna média dos pixels escuros (traço vertical) de uma imagem.
+fn dark_column(img: &image::RgbaImage) -> f32 {
+    let (mut sum, mut n) = (0.0f32, 0.0f32);
+    for (x, _, p) in img.enumerate_pixels() {
+        if p.0[3] > 128 && p.0[0] < 80 {
+            sum += x as f32;
+            n += 1.0;
+        }
+    }
+    assert!(n > 0.0, "sem traço");
+    sum / n
+}
+
+#[test]
+fn satsuei_camera_multiplane_effects_and_grade() {
+    let mut d = prod_doc();
+    let (cut, near, far, bg) = (d.cut.clone(), d.line.clone(), d.key.clone(), d.bg.clone());
+    for l in [&near, &far] {
+        act(&mut d.s, "DRAW_CURVES", json!({"cut": cut, "frame": 0, "layer": l, "curves": [{"points": [[160.0, 20.0], [160.0, 160.0]], "width": 4.0, "geometry": "polyline", "tip": "marker", "color": black()}]}));
+    }
+    // multiplano: o plano distante (depth 3) anda 1/4 do pan da câmera
+    let o = act(&mut d.s, "LAYER_MOTION", json!({"op": "set", "layer": far, "depth": 3.0}));
+    assert_eq!(o["layer_motion"]["depth"], 3.0);
+    let o = act(&mut d.s, "CAMERA", json!({"op": "move", "cut": cut, "from": {"center": [160.0, 90.0], "zoom": 1.0}, "to": {"center": [200.0, 90.0], "zoom": 1.0}, "start": 0, "end": 40}));
+    assert_eq!(o["can_undo"], true);
+    let x_near0 = dark_column(&shot(&mut d.s, &cut, 0, &[&near], json!({})));
+    let x_near = dark_column(&shot(&mut d.s, &cut, 47, &[&near], json!({})));
+    let x_far = dark_column(&shot(&mut d.s, &cut, 47, &[&far], json!({})));
+    assert!((x_near0 - x_near - 40.0).abs() < 1.5, "plano da câmera anda o pan inteiro: {x_near0} → {x_near}");
+    assert!((x_near0 - x_far - 10.0).abs() < 1.5, "plano distante anda 1/4: {x_near0} → {x_far}");
+    let r = act(&mut d.s, "CAMERA", json!({"op": "read", "cut": cut}));
+    assert!(r["camera"]["keys"]["center_x"].is_array(), "{r}");
+    assert_eq!(act_err(&mut d.s, "CAMERA", json!({"op": "keys", "cut": cut, "property": "foo", "keys": []})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "CAMERA", json!({"op": "move", "cut": cut, "from": {"center": [0.0, 0.0]}, "to": {"center": [1.0, 1.0]}, "start": 10, "end": 99})).code, code::INVALID_PARAMS);
+    act(&mut d.s, "CAMERA", json!({"op": "shake", "cut": cut, "amplitude": 6.0, "start": 2, "end": 10}));
+    act(&mut d.s, "CAMERA", json!({"op": "clear_keys", "cut": cut}));
+    // slide de camada
+    act(&mut d.s, "LAYER_MOTION", json!({"op": "slide", "layer": near, "from": [0.0, 0.0], "to": [30.0, 0.0], "start": 0, "end": 10}));
+    let xs = dark_column(&shot(&mut d.s, &cut, 10, &[&near], json!({})));
+    assert!((xs - x_near0 - 30.0).abs() < 1.5, "slide de 30 px: {x_near0} → {xs}");
+
+    // efeitos na camada: contorno vermelho aparece; lista/remove
+    let o = act(&mut d.s, "EFFECTS", json!({"op": "add", "layer": far, "effect": {"type": "outline", "width": 3.0, "color": [1.0, 0.0, 0.0, 1.0]}}));
+    assert_eq!(o["effects"][0]["name"], "outline", "{o}");
+    let img = shot(&mut d.s, &cut, 0, &[&far], json!({}));
+    assert!(img.pixels().any(|p| p.0[0] > 200 && p.0[1] < 60 && p.0[3] > 200), "contorno vermelho");
+    assert_eq!(act(&mut d.s, "EFFECTS", json!({"op": "list", "layer": far}))["effects"].as_array().unwrap().len(), 1);
+    act(&mut d.s, "EFFECTS", json!({"op": "remove", "layer": far, "index": 0}));
+    assert_eq!(act_err(&mut d.s, "EFFECTS", json!({"op": "remove", "layer": far, "index": 0})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "EFFECTS", json!({"op": "add", "layer": far, "effect": {"type": "nao_existe"}})).code, code::INVALID_PARAMS);
+
+    // grade: camada de efeito no topo, esquenta o fundo cinza; segunda chamada reaproveita a camada
+    act(&mut d.s, "GAG_BG", json!({"cut": cut, "frame": 0, "layer": bg, "pattern": {"type": "flat", "color": "#808080"}}));
+    let full = |s: &mut CoreSession| decode(act(s, "RENDER", json!({"cut": cut, "frame": 0}))["png_base64"].as_str().unwrap()).get_pixel(5, 5).0;
+    let before = full(&mut d.s);
+    let g = act(&mut d.s, "GRADE", json!({"cut": cut, "effects": [{"effect": {"type": "grade", "gain": [1.3, 1.0, 0.7]}}]}));
+    let gl = g["layer"].as_str().unwrap().to_string();
+    let after = full(&mut d.s);
+    assert!(after[0] > before[0] + 10 && after[2] + 10 < before[2], "grade quente: {before:?} → {after:?}");
+    let g2 = act(&mut d.s, "GRADE", json!({"cut": cut, "effects": []}));
+    assert_eq!(g2["layer"], json!(gl), "reaproveita a camada");
+    let cut_node = act(&mut d.s, "QUERY", json!({"query": {"kind": "node", "id": cut}}));
+    assert_eq!(cut_node["children"].as_array().unwrap().last().unwrap(), &json!(gl), "grade no topo: {cut_node}");
+}

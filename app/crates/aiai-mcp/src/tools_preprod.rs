@@ -61,7 +61,7 @@ const RETAKE_DESC: &str = r##"Retake: guarda o render atual de um quadro como sn
 Exemplo: {"op":"compare","retake":"<id>","out":"C:\\AnimeIAI\\producoes\\curta\\retake1.png"}"##;
 
 /// Schema de tipo-união (`oneOf` por `op`) com `type: object` no topo (os clientes MCP exigem).
-fn object_schema<T: schemars::JsonSchema>() -> Value {
+pub(crate) fn object_schema<T: schemars::JsonSchema>() -> Value {
     let mut s = schema_of::<T>();
     if let Some(o) = s.as_object_mut() {
         o.entry("type").or_insert(json!("object"));
@@ -83,7 +83,7 @@ pub fn definitions() -> Vec<Value> {
     ]
 }
 
-fn required(m: &Map<String, Value>, keys: &[&str]) -> Result<(), ToolError> {
+pub(crate) fn required(m: &Map<String, Value>, keys: &[&str]) -> Result<(), ToolError> {
     for k in keys {
         if m.get(*k).is_none_or(Value::is_null) {
             return Err(ToolError::invalid(format!("Missing '{k}': veja a descrição da ferramenta")));
