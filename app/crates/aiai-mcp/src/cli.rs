@@ -45,8 +45,10 @@ pub fn parse(args: &[String]) -> Result<Cmd, String> {
         Some("call") => {
             let mut it = args[1..].iter();
             let action = it.next().ok_or("call exige a ação (ex.: PING)")?.clone();
-            if action.is_empty() || action.len() > 32 || !action.chars().all(|c| c.is_ascii_uppercase() || c == '_') {
-                return Err(format!("ação inválida {action:?} (esperado MAIUSCULAS_COM_SUBLINHADO)"));
+            if action.is_empty() || action.len() > 32 || !action.starts_with(|c: char| c.is_ascii_uppercase())
+                || !action.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+            {
+                return Err(format!("ação inválida {action:?} (esperado MAIUSCULAS_COM_SUBLINHADO; dígitos depois da 1ª letra, ex.: GUIDE3D)"));
             }
             let mut params = json!({});
             let (mut png, mut project, mut timeout) = (None, None, None);
