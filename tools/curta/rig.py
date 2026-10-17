@@ -162,8 +162,8 @@ def mouth(h, ink, shape="closed", y=0.875):
         return [h.curve([(cx - 0.045, y), (cx, y + 0.006), (cx + 0.045, y - 0.002)], 1.0, ink, widths=[0.4, 1.0, 0.4])], []
     if shape == "smile":
         return [h.curve([(cx - 0.06, y - 0.012), (cx, y + 0.014), (cx + 0.06, y - 0.012)], 1.0, ink, widths=[0.4, 1.0, 0.4])], []
-    dims = {"a": (0.05, 0.055), "i": (0.055, 0.02), "u": (0.025, 0.03), "e": (0.05, 0.035), "o": (0.035, 0.05),
-            "shout": (0.065, 0.075), "small_o": (0.02, 0.022)}[shape]
+    dims = {"a": (0.062, 0.07), "i": (0.065, 0.024), "u": (0.032, 0.038), "e": (0.062, 0.044), "o": (0.044, 0.062),
+            "shout": (0.072, 0.085), "small_o": (0.022, 0.025)}[shape]
     rx, ry = dims
     if shape in ("a", "shout", "e"):
         # boca aberta de anime: topo reto, fundo arredondado
