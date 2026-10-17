@@ -553,6 +553,8 @@ pub(crate) struct Editor {
     pub edit: super::panels::edit::EditState,
     /// Workspace Entrega: preset, pedido e fila de exportação (uma por vez, em segundo plano).
     pub deliver: super::panels::deliver::DeliverState,
+    /// Workspace Áudio: clipe selecionado, monitor do corte, durações dos WAV, última medição de loudness.
+    pub audio: super::panels::audio::AudioState,
     /// Pedido de troca de workspace feito por um painel (o app atende no fim do quadro).
     pub want_workspace: Option<crate::workspace::WorkspaceId>,
 }
@@ -614,6 +616,7 @@ impl Default for Editor {
             prod: Default::default(),
             edit: Default::default(),
             deliver: Default::default(),
+            audio: Default::default(),
             want_workspace: None,
         }
     }

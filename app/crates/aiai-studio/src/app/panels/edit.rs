@@ -61,6 +61,18 @@ pub(crate) struct EditPreview {
 
 impl EditPreview {
     pub(crate) fn update(&mut self, ctx: &egui::Context, core: &CoreSession, edit: &NodeId, doc: &Arc<EditDoc>, frame: u32) {
+        self.request(ctx, (core.change_counter, edit.0.clone(), frame), || {
+            let (project, blobs, doc) = (core.project.clone(), core.blobs.clone(), doc.clone());
+            move || aiai_tools::edit::render_edit_frame(&project, &blobs, &doc, frame, true).map_err(|e| e.to_string())
+        });
+    }
+
+    /// Recolhe o render pronto e, se `key` (change_counter, documento, quadro) mudou, pede outro com `render` (um por vez;
+    /// o pedido mais novo vence). `make` (que copia o projeto para a thread) só roda quando há render novo a fazer.
+    pub(crate) fn request<F>(&mut self, ctx: &egui::Context, key: (u64, String, u32), make: impl FnOnce() -> F)
+    where
+        F: FnOnce() -> Result<aiai_paint::Image, String> + Send + 'static,
+    {
         if let Some(rx) = &self.job {
             match rx.try_recv() {
                 Ok((f, res)) => {
@@ -83,17 +95,15 @@ impl EditPreview {
                 Err(crossbeam_channel::TryRecvError::Disconnected) => self.job = None,
             }
         }
-        let want = (core.change_counter, edit.0.clone(), frame);
-        if self.job.is_some() || self.asked.as_ref() == Some(&want) {
+        if self.job.is_some() || self.asked.as_ref() == Some(&key) {
             return;
         }
-        self.asked = Some(want);
-        let project = core.project.clone();
-        let blobs = core.blobs.clone();
-        let doc = doc.clone();
+        let frame = key.2;
+        self.asked = Some(key);
+        let render = make();
         let (tx, rx) = crossbeam_channel::bounded(1);
-        let spawned = std::thread::Builder::new().name("aiai-edit-preview".into()).spawn(move || {
-            let out = aiai_tools::edit::render_edit_frame(&project, &blobs, &doc, frame, true).map(|img| (img.width, img.height, img.to_rgba8())).map_err(|e| e.to_string());
+        let spawned = std::thread::Builder::new().name("aiai-preview".into()).spawn(move || {
+            let out = render().map(|img| (img.width, img.height, img.to_rgba8()));
             let _ = tx.send((frame, out));
         });
         if spawned.is_ok() {
