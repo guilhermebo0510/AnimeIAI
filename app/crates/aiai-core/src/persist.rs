@@ -37,10 +37,26 @@ pub fn blob_path(dir: &Path, h: &BlobHash) -> PathBuf {
     dir.join(BLOB_DIR).join(&h.0[..2]).join(&h.0)
 }
 
+/// Repete uma operação de arquivo que falhou por bloqueio passageiro de outro processo (antivírus, indexador, visualizador
+/// que mapeou o arquivo): no Windows, compartilhamento (32), trava (33), seção mapeada pelo usuário (1224) e acesso negado
+/// durante a troca (5). Até ~1,5 s no total; outros erros voltam na hora.
+pub(crate) fn retry_io<T>(mut op: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    let mut attempt = 0u64;
+    loop {
+        match op() {
+            Err(e) if attempt < 10 && matches!(e.raw_os_error(), Some(5 | 32 | 33 | 1224)) => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(25 * attempt));
+            }
+            other => return other,
+        }
+    }
+}
+
 fn write_atomic(path: &Path, bytes: &[u8]) -> CoreResult<()> {
     let tmp = path.with_extension("tmp-write");
     {
-        let mut f = std::fs::File::create(&tmp)?;
+        let mut f = retry_io(|| std::fs::File::create(&tmp))?;
         f.write_all(bytes)?;
         f.sync_all()?;
     }
@@ -50,7 +66,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> CoreResult<()> {
         let _ = std::fs::remove_file(&tmp);
         return Err(CoreError::Io(format!("escrita incompleta em {} ({written} de {} bytes)", tmp.display(), bytes.len())));
     }
-    std::fs::rename(&tmp, path)?;
+    retry_io(|| std::fs::rename(&tmp, path))?;
     Ok(())
 }
 
@@ -227,7 +243,7 @@ pub struct Wal {
 impl Wal {
     pub fn create(dir: &Path, base_revision: u64) -> CoreResult<Self> {
         let path = dir.join(WAL_FILE);
-        let mut file = std::fs::File::create(&path)?;
+        let mut file = retry_io(|| std::fs::File::create(&path))?;
         writeln!(file, "{}", serde_json::to_string(&WalLine::Header { wal_base_revision: base_revision })?)?;
         file.sync_data()?;
         Ok(Wal { dir: dir.to_path_buf(), file })
@@ -237,7 +253,7 @@ impl Wal {
         if !keep_existing || !dir.join(WAL_FILE).exists() {
             return Wal::create(dir, base_revision);
         }
-        let file = std::fs::OpenOptions::new().append(true).open(dir.join(WAL_FILE))?;
+        let file = retry_io(|| std::fs::OpenOptions::new().append(true).open(dir.join(WAL_FILE)))?;
         Ok(Wal { dir: dir.to_path_buf(), file })
     }
 
@@ -252,5 +268,28 @@ impl Wal {
         writeln!(self.file, "{}", serde_json::to_string(&WalLine::Entry(entry.clone()))?)?;
         self.file.sync_data()?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::retry_io;
+
+    #[test]
+    fn retry_io_rides_out_transient_locks_but_not_real_errors() {
+        let mut calls = 0;
+        let r = retry_io(|| {
+            calls += 1;
+            if calls < 3 { Err(std::io::Error::from_raw_os_error(1224)) } else { Ok(7) }
+        });
+        assert_eq!(r.unwrap(), 7);
+        assert_eq!(calls, 3, "duas falhas passageiras e o sucesso");
+        let mut calls = 0;
+        let r: std::io::Result<()> = retry_io(|| {
+            calls += 1;
+            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "não existe"))
+        });
+        assert!(r.is_err());
+        assert_eq!(calls, 1, "erro de verdade volta na primeira");
     }
 }
