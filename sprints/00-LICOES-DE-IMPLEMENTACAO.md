@@ -102,3 +102,9 @@ Erros já pagos neste PC, nos projetos Smart Canvas e ANIGO do mesmo usuário. A
 58. **Ferramenta que lê pixels do cel (balde, lint) não pode passar pela posição animada da camada.** A camada com chaves de deslize pintou o quadro inteiro de uma cor só; a primeira suspeita (polilinha fora do canvas) estava errada — a pista era que a primeira execução, ANTES de criar as chaves, tinha saído certa. Quando um script reexecutável começa a falhar, perguntar o que a execução anterior deixou no documento.
 59. **Spline fechado de 4 pontos vira oval**: retângulo de manga desenhado como spline fechado incha e a semente cai fora; usar pontos intermediários (ou polilinha) em formas retas.
 60. **Recorte pelo quadro abre regiões**: personagem cortado pela borda precisa de uma linha de fechamento na borda (o lint ignora regiões que tocam a borda, então elas ficam sem cor sem aviso).
+
+## Interface (S20)
+
+61. **Abrir projeto versionado no app para testar a UI grava nele**: cada comando vai para o `wal.ndjson` na hora (sem salvar). Para testes que editam, copiar o projeto para o scratchpad e abrir a cópia; conferir `git status producoes/` ao fechar.
+62. **Render de painel que não é o quadro do corte usa `camera: false`**: o padrão do `RenderOptions` enquadra pela câmera do projeto (16:9) e recorta uma folha de modelo larga, deslocando tudo o que se desenha por cima em coordenadas do canvas.
+63. **Coordenadas do `aiai_input` são pontos lógicos** (1536 de largura com escala 125%), não pixels da captura reduzida (1280): converter ou ler os retângulos do `GET_UI_STATE`.

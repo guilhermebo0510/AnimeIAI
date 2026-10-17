@@ -771,18 +771,6 @@ impl DockBehavior<'_> {
             UiResponse::None
         }
     }
-
-    /// Texto de estado vazio centralizado no corpo do painel (com quebra de linha).
-    fn empty_state(&self, ui: &egui::Ui, body: Rect, text: &str) {
-        if body.width() < 40.0 || body.height() < 20.0 {
-            return;
-        }
-        let mut job = egui::text::LayoutJob::simple(text.to_owned(), FontId::proportional(13.0), self.t.text_dim, (body.width() - 32.0).max(40.0));
-        job.halign = Align::Center;
-        let galley = ui.painter().layout_job(job);
-        let pos = body.center() - galley.rect.center().to_vec2();
-        ui.painter().with_clip_rect(body).galley(pos, galley, self.t.text_dim);
-    }
 }
 
 impl Behavior<PanelKind> for DockBehavior<'_> {
@@ -807,6 +795,9 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::Preview if self.env.ws == WorkspaceId::Audio => panels::audio::monitor(&mut self.env, ui, body),
             PanelKind::Mixer => panels::audio::mixer(&mut self.env, ui, body),
             PanelKind::Navigator if self.env.ws == WorkspaceId::Cor => panels::audio::monitor(&mut self.env, ui, body),
+            PanelKind::Navigator => panels::navigator::show(&mut self.env, ui, body),
+            PanelKind::Characters => panels::characters::list(&mut self.env, ui, body),
+            PanelKind::Sheet => panels::characters::sheet(&mut self.env, ui, body),
             PanelKind::Media => panels::edit::media(&mut self.env, ui, body),
             PanelKind::Presets => panels::deliver::presets(&mut self.env, ui, body),
             PanelKind::Queue => panels::deliver::queue(&mut self.env, ui, body),
@@ -819,7 +810,6 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::Board => panels::board::show(&mut self.env, ui, body),
             PanelKind::Episodes => panels::production::episodes(&mut self.env, ui, body),
             PanelKind::Tasks => panels::production::tasks(&mut self.env, ui, body),
-            _ => self.empty_state(ui, body, tr(kind.empty_key())),
         }
         ui.painter().rect_stroke(rect, CARD_RADIUS, Stroke::new(1.0, self.t.border), StrokeKind::Inside);
         resp

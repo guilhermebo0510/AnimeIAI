@@ -25,6 +25,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: egui::Rect) {
             WorkspaceId::Edicao => return super::edit::properties(env, ui),
             WorkspaceId::Entrega => return super::deliver::properties(env, ui),
             WorkspaceId::Cor => return super::satsuei::grade(env, ui),
+            WorkspaceId::Personagens => return super::characters::properties(env, ui),
             _ => {}
         }
         let tool = *env.tool;

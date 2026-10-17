@@ -52,6 +52,27 @@ fn landmark_heads(heads: f32) -> Vec<(&'static str, f32)> {
     ]
 }
 
+/// Linhas-guia de proporção de um settei (nome, altura em cabeças a partir do topo): as genéricas pela altura em cabeças,
+/// trocadas pelas do próprio settei quando houver. `landmarks` aceita os dois formatos que existem em projetos: a lista
+/// que o `MODEL_SHEET` grava (`[{name, heads, y_px}]`) e o objeto curto (`{"olhos": 0.6}`) de quem ajusta à mão.
+pub fn sheet_landmarks(measurements: &serde_json::Value) -> Vec<(String, f32)> {
+    let Some(heads) = measurements.get("heads_tall").and_then(|v| v.as_f64()) else { return Vec::new() };
+    let mut out: Vec<(String, f32)> = landmark_heads(heads as f32).into_iter().map(|(n, h)| (n.to_owned(), h)).collect();
+    let mut own: Vec<(String, f32)> = Vec::new();
+    match measurements.get("landmarks") {
+        Some(serde_json::Value::Object(o)) => own.extend(o.iter().filter_map(|(k, v)| Some((k.clone(), v.as_f64()? as f32)))),
+        Some(serde_json::Value::Array(a)) => own.extend(a.iter().filter_map(|v| Some((v.get("name")?.as_str()?.to_owned(), v.get("heads")?.as_f64()? as f32)))),
+        _ => {}
+    }
+    for (n, h) in own {
+        match out.iter_mut().find(|(k, _)| *k == n) {
+            Some(slot) => slot.1 = h,
+            None => out.push((n, h)),
+        }
+    }
+    out
+}
+
 pub struct ModelSheetPlan {
     pub commands: Vec<Command>,
     pub cut: Id,
@@ -203,12 +224,9 @@ pub fn consistency(p: &Project, req: &ConsistencyRequest) -> ToolResult<Consiste
     if head < 2.0 {
         return Err(ToolError::Invalid("cabeça muito pequena para medir".into()));
     }
-    let lm = landmark_heads(heads);
     // linhas-guia do próprio settei (ex.: olhos mais baixos num desenho de olhos grandes) valem mais que as genéricas
-    let own = m.get("landmarks").and_then(|v| v.as_object());
-    let expected = |name: &str| {
-        own.and_then(|o| o.get(name)).and_then(|v| v.as_f64()).map(|v| v as f32).or_else(|| lm.iter().find(|(n, _)| *n == name).map(|(_, v)| *v)).unwrap_or(0.0)
-    };
+    let lm = sheet_landmarks(m);
+    let expected = |name: &str| lm.iter().find(|(n, _)| n == name).map(|(_, v)| *v).unwrap_or(0.0);
     let mut errors = std::collections::BTreeMap::new();
     let rel = |got: f32, exp: f32| if exp.abs() < 1e-3 { 0.0 } else { (got - exp).abs() / exp * 100.0 };
     if let Some(e) = req.eyes {
