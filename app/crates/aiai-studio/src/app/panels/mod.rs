@@ -1,4 +1,4 @@
-//! Painéis do editor (dock): Projeto, Camadas, Cores, Linha do tempo, Propriedades e, na pré-produção, Estrutura, Roteiro, Cenas e Prancha; na Produção, Episódios e Tarefas; na Edição, Mídia, Monitor e a linha do tempo da edição; na Entrega, Predefinições e Fila; no Áudio, Mídia, Monitor do corte e Mixer. Cada um desenha dentro do corpo do
+//! Painéis do editor (dock): Projeto, Camadas, Cores, Linha do tempo, Propriedades e, na pré-produção, Estrutura, Roteiro, Cenas e Prancha; na Produção, Episódios e Tarefas; na Edição, Mídia, Monitor e a linha do tempo da edição; na Entrega, Predefinições e Fila; no Áudio, Mídia, Monitor do corte e Mixer; na Composição e na Cor, efeitos, câmera e grade (`satsuei`). Cada um desenha dentro do corpo do
 //! painel com o `Env` (documento, estado do editor, ícones) e só altera o documento por comandos (`commands`).
 
 pub(crate) mod audio;
@@ -11,6 +11,7 @@ pub(crate) mod outline;
 pub(crate) mod production;
 pub(crate) mod project;
 pub(crate) mod properties;
+pub(crate) mod satsuei;
 pub(crate) mod script;
 pub(crate) mod shots;
 pub(crate) mod timeline;

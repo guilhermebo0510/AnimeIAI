@@ -806,6 +806,7 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::Media if self.env.ws == WorkspaceId::Audio => panels::audio::media(&mut self.env, ui, body),
             PanelKind::Preview if self.env.ws == WorkspaceId::Audio => panels::audio::monitor(&mut self.env, ui, body),
             PanelKind::Mixer => panels::audio::mixer(&mut self.env, ui, body),
+            PanelKind::Navigator if self.env.ws == WorkspaceId::Cor => panels::audio::monitor(&mut self.env, ui, body),
             PanelKind::Media => panels::edit::media(&mut self.env, ui, body),
             PanelKind::Presets => panels::deliver::presets(&mut self.env, ui, body),
             PanelKind::Queue => panels::deliver::queue(&mut self.env, ui, body),

@@ -24,6 +24,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: egui::Rect) {
             WorkspaceId::Producao => return super::production::properties(env, ui),
             WorkspaceId::Edicao => return super::edit::properties(env, ui),
             WorkspaceId::Entrega => return super::deliver::properties(env, ui),
+            WorkspaceId::Cor => return super::satsuei::grade(env, ui),
             _ => {}
         }
         let tool = *env.tool;
@@ -35,6 +36,10 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: egui::Rect) {
             dim_label(ui, &t, tr(if tool == ToolId::Move { "opt.move_hint" } else { "opt.select_hint" }));
         }
         layer_properties(env, ui);
+        if env.ws == WorkspaceId::Composicao {
+            super::satsuei::layer_effects(env, ui);
+            super::satsuei::camera(env, ui);
+        }
         cut_properties(env, ui);
     });
 }
