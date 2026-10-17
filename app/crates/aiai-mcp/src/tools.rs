@@ -204,10 +204,10 @@ Só grava em pastas permitidas (AIAI_MCP_ALLOWED_DIRS; padrão producoes/, calib
         },
         {
             "name": "aiai_ui",
-            "description": "Estado e ações da interface. action=get_state devolve workspace, painéis (nome, visível, rect_logical/rect_physical/rect_screen), `widgets` (abas de workspace ws_tab:<chave>, menus menu:file|edit|view|window|help, itens abertos menu_item:..., ferramentas tool:<chave>, barras, diálogos), ferramenta ativa, foco, diálogos abertos, escala de DPI, tamanho/posição da janela e input_pending. Ações (UI_ACTION; campos extras vão junto): set_workspace {workspace}, select_tool {tool}, toggle_panel {panel, visible?}, set_theme {theme: light|dark}, set_language {language: pt|en}, open_dialog/close_dialog {dialog: about|prefs}. Exige o app aberto.",
+            "description": "Estado e ações da interface. action=get_state devolve workspace, painéis (nome, visível, rect_logical/rect_physical/rect_screen), `widgets` (abas de workspace ws_tab:<chave>, menus menu:file|edit|view|window|help, itens abertos menu_item:..., ferramentas tool:<chave>, barras, diálogos), ferramenta ativa, foco, diálogos abertos, escala de DPI, tamanho/posição da janela e input_pending. Ações (UI_ACTION; campos extras vão junto): set_workspace {workspace}, select_tool {tool}, toggle_panel {panel, visible?}, set_theme {theme: light|dark}, set_language {language: pt|en}, set_window_size {width, height, maximized?}, open_dialog/close_dialog {dialog: about|prefs}. get_state traz também `overflow` (widgets cortados na horizontal pela borda do painel/janela; vazio = sem estouro). Exige o app aberto.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "action": { "type": "string", "description": "get_state | set_workspace | select_tool | toggle_panel | set_theme | set_language | open_dialog | close_dialog" } },
+                "properties": { "action": { "type": "string", "description": "get_state | set_workspace | select_tool | toggle_panel | set_theme | set_language | set_window_size | open_dialog | close_dialog" } },
                 "required": ["action"],
                 "additionalProperties": true
             }

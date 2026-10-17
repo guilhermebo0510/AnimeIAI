@@ -47,11 +47,25 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: egui::Rect) {
 
 fn row(ui: &mut Ui, t: &crate::theme::Tokens, compact: bool, key: &str, add: impl FnOnce(&mut Ui)) {
     if compact {
-        // na barra do canvas só os campos numéricos têm rótulo; combos e cor mostram o nome ao passar o mouse
-        if !matches!(key, "opt.tip" | "opt.stabilizer" | "opt.preset" | "opt.select_mode" | "opt.color") {
-            ui.label(egui::RichText::new(tr(key)).size(12.0).color(t.text_dim));
+        // Na barra do canvas (linha que quebra) combo e slider são blocos aninhados que o egui não leva para a linha de baixo
+        // (e `available_width` num layout que quebra é a largura inteira, não o que sobrou na linha):
+        // guarda a largura do grupo rótulo+controle e quebra a linha antes quando ele não cabe no que sobrou (estouro, S20).
+        let id = ui.id().with(("tb_row", key));
+        let need: f32 = ui.data(|d| d.get_temp(id)).unwrap_or(0.0);
+        if need > 0.0 && ui.available_rect_before_wrap().width() < need {
+            ui.end_row();
         }
-        add(ui);
+        let r = ui.scope(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            // só os campos numéricos têm rótulo; combos e cor mostram o nome ao passar o mouse
+            ui.horizontal(|ui| {
+                if !matches!(key, "opt.tip" | "opt.stabilizer" | "opt.preset" | "opt.select_mode" | "opt.color") {
+                    ui.label(egui::RichText::new(tr(key)).size(12.0).color(t.text_dim));
+                }
+                add(ui);
+            });
+        });
+        ui.data_mut(|d| d.insert_temp(id, r.response.rect.width() + ui.spacing().item_spacing.x));
     } else {
         ui.horizontal(|ui| {
             ui.set_min_width(110.0);

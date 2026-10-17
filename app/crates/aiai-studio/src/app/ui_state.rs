@@ -82,6 +82,52 @@ impl StudioApp {
         v
     }
 
+    /// Estouro de layout do quadro anterior: todo widget cujo retângulo inteiro passa do recorte do pai na horizontal
+    /// (texto/campo cortado pela borda do painel ou da janela). O recorte vertical é ignorado (rolagem normal). Cada item
+    /// diz o painel onde caiu (`panel`), quanto passou (`excess`, pontos), o retângulo e, quando o egui guardou, o rótulo.
+    /// Painéis com rolagem horizontal intencional (linhas do tempo) entram com `scroll_x: true` para o chamador
+    /// poder separar.
+    pub(crate) fn layout_overflow(&self, ctx: &egui::Context) -> Value {
+        let panels: Vec<(String, Rect)> = self.rects.all().iter().filter_map(|(k, r)| k.strip_prefix("panel:").map(|n| (n.to_string(), *r))).collect();
+        let screen = ctx.content_rect();
+        let mut out = Vec::new();
+        ctx.viewport(|vp| {
+            let w = &vp.prev_pass.widgets;
+            for (_, list) in w.layers() {
+                for wr in list {
+                    let (full, vis) = (wr.rect, wr.interact_rect);
+                    if !full.is_positive() || vis.height() <= 0.5 || full.width() > screen.width() * 2.0 {
+                        continue;
+                    }
+                    let right = (full.max.x - vis.max.x).max(0.0);
+                    let left = (vis.min.x - full.min.x).max(0.0);
+                    let excess = right.max(left);
+                    if excess <= 1.0 {
+                        continue;
+                    }
+                    // o ponto de prova fica dentro do recorte do pai (um widget empurrado inteiro para fora cairia no painel vizinho)
+                    let probe = if vis.width() > 0.0 { vis.center() } else if right >= left { egui::pos2(vis.max.x - 1.0, vis.center().y) } else { egui::pos2(vis.min.x + 1.0, vis.center().y) };
+                    let panel = panels.iter().filter(|(_, r)| r.contains(probe)).min_by(|a, b| a.1.area().total_cmp(&b.1.area())).map(|(n, _)| n.clone());
+                    let scroll_x = matches!(panel.as_deref(), Some("timeline"));
+                    let info = w.info(wr.id);
+                    out.push(json!({
+                        "panel": panel,
+                        "excess": round(excess),
+                        "side": if right >= left { "right" } else { "left" },
+                        "hidden": vis.width() <= 0.0,
+                        "scroll_x": scroll_x,
+                        "rect": rect4(full, 1.0),
+                        "visible_rect": rect4(vis, 1.0),
+                        "type": info.map(|i| format!("{:?}", i.typ)),
+                        "label": info.and_then(|i| i.label.clone().or_else(|| i.current_text_value.clone())),
+                    }));
+                }
+            }
+        });
+        out.sort_by(|a, b| b["excess"].as_f64().unwrap_or(0.0).total_cmp(&a["excess"].as_f64().unwrap_or(0.0)));
+        Value::Array(out)
+    }
+
     pub(crate) fn bridge_ui_state(&self, ctx: &egui::Context) -> Value {
         let ppp = ctx.pixels_per_point();
         let origin = self.client_origin_physical(ctx);
@@ -131,6 +177,7 @@ impl StudioApp {
             "tools": ToolId::ALL.iter().map(|t| t.key()).collect::<Vec<_>>(),
             "panels": panels,
             "widgets": widgets,
+            "overflow": self.layout_overflow(ctx),
             "dialogs": dialogs,
             "focused": {
                 "window": vp.focused,
@@ -216,6 +263,7 @@ impl StudioApp {
 
     /// `UI_ACTION {action, ...}`: set_workspace {workspace}, select_tool {tool}, toggle_panel {panel, visible?},
     /// set_theme {theme: light|dark}, set_language {language: pt|en}, open_dialog/close_dialog {dialog: about|prefs},
+    /// set_window_size {width, height, maximized?} (pontos lógicos),
     /// select_layer {layer}, select_cut {cut}, set_frame {frame}, set_color {color}, fit_view.
     /// Apelidos aceitos: set_tool = select_tool; open_panel = toggle_panel com visible=true.
     pub(crate) fn bridge_ui_action(&mut self, ctx: &egui::Context, params: &Value) -> BridgeResult {
@@ -292,6 +340,18 @@ impl StudioApp {
                 self.set_theme(ctx, t);
                 json!({ "theme": self.prefs.theme.key() })
             }
+            "set_window_size" => {
+                // Tamanho da área cliente em pontos lógicos (varredura de estouro nas larguras mínimas); tira o maximizado antes.
+                let w = m.get("width").and_then(Value::as_f64).ok_or_else(|| BridgeError::invalid_params("set_window_size exige 'width' e 'height' (pontos)"))?;
+                let h = m.get("height").and_then(Value::as_f64).ok_or_else(|| BridgeError::invalid_params("set_window_size exige 'width' e 'height' (pontos)"))?;
+                if m.get("maximized").and_then(Value::as_bool) == Some(true) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+                } else {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w as f32, h as f32)));
+                }
+                json!({ "requested": [w, h] })
+            }
             "set_language" => {
                 let key = text(&m, &["language", "lang", "value"]).ok_or_else(|| BridgeError::invalid_params("set_language exige 'language' (pt|en)"))?;
                 let l = Lang::from_code(key).ok_or_else(|| BridgeError::invalid_params(format!("idioma desconhecido: {key} (pt|en)")))?;
@@ -309,7 +369,7 @@ impl StudioApp {
             }
             other => {
                 return Err(BridgeError::invalid_params(format!(
-                    "UI_ACTION desconhecida: {other}; use set_workspace, select_tool, toggle_panel, set_theme, set_language, open_dialog, close_dialog, select_layer, select_cut, set_frame, set_color, fit_view"
+                    "UI_ACTION desconhecida: {other}; use set_workspace, select_tool, toggle_panel, set_theme, set_language, set_window_size, open_dialog, close_dialog, select_layer, select_cut, set_frame, set_color, fit_view"
                 )));
             }
         };

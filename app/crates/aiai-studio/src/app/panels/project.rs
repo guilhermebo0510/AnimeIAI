@@ -7,7 +7,7 @@ use crate::app::ui_kit::{Env, body_ui, dim_label, paint_icon, section};
 use crate::i18n::tr;
 use crate::icons::IconId;
 use aiai_core::*;
-use egui::{Align2, FontId, Id, Rect, Sense, Ui};
+use egui::{FontId, Id, Rect, Sense, Ui};
 use serde_json::json;
 
 const FPS_PRESETS: [(u32, u32, &str); 6] = [(24000, 1001, "23.976"), (24, 1, "24"), (25, 1, "25"), (30000, 1001, "29.97"), (30, 1, "30"), (60, 1, "60")];
@@ -208,11 +208,29 @@ fn node_row(env: &mut Env, ui: &mut Ui, id: &NodeId, depth: usize, icon: IconId,
     } else {
         let clip = Rect::from_min_max(egui::pos2(name_left, rect.top()), egui::pos2(rect.right() - 4.0, rect.bottom()));
         let painter = ui.painter().with_clip_rect(clip);
-        let galley = painter.layout_no_wrap(name.clone(), FontId::proportional(13.0), if selected || active_cut { t.text } else { t.text });
+        // nome longo termina em "…" (o nome inteiro aparece ao passar o mouse); a duração do corte só entra se couber
+        let extra_g = extra.map(|x| painter.layout_no_wrap(x, FontId::proportional(11.5), t.text_dim));
+        let full = painter.layout_no_wrap(name.clone(), FontId::proportional(13.0), t.text);
+        let room = clip.width();
+        let extra_w = extra_g.as_ref().map(|g| g.size().x + 8.0).unwrap_or(0.0);
+        let name_room = if full.size().x + extra_w <= room { room } else { (room - extra_w).max(room * 0.6) };
+        let galley = if full.size().x <= name_room {
+            full
+        } else {
+            let mut job = egui::text::LayoutJob::simple_singleline(name.clone(), FontId::proportional(13.0), t.text);
+            job.wrap = egui::text::TextWrapping::truncate_at_width(name_room);
+            painter.layout_job(job)
+        };
         let w = galley.size().x;
+        let elided = galley.elided;
         painter.galley(egui::pos2(name_left, rect.center().y - galley.size().y / 2.0), galley, t.text);
-        if let Some(x) = extra {
-            painter.text(egui::pos2(name_left + w + 8.0, rect.center().y), Align2::LEFT_CENTER, x, FontId::proportional(11.5), t.text_dim);
+        if let Some(g) = extra_g {
+            if name_left + w + 8.0 + g.size().x <= clip.right() {
+                painter.galley(egui::pos2(name_left + w + 8.0, rect.center().y - g.size().y / 2.0), g, t.text_dim);
+            }
+        }
+        if elided {
+            resp.clone().on_hover_text(name.clone());
         }
     }
     // clique, duplo clique e menu de contexto
@@ -262,16 +280,26 @@ fn node_row(env: &mut Env, ui: &mut Ui, id: &NodeId, depth: usize, icon: IconId,
 fn project_settings(env: &mut Env, ui: &mut Ui) {
     let t = env.t;
     let s = env.core.project.settings.clone();
-    egui::Grid::new("project_settings_grid").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+    // painel estreito: rótulo em cima do campo (rótulo + campo de 150 lado a lado estourava abaixo de ~250 pontos)
+    let narrow = ui.available_width() < 250.0;
+    let name_w = if narrow { ui.available_width() - 4.0 } else { 150.0f32.min(ui.available_width() - 110.0) };
+    egui::Grid::new("project_settings_grid").num_columns(if narrow { 1 } else { 2 }).spacing([10.0, 6.0]).show(ui, |ui| {
+        let next = |ui: &mut Ui| {
+            if narrow {
+                ui.end_row();
+            }
+        };
         dim_label(ui, &t, tr("project.name"));
+        next(ui);
         let current = env.core.project.name.clone();
-        let (te, committed) = super::text_commit(ui, Id::new("project_name"), &current, 150.0);
+        let (te, committed) = super::text_commit(ui, Id::new("project_name"), &current, name_w);
         env.note("project:name", te.rect);
         if let Some(name) = committed {
             let _ = cmds::set_project_props(env.core, json!({ "name": name }));
         }
         ui.end_row();
         dim_label(ui, &t, tr("project.frame_size"));
+        next(ui);
         ui.horizontal(|ui| {
             if let Some(v) = commit_on_release(ui, Id::new("proj_w"), s.width, |ui, v| ui.add(egui::DragValue::new(v).range(16..=16384).speed(4.0))) {
                 let _ = cmds::set_project_props(env.core, json!({ "settings": { "width": v } }));
@@ -283,6 +311,7 @@ fn project_settings(env: &mut Env, ui: &mut Ui) {
         });
         ui.end_row();
         dim_label(ui, &t, tr("project.fps"));
+        next(ui);
         let cur = FPS_PRESETS.iter().find(|(n, d, _)| *n == s.fps_num && *d == s.fps_den).map(|(_, _, l)| l.to_string()).unwrap_or_else(|| format!("{:.3}", s.fps()));
         egui::ComboBox::from_id_salt("proj_fps").width(90.0).selected_text(cur).show_ui(ui, |ui| {
             for (n, d, label) in FPS_PRESETS {

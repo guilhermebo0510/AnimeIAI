@@ -1,0 +1,2572 @@
+{
+ "summary": {
+  "combinations": 192,
+  "with_overflow": 0,
+  "overflow_items": 0,
+  "sizes": [
+   [
+    1024,
+    680
+   ],
+   [
+    1280,
+    720
+   ],
+   [
+    1440,
+    864
+   ],
+   "max"
+  ],
+  "languages": [
+   "pt",
+   "en"
+  ]
+ },
+ "entries": [
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "ws": "roteiro",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "ws": "personagens",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "ws": "storyboard",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "ws": "layout",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "ws": "animacao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "ws": "pintura",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "ws": "cenario",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "ws": "composicao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "ws": "cor",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "ws": "audio",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "ws": "edicao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "ws": "entrega",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "ws": "producao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "tool": "move",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "tool": "brush",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "tool": "pen",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "tool": "eraser",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "tool": "fill",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "tool": "lasso",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "tool": "eyedropper",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "tool": "hand",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "tool": "zoom",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "dialog": "prefs",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "pt",
+   "dialog": "about",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "ws": "roteiro",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "ws": "personagens",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "ws": "storyboard",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "ws": "layout",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "ws": "animacao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "ws": "pintura",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "ws": "cenario",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "ws": "composicao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "ws": "cor",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "ws": "audio",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "ws": "edicao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "ws": "entrega",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "ws": "producao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "tool": "move",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "tool": "brush",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "tool": "pen",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "tool": "eraser",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "tool": "fill",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "tool": "lasso",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "tool": "eyedropper",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "tool": "hand",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "tool": "zoom",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "dialog": "prefs",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1024.0,
+    680.0
+   ],
+   "requested": [
+    1024,
+    680
+   ],
+   "language": "en",
+   "dialog": "about",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "ws": "roteiro",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "ws": "personagens",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "ws": "storyboard",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "ws": "layout",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "ws": "animacao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "ws": "pintura",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "ws": "cenario",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "ws": "composicao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "ws": "cor",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "ws": "audio",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "ws": "edicao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "ws": "entrega",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "ws": "producao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "tool": "move",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "tool": "brush",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "tool": "pen",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "tool": "eraser",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "tool": "fill",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "tool": "lasso",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "tool": "eyedropper",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "tool": "hand",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "tool": "zoom",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "dialog": "prefs",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "pt",
+   "dialog": "about",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "ws": "roteiro",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "ws": "personagens",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "ws": "storyboard",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "ws": "layout",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "ws": "animacao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "ws": "pintura",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "ws": "cenario",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "ws": "composicao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "ws": "cor",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "ws": "audio",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "ws": "edicao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "ws": "entrega",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "ws": "producao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "tool": "move",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "tool": "brush",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "tool": "pen",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "tool": "eraser",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "tool": "fill",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "tool": "lasso",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "tool": "eyedropper",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "tool": "hand",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "tool": "zoom",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "dialog": "prefs",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1280.0,
+    720.0
+   ],
+   "requested": [
+    1280,
+    720
+   ],
+   "language": "en",
+   "dialog": "about",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "ws": "roteiro",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "ws": "personagens",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "ws": "storyboard",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "ws": "layout",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "ws": "animacao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "ws": "pintura",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "ws": "cenario",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "ws": "composicao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "ws": "cor",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "ws": "audio",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "ws": "edicao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "ws": "entrega",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "ws": "producao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "tool": "move",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "tool": "brush",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "tool": "pen",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "tool": "eraser",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "tool": "fill",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "tool": "lasso",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "tool": "eyedropper",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "tool": "hand",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "tool": "zoom",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "dialog": "prefs",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "pt",
+   "dialog": "about",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "ws": "roteiro",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "ws": "personagens",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "ws": "storyboard",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "ws": "layout",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "ws": "animacao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "ws": "pintura",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "ws": "cenario",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "ws": "composicao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "ws": "cor",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "ws": "audio",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "ws": "edicao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "ws": "entrega",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "ws": "producao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "tool": "move",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "tool": "brush",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "tool": "pen",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "tool": "eraser",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "tool": "fill",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "tool": "lasso",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "tool": "eyedropper",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "tool": "hand",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "tool": "zoom",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "dialog": "prefs",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1440.0,
+    864.0
+   ],
+   "requested": [
+    1440,
+    864
+   ],
+   "language": "en",
+   "dialog": "about",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "ws": "roteiro",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "ws": "personagens",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "ws": "storyboard",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "ws": "layout",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "ws": "animacao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "ws": "pintura",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "ws": "cenario",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "ws": "composicao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "ws": "cor",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "ws": "audio",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "ws": "edicao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "ws": "entrega",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "ws": "producao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "tool": "move",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "tool": "brush",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "tool": "pen",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "tool": "eraser",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "tool": "fill",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "tool": "lasso",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "tool": "eyedropper",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "tool": "hand",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "tool": "zoom",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "dialog": "prefs",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "pt",
+   "dialog": "about",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "ws": "roteiro",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "ws": "personagens",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "ws": "storyboard",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "ws": "layout",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "ws": "animacao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "ws": "pintura",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "ws": "cenario",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "ws": "composicao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "ws": "cor",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "ws": "audio",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "ws": "edicao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "ws": "entrega",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "ws": "producao",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "tool": "move",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "tool": "brush",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "tool": "pen",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "tool": "eraser",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "tool": "fill",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "tool": "lasso",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "tool": "eyedropper",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "tool": "hand",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "tool": "zoom",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "dialog": "prefs",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  },
+  {
+   "size": [
+    1536.0,
+    792.81
+   ],
+   "requested": "max",
+   "language": "en",
+   "dialog": "about",
+   "overflow": [],
+   "ignored_scroll_x": 0
+  }
+ ]
+}
