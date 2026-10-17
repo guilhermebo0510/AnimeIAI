@@ -233,6 +233,7 @@ fn render(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeErro
         only_layers,
         background: opt_str(&p, "background")?.map(parse_background).transpose()?,
         camera: opt_bool(&p, "camera")?.unwrap_or(true),
+        layer_motion: opt_bool(&p, "layer_motion")?.unwrap_or(true),
     };
     let out = render_frame(&session.project, &session.blobs, &cut, frame, &opts).map_err(|e| BridgeError::invalid_params(e.to_string()))?;
     let (mut width, mut height) = (out.image.width, out.image.height);

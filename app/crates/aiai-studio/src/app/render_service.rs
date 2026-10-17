@@ -243,7 +243,7 @@ fn worker(shared: Arc<Shared>, tx: crossbeam_channel::Sender<Done>, ctx: egui::C
 
 fn render_job(job: &Job, t0: Instant) -> Result<Rendered, String> {
     let k = &job.key;
-    let opts = RenderOptions { include_guides: k.guides, include_reference: k.reference, only_layers: None, background: None, camera: false };
+    let opts = RenderOptions { include_guides: k.guides, include_reference: k.reference, only_layers: None, background: None, camera: false, layer_motion: true };
     let out = render_frame(&job.snap.project, &job.snap.blobs, &k.cut, k.frame, &opts).map_err(|e| e.to_string())?;
     let (w, h) = (out.image.width as usize, out.image.height as usize);
     let r = k.reduce.max(1) as usize;

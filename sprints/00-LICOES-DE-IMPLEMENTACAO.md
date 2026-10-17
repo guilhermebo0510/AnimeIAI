@@ -96,3 +96,9 @@ Erros já pagos neste PC, nos projetos Smart Canvas e ANIGO do mesmo usuário. A
 55. **Para escolher as sementes, imitar o balde do app inteiro**: núcleos = componentes de {D > gap/2} e região de cada núcleo por propagação que NÃO atravessa linha (watershed com máscara fora da linha). Atribuir pelo núcleo mais próximo em linha reta misturou o lilás do outro lado do fecho na mediana do branco do olho (corte reto de Voronoi). Gap grande (36) fecha os vãos do contorno digitado, mas deixa sem núcleo as regiões fechadas estreitas (anel da íris, branco do olho): segunda passada com gap 4 só onde ficou vazio.
 56. **"É fundo" não se decide por cor parecida**: o branco do olho e o cabelo claro ficam a < 30 da parede creme e foram deixados vazios. Fundo = regiões que contêm pontos digitados de fundo.
 57. **Íris, broche e pálpebras grossas não se medem com o paquímetro de linha**: o miolo escuro (íris marinho, pedra) puxa a linha para dentro e a engrossa. Geometria digitada a partir de perfis de linha/coluna (raio do contorno nas duas direções) e cor do núcleo medida no perfil.
+
+## Micro anime (S22)
+
+58. **Ferramenta que lê pixels do cel (balde, lint) não pode passar pela posição animada da camada.** A camada com chaves de deslize pintou o quadro inteiro de uma cor só; a primeira suspeita (polilinha fora do canvas) estava errada — a pista era que a primeira execução, ANTES de criar as chaves, tinha saído certa. Quando um script reexecutável começa a falhar, perguntar o que a execução anterior deixou no documento.
+59. **Spline fechado de 4 pontos vira oval**: retângulo de manga desenhado como spline fechado incha e a semente cai fora; usar pontos intermediários (ou polilinha) em formas retas.
+60. **Recorte pelo quadro abre regiões**: personagem cortado pela borda precisa de uma linha de fechamento na borda (o lint ignora regiões que tocam a borda, então elas ficam sem cor sem aviso).

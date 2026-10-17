@@ -90,6 +90,42 @@ fn draw_fill_lint_render() {
 }
 
 #[test]
+fn fill_ignores_animated_layer_offset() {
+    // camadas que entram deslizando (chaves offset_x): o balde trabalha no cel cru, não na posição animada do quadro
+    let mut s = CoreSession::for_tests("tools-offset");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 640, "height": 360}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = create(&mut s, Some(&sc), "C001", NodeKind::Cut(CutData::new(24)));
+    let fill_layer = create(&mut s, Some(&cut), "cor", NodeKind::Layer(LayerData::new(LayerType::Fill)));
+    let line_layer = create(&mut s, Some(&cut), "linha", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+    create(&mut s, Some(&fill_layer), "cor1", NodeKind::Cel(CelData::new(1)));
+    create(&mut s, Some(&line_layer), "linha1", NodeKind::Cel(CelData::new(1)));
+    s.apply(Command::SetProps { id: fill_layer.clone(), name: None, data: json!({"line_refs": [line_layer.0]}) }).unwrap();
+    let ink = ColorRef::Direct { rgba: Rgba::from_hex("#202020").unwrap() };
+    let square = curve(&[[270.0, 130.0, 1.0], [370.0, 130.0, 1.0], [370.0, 230.0, 1.0], [270.0, 230.0, 1.0]], 3.0, &ink, true);
+    let mut sq = square;
+    sq.geometry = serde_json::from_value(json!("polyline")).unwrap();
+    s.apply(draw_command(&s.project, &DrawRequest { cut: cut.clone(), frame: 0, layer: line_layer.clone(), curves: vec![sq], mirror_x: None }).unwrap()).unwrap();
+    for l in [&fill_layer, &line_layer] {
+        s.apply(Command::SetProps { id: l.clone(), name: None, data: json!({"keys": {"offset_x": [{"frame": 0, "value": -300.0, "ease": "ease_out"}, {"frame": 12, "value": 0.0, "ease": "hold"}]}}) }).unwrap();
+    }
+    let red = ColorRef::Direct { rgba: Rgba::from_hex("#d03030").unwrap() };
+    let req = FillRequest { cut: cut.clone(), frame: 0, layer: fill_layer.clone(), seeds: vec![FillSeed { x: 320.0, y: 180.0, color: red }], line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35 };
+    let cmd = fill_command(&s.project, &mut s.blobs, &req).unwrap();
+    s.apply(cmd).unwrap();
+    let raw = RenderOptions { only_layers: Some(vec![fill_layer.clone()]), camera: false, layer_motion: false, ..Default::default() };
+    let img = render_frame(&s.project, &s.blobs, &cut, 0, &raw).unwrap().image;
+    assert!(img.get(320, 180)[3] > 0.99, "dentro do quadrado: pintado");
+    assert!(img.get(50, 50)[3] < 0.01 && img.get(600, 300)[3] < 0.01, "fora do quadrado: vazio (o balde não pode ler a linha deslocada)");
+    assert!(lint(&s.project, &s.blobs, &cut, 0, &fill_layer, 3.0, 30).unwrap().unpainted.is_empty());
+    // no quadro 0 a camada aparece deslocada 300 px para a esquerda; no 12, no lugar
+    let moved = RenderOptions { only_layers: Some(vec![fill_layer.clone()]), camera: false, ..Default::default() };
+    assert!(render_frame(&s.project, &s.blobs, &cut, 0, &moved).unwrap().image.get(20, 180)[3] > 0.99);
+    assert!(render_frame(&s.project, &s.blobs, &cut, 12, &moved).unwrap().image.get(320, 180)[3] > 0.99);
+}
+
+#[test]
 fn paint_sky_study_with_brushes() {
     use aiai_paint::brush::{BrushPreset, GradientKind};
     use aiai_tools::paint::{GradientRequest, PaintRequest, PaintStrokeSpec, gradient_command, paint_command};

@@ -21,11 +21,14 @@ pub struct RenderOptions {
     /// Aplica a câmera do corte (saída no tamanho do projeto, com multiplano). `false` = o canvas inteiro do corte,
     /// sem câmera (edição, balde, model sheets).
     pub camera: bool,
+    /// Aplica deslocamento/escala/rotação animados da camada (offset, chaves). `false` = o cel cru na posição do canvas,
+    /// como o balde e o lint precisam (as sementes e a máscara de cor ficam em coordenadas do cel).
+    pub layer_motion: bool,
 }
 
 impl Default for RenderOptions {
     fn default() -> Self {
-        RenderOptions { include_guides: false, include_reference: false, only_layers: None, background: None, camera: true }
+        RenderOptions { include_guides: false, include_reference: false, only_layers: None, background: None, camera: true, layer_motion: true }
     }
 }
 
@@ -54,6 +57,7 @@ pub struct Renderer<'a> {
     out_w: u32,
     out_h: u32,
     camera: Option<CameraState>,
+    layer_motion: bool,
     warnings: Vec<String>,
 }
 
@@ -142,7 +146,7 @@ pub fn render_frame(project: &Project, blobs: &BlobStore, cut_id: &Id, frame: u3
     } else {
         (w, h, None)
     };
-    let mut r = Renderer { project, blobs, width: w, height: h, out_w, out_h, camera, warnings: Vec::new() };
+    let mut r = Renderer { project, blobs, width: w, height: h, out_w, out_h, camera, layer_motion: opts.layer_motion, warnings: Vec::new() };
     let allowed = opts.only_layers.as_ref().map(|ids| {
         let mut set = std::collections::BTreeSet::new();
         for id in ids {
@@ -378,10 +382,16 @@ impl<'a> Renderer<'a> {
     /// Aplica transformação do cel, chaves da camada e câmera (multiplano) a uma imagem do canvas.
     fn place(&self, img: Image, layer: &LayerData, frame: u32, cel_transform: [f32; 4]) -> Image {
         let [tx, ty, s, rot] = cel_transform;
-        let ox = layer_prop(layer, "offset_x", frame, layer.offset[0]);
-        let oy = layer_prop(layer, "offset_y", frame, layer.offset[1]);
-        let ks = layer_prop(layer, "scale", frame, 1.0);
-        let kr = layer_prop(layer, "rotation", frame, 0.0);
+        let (ox, oy, ks, kr) = if self.layer_motion {
+            (
+                layer_prop(layer, "offset_x", frame, layer.offset[0]),
+                layer_prop(layer, "offset_y", frame, layer.offset[1]),
+                layer_prop(layer, "scale", frame, 1.0),
+                layer_prop(layer, "rotation", frame, 0.0),
+            )
+        } else {
+            (0.0, 0.0, 1.0, 0.0)
+        };
         let mut xf = Affine::from_trs(tx + ox, ty + oy, s * ks, rot + kr, [self.width as f32 / 2.0, self.height as f32 / 2.0]);
         if let Some(cam) = &self.camera {
             xf = compose_affine(cam.affine(layer.depth, self.out_w, self.out_h), xf);

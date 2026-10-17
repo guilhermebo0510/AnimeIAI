@@ -1668,7 +1668,7 @@ pub(crate) fn draw_arrow(img: &mut Image, a: [f32; 2], b: [f32; 2], width: f32, 
 
 fn render_panel_native(p: &Project, blobs: &BlobStore, panel: &Panel, bg: Option<[f32; 3]>) -> ToolResult<Option<Image>> {
     let Some(cut) = &panel.drawing_cut else { return Ok(None) };
-    let opts = RenderOptions { include_guides: false, include_reference: false, only_layers: None, background: bg, camera: false };
+    let opts = RenderOptions { include_guides: false, include_reference: false, only_layers: None, background: bg, camera: false, layer_motion: true };
     let out = render_frame(p, blobs, cut, 0, &opts).map_err(|e| ToolError::Render(e.to_string()))?;
     Ok(Some(out.image))
 }

@@ -60,7 +60,7 @@ pub fn compute_regions(
     if line_layers.is_empty() {
         return Err(ToolError::Invalid("nenhuma camada de linha para delimitar o balde (defina line_refs ou line_layers)".into()));
     }
-    let opts = RenderOptions { only_layers: Some(line_layers.to_vec()), include_guides: false, include_reference: false, background: None, camera: false };
+    let opts = RenderOptions { only_layers: Some(line_layers.to_vec()), include_guides: false, include_reference: false, background: None, camera: false, layer_motion: false };
     let out = render_frame(p, blobs, cut_id, frame, &opts).map_err(|e| ToolError::Render(e.to_string()))?;
     let (w, h) = (out.image.width, out.image.height);
     let boundary = boundary_from_alpha(&out.image, params.line_threshold);

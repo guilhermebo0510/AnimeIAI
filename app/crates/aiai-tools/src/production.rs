@@ -202,7 +202,7 @@ pub fn cut_table(p: &Project) -> Vec<CutRow> {
 }
 
 fn white_render_opts() -> RenderOptions {
-    RenderOptions { include_guides: false, include_reference: false, only_layers: None, background: Some([1.0, 1.0, 1.0]), camera: true }
+    RenderOptions { include_guides: false, include_reference: false, only_layers: None, background: Some([1.0, 1.0, 1.0]), camera: true, layer_motion: true }
 }
 
 /// Render do quadro `frame` do corte reduzido para `max_w` (mantendo a proporção) sobre fundo branco.
