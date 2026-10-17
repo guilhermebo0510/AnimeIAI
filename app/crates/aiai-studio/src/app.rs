@@ -7,6 +7,7 @@
 //! documento), `render_service` (render em segundo plano), `canvas`, `tools` (ferramentas) e `panels` (Projeto, Camadas,
 //! Cores, Linha do tempo, Propriedades).
 
+mod actions;
 mod bridge_host;
 mod canvas;
 mod commands;
@@ -49,7 +50,6 @@ pub struct StudioApp {
     trees: HashMap<WorkspaceId, Tree<PanelKind>>,
     icons: Icons,
     tool: ToolId,
-    script: String,
     about_open: bool,
     prefs_open: bool,
     /// O documento: a mesma `CoreSession` que a bridge usa (autor "human" para as ações do usuário).
@@ -113,7 +113,6 @@ impl StudioApp {
             trees: HashMap::new(),
             icons: Icons::default(),
             tool: ToolId::default(),
-            script: String::new(),
             about_open: false,
             prefs_open: false,
             core,
@@ -517,8 +516,8 @@ impl StudioApp {
         let ws = self.ws;
         let tree = self.trees.entry(ws).or_insert_with(|| layout::default_tree(ws));
         let mut notes: Vec<(String, Rect)> = Vec::new();
-        let env = ui_kit::Env { t, core: &mut self.core, ed: &mut self.ed, icons: &mut self.icons, notes: &mut notes, tool: &mut self.tool };
-        let mut behavior = DockBehavior { t, script: &mut self.script, in_tabs: layout::panes_in_tabs(tree), env };
+        let env = ui_kit::Env { t, core: &mut self.core, ed: &mut self.ed, icons: &mut self.icons, notes: &mut notes, tool: &mut self.tool, ws };
+        let mut behavior = DockBehavior { t, in_tabs: layout::panes_in_tabs(tree), env };
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.bg_frame).inner_margin(egui::Margin::same(CARD_GAP as i8))).show(ui, |ui| {
             tree.ui(&mut behavior, ui);
         });
@@ -528,6 +527,9 @@ impl StudioApp {
         if let Some(msg) = self.ed.toast.take() {
             self.notice(msg);
         }
+        if let Some(w) = self.ed.want_workspace.take() {
+            self.switch_workspace(w);
+        }
     }
 
     /// Atalhos do editor (ferramentas, tamanho do pincel, Enter/Esc do mover, quadros, ajustar visão).
@@ -536,8 +538,9 @@ impl StudioApp {
             return;
         }
         let t = self.tokens();
+        let ws = self.ws;
         let mut notes = Vec::new();
-        let mut env = ui_kit::Env { t, core: &mut self.core, ed: &mut self.ed, icons: &mut self.icons, notes: &mut notes, tool: &mut self.tool };
+        let mut env = ui_kit::Env { t, core: &mut self.core, ed: &mut self.ed, icons: &mut self.icons, notes: &mut notes, tool: &mut self.tool, ws };
         tools::shortcuts(ctx, &mut env);
     }
 
@@ -740,7 +743,6 @@ impl eframe::App for StudioApp {
 
 struct DockBehavior<'a> {
     t: Tokens,
-    script: &'a mut String,
     in_tabs: HashSet<TileId>,
     /// Documento, estado do editor, ícones e os retângulos desenhados neste quadro (vão para o `GET_UI_STATE`).
     env: ui_kit::Env<'a>,
@@ -773,24 +775,6 @@ impl DockBehavior<'_> {
         let pos = body.center() - galley.rect.center().to_vec2();
         ui.painter().with_clip_rect(body).galley(pos, galley, self.t.text_dim);
     }
-
-    /// Área de texto central do Roteiro (placeholder editável; a persistência vem com o projeto, S01).
-    fn script(&mut self, ui: &mut egui::Ui, body: Rect) {
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body.shrink2(egui::vec2(18.0, 12.0))));
-        child.set_clip_rect(body);
-        let row_h = child.text_style_height(&egui::TextStyle::Monospace);
-        let rows = ((body.height() - 24.0) / row_h).floor().max(3.0) as usize;
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(&mut child, |ui| {
-            ui.add(
-                egui::TextEdit::multiline(self.script)
-                    .frame(egui::Frame::NONE)
-                    .font(egui::TextStyle::Monospace)
-                    .desired_width(f32::INFINITY)
-                    .desired_rows(rows)
-                    .hint_text(RichText::new(tr("panel.script.empty")).color(self.t.text_dim)),
-            );
-        });
-    }
 }
 
 impl Behavior<PanelKind> for DockBehavior<'_> {
@@ -812,7 +796,10 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::Timeline => panels::timeline::show(&mut self.env, ui, body),
             PanelKind::Properties => panels::properties::show(&mut self.env, ui, body),
             PanelKind::Project => panels::project::show(&mut self.env, ui, body),
-            PanelKind::Script => self.script(ui, body),
+            PanelKind::Outline => panels::outline::show(&mut self.env, ui, body),
+            PanelKind::Script => panels::script::show(&mut self.env, ui, body),
+            PanelKind::Shots => panels::shots::show(&mut self.env, ui, body),
+            PanelKind::Board => panels::board::show(&mut self.env, ui, body),
             _ => self.empty_state(ui, body, tr(kind.empty_key())),
         }
         ui.painter().rect_stroke(rect, CARD_RADIUS, Stroke::new(1.0, self.t.border), StrokeKind::Inside);

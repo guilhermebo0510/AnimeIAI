@@ -6,7 +6,7 @@ use super::editor::Editor;
 use crate::i18n::tr;
 use crate::icons::{IconId, Icons};
 use crate::theme::Tokens;
-use crate::workspace::ToolId;
+use crate::workspace::{ToolId, WorkspaceId};
 use aiai_core::CoreSession;
 use egui::{Color32, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2};
 
@@ -17,6 +17,8 @@ pub(crate) struct Env<'a> {
     pub icons: &'a mut Icons,
     pub notes: &'a mut Vec<(String, Rect)>,
     pub tool: &'a mut ToolId,
+    /// Workspace ativo (o painel Propriedades mostra o que combina com ele).
+    pub ws: WorkspaceId,
 }
 
 impl Env<'_> {

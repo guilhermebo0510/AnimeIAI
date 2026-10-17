@@ -533,6 +533,22 @@ pub(crate) struct Editor {
     pub lint_report: Option<String>,
     /// Nós da árvore do projeto recolhidos (o padrão é aberto).
     pub tree_closed: std::collections::HashSet<NodeId>,
+    // ---- pré-produção (Roteiro e Storyboard): o documento aberto e a seleção (corrigidos por `actions::sync_*`)
+    pub sel_script: Option<NodeId>,
+    pub sel_scene: Option<Id>,
+    pub sel_element: Option<Id>,
+    pub sel_storyboard: Option<NodeId>,
+    pub sel_panel: Option<Id>,
+    /// Roteiro: mostrar todas as cenas em vez de só a selecionada.
+    pub script_all: bool,
+    /// Personagem escolhido para o próximo "Nova fala".
+    pub script_speaker: Option<NodeId>,
+    /// Elemento recém-criado que deve receber o cursor no próximo quadro.
+    pub script_focus: Option<Id>,
+    pub docs: super::actions::DocCache,
+    pub thumbs: super::panels::board::ThumbCache,
+    /// Pedido de troca de workspace feito por um painel (o app atende no fim do quadro).
+    pub want_workspace: Option<crate::workspace::WorkspaceId>,
 }
 
 impl Default for Editor {
@@ -579,6 +595,17 @@ impl Default for Editor {
             tl_ctx_cell: None,
             lint_report: None,
             tree_closed: Default::default(),
+            sel_script: None,
+            sel_scene: None,
+            sel_element: None,
+            sel_storyboard: None,
+            sel_panel: None,
+            script_all: false,
+            script_speaker: None,
+            script_focus: None,
+            docs: Default::default(),
+            thumbs: Default::default(),
+            want_workspace: None,
         }
     }
 }

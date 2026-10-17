@@ -1,10 +1,14 @@
-//! Painéis do editor (dock): Projeto, Camadas, Cores, Linha do tempo e Propriedades. Cada um desenha dentro do corpo do
+//! Painéis do editor (dock): Projeto, Camadas, Cores, Linha do tempo, Propriedades e, na pré-produção, Estrutura, Roteiro, Cenas e Prancha. Cada um desenha dentro do corpo do
 //! painel com o `Env` (documento, estado do editor, ícones) e só altera o documento por comandos (`commands`).
 
+pub(crate) mod board;
 pub(crate) mod colors;
 pub(crate) mod layers;
+pub(crate) mod outline;
 pub(crate) mod project;
 pub(crate) mod properties;
+pub(crate) mod script;
+pub(crate) mod shots;
 pub(crate) mod timeline;
 
 use egui::{Id, Response, Ui};
@@ -41,6 +45,39 @@ pub(crate) fn text_commit(ui: &mut Ui, id: Id, current: &str, width: f32) -> (Re
     } else {
         ui.data_mut(|d| d.remove_temp::<String>(id));
         if r.lost_focus() && !ui.input(|i| i.key_pressed(egui::Key::Escape)) && buf.trim() != current && !buf.trim().is_empty() {
+            out = Some(buf.trim().to_owned());
+        }
+    }
+    (r, out)
+}
+
+/// Campo de texto de várias linhas (cresce com o texto) que só entrega o texto ao perder o foco (Esc descarta); o texto vazio
+/// é válido (limpa o campo). Guarda o que está sendo digitado na memória do egui, como `text_commit`.
+pub(crate) fn text_commit_multi(ui: &mut Ui, id: Id, current: &str, width: f32, hint: &str) -> (Response, Option<String>) {
+    let mut buf: String = ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| current.to_owned());
+    let r = ui.add(egui::TextEdit::multiline(&mut buf).desired_width(width).desired_rows(1).hint_text(hint));
+    let mut out = None;
+    if r.has_focus() {
+        ui.data_mut(|d| d.insert_temp(id, buf.clone()));
+    } else {
+        ui.data_mut(|d| d.remove_temp::<String>(id));
+        if r.lost_focus() && !ui.input(|i| i.key_pressed(egui::Key::Escape)) && buf != current {
+            out = Some(buf);
+        }
+    }
+    (r, out)
+}
+
+/// Como `text_commit`, mas aceita o texto vazio (campos opcionais, como emoção e direção).
+pub(crate) fn text_commit_opt(ui: &mut Ui, id: Id, current: &str, width: f32, hint: &str) -> (Response, Option<String>) {
+    let mut buf: String = ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| current.to_owned());
+    let r = ui.add(egui::TextEdit::singleline(&mut buf).desired_width(width).hint_text(hint));
+    let mut out = None;
+    if r.has_focus() {
+        ui.data_mut(|d| d.insert_temp(id, buf.clone()));
+    } else {
+        ui.data_mut(|d| d.remove_temp::<String>(id));
+        if r.lost_focus() && !ui.input(|i| i.key_pressed(egui::Key::Escape)) && buf.trim() != current {
             out = Some(buf.trim().to_owned());
         }
     }

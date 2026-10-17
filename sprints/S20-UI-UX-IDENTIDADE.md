@@ -23,3 +23,18 @@ Blender 4/5, DaVinci Resolve, Clip Studio, Toon Boom Harmony (organização de w
 
 ## Critério de pronto
 - [ ] Prancha de capturas (todos os workspaces, 2 idiomas, 2 temas) e a logomarca em evidências; zero estouros; zero emoji; zero ícone provisório.
+
+## Execução (P6, a partir de 2026-10-17)
+
+Decisão: os painéis novos chamam as MESMAS ações da bridge dentro do processo (`aiai_bridge::core_ops::handle_core_action`
+com autor `user`), via um helper `app/actions.rs`. Uma regra de negócio só, o mesmo undo/log do MCP, e cada fluxo
+feito pelo agente fica possível pela UI sem reimplementar. Renders longos (animatic, export) bloqueiam o quadro por
+enquanto, com aviso na barra de status (lacuna: fila em segundo plano).
+
+| Fatia | Workspaces | Conteúdo | Estado |
+|---|---|---|---|
+| P6a | Roteiro, Storyboard | helper de ações; Estrutura (cenas do roteiro), Roteiro ligado ao documento (elementos editáveis, fala + tradução, tempo estimado), Cenas/Prancha do storyboard (miniaturas, propriedades do painel, adicionar/mover/apagar, animatic, gerar cortes) | feito 2026-10-17 (evidencias/S20/p6a_*.png; animatic bloqueia a UI ~15 s) |
+| P6b | Produção | tabela de cortes com miniaturas e etapas, lint do corte, correções e retakes | em andamento |
+| P6c | Edição, Áudio, Entrega | linha do tempo da edição, prévia de quadro com legenda, mixer, exportação | pendente |
+| P6d | Composição, Cor | satsuei (efeitos por camada), câmera do corte, grade de cor | pendente |
+| P6e | todos | prancha PT/EN × claro/escuro, varredura de estouro, roteiro de mouse real | pendente |

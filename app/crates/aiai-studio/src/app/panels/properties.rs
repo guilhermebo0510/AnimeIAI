@@ -8,7 +8,7 @@ use crate::app::editor::*;
 use crate::app::tools;
 use crate::app::ui_kit::{Env, body_ui, color32_to_rgba, dim_label, rgba_to_color32, section};
 use crate::i18n::tr;
-use crate::workspace::ToolId;
+use crate::workspace::{ToolId, WorkspaceId};
 use aiai_core::*;
 use egui::{Id, Ui};
 use serde_json::json;
@@ -17,6 +17,12 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: egui::Rect) {
     let mut child = body_ui(ui, body, 8.0);
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(&mut child, |ui| {
         let t = env.t;
+        // na pré-produção o painel mostra o documento (roteiro, painel do storyboard), não as opções de ferramenta
+        match env.ws {
+            WorkspaceId::Roteiro => return super::script::properties(env, ui),
+            WorkspaceId::Storyboard => return super::shots::properties(env, ui),
+            _ => {}
+        }
         let tool = *env.tool;
         ui.label(egui::RichText::new(tr(tool.title_key())).strong().size(13.0));
         ui.add_space(2.0);
