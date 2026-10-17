@@ -142,5 +142,17 @@
  "c7_bg_ceu": "01a147c6-3bc7-7149-b449-b0cea5988ac3",
  "c7_bg_ceu_c1": "01a147c6-3dc7-77a9-ac99-04d6025663a7",
  "c7_bg_chao": "01a147c6-4301-71a2-91f0-ea5afadfbd91",
- "c7_bg_chao_c1": "01a147c6-452e-70e9-b72d-92f1cb87bd32"
+ "c7_bg_chao_c1": "01a147c6-452e-70e9-b72d-92f1cb87bd32",
+ "c3_bg": "01a147c9-7a2e-700d-a277-dfa4749abd3b",
+ "c3_bg_c1": "01a147c9-7bd1-7694-a3c9-d35906fc2152",
+ "c3_hana_cor": "01a147c9-8d70-7599-891b-bab50111bc70",
+ "c3_hana_cor_c1": "01a147c9-8ef8-71e8-b07e-87d738bdb272",
+ "c3_hana_sombra": "01a147c9-904b-7641-b6d8-7f6f02950513",
+ "c3_hana_sombra_c1": "01a147c9-91fb-7733-97ca-25228a8e817f",
+ "c3_hana_olhos": "01a147c9-936d-727b-9bbb-5b6cf2726f01",
+ "c3_hana_olhos_c1": "01a147c9-9496-70ef-ad3e-48574c9b0def",
+ "c3_hana_linha": "01a147c9-95cb-774f-a3b0-8b8bee96734c",
+ "c3_hana_linha_c1": "01a147c9-96f8-7456-9a24-e1134da5b5ac",
+ "c3_hana_brilho": "01a147c9-9831-73b0-9bf4-fd583c527af3",
+ "c3_hana_brilho_c1": "01a147c9-995f-7221-a704-13aee10a7304"
 }

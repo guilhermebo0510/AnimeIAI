@@ -64,7 +64,8 @@ def paint(cut, frame, L, drawings, gap=4):
     d.call("DRAW_CURVES", {"cut": cut, "frame": frame, "layer": L["linha"], "curves": allc})
     for who, _, seeds, _, _, _ in drawings:
         pal = PALETTE[who]
-        fs = [{"x": s["x"], "y": s["y"], "color": {"type": "direct", "rgba": rig.hexrgba(pal[s["name"]])}} for s in seeds if s["name"] in pal]
+        fs = [{"x": s["x"], "y": s["y"], "color": {"type": "direct", "rgba": rig.hexrgba(pal[s["name"]])}} for s in seeds
+              if s["name"] in pal and 0 <= s["x"] < 1920 and 0 <= s["y"] < 1080]  # partes cortadas pelo quadro ficam de fora
         d.call("FILL", {"cut": cut, "frame": frame, "layer": L["cor"], "seeds": fs, "gap": gap})
     for who, _, _, shapes, _, _ in drawings:
         pal = PALETTE[who]

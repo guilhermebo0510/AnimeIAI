@@ -372,21 +372,24 @@ def body_bust(h, who, bottom=2.45, turn=0.0):
     if who == "hana":
         # blusa: gola redonda (duas abas) e manga com punho dobrado na borda
         for sg in (-1, 1):
-            out.append(c([(X(sg, nw * 0.2), 1.14), (X(sg, 0.12), 1.22), (X(sg, 0.24), 1.24), (X(sg, 0.27), 1.17), (Xn(sg), 1.12)], 0.9, closed=False))
+            out.append(c([(X(sg, nw * 0.2), 1.14), (X(sg, 0.12), 1.22), (X(sg, 0.24), 1.24), (X(sg, 0.27), 1.17), (Xn(sg), 1.12)], 0.9, closed=True))  # fechada: separa a aba do pescoço
+        out.append(c([(X(-1, nw * 0.25), 1.142), (X(1, nw * 0.25), 1.142)], 0.6, geometry="polyline"))  # decote: fecha pescoço × blusa
         # avental: babador com alças sobre os ombros, bolso
         bib = [(X(-1, 0.27), 1.62), (X(1, 0.27), 1.62)]
         out.append(c([(X(-1, 0.27), 1.62), (X(-1, 0.30), bottom)], 1.0))
         out.append(c([(X(1, 0.27), 1.62), (X(1, 0.30), bottom)], 1.0))
         out.append(c(bib, 1.0, geometry="polyline"))
         for sg in (-1, 1):  # alças
-            out.append(c([(X(sg, 0.22), 1.62), (X(sg, 0.30), 1.40), (X(sg, 0.38), 1.25)], 0.9))
-            out.append(c([(X(sg, 0.27), 1.62), (X(sg, 0.35), 1.42), (X(sg, 0.44), 1.27)], 0.9))
+            # as alças passam por cima da linha do ombro (fecham a região da alça para o balde)
+            out.append(c([(X(sg, 0.22), 1.62), (X(sg, 0.30), 1.40), (X(sg, 0.40), 1.215)], 0.9))
+            out.append(c([(X(sg, 0.27), 1.62), (X(sg, 0.35), 1.42), (X(sg, 0.47), 1.235)], 0.9))
         out.append(c([(X(-1, 0.13), 1.95), (X(1, 0.13), 1.95), (X(1, 0.13), 2.18), (X(-1, 0.13), 2.18)], 0.8, closed=True, geometry="polyline"))  # bolso
         out.append(c([(X(0, 0.0), 1.95), (X(0, 0.0), 2.18)], 0.5, geometry="polyline"))
         seeds += [h.seed(ox, 1.80, "avental", False), h.seed(ox, 2.30, "avental", False), h.seed(ox + 0.06, 2.06, "avental", False), h.seed(ox - 0.06, 2.06, "avental", False),
                   h.seed(X(-1, 0.20), 1.45, "blusa", False), h.seed(X(1, 0.20), 1.45, "blusa", False), h.seed(X(-1, 0.42), 1.9, "blusa", False), h.seed(X(1, 0.42), 1.9, "blusa", False),
                   h.seed(X(-1, sh + 0.02), 2.0, "blusa", False), h.seed(X(1, sh + 0.02), 2.0, "blusa", False), h.seed(X(-1, 0.18), 1.19, "blusa", False), h.seed(X(1, 0.18), 1.19, "blusa", False),
-                  h.seed(X(-1, 0.32), 1.48, "avental", False), h.seed(X(1, 0.32), 1.48, "avental", False)]
+                  h.seed(X(-1, 0.32), 1.48, "avental", False), h.seed(X(1, 0.32), 1.48, "avental", False),
+                  h.seed(X(-1, 0.46), 1.42, "blusa", False), h.seed(X(1, 0.46), 1.42, "blusa", False)]  # ombros fora das alças
         for sg in (-1, 1):
             shapes.append(("blusa_sombra", [h.p(x, y, None, False) for x, y in [(X(sg, sh - 0.07), 1.52), (X(sg, sh - 0.10), 1.75), (X(sg, wa + 0.02), 2.1), (X(sg, wa), bottom), (X(sg, wa - 0.07), bottom), (X(sg, wa - 0.05), 2.05), (X(sg, sh - 0.16), 1.6)]]))
     else:
