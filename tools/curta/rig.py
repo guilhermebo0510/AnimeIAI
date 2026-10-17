@@ -57,9 +57,11 @@ def hexrgba(h, a=1.0):
 
 # ------------------------------------------------------------------------------------------------- rosto (comum)
 
-def face_outline(h, ink, chin=1.0, cheek=0.37):
-    """Contorno do rosto: têmpora → bochecha → maxilar → queixo, dos dois lados (o lado oculto encolhe com o yaw)."""
-    side = lambda s: [(s * 0.39, 0.40), (s * 0.385, 0.55), (s * cheek, 0.66), (s * 0.29, 0.84), (s * 0.12, 0.97 * chin), (0.0, chin)]
+def face_outline(h, ink, chin=1.0, cheek=0.37, temple=(0.39, 0.40)):
+    """Contorno do rosto: têmpora → bochecha → maxilar → queixo, dos dois lados (o lado oculto encolhe com o yaw).
+    `temple` tem de ser o MESMO ponto onde a linha do cabelo encosta (perto da borda da esfera, pontos vizinhos se
+    separam ao girar)."""
+    side = lambda s: [(s * temple[0], temple[1]), (s * 0.385, 0.55), (s * cheek, 0.66), (s * 0.29, 0.84), (s * 0.12, 0.97 * chin), (0.0, chin)]
     left, right = side(-1), side(1)
     # maxilar projetado (pontos densos, da esquerda para a direita) para o pescoço achar onde encosta
     dense = []
@@ -256,7 +258,8 @@ def face_hana(h, mood="neutral", open_=1.0, mouth_shape="closed"):
     strokes += m
     seeds += ms
     strokes += neck(h, ink)
-    strokes.append(h.curve([(-0.32, 1.16), (-0.09, 1.11), (0.0, 1.18), (0.09, 1.11), (0.32, 1.16)], 1.0, ink, geometry="polyline", rot=False))  # gola
+    if getattr(h, "collar", True):
+        strokes.append(h.curve([(-0.32, 1.16), (-0.09, 1.11), (0.0, 1.18), (0.09, 1.11), (0.32, 1.16)], 1.0, ink, geometry="polyline", rot=False))  # gola
     hs, hsd = hair_hana(h, ink)
     strokes += hs
     seeds += hsd
@@ -319,7 +322,7 @@ def face_ren(h, mood="neutral", open_=1.0, mouth_shape="closed"):
     """Rosto inteiro de Ren: (traços, sementes, formas)."""
     ink = INK["ren"]
     strokes, seeds, shapes = [], [], []
-    strokes += face_outline(h, ink, chin=1.0, cheek=0.385)
+    strokes += face_outline(h, ink, chin=1.0, cheek=0.385, temple=(0.40, 0.355))
     for sd in (-1, 1):
         e, sh = eye(h, ink, sd, "#b07a2a", open_, mood, False)
         strokes += e
@@ -330,7 +333,8 @@ def face_ren(h, mood="neutral", open_=1.0, mouth_shape="closed"):
     strokes += m
     seeds += ms
     strokes += neck(h, ink, False)
-    strokes.append(h.curve([(-0.34, 1.17), (-0.11, 1.11), (0.0, 1.16), (0.11, 1.11), (0.34, 1.17)], 1.0, ink, geometry="polyline", rot=False))
+    if getattr(h, "collar", True):
+        strokes.append(h.curve([(-0.34, 1.17), (-0.11, 1.11), (0.0, 1.16), (0.11, 1.11), (0.34, 1.17)], 1.0, ink, geometry="polyline", rot=False))
     hs, hsd = hair_ren(h, ink)
     strokes += hs
     seeds += hsd
@@ -341,3 +345,212 @@ def face_ren(h, mood="neutral", open_=1.0, mouth_shape="closed"):
     shapes.append(("pele_sombra", top + [h.p(0.113, 1.03, None, False), h.p(0.0, 1.07, None, False), h.p(-0.113, 1.03, None, False)]))
     shapes += [("brilho", q) for q in eye_highlights(h, -1, open_, mood) + eye_highlights(h, 1, open_, mood)]
     return strokes, seeds, shapes
+
+
+# ------------------------------------------------------------------------------------------------- corpo (busto)
+
+def body_bust(h, who, bottom=2.45, turn=0.0):
+    """Busto até `bottom` (cabeças), com a roupa do personagem; `turn` -1..1 encolhe o lado distante (3/4).
+    O busto não gira com a cabeça (fica no eixo); fecha embaixo com uma linha (borda do quadro/recorte)."""
+    ink = INK[who]
+    male = who == "ren"
+    sh = 0.63 if male else 0.55        # largura dos ombros
+    wa = 0.50 if male else 0.40        # cintura
+    nw = 0.105 if male else 0.085
+    k = lambda sg: 1.0 - 0.35 * max(0.0, -sg * turn)   # lado distante mais estreito
+    ox = 0.10 * turn                   # o tronco desloca um pouco para o lado em que o rosto olha
+    X = lambda sg, x: ox + sg * x * k(sg)
+    Xn = lambda sg: sg * nw * 1.03     # base do pescoço: fica no eixo da cabeça (o pescoço não desloca)
+    out, seeds, shapes = [], [], []
+    c = lambda pts, w=1.0, **kw: h.curve([(x, y, False) for x, y in pts], w, ink, **kw)
+    for sg in (-1, 1):
+        # trapézio → ombro → braço (contorno externo) até a borda de baixo
+        out.append(c([(Xn(sg), 1.12), (X(sg, 0.30), 1.20), (X(sg, sh), 1.33), (X(sg, sh + 0.06), 1.50), (X(sg, sh + 0.08), 1.90), (X(sg, sh + 0.07), bottom)], 1.1, widths=[0.7, 1.0, 1.0]))
+        # axila → lateral do tronco (contorno interno do braço / lado do corpo)
+        out.append(c([(X(sg, sh - 0.06), 1.52), (X(sg, sh - 0.10), 1.75), (X(sg, wa + 0.02), 2.10), (X(sg, wa), bottom)], 1.0, widths=[0.5, 1.0, 1.0]))
+    out.append(c([(X(-1, sh + 0.12), bottom), (X(1, sh + 0.12), bottom)], 0.6, geometry="polyline"))  # recorte
+    if who == "hana":
+        # blusa: gola redonda (duas abas) e manga com punho dobrado na borda
+        for sg in (-1, 1):
+            out.append(c([(X(sg, nw * 0.2), 1.14), (X(sg, 0.12), 1.22), (X(sg, 0.24), 1.24), (X(sg, 0.27), 1.17), (Xn(sg), 1.12)], 0.9, closed=False))
+        # avental: babador com alças sobre os ombros, bolso
+        bib = [(X(-1, 0.27), 1.62), (X(1, 0.27), 1.62)]
+        out.append(c([(X(-1, 0.27), 1.62), (X(-1, 0.30), bottom)], 1.0))
+        out.append(c([(X(1, 0.27), 1.62), (X(1, 0.30), bottom)], 1.0))
+        out.append(c(bib, 1.0, geometry="polyline"))
+        for sg in (-1, 1):  # alças
+            out.append(c([(X(sg, 0.22), 1.62), (X(sg, 0.30), 1.40), (X(sg, 0.38), 1.25)], 0.9))
+            out.append(c([(X(sg, 0.27), 1.62), (X(sg, 0.35), 1.42), (X(sg, 0.44), 1.27)], 0.9))
+        out.append(c([(X(-1, 0.13), 1.95), (X(1, 0.13), 1.95), (X(1, 0.13), 2.18), (X(-1, 0.13), 2.18)], 0.8, closed=True, geometry="polyline"))  # bolso
+        out.append(c([(X(0, 0.0), 1.95), (X(0, 0.0), 2.18)], 0.5, geometry="polyline"))
+        seeds += [h.seed(ox, 1.80, "avental", False), h.seed(ox, 2.30, "avental", False), h.seed(ox + 0.06, 2.06, "avental", False), h.seed(ox - 0.06, 2.06, "avental", False),
+                  h.seed(X(-1, 0.20), 1.45, "blusa", False), h.seed(X(1, 0.20), 1.45, "blusa", False), h.seed(X(-1, 0.42), 1.9, "blusa", False), h.seed(X(1, 0.42), 1.9, "blusa", False),
+                  h.seed(X(-1, sh + 0.02), 2.0, "blusa", False), h.seed(X(1, sh + 0.02), 2.0, "blusa", False), h.seed(X(-1, 0.18), 1.19, "blusa", False), h.seed(X(1, 0.18), 1.19, "blusa", False),
+                  h.seed(X(-1, 0.32), 1.48, "avental", False), h.seed(X(1, 0.32), 1.48, "avental", False)]
+        for sg in (-1, 1):
+            shapes.append(("blusa_sombra", [h.p(x, y, None, False) for x, y in [(X(sg, sh - 0.07), 1.52), (X(sg, sh - 0.10), 1.75), (X(sg, wa + 0.02), 2.1), (X(sg, wa), bottom), (X(sg, wa - 0.07), bottom), (X(sg, wa - 0.05), 2.05), (X(sg, sh - 0.16), 1.6)]]))
+    else:
+        # camisa azul com gola em V, avental creme com alça no pescoço, manga dobrada
+        out.append(c([(Xn(-1), 1.12), (X(0, 0.0), 1.30), (Xn(1), 1.12)], 0.9, geometry="polyline"))
+        for sg in (-1, 1):  # gola da camisa (abas)
+            out.append(c([(Xn(sg), 1.12), (X(sg, 0.22), 1.22), (X(sg, 0.10), 1.30), (X(0, 0.0), 1.30)], 0.9, geometry="polyline"))
+        out.append(c([(X(-1, 0.30), 1.58), (X(1, 0.30), 1.58)], 1.0, geometry="polyline"))  # topo do avental
+        for sg in (-1, 1):
+            out.append(c([(X(sg, 0.30), 1.58), (X(sg, 0.33), bottom)], 1.0))
+            out.append(c([(X(sg, 0.23), 1.58), (X(sg, 0.13), 1.31)], 0.9))  # alça do pescoço
+            out.append(c([(X(sg, sh + 0.075), 1.95), (X(sg, sh - 0.11), 1.95)], 0.8, geometry="polyline"))  # dobra da manga
+        out.append(c([(X(-1, 0.20), 2.05), (X(1, 0.20), 2.05)], 0.7, geometry="polyline"))  # cordão do avental
+        seeds += [h.seed(ox, 1.80, "avental", False), h.seed(ox, 2.30, "avental", False), h.seed(X(-1, 0.20), 1.45, "camisa", False), h.seed(X(1, 0.20), 1.45, "camisa", False),
+                  h.seed(X(-1, 0.42), 1.9, "camisa", False), h.seed(X(1, 0.42), 1.9, "camisa", False), h.seed(X(-1, sh), 1.7, "camisa", False), h.seed(X(1, sh), 1.7, "camisa", False),
+                  h.seed(X(-1, sh), 2.2, "camisa", False), h.seed(X(1, sh), 2.2, "camisa", False), h.seed(ox, 1.25, "pele", False), h.seed(X(-1, 0.15), 1.20, "camisa", False), h.seed(X(1, 0.15), 1.20, "camisa", False),
+                  h.seed(ox, 1.45, "camisa", False)]
+        for sg in (-1, 1):
+            shapes.append(("camisa_sombra", [h.p(x, y, None, False) for x, y in [(X(sg, sh - 0.07), 1.52), (X(sg, sh - 0.10), 1.75), (X(sg, wa + 0.02), 2.1), (X(sg, wa), bottom), (X(sg, wa - 0.08), bottom), (X(sg, wa - 0.06), 2.05), (X(sg, sh - 0.17), 1.6)]]))
+    return out, seeds, shapes
+
+
+def bust(h, who, mood="neutral", open_=1.0, mouth_shape="closed", bottom=2.45, turn=None):
+    """Rosto + busto. `turn` padrão segue o giro da cabeça (metade)."""
+    h.collar = False
+    f, sd, sh = (face_hana if who == "hana" else face_ren)(h, mood, open_, mouth_shape)
+    t = (math.degrees(h.yaw) / 60.0) if turn is None else turn
+    b, bs, bsh = body_bust(h, who, bottom, t)
+    return f + b, sd + bs, sh + bsh
+
+
+# ------------------------------------------------------------------------------------------------- figura inteira (model sheet)
+
+LANDMARKS = {"hana": {"waist": 2.52, "hip": 2.92, "knee": 4.2, "feet": 5.5}, "ren": {"waist": 2.78, "hip": 3.18, "knee": 4.59, "feet": 6.0}}
+
+
+def hand(h, ink, cx, top, scale=1.0, mirror=1):
+    """Mão relaxada simples (vista de frente/lado), em unidades de cabeça a partir do punho (cx, top)."""
+    sx = mirror * 0.11 * scale
+    pts = [(cx - sx * 0.55, top), (cx - sx * 0.75, top + 0.10 * scale), (cx - sx * 0.6, top + 0.24 * scale), (cx - sx * 0.1, top + 0.30 * scale),
+           (cx + sx * 0.45, top + 0.24 * scale), (cx + sx * 0.7, top + 0.12 * scale), (cx + sx * 0.55, top)]
+    out = [h.curve([(x, y, False) for x, y in pts], 0.9, ink, widths=[0.7, 1.0, 0.7])]
+    out.append(h.curve([(cx - sx * 0.3, top + 0.16 * scale, False), (cx - sx * 0.25, top + 0.26 * scale, False)], 0.5, ink, widths=[0.3, 1.0, 0.3]))  # dedos
+    out.append(h.curve([(cx + sx * 0.1, top + 0.17 * scale, False), (cx + sx * 0.12, top + 0.27 * scale, False)], 0.5, ink, widths=[0.3, 1.0, 0.3]))
+    return out, [h.seed(cx, top + 0.15 * scale, "pele", False)]
+
+
+def figure(h, who, view="front"):
+    """Figura inteira para o model sheet: view = front | threequarter | back. Devolve (traços, sementes, formas)."""
+    L = LANDMARKS[who]
+    ink = INK[who]
+    male = who == "ren"
+    turn = 0.5 if view == "threequarter" else 0.0
+    if view == "back":
+        strokes, seeds, shapes = back_head(h, who)
+    else:
+        h.collar = False
+        strokes, seeds, shapes = (face_hana if who == "hana" else face_ren)(h, "neutral", 1.0, "closed")
+    # busto até a cintura sem a linha de recorte
+    b, bs, bsh = body_bust(h, who, L["waist"], turn)
+    b = b[:4] + b[5:]  # tira a linha de recorte (5º traço)
+    if view == "back":  # costas: sem frente da roupa (fica só o contorno + alças/cordão)
+        b = b[:4]
+        bs = [x for x in bs if x["name"] in ("blusa", "camisa")] + [h.seed(0.0, 1.8, "blusa" if not male else "camisa", False)]
+        bsh = []
+    strokes += b
+    seeds += bs
+    shapes += bsh
+    sh = 0.63 if male else 0.55
+    k = lambda sg: 1.0 - 0.35 * max(0.0, -sg * turn)
+    ox = 0.10 * turn
+    X = lambda sg, x: ox + sg * x * k(sg)
+    c = lambda pts, w=1.0, **kw: h.curve([(x, y, False) for x, y in pts], w, ink, **kw)
+    wa = 0.50 if male else 0.40
+    wrist = L["hip"] + 0.02
+    for sg in (-1, 1):
+        # braço continua até o punho (o busto parou na cintura)
+        c_out = [(X(sg, sh + 0.07), L["waist"]), (X(sg, sh + 0.05), wrist)]
+        c_in = [(X(sg, wa), L["waist"]), (X(sg, wa - 0.01), L["waist"] + 0.05)]
+        strokes.append(c(c_out, 1.0))
+        # contorno interno do braço, da axila ao punho (separa braço e tronco)
+        strokes.append(c([(X(sg, sh - 0.06), 1.52), (X(sg, sh - 0.10), 1.95), (X(sg, sh - 0.12), wrist)], 1.0))
+        strokes.append(c([(X(sg, sh + 0.05), wrist), (X(sg, sh - 0.12), wrist)], 0.9, geometry="polyline"))  # punho
+        hs, hsd = hand(h, ink, X(sg, sh - 0.035), wrist, 1.0, sg)
+        strokes += hs
+        seeds += hsd
+        seeds.append(h.seed(X(sg, sh - 0.03), L["waist"] + 0.2, "blusa" if not male else "camisa", False))
+        seeds.append(h.seed(X(sg, sh - 0.01), 1.6, "blusa" if not male else "camisa", False))
+    if not male:
+        # saia do avental (godê leve) da cintura até o joelho
+        hem = L["knee"] - 0.25
+        for sg in (-1, 1):
+            strokes.append(c([(X(sg, wa), L["waist"]), (X(sg, wa + 0.06), L["hip"]), (X(sg, 0.56), hem)], 1.0))
+        strokes.append(c([(X(-1, 0.56), hem), (X(-0.5, 0.28), hem + 0.04), (X(0, 0.0), hem), (X(0.5, 0.28), hem + 0.04), (X(1, 0.56), hem)], 1.0))
+        strokes.append(c([(X(-1, wa), L["waist"]), (X(1, wa), L["waist"])], 0.9, geometry="polyline"))  # cintura
+        if view != "back":
+            strokes.append(c([(X(-1, 0.14), 3.05), (X(1, 0.14), 3.05), (X(1, 0.14), 3.35), (X(-1, 0.14), 3.35)], 0.8, closed=True, geometry="polyline"))
+        seeds += [h.seed(ox, 3.6, "avental", False), h.seed(ox, 3.2, "avental", False), h.seed(ox - 0.3, 3.4, "avental", False), h.seed(ox + 0.3, 3.4, "avental", False)]
+        leg_top, sock, foot = hem, L["feet"] - 0.55, L["feet"]
+        lw = (0.095, 0.075)
+        cols = ("pele", "bota")
+    else:
+        # avental comprido até o joelho por cima da calça; camisa por dentro da calça (linha da cintura)
+        hem = L["knee"] - 0.05
+        strokes.append(c([(X(-1, wa), L["waist"]), (X(1, wa), L["waist"])], 0.9, geometry="polyline"))
+        seeds += [h.seed(X(-1, 0.42), L["waist"] - 0.2, "camisa", False), h.seed(X(1, 0.42), L["waist"] - 0.2, "camisa", False)]
+        for sg in (-1, 1):
+            if view != "back":
+                strokes.append(c([(X(sg, 0.33), L["waist"]), (X(sg, 0.36), hem)], 1.0))
+            strokes.append(c([(X(sg, wa), L["waist"]), (X(sg, wa), L["hip"]), (X(sg, 0.30), L["feet"] - 0.35)], 1.0))  # calça (fora)
+        if view != "back":
+            strokes.append(c([(X(-1, 0.36), hem), (X(1, 0.36), hem)], 1.0, geometry="polyline"))
+            strokes.append(c([(X(0, 0.0), hem), (X(0, 0.0), L["feet"] - 0.35)], 1.0))  # entreperna
+        else:
+            strokes.append(c([(X(0, 0.0), L["hip"] + 0.25), (X(0, 0.0), L["feet"] - 0.35)], 1.0))
+        strokes.append(c([(X(-1, 0.30), L["feet"] - 0.35), (X(1, 0.30), L["feet"] - 0.35)], 0.9, geometry="polyline"))  # barra
+        seeds += [h.seed(ox, 3.6, "avental" if view != "back" else "calca", False), h.seed(X(-1, 0.43), 3.4, "calca", False), h.seed(X(1, 0.43), 3.4, "calca", False),
+                  h.seed(X(-1, 0.16), hem + 0.3, "calca", False), h.seed(X(1, 0.16), hem + 0.3, "calca", False)]
+        leg_top, sock, foot = L["feet"] - 0.35, L["feet"] - 0.35, L["feet"]
+        lw = (0.13, 0.12)
+        cols = (None, "sapato")
+    for sg in (-1, 1):
+        lx = X(sg, 0.17)
+        if leg_top < sock:  # perna à mostra (Hana)
+            strokes.append(c([(lx - sg * lw[0], leg_top), (lx - sg * lw[0] * 0.8, L["knee"]), (lx - sg * lw[1], sock)], 1.0))
+            strokes.append(c([(lx + sg * lw[0], leg_top), (lx + sg * lw[0] * 0.9, L["knee"]), (lx + sg * lw[1], sock)], 1.0))
+            seeds.append(h.seed(lx, (leg_top + sock) / 2, "pele", False))
+        # bota/sapato
+        boot = [(lx - sg * lw[1] * 1.15, sock), (lx - sg * lw[1] * 1.2, foot - 0.08), (lx - sg * lw[1] * 1.2, foot), (lx + sg * lw[1] * 2.0, foot),
+                (lx + sg * lw[1] * 1.9, foot - 0.10), (lx + sg * lw[1] * 1.15, foot - 0.18), (lx + sg * lw[1] * 1.15, sock)]
+        strokes.append(c(boot, 1.0, closed=True))
+        seeds.append(h.seed(lx, foot - 0.12, cols[1], False))
+    return strokes, seeds, shapes
+
+
+def back_head(h, who):
+    """Cabeça de costas: só a massa do cabelo (silhueta) e o pescoço."""
+    ink = INK[who]
+    out, seeds = [], []
+    if who == "hana":
+        sil = [(-0.43, 0.94), (-0.51, 0.70), (-0.54, 0.42), (-0.48, 0.15), (-0.30, -0.03), (0.02, -0.08), (0.31, -0.03), (0.49, 0.15),
+               (0.55, 0.42), (0.52, 0.70), (0.43, 0.94)]
+        out.append(h.curve([(x, y, False) for x, y in sil], 1.3, ink, widths=[0.5, 1.2, 0.5]))
+        out.append(h.curve([(-0.43, 0.94, False), (-0.2, 0.98, False), (0.0, 0.95, False), (0.2, 0.98, False), (0.43, 0.94, False)], 1.1, ink))
+        for x in (-0.25, 0.0, 0.25):
+            out.append(h.curve([(x * 0.9, 0.05, False), (x, 0.5, False), (x * 1.05, 0.9, False)], 0.55, ink, widths=[0.2, 1.0, 0.2]))
+        seeds.append(h.seed(0.0, 0.5, "cabelo", False))
+        neck_top = 0.95
+    else:
+        sil = [(-0.375, 0.64), (-0.45, 0.60), (-0.47, 0.50), (-0.53, 0.40), (-0.49, 0.30), (-0.55, 0.18), (-0.45, 0.10), (-0.47, -0.02), (-0.33, 0.0),
+               (-0.27, -0.12), (-0.15, -0.05), (-0.04, -0.15), (0.06, -0.06), (0.19, -0.13), (0.26, -0.02), (0.42, -0.06), (0.44, 0.08), (0.56, 0.14),
+               (0.50, 0.28), (0.55, 0.40), (0.47, 0.50), (0.45, 0.60), (0.375, 0.64)]
+        out.append(h.curve([(x, y, False) for x, y in sil], 1.3, ink, geometry="polyline", widths=[0.6, 1.2, 0.6]))
+        out.append(h.curve([(-0.375, 0.64, False), (-0.2, 0.80, False), (0.0, 0.84, False), (0.2, 0.80, False), (0.375, 0.64, False)], 1.1, ink))
+        # nó da bandana atrás
+        out.append(h.curve([(-0.5, 0.22, False), (0.5, 0.22, False)], 1.0, ink))
+        out.append(h.curve([(-0.5, 0.38, False), (0.5, 0.38, False)], 1.0, ink))
+        out.append(h.curve([(-0.04, 0.30, False), (-0.10, 0.62, False), (0.02, 0.58, False), (0.04, 0.30, False), (0.14, 0.55, False), (0.22, 0.50, False), (0.04, 0.30, False)], 0.9, ink, closed=True))
+        seeds += [h.seed(0.0, 0.08, "cabelo", False), h.seed(-0.3, 0.30, "bandana", False), h.seed(0.3, 0.30, "bandana", False), h.seed(-0.3, 0.55, "cabelo", False), h.seed(0.33, 0.55, "cabelo", False),
+                  h.seed(-0.03, 0.50, "bandana", False), h.seed(0.12, 0.47, "bandana", False)]
+        neck_top = 0.80
+    nw = 0.105 if who == "ren" else 0.085
+    for sg in (-1, 1):
+        out.append(h.curve([(sg * nw, neck_top, False), (sg * nw * 1.03, 1.12, False)], 0.9, ink))
+    out.append(h.curve([(-nw * 1.03, 1.12, False), (0.0, 1.135, False), (nw * 1.03, 1.12, False)], 0.9, ink))  # gola de trás
+    seeds.append(h.seed(0.0, 1.05, "pele", False))
+    return out, seeds, []
