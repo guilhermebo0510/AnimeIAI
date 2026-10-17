@@ -1,0 +1,599 @@
+{
+ "consistencia": [
+  {
+   "corte": "C003",
+   "quem": "hana",
+   "errors_pct": {
+    "olhos": 0.0,
+    "ombros": 1.4814800024032593
+   },
+   "max_error_pct": 1.4814800024032593,
+   "ok": true
+  },
+  {
+   "corte": "C004",
+   "quem": "ren",
+   "errors_pct": {
+    "olhos": 0.0,
+    "ombros": 1.4814800024032593
+   },
+   "max_error_pct": 1.4814800024032593,
+   "ok": true
+  },
+  {
+   "corte": "C005",
+   "quem": "hana",
+   "errors_pct": {
+    "olhos": 0.0,
+    "ombros": 1.4814889430999756
+   },
+   "max_error_pct": 1.4814889430999756,
+   "ok": true
+  },
+  {
+   "corte": "C005",
+   "quem": "ren",
+   "errors_pct": {
+    "olhos": 0.0,
+    "ombros": 1.4814889430999756
+   },
+   "max_error_pct": 1.4814889430999756,
+   "ok": true
+  },
+  {
+   "corte": "C006",
+   "quem": "hana",
+   "errors_pct": {
+    "olhos": 0.0,
+    "ombros": 1.4814976453781128
+   },
+   "max_error_pct": 1.4814976453781128,
+   "ok": true
+  },
+  {
+   "corte": "C006",
+   "quem": "ren",
+   "errors_pct": {
+    "olhos": 0.0,
+    "ombros": 1.4814800024032593
+   },
+   "max_error_pct": 1.4814800024032593,
+   "ok": true
+  }
+ ],
+ "delta_e": [
+  {
+   "corte": "C003",
+   "cor": "presilha",
+   "ponto": [
+    768,
+    259
+   ],
+   "settei": "#5fae6a",
+   "pintado": "#5fae6a",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C003",
+   "cor": "cabelo",
+   "ponto": [
+    972,
+    184
+   ],
+   "settei": "#9b4a32",
+   "pintado": "#9b4a32",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C003",
+   "cor": "cabelo",
+   "ponto": [
+    659,
+    580
+   ],
+   "settei": "#9b4a32",
+   "pintado": "#9b4a32",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C003",
+   "cor": "cabelo",
+   "ponto": [
+    1267,
+    580
+   ],
+   "settei": "#9b4a32",
+   "pintado": "#9b4a32",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C003",
+   "cor": "pele",
+   "ponto": [
+    1098,
+    600
+   ],
+   "settei": "#f6d5c3",
+   "pintado": "#f6d5c3",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C003",
+   "cor": "pele",
+   "ponto": [
+    780,
+    600
+   ],
+   "settei": "#f6d5c3",
+   "pintado": "#f6d5c3",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C003",
+   "cor": "pele",
+   "ponto": [
+    960,
+    792
+   ],
+   "settei": "#f6d5c3",
+   "pintado": "#f6d5c3",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C003",
+   "cor": "blusa",
+   "ponto": [
+    825,
+    1048
+   ],
+   "settei": "#f3efe4",
+   "pintado": "#f3efe4",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C003",
+   "cor": "blusa",
+   "ponto": [
+    1077,
+    1048
+   ],
+   "settei": "#f3efe4",
+   "pintado": "#f3efe4",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C003",
+   "cor": "blusa",
+   "ponto": [
+    838,
+    881
+   ],
+   "settei": "#f3efe4",
+   "pintado": "#f3efe4",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C003",
+   "cor": "blusa",
+   "ponto": [
+    1064,
+    881
+   ],
+   "settei": "#f3efe4",
+   "pintado": "#f3efe4",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C003",
+   "cor": "avental",
+   "ponto": [
+    748,
+    1067
+   ],
+   "settei": "#5d7048",
+   "pintado": "#5d7048",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C003",
+   "cor": "avental",
+   "ponto": [
+    1151,
+    1067
+   ],
+   "settei": "#5d7048",
+   "pintado": "#5d7048",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C003",
+   "cor": "blusa",
+   "ponto": [
+    659,
+    1028
+   ],
+   "settei": "#f3efe4",
+   "pintado": "#f3efe4",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C003",
+   "cor": "blusa",
+   "ponto": [
+    1237,
+    1028
+   ],
+   "settei": "#f3efe4",
+   "pintado": "#f3efe4",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C004",
+   "cor": "cabelo",
+   "ponto": [
+    960,
+    174
+   ],
+   "settei": "#2b2a35",
+   "pintado": "#2b2a35",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C004",
+   "cor": "cabelo",
+   "ponto": [
+    672,
+    420
+   ],
+   "settei": "#2b2a35",
+   "pintado": "#2b2a35",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C004",
+   "cor": "cabelo",
+   "ponto": [
+    1254,
+    420
+   ],
+   "settei": "#2b2a35",
+   "pintado": "#2b2a35",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C004",
+   "cor": "bandana",
+   "ponto": [
+    993,
+    300
+   ],
+   "settei": "#f7f5ef",
+   "pintado": "#f7f5ef",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C004",
+   "cor": "bandana",
+   "ponto": [
+    803,
+    306
+   ],
+   "settei": "#f7f5ef",
+   "pintado": "#f7f5ef",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C004",
+   "cor": "bandana",
+   "ponto": [
+    1160,
+    306
+   ],
+   "settei": "#f7f5ef",
+   "pintado": "#f7f5ef",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C004",
+   "cor": "cabelo",
+   "ponto": [
+    837,
+    389
+   ],
+   "settei": "#2b2a35",
+   "pintado": "#2b2a35",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C004",
+   "cor": "cabelo",
+   "ponto": [
+    908,
+    394
+   ],
+   "settei": "#2b2a35",
+   "pintado": "#2b2a35",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C004",
+   "cor": "cabelo",
+   "ponto": [
+    981,
+    377
+   ],
+   "settei": "#2b2a35",
+   "pintado": "#2b2a35",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C004",
+   "cor": "cabelo",
+   "ponto": [
+    1046,
+    389
+   ],
+   "settei": "#2b2a35",
+   "pintado": "#2b2a35",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C004",
+   "cor": "cabelo",
+   "ponto": [
+    1102,
+    382
+   ],
+   "settei": "#2b2a35",
+   "pintado": "#2b2a35",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C004",
+   "cor": "pele",
+   "ponto": [
+    1118,
+    600
+   ],
+   "settei": "#f3d0bb",
+   "pintado": "#f3d0bb",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C004",
+   "cor": "pele",
+   "ponto": [
+    857,
+    600
+   ],
+   "settei": "#f3d0bb",
+   "pintado": "#f3d0bb",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C004",
+   "cor": "pele",
+   "ponto": [
+    960,
+    786
+   ],
+   "settei": "#f3d0bb",
+   "pintado": "#f3d0bb",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C004",
+   "cor": "camisa",
+   "ponto": [
+    853,
+    1020
+   ],
+   "settei": "#6f8fb3",
+   "pintado": "#6f8fb3",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C004",
+   "cor": "camisa",
+   "ponto": [
+    1088,
+    1020
+   ],
+   "settei": "#6f8fb3",
+   "pintado": "#6f8fb3",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C004",
+   "cor": "pele",
+   "ponto": [
+    968,
+    900
+   ],
+   "settei": "#f3d0bb",
+   "pintado": "#f3d0bb",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C004",
+   "cor": "camisa",
+   "ponto": [
+    882,
+    870
+   ],
+   "settei": "#6f8fb3",
+   "pintado": "#6f8fb3",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C004",
+   "cor": "camisa",
+   "ponto": [
+    1058,
+    870
+   ],
+   "settei": "#6f8fb3",
+   "pintado": "#6f8fb3",
+   "delta_e": 0.0
+  },
+  {
+   "corte": "C004",
+   "cor": "camisa",
+   "ponto": [
+    968,
+    1020
+   ],
+   "settei": "#6f8fb3",
+   "pintado": "#6f8fb3",
+   "delta_e": 0.0
+  }
+ ],
+ "lint": [
+  {
+   "corte": "C001",
+   "resultado": {
+    "_via": "headless",
+    "clean": true,
+    "cut": "01a14765-b5e9-7782-832e-7536d1617faf",
+    "fill_layers": [],
+    "unpainted_area": 0,
+    "unpainted_regions": 0
+   }
+  },
+  {
+   "corte": "C002",
+   "resultado": {
+    "_via": "headless",
+    "clean": true,
+    "cut": "01a14765-b60c-7341-b815-ee4d8a5f99e0",
+    "fill_layers": [
+     {
+      "frames_checked": 1,
+      "layer": "01a147e8-20ac-70dc-94e1-283754662a5d",
+      "layer_name": "cor",
+      "painted_regions": 4,
+      "unpainted_area": 0,
+      "unpainted_regions": 0
+     },
+     {
+      "frames_checked": 1,
+      "layer": "01a147e8-7059-752a-81cc-99c0e68406b9",
+      "layer_name": "cor",
+      "painted_regions": 7,
+      "unpainted_area": 0,
+      "unpainted_regions": 0
+     }
+    ],
+    "unpainted_area": 0,
+    "unpainted_regions": 0
+   }
+  },
+  {
+   "corte": "C003",
+   "resultado": {
+    "_via": "headless",
+    "clean": true,
+    "cut": "01a14765-b62f-75ef-9db6-626dbd51dfdf",
+    "fill_layers": [
+     {
+      "frames_checked": 8,
+      "layer": "01a147c9-8d70-7599-891b-bab50111bc70",
+      "layer_name": "cor",
+      "painted_regions": 134,
+      "unpainted_area": 0,
+      "unpainted_regions": 0
+     }
+    ],
+    "unpainted_area": 0,
+    "unpainted_regions": 0
+   }
+  },
+  {
+   "corte": "C004",
+   "resultado": {
+    "_via": "headless",
+    "clean": true,
+    "cut": "01a14765-b65d-760b-ae11-ada26dc939b1",
+    "fill_layers": [
+     {
+      "frames_checked": 8,
+      "layer": "01a147db-56cf-7730-b1e7-eb3b1e2d3597",
+      "layer_name": "cor",
+      "painted_regions": 142,
+      "unpainted_area": 0,
+      "unpainted_regions": 0
+     }
+    ],
+    "unpainted_area": 0,
+    "unpainted_regions": 0
+   }
+  },
+  {
+   "corte": "C005",
+   "resultado": {
+    "_via": "headless",
+    "clean": true,
+    "cut": "01a14765-b68d-734c-b302-0a0b54d0adec",
+    "fill_layers": [
+     {
+      "frames_checked": 4,
+      "layer": "01a147df-ebee-732e-b11f-5f783dca0d6c",
+      "layer_name": "cor",
+      "painted_regions": 74,
+      "unpainted_area": 0,
+      "unpainted_regions": 0
+     },
+     {
+      "frames_checked": 3,
+      "layer": "01a147e3-daa5-720c-a6e4-90496476c5e4",
+      "layer_name": "cor",
+      "painted_regions": 63,
+      "unpainted_area": 0,
+      "unpainted_regions": 0
+     }
+    ],
+    "unpainted_area": 0,
+    "unpainted_regions": 0
+   }
+  },
+  {
+   "corte": "C006",
+   "resultado": {
+    "_via": "headless",
+    "clean": true,
+    "cut": "01a14765-b6b1-75e5-8eaa-fc81d401c149",
+    "fill_layers": [
+     {
+      "frames_checked": 12,
+      "layer": "01a147f9-7522-75ab-8361-fe59ed173e47",
+      "layer_name": "cor",
+      "painted_regions": 186,
+      "unpainted_area": 0,
+      "unpainted_regions": 0
+     },
+     {
+      "frames_checked": 4,
+      "layer": "01a147f9-8975-7305-9351-68cb65e821ff",
+      "layer_name": "cor",
+      "painted_regions": 81,
+      "unpainted_area": 0,
+      "unpainted_regions": 0
+     }
+    ],
+    "unpainted_area": 0,
+    "unpainted_regions": 0
+   }
+  },
+  {
+   "corte": "C007",
+   "resultado": {
+    "_via": "headless",
+    "clean": true,
+    "cut": "01a14765-b6d8-74bf-b765-4c8ae1781f27",
+    "fill_layers": [],
+    "unpainted_area": 0,
+    "unpainted_regions": 0
+   }
+  }
+ ]
+}

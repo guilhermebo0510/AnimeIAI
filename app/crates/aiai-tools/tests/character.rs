@@ -26,6 +26,15 @@ fn model_sheet_with_turnaround_guides() {
     // checagem: desenho com cabeça de 100 px, olhos a 55 px, pés a 650 → ok; pés a 560 → erro grande
     let ok = consistency(&s.project, &ConsistencyRequest { character: ch.clone(), head_top: 0.0, chin: 100.0, eyes: Some(55.0), shoulders: None, feet: Some(650.0) }).unwrap();
     assert!(ok.ok, "{ok:?}");
-    let bad = consistency(&s.project, &ConsistencyRequest { character: ch, head_top: 0.0, chin: 100.0, eyes: Some(55.0), shoulders: None, feet: Some(560.0) }).unwrap();
+    let bad = consistency(&s.project, &ConsistencyRequest { character: ch.clone(), head_top: 0.0, chin: 100.0, eyes: Some(55.0), shoulders: None, feet: Some(560.0) }).unwrap();
     assert!(!bad.ok && bad.max_error_pct > 10.0, "{bad:?}");
+    // settei com olhos mais baixos (0,60 cabeça): olhos a 60 px passam a valer e 55 px vira erro
+    let NodeKind::Character(c) = &s.project.node(&ch).unwrap().data else { unreachable!() };
+    let mut m = serde_json::to_value(&c.measurements).unwrap();
+    m["landmarks"] = serde_json::json!({"olhos": 0.60});
+    s.apply(Command::SetProps { id: ch.clone(), name: None, data: serde_json::json!({"measurements": m}) }).unwrap();
+    let own = consistency(&s.project, &ConsistencyRequest { character: ch.clone(), head_top: 0.0, chin: 100.0, eyes: Some(60.0), shoulders: None, feet: Some(650.0) }).unwrap();
+    assert!(own.ok && own.errors_pct["olhos"] < 0.01, "{own:?}");
+    let old = consistency(&s.project, &ConsistencyRequest { character: ch, head_top: 0.0, chin: 100.0, eyes: Some(55.0), shoulders: None, feet: Some(650.0) }).unwrap();
+    assert!(old.errors_pct["olhos"] > 8.0, "{old:?}");
 }

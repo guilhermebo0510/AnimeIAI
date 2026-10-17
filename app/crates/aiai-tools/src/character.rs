@@ -204,7 +204,11 @@ pub fn consistency(p: &Project, req: &ConsistencyRequest) -> ToolResult<Consiste
         return Err(ToolError::Invalid("cabeça muito pequena para medir".into()));
     }
     let lm = landmark_heads(heads);
-    let expected = |name: &str| lm.iter().find(|(n, _)| *n == name).map(|(_, v)| *v).unwrap_or(0.0);
+    // linhas-guia do próprio settei (ex.: olhos mais baixos num desenho de olhos grandes) valem mais que as genéricas
+    let own = m.get("landmarks").and_then(|v| v.as_object());
+    let expected = |name: &str| {
+        own.and_then(|o| o.get(name)).and_then(|v| v.as_f64()).map(|v| v as f32).or_else(|| lm.iter().find(|(n, _)| *n == name).map(|(_, v)| *v)).unwrap_or(0.0)
+    };
     let mut errors = std::collections::BTreeMap::new();
     let rel = |got: f32, exp: f32| if exp.abs() < 1e-3 { 0.0 } else { (got - exp).abs() / exp * 100.0 };
     if let Some(e) = req.eyes {

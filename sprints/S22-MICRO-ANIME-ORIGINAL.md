@@ -9,18 +9,29 @@ Produzir dentro do app, só via MCP (e mouse quando for o caminho natural), um c
 - Exemplo de ponto de partida (o agente pode trocar): uma jovem jardineira e um aprendiz de confeiteiro disputam a última rosa do jardim para um concurso; descobrem que querem dá-la à mesma pessoa, a avó que cuidou dos dois. Final com pétalas ao vento.
 
 ## Tarefas (na ordem do fluxo)
-- [ ] Bíblia, beats, roteiro (JA + PT), fichas de personagem.
-- [ ] Model sheets, expressões, bocas, settei de cor de cada personagem.
-- [ ] Perfis de voz e teste de falas.
-- [ ] Cenários-base (blocos 3D → linha → pintura com pincéis e texturas).
-- [ ] Storyboard/e-conte, animatic com TTS, ajuste de tempo, geração dos cortes.
-- [ ] Para cada corte: layout, genga, douga (intercalação + correção), lip-sync e piscar, shiage com lint = 0, BG/BOOK do corte, satsuei (câmera, difusão, luz, partículas, FX), cor, render.
-- [ ] Som final: falas, SFX, BGM, mix, loudness.
-- [ ] Edição: montagem, transições, legendas PT, créditos (vozes VOICEVOX, texturas CC0, "produzido no AnimeIAI").
-- [ ] Export MP4 e verificação de entrega.
-- [ ] Revisão (S19): checar consistência de cada corte (proporção, cor, lint), retakes até passar.
-- [ ] Diário de produção: tempo por etapa, dificuldades, ferramentas que faltaram (→ LACUNAS e correção nas sprints de origem).
+- [x] Bíblia, beats, roteiro (JA + PT), fichas de personagem.
+- [x] Model sheets, expressões, bocas, settei de cor de cada personagem.
+- [x] Perfis de voz e teste de falas.
+- [x] Cenários-base (blocos 3D → linha → pintura com pincéis e texturas).
+- [x] Storyboard/e-conte, animatic com TTS, ajuste de tempo, geração dos cortes.
+- [x] Para cada corte: layout, genga, douga (intercalação + correção), lip-sync e piscar, shiage com lint = 0, BG/BOOK do corte, satsuei (câmera, difusão, luz, partículas, FX), cor, render.
+- [x] Som final: falas, SFX, BGM, mix, loudness.
+- [x] Edição: montagem, transições, legendas PT, créditos (vozes VOICEVOX, texturas CC0, "produzido no AnimeIAI").
+- [x] Export MP4 e verificação de entrega.
+- [x] Revisão (S19): checar consistência de cada corte (proporção, cor, lint), retakes até passar.
+- [x] Diário de produção: tempo por etapa, dificuldades, ferramentas que faltaram (→ LACUNAS e correção nas sprints de origem).
 
 ## Critério de pronto
-- [ ] Todos os itens do aceite §7 do protocolo com evidência.
-- [ ] `producoes/micro-anime/` com o projeto `.aiai`, o MP4 final, WAV, SRT, folhas de model sheet/settei/e-conte exportadas e o diário.
+- [x] Todos os itens do aceite §7 do protocolo com evidência.
+- [x] `producoes/micro-anime/` com o projeto `.aiai`, o MP4 final, WAV, SRT, folhas de model sheet/settei/e-conte exportadas e o diário.
+
+## Execução (2026-10-16/17)
+
+Concluída. Entregáveis e etapas em `producoes/micro-anime/DIARIO.md`; evidências em `registro/evidencias/S22/`
+(`mp4_final_folha.png`, tiras de cada corte, `c006_virada.png`, `grade_antes_depois.png`, `edicao_previa.png`,
+`revisao.json`). Aceite §7: 33,2 s H.264/AAC 1920×1080 23,976 fps 48 kHz; 2 personagens com model sheet, expressões,
+bocas e settei; 7 cortes do storyboard com animatic; 3 cenários (guia 3D na varanda, 2 pontos de fuga no jardim,
+texturas e pincéis); C006 com 8 desenhos (chaves + intercalação), piscar e lip-sync nas 4 falas; pan e tilt com
+multiplano, partículas, glow, difusão, god rays; grade por corte; VOICEVOX com legenda PT, SFX e BGM do app,
+−24,0 LKFS / −5,0 dBTP; proporções ≤ 1,5%, ΔE 0, lint 0; créditos de voz e de texturas (procedurais).
+Lacunas abertas que nasceram aqui: 8, 10, 11, 14, 15.
