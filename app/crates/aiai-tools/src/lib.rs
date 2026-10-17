@@ -16,6 +16,7 @@ pub mod fx2d;
 pub mod guide;
 pub mod paint;
 pub mod preprod;
+pub mod preview;
 pub mod production;
 pub mod transform;
 

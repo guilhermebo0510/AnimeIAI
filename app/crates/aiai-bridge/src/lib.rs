@@ -9,6 +9,7 @@
 //! * [`host`] — ponte para a thread da UI (canal limitado, prazo, cancelamento): [`BridgeReceiver::try_recv_all`];
 //! * [`core_ops`] — ações de documento que só precisam da `CoreSession` ([`core_ops::handle_core_action`]);
 //! * [`core_tools`] — RENDER, DRAW_CURVES, FILL, LINT, PAINT, GRADIENT, TRANSFORM, REPEAT, BRUSH_PRESETS (também só o documento);
+//! * [`preview_tools`] — prévia e entrega: RENDER_SHEET, EDIT_PREVIEW, EDIT_MIX, TTS_REGENERATE;
 //! * [`preprod_tools`] — pré-produção (S16): SCRIPT, BEATS, STORYBOARD, ANIMATIC, CUTS_FROM_STORYBOARD;
 //! * [`satsuei_tools`] — satsuei, câmera e cor tipados (S13/S15): EFFECTS, GRADE, CAMERA, LAYER_MOTION;
 //! * [`review_tools`] — produção e revisão (S19): PRODUCTION, CORRECTION, RETAKE;
@@ -25,6 +26,7 @@ pub mod discovery;
 pub mod host;
 pub mod http;
 pub mod preprod_tools;
+pub mod preview_tools;
 pub mod production_tools;
 pub mod review_tools;
 pub mod satsuei_tools;

@@ -1323,3 +1323,48 @@ fn satsuei_camera_multiplane_effects_and_grade() {
     let cut_node = act(&mut d.s, "QUERY", json!({"query": {"kind": "node", "id": cut}}));
     assert_eq!(cut_node["children"].as_array().unwrap().last().unwrap(), &json!(gl), "grade no topo: {cut_node}");
 }
+
+#[test]
+fn preview_sheet_edit_frames_mix_and_sidecar_srt() {
+    let mut d = prod_doc();
+    let (cut, line) = (d.cut.clone(), d.line.clone());
+    let dir = tempfile::tempdir().unwrap();
+    act(&mut d.s, "DRAW_CURVES", json!({"cut": cut, "frame": 0, "layer": line, "curves": [{"points": [[100.0, 20.0], [100.0, 160.0]], "width": 4.0, "color": black()}]}));
+    act(&mut d.s, "CAMERA", json!({"op": "move", "cut": cut, "from": {"center": [160.0, 90.0]}, "to": {"center": [220.0, 90.0]}}));
+
+    // folha de contato: faixa com passo; a imagem tem uma miniatura por quadro
+    let out = dir.path().join("folha.png");
+    let o = act(&mut d.s, "RENDER_SHEET", json!({"cut": cut, "start": 0, "end": 47, "step": 8, "columns": 3, "thumb_width": 160, "out": out.display().to_string()}));
+    assert_eq!(o["frames"], json!([0, 8, 16, 24, 32, 40]), "{o}");
+    let img = image::open(&out).unwrap();
+    assert!(img.width() >= 3 * 160 && img.height() > 2 * 90, "{}x{}", img.width(), img.height());
+    assert_eq!(act_err(&mut d.s, "RENDER_SHEET", json!({"cut": cut, "frames": [99], "out": out.display().to_string()})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "RENDER_SHEET", json!({"cut": cut, "frames": vec![0; 49], "out": out.display().to_string()})).code, code::INVALID_PARAMS, "mais de 48 quadros");
+
+    // prévia da edição com legenda queimada (difere da mesma prévia sem legenda)
+    act(&mut d.s, "SFX", json!({"preset": "impact", "seed": 3, "cut": cut, "start_frame": 6}));
+    let e = act(&mut d.s, "EDIT_SET", json!({"name": "Ep", "clips": [{"cut": cut}], "subtitles": [{"start_frame": 2, "end_frame": 30, "text": "Olá, mundo"}]}));
+    let edit = e["edit"].as_str().unwrap().to_string();
+    let (a, b) = (dir.path().join("com.png"), dir.path().join("sem.png"));
+    let o = act(&mut d.s, "EDIT_PREVIEW", json!({"edit": edit, "frames": [10], "out": a.display().to_string()}));
+    assert_eq!(o["total_frames"], 48);
+    act(&mut d.s, "EDIT_PREVIEW", json!({"edit": edit, "frames": [10], "burn_subtitles": false, "out": b.display().to_string()}));
+    assert_ne!(std::fs::read(&a).unwrap(), std::fs::read(&b).unwrap(), "legenda aparece na prévia");
+    let o = act(&mut d.s, "EDIT_PREVIEW", json!({"edit": edit, "seconds": [0.5, 1.0], "out": a.display().to_string()}));
+    assert_eq!(o["frames"].as_array().unwrap().len(), 2);
+
+    // mixagem da edição em WAV
+    let wav = dir.path().join("mix.wav");
+    let o = act(&mut d.s, "EDIT_MIX", json!({"edit": edit, "out": wav.display().to_string(), "preset": "arib"}));
+    assert!(wav.exists() && (o["duration_s"].as_f64().unwrap() - 2.0).abs() < 0.1, "{o}");
+    assert_eq!(act_err(&mut d.s, "EDIT_MIX", json!({"edit": edit, "out": dir.path().join("x.mp3").display().to_string()})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "TTS_REGENERATE", json!({"asset": cut})).code, code::INVALID_PARAMS);
+
+    // .srt de entrega ao lado do MP4 (precisa do ffmpeg)
+    if std::process::Command::new(aiai_media::ffmpeg()).arg("-version").output().is_ok() {
+        let mp4 = dir.path().join("ep.mp4");
+        let o = act(&mut d.s, "EXPORT_VIDEO", json!({"edit": edit, "out": mp4.display().to_string(), "sidecar_srt": true}));
+        let srt = std::fs::read_to_string(dir.path().join("ep.srt")).unwrap_or_else(|_| panic!("{o}"));
+        assert!(srt.contains("Olá, mundo") && srt.contains("-->"), "{srt}");
+    }
+}

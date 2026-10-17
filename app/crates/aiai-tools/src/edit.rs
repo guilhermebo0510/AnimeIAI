@@ -139,6 +139,9 @@ fn fade_to(img: &mut Image, color: [f32; 3], k: f32) {
     }
 }
 
+/// Corpo da legenda queimada, em fração da altura do quadro.
+pub const SUBTITLE_SIZE: f32 = 0.09;
+
 /// Texto centrado (créditos, legendas) desenhado direto numa imagem.
 pub fn draw_text(img: &mut Image, text: &str, center: [f32; 2], size: f32, color: [f32; 4], outline: Option<([f32; 4], f32)>) {
     if text.trim().is_empty() {
@@ -251,12 +254,17 @@ pub fn render_edit_frame(p: &Project, blobs: &BlobStore, doc: &EditDoc, f: u32, 
         fade_to(&mut img, [0.0; 3], 1.0 - left as f32 / doc.fade_out_end as f32);
     }
     if burn_subtitles {
+        // proporção de legenda de anime em 1080p (medida: ~800 px para 26 caracteres, ~70 px com acentos e descendentes),
+        // contorno escuro ~4 px, quebra automática em 86% da largura
+        let size = h as f32 * SUBTITLE_SIZE;
+        let font = crate::fx2d::default_font();
         for s in &doc.subtitles {
             if f >= s.start_frame && f < s.end_frame {
-                for (i, line) in s.text.lines().enumerate() {
-                    let n = s.text.lines().count() as f32;
-                    let y = h as f32 * 0.9 - (n - 1.0 - i as f32) * h as f32 * 0.055;
-                    draw_text(&mut img, line, [w as f32 / 2.0, y], h as f32 * 0.045, [1.0, 1.0, 1.0, 1.0], Some(([0.05, 0.05, 0.08, 1.0], (h as f32 * 0.003).max(1.5))));
+                let lines: Vec<String> = s.text.lines().flat_map(|l| crate::preprod::wrap_text(font, size, l, w as f32 * 0.86)).collect();
+                let n = lines.len() as f32;
+                for (i, line) in lines.iter().enumerate() {
+                    let y = h as f32 * 0.91 - (n - 1.0 - i as f32) * size * 1.25;
+                    draw_text(&mut img, line, [w as f32 / 2.0, y], size, [1.0, 1.0, 1.0, 1.0], Some(([0.04, 0.04, 0.07, 1.0], (h as f32 * 0.0038).max(1.5))));
                 }
             }
         }

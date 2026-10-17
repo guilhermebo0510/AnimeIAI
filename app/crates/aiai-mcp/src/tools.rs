@@ -37,7 +37,7 @@ Ferramentas de alto nível (açúcar sobre estes comandos, com validação e exe
 
 const RENDER_DESC: &str = r##"Renderiza um quadro de um corte com o motor CPU real (a MESMA imagem que o app mostra) e devolve a imagem como conteúdo de imagem MCP (reduzida a 1280 px no lado maior) e/ou grava o PNG em `out`. É a forma de VER o que você desenhou: renderize depois de cada passo importante e olhe a imagem.
 Parâmetros: cut (id do corte, obrigatório), frame (0-based, padrão 0), layers (ids; só estas camadas, ex.: só a linha), background ("#rrggbb": achata sobre cor opaca; sem isso o fundo é transparente), include_guides / include_reference (mostram camadas de guia/referência), camera (padrão true = tamanho do projeto com a câmera do corte; false = canvas inteiro do corte, sem câmera), size [largura, altura] (reduz o PNG), out (caminho .png dentro das pastas permitidas), inline (true = devolve a imagem mesmo com out; sem out a imagem sempre volta).
-Devolve {width, height, warnings, path?}: `warnings` lista o que NÃO foi desenhado (nunca ignore). `range` (sequência) e backend gpu ainda não existem e dão erro claro."##;
+Devolve {width, height, warnings, path?}: `warnings` lista o que NÃO foi desenhado (nunca ignore). Vários quadros numa imagem: aiai_render_sheet. `range` e backend gpu não existem aqui e dão erro claro."##;
 
 const DRAW_DESC: &str = r##"Desenha curvas vetoriais (traços de linha) no cel exposto de uma camada VETORIAL no quadro dado. Entra no undo e aparece ao vivo no app. Devolve o Outcome (revision, created, can_undo/can_redo).
 GUIA RÁPIDO
@@ -277,12 +277,13 @@ Só grava em pastas permitidas (AIAI_MCP_ALLOWED_DIRS; padrão producoes/, calib
 }
 
 /// Catálogo completo: ferramentas genéricas + curadas de desenho + de produção (`tools_production`) + de pré-produção
-/// (`tools_preprod`) + de satsuei/câmera/cor (`tools_satsuei`).
+/// (`tools_preprod`) + de satsuei/câmera/cor (`tools_satsuei`) + de prévia/entrega (`tools_preview`).
 pub fn definitions() -> Value {
     let mut list = base_definitions().as_array().cloned().unwrap_or_default();
     list.extend(crate::tools_production::definitions());
     list.extend(crate::tools_preprod::definitions());
     list.extend(crate::tools_satsuei::definitions());
+    list.extend(crate::tools_preview::definitions());
     Value::Array(list)
 }
 
@@ -339,6 +340,9 @@ pub fn plan(name: &str, args: &Value) -> Result<Plan, ToolError> {
         return p;
     }
     if let Some(p) = crate::tools_satsuei::plan(name, &m) {
+        return p;
+    }
+    if let Some(p) = crate::tools_preview::plan(name, &m) {
         return p;
     }
     match name {

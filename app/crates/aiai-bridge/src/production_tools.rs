@@ -223,7 +223,7 @@ fn clip_info(c: &audio::ClipOutput) -> Value {
 }
 
 /// Caminho de gravação: absoluto e sem `..` (o MCP confina às pastas permitidas).
-fn check_abs(path: &str, what: &str) -> Result<PathBuf, BridgeError> {
+pub(crate) fn check_abs(path: &str, what: &str) -> Result<PathBuf, BridgeError> {
     let p = Path::new(path);
     if !p.is_absolute() || p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
         return Err(BridgeError::invalid_params(format!("'{what}' deve ser um caminho absoluto sem '..'")));
@@ -231,7 +231,7 @@ fn check_abs(path: &str, what: &str) -> Result<PathBuf, BridgeError> {
     Ok(p.to_path_buf())
 }
 
-fn ensure_parent(p: &Path) -> Result<(), BridgeError> {
+pub(crate) fn ensure_parent(p: &Path) -> Result<(), BridgeError> {
     if let Some(dir) = p.parent() {
         std::fs::create_dir_all(dir).map_err(|e| BridgeError::new(code::ACTION_FAILED, format!("criando {}: {e}", dir.display())))?;
     }
@@ -244,7 +244,7 @@ fn parse_hex_rgb(s: &str, what: &str) -> Result<[f32; 3], BridgeError> {
 }
 
 /// Relatório de loudness como JSON; as séries (um ponto por 100 ms) só entram com `series`.
-fn loudness_json(r: &LoudnessReport, series: bool) -> Result<Value, BridgeError> {
+pub(crate) fn loudness_json(r: &LoudnessReport, series: bool) -> Result<Value, BridgeError> {
     let mut v = to_json(r)?;
     if !series {
         if let Some(o) = v.as_object_mut() {
@@ -356,7 +356,7 @@ fn is_loopback_url(url: &str) -> bool {
 }
 
 /// URL do VOICEVOX: parâmetro `voicevox_url` (só loopback) > env `AIAI_VOICEVOX_URL` > padrão.
-fn voicevox_url(params: &Value) -> Result<String, BridgeError> {
+pub(crate) fn voicevox_url(params: &Value) -> Result<String, BridgeError> {
     let p = obj(params)?;
     if let Some(u) = opt_str(&p, "voicevox_url")? {
         if !is_loopback_url(u) {
@@ -654,6 +654,9 @@ pub struct ExportVideoRequest {
     /// Fundo sob a transparência (#rrggbb). Padrão #ffffff.
     #[serde(default)]
     pub background: Option<String>,
+    /// Grava também a legenda como arquivo `.srt` ao lado do vídeo (mesmo nome), para entrega.
+    #[serde(default)]
+    pub sidecar_srt: bool,
 }
 
 /// Arquivo temporário apagado ao sair do escopo.
@@ -879,6 +882,26 @@ fn export_video(session: &mut CoreSession, params: &Value) -> Result<Value, Brid
         }
     }
     let report = encoder.ok_or_else(|| BridgeError::failed("nenhum quadro renderizado"))?.finish().map_err(BridgeError::failed)?;
+    // legenda de entrega ao lado do vídeo
+    let mut sidecar = Value::Null;
+    if r.sidecar_srt && r.codec != VideoCodec::PngSequence {
+        let fps = settings.fps();
+        let text = match &edit_doc {
+            Some(doc) => Some(aiai_media::write_srt(
+                &doc.subtitles.iter().map(|s| Subtitle { start: s.start_frame as f64 / fps, end: s.end_frame as f64 / fps, text: s.text.clone() }).collect::<Vec<_>>(),
+            )),
+            None if !r.subtitles.is_empty() => Some(aiai_media::write_srt(&r.subtitles)),
+            None => r.srt.as_ref().and_then(|s| std::fs::read_to_string(s).ok()),
+        };
+        match text.filter(|t| !t.trim().is_empty()) {
+            Some(t) => {
+                let srt = out_path.with_extension("srt");
+                std::fs::write(&srt, t.as_bytes()).map_err(|e| BridgeError::failed(format!("gravar {}: {e}", srt.display())))?;
+                sidecar = json!(srt.display().to_string());
+            }
+            None => sidecar = json!("sem legendas para gravar"),
+        }
+    }
     let probe = if r.codec == VideoCodec::PngSequence { Value::Null } else { to_json(&aiai_media::probe(&out_path).map_err(|e| BridgeError::failed(format!("ffprobe: {e}")))?)? };
     let warn_list: Vec<Value> = warnings.iter().take(20).map(|(w, n)| json!({ "warning": w, "frames": n })).collect();
     Ok(json!({
@@ -894,6 +917,7 @@ fn export_video(session: &mut CoreSession, params: &Value) -> Result<Value, Brid
         },
         "audio": audio_report,
         "subtitles_burned": burned,
+        "sidecar_srt": sidecar,
         "probe": probe,
         "warnings": warn_list,
         "elapsed_s": started.elapsed().as_secs_f64(),
