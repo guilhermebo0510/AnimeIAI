@@ -32,3 +32,5 @@ sprints/registro/calibracao/**/*_bordas.png
 sprints/registro/calibracao/**/*_flip_bruto.png
 # tentativas de calibração (centenas de renders de trabalho); só os aprovados entram
 sprints/registro/calibracao/**/tentativas/
+# renders de trabalho do micro anime (o projeto .aiai e as folhas finais entram)
+/producoes/micro-anime/saida/
