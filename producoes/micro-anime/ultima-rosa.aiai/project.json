@@ -125099,13 +125099,18 @@
     },
     "01a14765-b5e9-7782-832e-7536d1617faf": {
       "children": [
-        "01a14765-b60a-7679-9136-51ec09764eec"
+        "01a14765-b60a-7679-9136-51ec09764eec",
+        "01a147b2-6305-75eb-a10c-3fadd0360765",
+        "01a147b2-6a9d-7075-8ef3-0e9f27a6582a",
+        "01a147b2-725f-7080-bfd1-6a340e00eb49",
+        "01a147b2-9bcc-701a-affd-7491e09c4cdd",
+        "01a147b2-a92a-72ee-a0ec-44c547ec6bb3"
       ],
       "data": {
         "camera": {
           "center": [
-            691.2000122070312,
-            540.0
+            740.0,
+            520.0
           ],
           "keys": {
             "center_x": [
@@ -125114,14 +125119,14 @@
                   "type": "ease_in_out"
                 },
                 "frame": 0,
-                "value": 691.2000122070312
+                "value": 740.0
               },
               {
                 "ease": {
                   "type": "linear"
                 },
                 "frame": 107,
-                "value": 1228.7999267578125
+                "value": 1180.0
               }
             ],
             "center_y": [
@@ -125130,14 +125135,14 @@
                   "type": "ease_in_out"
                 },
                 "frame": 0,
-                "value": 540.0
+                "value": 520.0
               },
               {
                 "ease": {
                   "type": "linear"
                 },
                 "frame": 107,
-                "value": 594.0
+                "value": 600.0
               }
             ],
             "zoom": [
@@ -125177,7 +125182,7 @@
       "provenance": {
         "created_by": "agent:claude",
         "modified_by": "agent:claude",
-        "revision": 1349
+        "revision": 2590
       }
     },
     "01a14765-b60a-7679-9136-51ec09764eec": {
@@ -125788,9 +125793,858 @@
         "modified_by": "agent:claude",
         "revision": 1349
       }
+    },
+    "01a147b2-6305-75eb-a10c-3fadd0360765": {
+      "children": [
+        "01a147b2-6585-727a-be0f-2af11d68950c"
+      ],
+      "data": {
+        "blend": "normal",
+        "clip_to_below": false,
+        "depth": 4.0,
+        "keys": {
+          "scale": [
+            {
+              "ease": {
+                "type": "linear"
+              },
+              "frame": 0,
+              "value": 1.1784000396728516
+            }
+          ]
+        },
+        "kind": "raster",
+        "locked": false,
+        "offset": [
+          0.0,
+          0.0
+        ],
+        "opacity": 1.0,
+        "role": "none",
+        "type": "layer",
+        "visible": true
+      },
+      "id": "01a147b2-6305-75eb-a10c-3fadd0360765",
+      "name": "bg_ceu",
+      "parent": "01a14765-b5e9-7782-832e-7536d1617faf",
+      "provenance": {
+        "created_by": "agent:claude",
+        "modified_by": "agent:claude",
+        "revision": 2581
+      }
+    },
+    "01a147b2-6585-727a-be0f-2af11d68950c": {
+      "data": {
+        "number": 1,
+        "role": "key",
+        "tiles": [
+          {
+            "blob": "9b9e7d5aeb27d2ea869aa50b163249c0d7e23181481b96f5a364a4b3c63a1556",
+            "x": 0,
+            "y": 0
+          },
+          {
+            "blob": "efa9853514d17cdbc456cc770d585682ff2f1433949f4e600fcf7d857d66f7e4",
+            "x": 1,
+            "y": 0
+          },
+          {
+            "blob": "03c10dd7fbf0b02cb198c6b81b0a25b51e1403f06db02da5e8b4a13288840d06",
+            "x": 2,
+            "y": 0
+          },
+          {
+            "blob": "a973dbdec3589162138b1a52462bcca2ac520559ace01a71b6e240743c6ca7f9",
+            "x": 3,
+            "y": 0
+          },
+          {
+            "blob": "f2f66e0a95fcd9bf4e0d8d0e0a3edb5cedf18db059e404fe81e02ed709ccf750",
+            "x": 4,
+            "y": 0
+          },
+          {
+            "blob": "2f39ded76549fa20660d47b2babd04bb16033ceffca3f48e5b27fc1ea3cdad98",
+            "x": 5,
+            "y": 0
+          },
+          {
+            "blob": "ac74a784f402d6611f2684c27be6bb8107cbaba2a541fc47884ed3606b817831",
+            "x": 6,
+            "y": 0
+          },
+          {
+            "blob": "f3a65b1b5b64ec0fcaee6ac044ed80209fafe0a58da9e6258c0fa10f5c770b05",
+            "x": 7,
+            "y": 0
+          },
+          {
+            "blob": "dad76391b98661983d926a0ca90815248ccf992bf26b2428b571ff05e44cf2fb",
+            "x": 0,
+            "y": 1
+          },
+          {
+            "blob": "6090ddfe957d34cbe8eebdf202413b04f97763da3123ee75312c18dfac4c30ec",
+            "x": 1,
+            "y": 1
+          },
+          {
+            "blob": "e1ae259bb3743e0aacc5951e091956c43e3a643f7ded03bf1bf796300c7f525d",
+            "x": 2,
+            "y": 1
+          },
+          {
+            "blob": "6526124e52aae3698aebddf39a80ce9adbdcd672e6449bfd484c7472da8e2d00",
+            "x": 3,
+            "y": 1
+          },
+          {
+            "blob": "37be85a4e354602971810423274f80e445e3467c3cc7dff5a6bec442da69044a",
+            "x": 4,
+            "y": 1
+          },
+          {
+            "blob": "a01eb1ec87a4614a7ef28d94f3f197e423a72fffc9f7f9ba1585b85a7494e350",
+            "x": 5,
+            "y": 1
+          },
+          {
+            "blob": "3963a0af02ee7eae2b41646af106c198f8b8420edcad7ceed229642bba755cc5",
+            "x": 6,
+            "y": 1
+          },
+          {
+            "blob": "742e5d48d542c67376adcfc48bd46cc3fbc142693eedbbf5442ec30443467bee",
+            "x": 7,
+            "y": 1
+          },
+          {
+            "blob": "949b513c3aae7f1cfaf6012576683082000f2dfe38d34609fa2977d677d7317c",
+            "x": 0,
+            "y": 2
+          },
+          {
+            "blob": "317e5ba8aba3c8d751f804566126fc8978829b624e2ebd599524c20483802d36",
+            "x": 1,
+            "y": 2
+          },
+          {
+            "blob": "a8e99b28c25733a340afd537642b179338cde300180d9ba0e4af78ae2aec7f87",
+            "x": 2,
+            "y": 2
+          },
+          {
+            "blob": "b0d0a7f9ced51e45198480d77bb5c00d1b63fbf3000e1cda84017d8b6294e7cd",
+            "x": 3,
+            "y": 2
+          },
+          {
+            "blob": "ce975199de0b7aaa471691c2cc1eb776e52afebbf6bb765146e51d5d23c65cad",
+            "x": 4,
+            "y": 2
+          },
+          {
+            "blob": "5bd416cfbbbb08e445627f0b4933aae4d8916b6cfbb940d02e9af5ac615de688",
+            "x": 5,
+            "y": 2
+          },
+          {
+            "blob": "4019156e898a8ad3ae7b99873b5184a6a18b081a58cb99d6b456047378d3ec0c",
+            "x": 6,
+            "y": 2
+          },
+          {
+            "blob": "54f38927f986800a3d928fe9391646dd374e964397b6efcb2d51891fb73c78d0",
+            "x": 7,
+            "y": 2
+          },
+          {
+            "blob": "6a44e8632634c587acf6d43db6ea4a6c824f171828be7f7d2bc2d45bfdf4eb6e",
+            "x": 0,
+            "y": 3
+          },
+          {
+            "blob": "4052e919de60a2e0ab87c04536fdc246a34412ab562ad68667953fc0d1a189bf",
+            "x": 1,
+            "y": 3
+          },
+          {
+            "blob": "0510733dd4e8a7d9ca0242dad9745e40005eb353b9d8765403d3737c3e83ad92",
+            "x": 2,
+            "y": 3
+          },
+          {
+            "blob": "c0660c534447fe433a847dbdadcd1026ed5c63feaf497069a9e39dcfa5c8f7c4",
+            "x": 3,
+            "y": 3
+          },
+          {
+            "blob": "6a44e8632634c587acf6d43db6ea4a6c824f171828be7f7d2bc2d45bfdf4eb6e",
+            "x": 4,
+            "y": 3
+          },
+          {
+            "blob": "6a44e8632634c587acf6d43db6ea4a6c824f171828be7f7d2bc2d45bfdf4eb6e",
+            "x": 5,
+            "y": 3
+          },
+          {
+            "blob": "6a44e8632634c587acf6d43db6ea4a6c824f171828be7f7d2bc2d45bfdf4eb6e",
+            "x": 6,
+            "y": 3
+          },
+          {
+            "blob": "689eb223a75412575af301afa52a04efe468f98fe09c618b2a15acea4ee23378",
+            "x": 7,
+            "y": 3
+          },
+          {
+            "blob": "7ba87370143235ad53d6f7148b518cc98a4da73124b61dcf2d4be65531e407e4",
+            "x": 0,
+            "y": 4
+          },
+          {
+            "blob": "7ba87370143235ad53d6f7148b518cc98a4da73124b61dcf2d4be65531e407e4",
+            "x": 1,
+            "y": 4
+          },
+          {
+            "blob": "7ba87370143235ad53d6f7148b518cc98a4da73124b61dcf2d4be65531e407e4",
+            "x": 2,
+            "y": 4
+          },
+          {
+            "blob": "7ba87370143235ad53d6f7148b518cc98a4da73124b61dcf2d4be65531e407e4",
+            "x": 3,
+            "y": 4
+          },
+          {
+            "blob": "7ba87370143235ad53d6f7148b518cc98a4da73124b61dcf2d4be65531e407e4",
+            "x": 4,
+            "y": 4
+          },
+          {
+            "blob": "7ba87370143235ad53d6f7148b518cc98a4da73124b61dcf2d4be65531e407e4",
+            "x": 5,
+            "y": 4
+          },
+          {
+            "blob": "7ba87370143235ad53d6f7148b518cc98a4da73124b61dcf2d4be65531e407e4",
+            "x": 6,
+            "y": 4
+          },
+          {
+            "blob": "0c2c6fecc651bbfa8cf6a0cf699353dc924ad718dc2cf0ca2c408ded5a9459ae",
+            "x": 7,
+            "y": 4
+          }
+        ],
+        "transform": [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        "type": "cel"
+      },
+      "id": "01a147b2-6585-727a-be0f-2af11d68950c",
+      "name": "1",
+      "parent": "01a147b2-6305-75eb-a10c-3fadd0360765",
+      "provenance": {
+        "created_by": "agent:claude",
+        "modified_by": "agent:claude",
+        "revision": 2405
+      }
+    },
+    "01a147b2-6a9d-7075-8ef3-0e9f27a6582a": {
+      "children": [
+        "01a147b2-6d54-75d9-86f6-2cec88802539"
+      ],
+      "data": {
+        "blend": "normal",
+        "clip_to_below": false,
+        "depth": 1.2000000476837158,
+        "keys": {
+          "scale": [
+            {
+              "ease": {
+                "type": "linear"
+              },
+              "frame": 0,
+              "value": 1.1146999597549438
+            }
+          ]
+        },
+        "kind": "raster",
+        "locked": false,
+        "offset": [
+          0.0,
+          0.0
+        ],
+        "opacity": 1.0,
+        "role": "none",
+        "type": "layer",
+        "visible": true
+      },
+      "id": "01a147b2-6a9d-7075-8ef3-0e9f27a6582a",
+      "name": "bg_morros",
+      "parent": "01a14765-b5e9-7782-832e-7536d1617faf",
+      "provenance": {
+        "created_by": "agent:claude",
+        "modified_by": "agent:claude",
+        "revision": 2583
+      }
+    },
+    "01a147b2-6d54-75d9-86f6-2cec88802539": {
+      "data": {
+        "number": 1,
+        "role": "key",
+        "tiles": [
+          {
+            "blob": "62520ffc134f33f297bd4794d670c54457924b0df62b3dac09dca33da1edcd5f",
+            "x": 0,
+            "y": 1
+          },
+          {
+            "blob": "32e801b7e74bece2b3440c659aef7addb58164db7fae6243494a339603274ed4",
+            "x": 1,
+            "y": 1
+          },
+          {
+            "blob": "081eb800d6b932691d0f297f5380d204db0ac95121a95d9afea6e27f22f2cbba",
+            "x": 2,
+            "y": 1
+          },
+          {
+            "blob": "ae25c48759a4dbbbc37b6aa7503b0220dcdf19c2f2875dce3b4eaf1c10ee4651",
+            "x": 3,
+            "y": 1
+          },
+          {
+            "blob": "02dc5b8f816d4409ea704fc6415ba43a984d4385168e4befdaf84354e6ab48c8",
+            "x": 4,
+            "y": 1
+          },
+          {
+            "blob": "c4917850fcf4e49343cacb970c0b915743a4e1aa94eb53b5e749837eff0cace9",
+            "x": 5,
+            "y": 1
+          },
+          {
+            "blob": "405027577a6f951b22fdf21308c9558f9fb0a01c0b95e854587a48fc4f91ede5",
+            "x": 6,
+            "y": 1
+          },
+          {
+            "blob": "d32f42163fc5abeba0064dea2440c89a156ce1bb29b7e940ea098e0deeaf57d6",
+            "x": 7,
+            "y": 1
+          },
+          {
+            "blob": "7420a8becd2822eb7556a3d35879a13e3ac6715d97d65870815a981eb8cb8fbe",
+            "x": 0,
+            "y": 2
+          },
+          {
+            "blob": "9eab2c1d6c588a7e7198fe55781063e2d19a0da8520eeedb87378abfa4dbb723",
+            "x": 1,
+            "y": 2
+          },
+          {
+            "blob": "80f8baf8d6a0bdb0279232627f7cb528df606fe7601d0e1c9ca95fe3163fc86b",
+            "x": 2,
+            "y": 2
+          },
+          {
+            "blob": "4d6d44eb5155c524b29585cbf09fc41e0ba00162d7174729a3b55de93d89c785",
+            "x": 3,
+            "y": 2
+          },
+          {
+            "blob": "e508d5d3730d1feb07e64eef18d65dc43d3d9721e3b71cf70cc5ccf8729adb88",
+            "x": 4,
+            "y": 2
+          },
+          {
+            "blob": "1b62b0e3b10f1f3c5c91d593db5f6afa93bdd7a562ca85cf6d7361d0717526c2",
+            "x": 5,
+            "y": 2
+          },
+          {
+            "blob": "6680fa6c55cb2eada12710056caf46f54f6fe0ba52d61b5cc83921ddfa1fe3d6",
+            "x": 6,
+            "y": 2
+          },
+          {
+            "blob": "0ad4510fb484bcd598fdc7766c03ce2998647f06c3cbbc69faab0a0572bbee84",
+            "x": 7,
+            "y": 2
+          },
+          {
+            "blob": "60a598c7394d934723d1b324b38187cb8a716fe64fb1dd356732b410667d44d8",
+            "x": 0,
+            "y": 3
+          },
+          {
+            "blob": "17cc99d2cf5fb5138d5151a21ca056759e9b911b143fa80d3ad8b8a1daa6a0c1",
+            "x": 1,
+            "y": 3
+          },
+          {
+            "blob": "1561c042432ac501e118c05037baf2c3e11dce43e29671ba5ad4bf0a48eef564",
+            "x": 2,
+            "y": 3
+          },
+          {
+            "blob": "b3d566a3a50fdac4561a5b1b1d27ca446fcc20dcbbdaca1361e99b4ef43aed0c",
+            "x": 3,
+            "y": 3
+          },
+          {
+            "blob": "7b459462ad11633700bae80897579e91abf5e72c5b4d24a905b0a569741e658b",
+            "x": 4,
+            "y": 3
+          },
+          {
+            "blob": "6fa425f28331742156be9ceeabcef1969ef064199b95616106ca193e4172835c",
+            "x": 5,
+            "y": 3
+          },
+          {
+            "blob": "c54fac165ffd5b87cd4c09f14da8e02c5b1af5b5156ce7d3fcaa36829993c1a9",
+            "x": 6,
+            "y": 3
+          },
+          {
+            "blob": "b51e7b8dc562e24612918d5398c27d03befa334ccc05e1173345a980dd842d32",
+            "x": 7,
+            "y": 3
+          },
+          {
+            "blob": "9b77a9d8830d3a5e67a196520f5c8a3b3869cf834c210d817c5ad238897acde0",
+            "x": 0,
+            "y": 4
+          },
+          {
+            "blob": "fb42818bf36c95f102b2927d6724812c14435ccdda81a2ac7f46d16b182f8bf0",
+            "x": 1,
+            "y": 4
+          },
+          {
+            "blob": "91c9b8c117f5812c11e0160c5bd980de08c492c19d00c6027f1bbabe0c6751f2",
+            "x": 2,
+            "y": 4
+          },
+          {
+            "blob": "e390edaa0bccb6d0f7a92fe54c62febcf502f9449b0c181e2bcd7ad0ca94f1d5",
+            "x": 3,
+            "y": 4
+          },
+          {
+            "blob": "b674e58b3fb7425f44224816b5302a4b926aaba56b5ebc1e60ce95a1da9cc227",
+            "x": 4,
+            "y": 4
+          },
+          {
+            "blob": "13209df96e5e37a180c85925d48082a8e2096671ce3f5264fa485232e2d3a5e8",
+            "x": 5,
+            "y": 4
+          },
+          {
+            "blob": "ae01aba605bd90b63fa2d5ccc357c2f9da5835333167c88b1278ca6168b842df",
+            "x": 6,
+            "y": 4
+          },
+          {
+            "blob": "116dc09a652e43ea179b264c8f304222935856fa79feca77c749a9df097f305f",
+            "x": 7,
+            "y": 4
+          }
+        ],
+        "transform": [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        "type": "cel"
+      },
+      "id": "01a147b2-6d54-75d9-86f6-2cec88802539",
+      "name": "1",
+      "parent": "01a147b2-6a9d-7075-8ef3-0e9f27a6582a",
+      "provenance": {
+        "created_by": "agent:claude",
+        "modified_by": "agent:claude",
+        "revision": 2501
+      }
+    },
+    "01a147b2-725f-7080-bfd1-6a340e00eb49": {
+      "children": [
+        "01a147b2-74c7-708f-bf60-c7ecd13c3476"
+      ],
+      "data": {
+        "blend": "normal",
+        "clip_to_below": false,
+        "depth": 0.5,
+        "keys": {
+          "scale": [
+            {
+              "ease": {
+                "type": "linear"
+              },
+              "frame": 0,
+              "value": 1.0678000450134277
+            }
+          ]
+        },
+        "kind": "raster",
+        "locked": false,
+        "offset": [
+          0.0,
+          0.0
+        ],
+        "opacity": 1.0,
+        "role": "none",
+        "type": "layer",
+        "visible": true
+      },
+      "id": "01a147b2-725f-7080-bfd1-6a340e00eb49",
+      "name": "bg_casa",
+      "parent": "01a14765-b5e9-7782-832e-7536d1617faf",
+      "provenance": {
+        "created_by": "agent:claude",
+        "modified_by": "agent:claude",
+        "revision": 2585
+      }
+    },
+    "01a147b2-74c7-708f-bf60-c7ecd13c3476": {
+      "data": {
+        "number": 1,
+        "role": "key",
+        "tiles": [
+          {
+            "blob": "650d9f0682a16d1bf1c6b8cdd54b074aae38157c347c2dc75165080765b306ed",
+            "x": 5,
+            "y": 0
+          },
+          {
+            "blob": "ddee9a2c84eae2e7e00f0c15f10d69fa1f8249121dca4cfe2e198c4787a7fba7",
+            "x": 6,
+            "y": 0
+          },
+          {
+            "blob": "2335a9ddebf312ab236f713098b82606a1f919d8f6841b56e5ce9e96dcdb89c0",
+            "x": 4,
+            "y": 1
+          },
+          {
+            "blob": "e592c5fbf3052b1bd6346ed7b648e8abdfdbfa02907aefb72c75bbfd0fcb401b",
+            "x": 5,
+            "y": 1
+          },
+          {
+            "blob": "9534dbfe2aadf80fd12298d0478b13ef3bdd084c5ded6c880e0cad2f2846901c",
+            "x": 6,
+            "y": 1
+          },
+          {
+            "blob": "76d203e0a68c64ae870b154807c67741b7aca083f24710a2fd0d5524203f1333",
+            "x": 5,
+            "y": 2
+          },
+          {
+            "blob": "d0b284b58f8387bf2515d31b3c8cdd940ae216f4ac82786f3d0820d3854514f4",
+            "x": 6,
+            "y": 2
+          }
+        ],
+        "transform": [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        "type": "cel"
+      },
+      "id": "01a147b2-74c7-708f-bf60-c7ecd13c3476",
+      "name": "1",
+      "parent": "01a147b2-725f-7080-bfd1-6a340e00eb49",
+      "provenance": {
+        "created_by": "agent:claude",
+        "modified_by": "agent:claude",
+        "revision": 2482
+      }
+    },
+    "01a147b2-9bcc-701a-affd-7491e09c4cdd": {
+      "children": [
+        "01a147b2-a0f8-7458-9bd0-db390b38fc66"
+      ],
+      "data": {
+        "blend": "normal",
+        "clip_to_below": false,
+        "depth": 0.25,
+        "keys": {
+          "scale": [
+            {
+              "ease": {
+                "type": "linear"
+              },
+              "frame": 0,
+              "value": 1.0407999753952026
+            }
+          ]
+        },
+        "kind": "raster",
+        "locked": false,
+        "offset": [
+          0.0,
+          0.0
+        ],
+        "opacity": 1.0,
+        "role": "none",
+        "type": "layer",
+        "visible": true
+      },
+      "id": "01a147b2-9bcc-701a-affd-7491e09c4cdd",
+      "name": "bg_cerca",
+      "parent": "01a14765-b5e9-7782-832e-7536d1617faf",
+      "provenance": {
+        "created_by": "agent:claude",
+        "modified_by": "agent:claude",
+        "revision": 2587
+      }
+    },
+    "01a147b2-a0f8-7458-9bd0-db390b38fc66": {
+      "data": {
+        "number": 1,
+        "role": "key",
+        "tiles": [
+          {
+            "blob": "8eec20dbd08c73870f294780acd57bcb64b900cfcc70dec91c1652ab86747ce7",
+            "x": 0,
+            "y": 2
+          },
+          {
+            "blob": "1ca84124d133873de85f6d70e2e27311f27f6930448ea31b85e5467684b28355",
+            "x": 1,
+            "y": 2
+          },
+          {
+            "blob": "2a773244fcd89277d9fa450586de80c97a17fd2b3049bd83069f3ce51f9a5ffa",
+            "x": 2,
+            "y": 2
+          },
+          {
+            "blob": "f1963063ec4e56d87450cbcb4e27dbc41b9346276fcbea7856911d1d2b3ce206",
+            "x": 3,
+            "y": 2
+          },
+          {
+            "blob": "c17b9698dd782e24ec1a18cc9befb889d95e41447964c89afebcc81b2a3299a1",
+            "x": 4,
+            "y": 2
+          },
+          {
+            "blob": "26aa3fbd1c059ed646ed4d86e3e2c1df30a529e719406373c3bc96a6ad6913ce",
+            "x": 5,
+            "y": 2
+          },
+          {
+            "blob": "2127b6dc8dec13f7b4a569572d2172351ae855437ce889fab431efcd40303f31",
+            "x": 6,
+            "y": 2
+          },
+          {
+            "blob": "0b9f32a7f7ebeeac79138d14ddb7915a5dcc4e50358130dbed29f9d4555d7f74",
+            "x": 7,
+            "y": 2
+          }
+        ],
+        "transform": [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        "type": "cel"
+      },
+      "id": "01a147b2-a0f8-7458-9bd0-db390b38fc66",
+      "name": "1",
+      "parent": "01a147b2-9bcc-701a-affd-7491e09c4cdd",
+      "provenance": {
+        "created_by": "agent:claude",
+        "modified_by": "agent:claude",
+        "revision": 2504
+      }
+    },
+    "01a147b2-a92a-72ee-a0ec-44c547ec6bb3": {
+      "children": [
+        "01a147b2-acad-737b-be32-0efa3d166c15"
+      ],
+      "data": {
+        "blend": "normal",
+        "clip_to_below": false,
+        "depth": 0.0,
+        "kind": "raster",
+        "locked": false,
+        "offset": [
+          0.0,
+          0.0
+        ],
+        "opacity": 1.0,
+        "role": "none",
+        "type": "layer",
+        "visible": true
+      },
+      "id": "01a147b2-a92a-72ee-a0ec-44c547ec6bb3",
+      "name": "bg_roseira",
+      "parent": "01a14765-b5e9-7782-832e-7536d1617faf",
+      "provenance": {
+        "created_by": "agent:claude",
+        "modified_by": "agent:claude",
+        "revision": 2589
+      }
+    },
+    "01a147b2-acad-737b-be32-0efa3d166c15": {
+      "data": {
+        "number": 1,
+        "role": "key",
+        "tiles": [
+          {
+            "blob": "2f4c2ebc6b8d874fcbfa67bdefeb26a1866ec7c851f6efb6aa55a8543d6880c6",
+            "x": 0,
+            "y": 2
+          },
+          {
+            "blob": "b6aeabaa1c84dfcc8239f90c632f8e298f83b71cee8531cca8a813711946de68",
+            "x": 1,
+            "y": 2
+          },
+          {
+            "blob": "dcaae0dfb62db8ad6aead1b86c284a31fcf13a3064873a598fbf30e159fb7db9",
+            "x": 2,
+            "y": 2
+          },
+          {
+            "blob": "dadb786e96e95815f86af3291842335b07a9566796a9a3aaada636980be216d1",
+            "x": 3,
+            "y": 2
+          },
+          {
+            "blob": "55b85b4cce639cc3386b13260f310b645968db5402698407b52e345fb670fce5",
+            "x": 4,
+            "y": 2
+          },
+          {
+            "blob": "beeb381d1d32b63fc463fb47ce071363a7c68dacdb7e4ed27936268aa5cf096c",
+            "x": 5,
+            "y": 2
+          },
+          {
+            "blob": "769d4ca7609b4304be8d13c7338953b1416065299f59abbbfad9bde8919858e8",
+            "x": 6,
+            "y": 2
+          },
+          {
+            "blob": "65bed4f35bf682e944409f57657e34754029e42785858d329ce1908886795a1d",
+            "x": 7,
+            "y": 2
+          },
+          {
+            "blob": "5016722f697d14d25f63c43ad61c8fa04dd4acc773000f136ec2c849bbf461af",
+            "x": 0,
+            "y": 3
+          },
+          {
+            "blob": "92409f693710488c8ac83b606b5054ff19c2937ac6354efd18c64274b787818c",
+            "x": 1,
+            "y": 3
+          },
+          {
+            "blob": "59303e394937c58b092e3d3f091eaa333e7a62412c3dfe10216323cd781b88d5",
+            "x": 2,
+            "y": 3
+          },
+          {
+            "blob": "d8fbac8fa62ce56ac25c1d2a41d702bf8e9de00d40bd313c9fbb1d1d6b2a2100",
+            "x": 3,
+            "y": 3
+          },
+          {
+            "blob": "f719d9d1762b6eae9b18652a26828cf6d395eca076ace1dc2c5f2ca3d487945d",
+            "x": 4,
+            "y": 3
+          },
+          {
+            "blob": "6e14ee964fa81e2b5364127e73291b27ef0b54b9bb44adbfee72ea4a3fcf4fa8",
+            "x": 5,
+            "y": 3
+          },
+          {
+            "blob": "878bf562be611083167f47121d15c961c6cc9cb7c2d9f85d12688b7957a5166f",
+            "x": 6,
+            "y": 3
+          },
+          {
+            "blob": "f1364075d0e5dc0e4c282037f2529f0d34a2f36184519887132e87bfdce1d9d5",
+            "x": 7,
+            "y": 3
+          },
+          {
+            "blob": "7e50b40d605418206bddb3d7600fc3b146f9dfee960b4407b2fd0ba78c753313",
+            "x": 0,
+            "y": 4
+          },
+          {
+            "blob": "495edeffacfb45b752e8b479afe7b2f31f14c57e8b147dac29ff2314bb331ab4",
+            "x": 1,
+            "y": 4
+          },
+          {
+            "blob": "398a288c95a8934af2d36edcae915850e238e51f6e03fe332c9d9772bf6d6324",
+            "x": 2,
+            "y": 4
+          },
+          {
+            "blob": "ef2145f6c98e17ca1572c444f1a5f696575b67ad2f744deb332aac3b79f2b087",
+            "x": 4,
+            "y": 4
+          },
+          {
+            "blob": "4e183476b6b7eacda30434a647b0c39e347ea82742008b3e21442b4c8b46289e",
+            "x": 5,
+            "y": 4
+          },
+          {
+            "blob": "f6d8d9cb80df8e4283c0d75271c98e3a7e0117ee1edebe5bc9c92c27d7d3c98b",
+            "x": 6,
+            "y": 4
+          },
+          {
+            "blob": "c7b88b85598444cfa3ca4cc2d563becf302055b417f479863631572108d16c28",
+            "x": 7,
+            "y": 4
+          }
+        ],
+        "transform": [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        "type": "cel"
+      },
+      "id": "01a147b2-acad-737b-be32-0efa3d166c15",
+      "name": "1",
+      "parent": "01a147b2-a92a-72ee-a0ec-44c547ec6bb3",
+      "provenance": {
+        "created_by": "agent:claude",
+        "modified_by": "agent:claude",
+        "revision": 2577
+      }
     }
   },
-  "revision": 1349,
+  "revision": 2590,
   "roots": {
     "assets": [
       "01a1474b-12cf-7000-adb1-94367bcc53d2",

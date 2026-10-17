@@ -122,5 +122,15 @@
   "01a14765-b68d-734c-b302-0a0b54d0adec",
   "01a14765-b6b1-75e5-8eaa-fc81d401c149",
   "01a14765-b6d8-74bf-b765-4c8ae1781f27"
- ]
+ ],
+ "c1_bg_ceu": "01a147b2-6305-75eb-a10c-3fadd0360765",
+ "c1_bg_ceu_c1": "01a147b2-6585-727a-be0f-2af11d68950c",
+ "c1_bg_morros": "01a147b2-6a9d-7075-8ef3-0e9f27a6582a",
+ "c1_bg_morros_c1": "01a147b2-6d54-75d9-86f6-2cec88802539",
+ "c1_bg_casa": "01a147b2-725f-7080-bfd1-6a340e00eb49",
+ "c1_bg_casa_c1": "01a147b2-74c7-708f-bf60-c7ecd13c3476",
+ "c1_bg_cerca": "01a147b2-9bcc-701a-affd-7491e09c4cdd",
+ "c1_bg_cerca_c1": "01a147b2-a0f8-7458-9bd0-db390b38fc66",
+ "c1_bg_roseira": "01a147b2-a92a-72ee-a0ec-44c547ec6bb3",
+ "c1_bg_roseira_c1": "01a147b2-acad-737b-be32-0efa3d166c15"
 }

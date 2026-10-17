@@ -4,7 +4,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema, Default)]
+/// Aceita a forma marcada (`{"type":"ease_in_out"}`, `{"type":"bezier",...}`) e, para as curvas sem parâmetro, o nome
+/// em texto (`"ease_in_out"`), como as descrições das ferramentas MCP mostram.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, JsonSchema, Default)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Ease {
     #[default]
@@ -16,6 +18,47 @@ pub enum Ease {
     EaseInOut,
     /// Curva de Bézier cúbica como no CSS/AE (x1, y1, x2, y2), x em 0..1.
     Bezier { x1: f32, y1: f32, x2: f32, y2: f32 },
+}
+
+impl<'de> Deserialize<'de> for Ease {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(tag = "type", rename_all = "snake_case")]
+        enum Tagged {
+            Linear,
+            Hold,
+            EaseIn,
+            EaseOut,
+            EaseInOut,
+            Bezier { x1: f32, y1: f32, x2: f32, y2: f32 },
+        }
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            Name(String),
+            Tagged(Tagged),
+        }
+        Ok(match Repr::deserialize(d).map_err(|_| {
+            serde::de::Error::custom("ease: use \"linear\" | \"hold\" | \"ease_in\" | \"ease_out\" | \"ease_in_out\" ou {\"type\":\"bezier\",\"x1\",\"y1\",\"x2\",\"y2\"}")
+        })? {
+            Repr::Name(s) => match s.as_str() {
+                "linear" => Ease::Linear,
+                "hold" => Ease::Hold,
+                "ease_in" => Ease::EaseIn,
+                "ease_out" => Ease::EaseOut,
+                "ease_in_out" => Ease::EaseInOut,
+                other => return Err(serde::de::Error::custom(format!("ease desconhecido: {other}"))),
+            },
+            Repr::Tagged(t) => match t {
+                Tagged::Linear => Ease::Linear,
+                Tagged::Hold => Ease::Hold,
+                Tagged::EaseIn => Ease::EaseIn,
+                Tagged::EaseOut => Ease::EaseOut,
+                Tagged::EaseInOut => Ease::EaseInOut,
+                Tagged::Bezier { x1, y1, x2, y2 } => Ease::Bezier { x1, y1, x2, y2 },
+            },
+        })
+    }
 }
 
 impl Ease {
@@ -122,5 +165,16 @@ mod tests {
         let css_ease = Ease::Bezier { x1: 0.25, y1: 0.1, x2: 0.25, y2: 1.0 };
         assert!((css_ease.apply(0.5) - 0.8024).abs() < 0.01, "ease do CSS em 0,5 ≈ 0,80: {}", css_ease.apply(0.5));
         assert!(Ease::EaseIn.apply(0.3) < 0.3 && Ease::EaseOut.apply(0.3) > 0.3);
+    }
+
+    #[test]
+    fn ease_accepts_name_or_tagged() {
+        let p = |s: &str| serde_json::from_str::<Ease>(s);
+        assert_eq!(p(r#""ease_in_out""#).unwrap(), Ease::EaseInOut);
+        assert_eq!(p(r#"{"type":"hold"}"#).unwrap(), Ease::Hold);
+        assert_eq!(p(r#"{"type":"bezier","x1":0.1,"y1":0.2,"x2":0.3,"y2":0.4}"#).unwrap(), Ease::Bezier { x1: 0.1, y1: 0.2, x2: 0.3, y2: 0.4 });
+        assert!(p(r#""zigzag""#).is_err());
+        // a forma gravada continua marcada (documentos antigos e novos leem igual)
+        assert_eq!(serde_json::to_string(&Ease::EaseInOut).unwrap(), r#"{"type":"ease_in_out"}"#);
     }
 }
