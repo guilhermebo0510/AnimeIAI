@@ -34,7 +34,7 @@ enquanto, com aviso na barra de status (lacuna: fila em segundo plano).
 | Fatia | Workspaces | Conteúdo | Estado |
 |---|---|---|---|
 | P6a | Roteiro, Storyboard | helper de ações; Estrutura (cenas do roteiro), Roteiro ligado ao documento (elementos editáveis, fala + tradução, tempo estimado), Cenas/Prancha do storyboard (miniaturas, propriedades do painel, adicionar/mover/apagar, animatic, gerar cortes) | feito 2026-10-17 (evidencias/S20/p6a_*.png; animatic bloqueia a UI ~15 s) |
-| P6b | Produção | tabela de cortes com miniaturas e etapas, lint do corte, correções e retakes | em andamento |
-| P6c | Edição, Áudio, Entrega | linha do tempo da edição, prévia de quadro com legenda, mixer, exportação | pendente |
+| P6b | Produção | Episódios (filtro por episódio/cena, resumo das etapas, relatório), Tabela de cortes (miniatura do quadro 0 em cache, nº, cena, duração, 8 etapas clicáveis com menu, correções/retakes abertos, sugerir etapas, lint, abrir na Animação), Propriedades do corte (etapas, lint por camada, correções com ir ao quadro e resolver, retakes com comparar ANTES/DEPOIS/DIFERENÇA) | feito 2026-10-17 (evidencias/S20/p6b_*.png; tokens st_* de estado no tema) |
+| P6c | Edição, Áudio, Entrega | linha do tempo da edição, prévia de quadro com legenda, mixer, exportação | em andamento |
 | P6d | Composição, Cor | satsuei (efeitos por camada), câmera do corte, grade de cor | pendente |
 | P6e | todos | prancha PT/EN × claro/escuro, varredura de estouro, roteiro de mouse real | pendente |

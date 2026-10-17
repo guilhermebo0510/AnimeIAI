@@ -800,6 +800,8 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::Script => panels::script::show(&mut self.env, ui, body),
             PanelKind::Shots => panels::shots::show(&mut self.env, ui, body),
             PanelKind::Board => panels::board::show(&mut self.env, ui, body),
+            PanelKind::Episodes => panels::production::episodes(&mut self.env, ui, body),
+            PanelKind::Tasks => panels::production::tasks(&mut self.env, ui, body),
             _ => self.empty_state(ui, body, tr(kind.empty_key())),
         }
         ui.painter().rect_stroke(rect, CARD_RADIUS, Stroke::new(1.0, self.t.border), StrokeKind::Inside);

@@ -67,6 +67,11 @@ pub struct Tokens {
     /// Interior do quadro da câmera.
     pub canvas_frame_fill: Color32,
     pub canvas_frame_stroke: Color32,
+    /// Estados de etapa da produção (fundo de etiqueta, com `text` por cima): em andamento, para revisão, aprovado, retake.
+    pub st_progress: Color32,
+    pub st_review: Color32,
+    pub st_ok: Color32,
+    pub st_retake: Color32,
 }
 
 const fn rgb(r: u8, g: u8, b: u8) -> Color32 {
@@ -89,6 +94,10 @@ impl Tokens {
             canvas_bg: rgb(0x2a, 0x2b, 0x30),
             canvas_frame_fill: rgb(0x31, 0x32, 0x38),
             canvas_frame_stroke: rgb(0xb4, 0xb6, 0xbf),
+            st_progress: rgb(0x2b, 0x4a, 0x74),
+            st_review: rgb(0x65, 0x4e, 0x14),
+            st_ok: rgb(0x2a, 0x58, 0x37),
+            st_retake: rgb(0x77, 0x2a, 0x2a),
         }
     }
 
@@ -107,6 +116,10 @@ impl Tokens {
             canvas_bg: rgb(0xa9, 0xab, 0xb1),
             canvas_frame_fill: rgb(0xb6, 0xb8, 0xbe),
             canvas_frame_stroke: rgb(0x3c, 0x3e, 0x46),
+            st_progress: rgb(0xc4, 0xd8, 0xf2),
+            st_review: rgb(0xf0, 0xdc, 0x9a),
+            st_ok: rgb(0xc2, 0xe4, 0xca),
+            st_retake: rgb(0xf2, 0xc2, 0xc2),
         }
     }
 }

@@ -8,7 +8,7 @@
 - **Sprint atual:** produto (plano em `sprints/registro/PLANO-PRODUTO.md`). Calibração: **corte D (#218) aprovado** na régua perceptual (decisão 25) com 86/87 quadros (98,9%; q82 só espessura/paleta), resumo em `registro/calibracao/D218/aprovado/r25_resumo.txt`. Cortes A (#138) e C (#131) pausados (C: q15 F1 0,864 a 4 px; A: q12 F1 0,808 na régua antiga); não retomar sem nova orientação.
 - **Pendências sugeridas pelo B2:** perfil dev com opt-level 3 para aiai-render/aiai-paint; escala em `RenderOptions` (reprodução); taper da G-pen contado no `gap` do balde; arrastar para reordenar camadas; edição de pontos.
 - **Fatia atual (2026-10-16, orientação do usuário):** calibração pixel a pixel encerrada como frente principal; foco no produto. **P1 feito** (S16 no MCP: aiai_script, aiai_beats, aiai_storyboard, aiai_animatic, aiai_cuts_from_storyboard) e **P2 feito** (S19 no MCP: aiai_production, aiai_correction, aiai_retake) e **P3 feito** (satsuei/câmera/cor tipados: aiai_effects, aiai_grade, aiai_camera, aiai_layer_motion; multiplano conferido no render) e **P4 feito** (prévia/entrega: aiai_render_sheet, aiai_edit_preview, aiai_edit_mix, aiai_tts_regenerate, .srt de entrega) — 63 ferramentas MCP. P5 micro anime (S22) **feito**; próxima: P6 interface (S20).
-- **Próximo passo concreto:** P6 interface (S20; plano de fatias na seção Execução de `sprints/S20-UI-UX-IDENTIDADE.md`). **P6a feita** (Roteiro e Storyboard reais: `app/actions.rs` chama as ações da bridge no processo, autor `human`; painéis Estrutura/Roteiro/Cenas/Prancha + propriedades; evidencias/S20/p6a_*.png). Próxima: **P6b Produção** (tabela de cortes com miniaturas/etapas, lint, correções, retakes via ações PRODUCTION/CORRECTION/RETAKE), depois P6c edição/áudio/entrega, P6d composição/cor, P6e prancha PT/EN×tema e mouse real. App: `target/debug/aiai-studio.exe` (relanca.ps1). Depois: S23.
+- **Próximo passo concreto:** P6 interface (S20; plano de fatias na seção Execução de `sprints/S20-UI-UX-IDENTIDADE.md`). **P6a feita** (Roteiro e Storyboard reais: `app/actions.rs` chama as ações da bridge no processo, autor `human`; painéis Estrutura/Roteiro/Cenas/Prancha + propriedades; evidencias/S20/p6a_*.png). **P6b feita** (Produção: Episódios/Tabela de cortes/Propriedades do corte via PRODUCTION/CORRECTION/RETAKE; evidencias/S20/p6b_*.png). Próxima: **P6c edição/áudio/entrega** (linha do tempo da edição, prévia com legenda, mixer, exportação via EDIT/EDIT_PREVIEW/EDIT_MIX/MIX/EXPORT_VIDEO), P6d composição/cor, P6e prancha PT/EN×tema e mouse real. App: `target/debug/aiai-studio.exe` (relanca.ps1). Depois: S23.
 - **S22 concluída (2026-10-17):** micro anime 「最後の一輪」 em `producoes/micro-anime/` (MP4 33,2 s, SRT, WAV −24 LKFS, projeto, `DIARIO.md`, `revisao.json`); scripts `tools/curta/c00..c21`; evidências `registro/evidencias/S22/`.
 - **Bloqueios:** nenhum. Obs.: `aiai-core` mudou (Ease aceita texto); `aiai-render` ganhou `layer_motion` (balde usa cel cru); `aiai-mcp` release recompilado, o `aiai-studio` ainda não (recompilar antes de abrir o app).
 - **Disco C: livre na última medição:** 43 GB (2026-10-15).
@@ -37,7 +37,7 @@
 | S17 Áudio | em andamento | evidencias/S17 (mix -24,0 LUFS, lip-sync) | motor, VOICEVOX, Kokoro, SFX, BGM, mix, loudness prontos; falta UI e saída ao vivo |
 | S18 Edição e entrega | em andamento | evidencias/S18 | edição (transições, legendas, créditos) + export MP4 prontos; falta UI |
 | S19 Produção e revisão | em andamento | evidencias/S19 | tracker, etapas, lint do corte, correções, retakes, relatório no MCP desde 2026-10-16; falta UI |
-| S20 UI/UX e identidade | em andamento | evidencias/S20 | P6a (roteiro/storyboard) feita |
+| S20 UI/UX e identidade | em andamento | evidencias/S20 | P6a (roteiro/storyboard) e P6b (produção) feitas |
 | S21 Calibração (A, B, C obrigatórios; D, E meta) | pausada (frente secundária) | registro/calibracao/D218, C131 | D aprovado (decisão 25, 86/87); C q15 F1 0,864 a 4 px; A q12 |
 | S22 Micro anime | concluída (2026-10-17) | evidencias/S22 | 「最後の一輪」 33,2 s; aceite §7 com evidência; lacunas 8, 10, 11, 14, 15 abertas |
 | S23 Endurecimento e apresentação | pendente | — | |
@@ -62,4 +62,5 @@ Estados: pendente · em andamento · bloqueada (motivo) · concluída (data) · 
 | 2026-10-16 | Disco livre | 33 GB (VOICEVOX 2,1 GB + modelos em sidecars/) |
 | 2026-10-17 | Disco livre | 22 GB |
 | 2026-10-17 03:30 | Disco livre | 17 GB |
+| 2026-10-17 08:10 | Disco livre | 9,5 GB (target 7,3 GB; limpar pdbs antes do próximo build se cair abaixo de 8) |
 | 2026-10-16 | Piso de ruído FLIP | A#138 0,015–0,017; C#131 0,0065–0,0083; D#218 0,0047 |

@@ -1,10 +1,11 @@
-//! Painéis do editor (dock): Projeto, Camadas, Cores, Linha do tempo, Propriedades e, na pré-produção, Estrutura, Roteiro, Cenas e Prancha. Cada um desenha dentro do corpo do
+//! Painéis do editor (dock): Projeto, Camadas, Cores, Linha do tempo, Propriedades e, na pré-produção, Estrutura, Roteiro, Cenas e Prancha; na Produção, Episódios e Tarefas. Cada um desenha dentro do corpo do
 //! painel com o `Env` (documento, estado do editor, ícones) e só altera o documento por comandos (`commands`).
 
 pub(crate) mod board;
 pub(crate) mod colors;
 pub(crate) mod layers;
 pub(crate) mod outline;
+pub(crate) mod production;
 pub(crate) mod project;
 pub(crate) mod properties;
 pub(crate) mod script;

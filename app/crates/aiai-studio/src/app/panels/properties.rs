@@ -21,6 +21,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: egui::Rect) {
         match env.ws {
             WorkspaceId::Roteiro => return super::script::properties(env, ui),
             WorkspaceId::Storyboard => return super::shots::properties(env, ui),
+            WorkspaceId::Producao => return super::production::properties(env, ui),
             _ => {}
         }
         let tool = *env.tool;
