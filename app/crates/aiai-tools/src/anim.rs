@@ -200,7 +200,7 @@ pub fn propagate_fills(p: &Project, blobs: &mut BlobStore, req: &PropagateFillsR
                 FillSeed { x: ra.seed[0] + (sb[0] - ra.seed[0]) * t, y: ra.seed[1] + (sb[1] - ra.seed[1]) * t, color: ra.color.clone() }
             })
             .collect();
-        let req_f = FillRequest { cut: req.cut.clone(), frame: f, layer: req.fill_layer.clone(), seeds, line_layers: vec![], gap: req.gap, expand: 2, line_threshold: 0.35 };
+        let req_f = FillRequest { cut: req.cut.clone(), frame: f, layer: req.fill_layer.clone(), seeds, line_layers: vec![], gap: req.gap, expand: 2, line_threshold: 0.35, close_leftovers: None };
         out.push(fill_command(p, blobs, &req_f)?);
     }
     Ok(out)

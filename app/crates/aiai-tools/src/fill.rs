@@ -30,6 +30,12 @@ pub struct FillRequest {
     pub expand: u32,
     #[serde(default = "default_threshold")]
     pub line_threshold: f32,
+    /// Fecha as frestas: depois das sementes, cada região fechada SEM tinta de até este número de pixels (longe da
+    /// borda do quadro) recebe a cor que mais aparece em volta dela, atravessando a linha (até 8 px) — o "preencher
+    /// área não pintada" dos programas de pintura de cel. Só para frestas (cantos de olho, entre dedos); regiões
+    /// maiores continuam no lint e pedem semente com a cor certa.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub close_leftovers: Option<u32>,
 }
 
 fn default_gap() -> f32 {
@@ -97,7 +103,93 @@ pub fn fill_command(p: &Project, blobs: &mut BlobStore, req: &FillRequest) -> To
         let hash = blobs.put(mask.encode());
         fills.push(FillRegion { id: Id(String::new()), seed: [s.x, s.y], color: s.color.clone(), mask: Some(hash), bounds });
     }
+    if let Some(max_area) = req.close_leftovers {
+        let extra = leftover_fills(blobs, &lr, &fills, max_area as usize);
+        fills.extend(extra);
+    }
     Ok(Command::ReplaceFills { cel: cel_node.id.clone(), fills })
+}
+
+/// Preenchimentos para as frestas (regiões fechadas, sem tinta, até `max_area` px, sem tocar a borda): a cor é a
+/// que mais cobre os pixels em volta da fresta (dilatação de 8 px que atravessa a linha).
+fn leftover_fills(blobs: &mut BlobStore, lr: &LineRegions, fills: &[FillRegion], max_area: usize) -> Vec<FillRegion> {
+    let (w, h) = (lr.width as usize, lr.height as usize);
+    let labels = &lr.regions.labels;
+    // dono de cada pixel (índice do preenchimento que o cobre; o último vence, como no render)
+    let mut owner = vec![-1i32; w * h];
+    for (k, f) in fills.iter().enumerate() {
+        let [bx, by, bw, bh] = f.bounds;
+        let Some(m) = f.mask.as_ref().and_then(|hh| blobs.get(hh)).and_then(|b| aiai_paint::Mask::decode(&b).ok()) else { continue };
+        for y in by.max(0)..(by + bh).min(h as i32) {
+            for x in bx.max(0)..(bx + bw).min(w as i32) {
+                if m.get((x - bx) as u32, (y - by) as u32) > 0.5 {
+                    owner[y as usize * w + x as usize] = k as i32;
+                }
+            }
+        }
+    }
+    let areas = lr.regions.areas();
+    let border = lr.regions.touches_border();
+    let n = lr.regions.count as usize + 1;
+    let mut covered = vec![0usize; n];
+    let mut pixels: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (i, &l) in labels.iter().enumerate() {
+        let l = l as usize;
+        if l == 0 {
+            continue;
+        }
+        if owner[i] >= 0 {
+            covered[l] += 1;
+        }
+        if areas[l] <= max_area && !border[l] {
+            pixels[l].push(i);
+        }
+    }
+    let mut out = Vec::new();
+    for l in 1..n {
+        if pixels[l].is_empty() || covered[l] * 2 >= areas[l] {
+            continue;
+        }
+        // dilatação em anéis a partir da fresta; conta os donos achados fora dela
+        let mut seen: std::collections::HashSet<usize> = pixels[l].iter().copied().collect();
+        let mut ring = pixels[l].clone();
+        let mut votes: std::collections::HashMap<i32, usize> = std::collections::HashMap::new();
+        for _ in 0..8 {
+            let mut next = Vec::new();
+            for &i in &ring {
+                let (x, y) = (i % w, i / w);
+                let neigh = [(x > 0).then(|| i - 1), (x + 1 < w).then(|| i + 1), (y > 0).then(|| i - w), (y + 1 < h).then(|| i + w)];
+                for j in neigh.into_iter().flatten() {
+                    if seen.insert(j) {
+                        if owner[j] >= 0 && labels[j] as usize != l {
+                            *votes.entry(owner[j]).or_default() += 1;
+                        }
+                        next.push(j);
+                    }
+                }
+            }
+            ring = next;
+        }
+        // cor mais votada (agrupando preenchimentos da mesma cor); empate: a do preenchimento mais antigo
+        let mut by_color: Vec<(String, usize, i32)> = Vec::new();
+        for (&k, &v) in &votes {
+            let key = serde_json::to_string(&fills[k as usize].color).unwrap_or_default();
+            match by_color.iter_mut().find(|c| c.0 == key) {
+                Some(c) => {
+                    c.1 += v;
+                    c.2 = c.2.min(k);
+                }
+                None => by_color.push((key, v, k)),
+            }
+        }
+        let Some(best) = by_color.iter().max_by_key(|c| (c.1, std::cmp::Reverse(c.2))) else { continue };
+        let color = fills[best.2 as usize].color.clone();
+        let Some((bounds, mask)) = lr.regions.mask_of(l as u32) else { continue };
+        let i = pixels[l][pixels[l].len() / 2];
+        let hash = blobs.put(mask.encode());
+        out.push(FillRegion { id: Id(String::new()), seed: [(i % w) as f32 + 0.5, (i / w) as f32 + 0.5], color, mask: Some(hash), bounds });
+    }
+    out
 }
 
 fn fill_covers(blobs: &BlobStore, f: &FillRegion, x: u32, y: u32) -> bool {

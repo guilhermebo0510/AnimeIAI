@@ -6,6 +6,7 @@ app (mesmo caminho do MCP); o projeto guarda o log de comandos como evidência.
     d.call("QUERY", {"query": {"kind": "stats"}})
 """
 import json
+import time
 import os
 import subprocess
 import tempfile
@@ -34,7 +35,14 @@ class Drive:
         env = dict(os.environ)
         env.setdefault("AIAI_MCP_ALLOWED_DIRS", r"C:\AnimeIAI\producoes;C:\AnimeIAI\calibracao;C:\AnimeIAI\sprints\registro\evidencias;C:\AnimeIAI\sprints\registro\calibracao")
         try:
-            r = subprocess.run(cmd, capture_output=True, timeout=timeout, env=env)
+            # arquivo do projeto preso por outro processo (indexador/antivírus: erros 1224/32/33 do Windows) além do
+            # que o próprio app espera: o salvamento é atômico (project.json só troca no fim), então repetir é seguro
+            for attempt in range(4):
+                r = subprocess.run(cmd, capture_output=True, timeout=timeout, env=env)
+                err = r.stdout.decode("utf-8", "replace") + r.stderr.decode("utf-8", "replace")
+                if r.returncode == 0 or not any(f"os error {c})" in err for c in (1224, 32, 33)):
+                    break
+                time.sleep(2 + 2 * attempt)
         finally:
             os.unlink(path)
         self.calls += 1

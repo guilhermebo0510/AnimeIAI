@@ -69,7 +69,7 @@ fn draw_fill_lint_render() {
             FillSeed { x, y, color }
         })
         .collect();
-    let req = FillRequest { cut: cut.clone(), frame: 0, layer: fill_layer.clone(), seeds, line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35 };
+    let req = FillRequest { cut: cut.clone(), frame: 0, layer: fill_layer.clone(), seeds, line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35, close_leftovers: None };
     let cmd = fill_command(&s.project, &mut s.blobs, &req).unwrap();
     s.apply(cmd).unwrap();
     let after = lint(&s.project, &s.blobs, &cut, 0, &fill_layer, 3.0, 30).unwrap();
@@ -111,7 +111,7 @@ fn fill_ignores_animated_layer_offset() {
         s.apply(Command::SetProps { id: l.clone(), name: None, data: json!({"keys": {"offset_x": [{"frame": 0, "value": -300.0, "ease": "ease_out"}, {"frame": 12, "value": 0.0, "ease": "hold"}]}}) }).unwrap();
     }
     let red = ColorRef::Direct { rgba: Rgba::from_hex("#d03030").unwrap() };
-    let req = FillRequest { cut: cut.clone(), frame: 0, layer: fill_layer.clone(), seeds: vec![FillSeed { x: 320.0, y: 180.0, color: red }], line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35 };
+    let req = FillRequest { cut: cut.clone(), frame: 0, layer: fill_layer.clone(), seeds: vec![FillSeed { x: 320.0, y: 180.0, color: red }], line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35, close_leftovers: None };
     let cmd = fill_command(&s.project, &mut s.blobs, &req).unwrap();
     s.apply(cmd).unwrap();
     let raw = RenderOptions { only_layers: Some(vec![fill_layer.clone()]), camera: false, layer_motion: false, ..Default::default() };
@@ -315,7 +315,7 @@ fn inbetween_with_timesheet_and_fill_propagation() {
             let big = r.unpainted.iter().max_by_key(|g| g.area).unwrap();
             (big.point[0] as f32, big.point[1] as f32)
         };
-        let req = FillRequest { cut: cut.clone(), frame: f, layer: fill.clone(), seeds: vec![FillSeed { x: sx, y: sy, color: skin.clone() }], line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35 };
+        let req = FillRequest { cut: cut.clone(), frame: f, layer: fill.clone(), seeds: vec![FillSeed { x: sx, y: sy, color: skin.clone() }], line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35, close_leftovers: None };
         let c = fill_command(&s.project, &mut s.blobs, &req).unwrap();
         s.apply(c).unwrap();
     }
@@ -340,4 +340,56 @@ fn inbetween_with_timesheet_and_fill_propagation() {
     if let Ok(dir) = std::env::var("AIAI_EVIDENCE_DIR") {
         strip.save_png(&std::path::Path::new(&dir).join("intercalacao_tira.png")).unwrap();
     }
+}
+
+#[test]
+fn close_leftovers_fills_only_small_gaps_with_the_surrounding_color() {
+    let mut s = CoreSession::for_tests("frestas");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 400, "height": 240}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = create(&mut s, Some(&sc), "C", NodeKind::Cut(CutData::new(24)));
+    let fill_layer = create(&mut s, Some(&cut), "cor", NodeKind::Layer(LayerData::new(LayerType::Fill)));
+    let line_layer = create(&mut s, Some(&cut), "linha", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+    create(&mut s, Some(&fill_layer), "cor1", NodeKind::Cel(CelData::new(1)));
+    create(&mut s, Some(&line_layer), "linha1", NodeKind::Cel(CelData::new(1)));
+    s.apply(Command::SetProps { id: fill_layer.clone(), name: None, data: json!({"line_refs": [line_layer.0]}) }).unwrap();
+    let ink = ColorRef::Direct { rgba: Rgba::from_hex("#202020").unwrap() };
+    let poly = |pts: &[[f32; 3]]| {
+        let mut c = curve(pts, 2.0, &ink, true);
+        c.geometry = serde_json::from_value(json!("polyline")).unwrap();
+        c
+    };
+    // dois quadrados vermelhos separados por uma fresta fechada de ~4 px; um quadrado grande sem tinta à direita
+    let a = poly(&[[40.0, 40.0, 1.0], [140.0, 40.0, 1.0], [140.0, 140.0, 1.0], [40.0, 140.0, 1.0]]);
+    let b = poly(&[[146.0, 40.0, 1.0], [246.0, 40.0, 1.0], [246.0, 140.0, 1.0], [146.0, 140.0, 1.0]]);
+    let big = poly(&[[270.0, 40.0, 1.0], [370.0, 40.0, 1.0], [370.0, 200.0, 1.0], [270.0, 200.0, 1.0]]);
+    let mut top = curve(&[[139.0, 40.0, 1.0], [147.0, 40.0, 1.0]], 2.0, &ink, false);
+    let mut bot = curve(&[[139.0, 140.0, 1.0], [147.0, 140.0, 1.0]], 2.0, &ink, false);
+    top.tip = serde_json::from_value(json!("marker")).unwrap();
+    bot.tip = serde_json::from_value(json!("marker")).unwrap();
+    s.apply(draw_command(&s.project, &DrawRequest { cut: cut.clone(), frame: 0, layer: line_layer.clone(), curves: vec![a, b, big, top, bot], mirror_x: None }).unwrap()).unwrap();
+    let red = ColorRef::Direct { rgba: Rgba::from_hex("#d03030").unwrap() };
+    let seeds = vec![FillSeed { x: 90.0, y: 90.0, color: red.clone() }, FillSeed { x: 196.0, y: 90.0, color: red.clone() }];
+    let before = {
+        let req = FillRequest { cut: cut.clone(), frame: 0, layer: fill_layer.clone(), seeds: seeds.clone(), line_layers: vec![], gap: 0.0, expand: 2, line_threshold: 0.35, close_leftovers: None };
+        let c = fill_command(&s.project, &mut s.blobs, &req).unwrap();
+        let mut t = CoreSession::for_tests("x");
+        t.project = s.project.clone();
+        t.blobs = s.blobs.clone();
+        t.apply(c).unwrap();
+        lint(&t.project, &t.blobs, &cut, 0, &fill_layer, 0.0, 1).unwrap()
+    };
+    assert!(before.unpainted.iter().any(|r| r.area < 600), "sem fechar, a fresta aparece no lint: {:?}", before.unpainted);
+    let req = FillRequest { cut: cut.clone(), frame: 0, layer: fill_layer.clone(), seeds, line_layers: vec![], gap: 0.0, expand: 2, line_threshold: 0.35, close_leftovers: Some(600) };
+    let c = fill_command(&s.project, &mut s.blobs, &req).unwrap();
+    s.apply(c).unwrap();
+    let raw = RenderOptions { only_layers: Some(vec![fill_layer.clone()]), camera: false, ..Default::default() };
+    let img = render_frame(&s.project, &s.blobs, &cut, 0, &raw).unwrap().image;
+    let p = img.get(143, 90);
+    assert!(p[3] > 0.99 && p[0] > 0.7 && p[1] < 0.3, "a fresta ficou vermelha (cor em volta): {p:?}");
+    assert!(img.get(320, 120)[3] < 0.01, "a região grande sem semente continua sem tinta");
+    let after = lint(&s.project, &s.blobs, &cut, 0, &fill_layer, 0.0, 1).unwrap();
+    assert!(after.unpainted.iter().all(|r| r.area > 600), "só a grande sobra no lint: {:?}", after.unpainted);
+    assert_eq!(after.unpainted.len(), 1);
 }

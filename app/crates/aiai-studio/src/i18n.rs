@@ -336,6 +336,8 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("opt.gap.tip", "Tamanho do vão nas linhas que o balde ainda considera fechado", "Gap size in the lines that the bucket still treats as closed"),
     ("opt.expand", "Expandir", "Expand"),
     ("opt.expand.tip", "Quanto a tinta avança por baixo da linha", "How far the paint extends under the line"),
+    ("opt.close_leftovers", "Fechar frestas", "Close gaps"),
+    ("opt.close_leftovers.tip", "Depois de pintar, as frestas fechadas sem tinta (até 300 px) recebem a cor que as cerca", "After filling, small closed unpainted gaps (up to 300 px) take the surrounding color"),
     ("opt.lint", "Verificar", "Check"),
     ("opt.lint.tip", "Conta as regiões fechadas ainda sem tinta", "Counts closed regions that are still unpainted"),
     ("opt.select_mode", "Forma", "Shape"),

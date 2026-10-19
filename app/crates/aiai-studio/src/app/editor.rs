@@ -346,6 +346,8 @@ pub(crate) struct ToolOptions {
     pub eraser_size: f32,
     pub fill_gap: f32,
     pub fill_expand: u32,
+    /// Balde fecha as frestas em volta (regiões sem tinta de até `LEFTOVER_PX`) com a cor que as cerca.
+    pub fill_close_leftovers: bool,
     pub select_mode: SelMode,
 }
 
@@ -365,6 +367,7 @@ impl Default for ToolOptions {
             eraser_size: 20.0,
             fill_gap: 3.0,
             fill_expand: 2,
+            fill_close_leftovers: false,
             select_mode: SelMode::Rect,
         }
     }

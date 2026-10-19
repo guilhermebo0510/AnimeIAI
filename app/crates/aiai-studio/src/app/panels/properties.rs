@@ -184,6 +184,8 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
             row(ui, &t, compact, "opt.expand", |ui| {
                 ui.add(egui::DragValue::new(&mut o.fill_expand).range(0..=12).speed(0.1).suffix(" px")).on_hover_text(tr("opt.expand.tip"));
             });
+            let c = ui.checkbox(&mut o.fill_close_leftovers, tr("opt.close_leftovers")).on_hover_text(tr("opt.close_leftovers.tip"));
+            env.note("opt:close_leftovers", c.rect);
             let b = ui.button(tr("opt.lint"));
             env.note("opt:lint", b.rect);
             if b.on_hover_text(tr("opt.lint.tip")).clicked() {
