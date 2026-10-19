@@ -48,7 +48,7 @@ fn layer(s: &mut CoreSession, parent: &Id, name: &str, kind: LayerType, patch: s
 fn gpen(points: &[(f32, f32, f32)], width: f32, color: ColorRef) -> Stroke {
     Stroke {
         id: Id::from(""),
-        points: points.iter().map(|&(x, y, p)| StrokePoint { x, y, pressure: p, tilt: None, t: None }).collect(),
+        points: points.iter().map(|&(x, y, p)| StrokePoint { x, y, pressure: p, tilt: None, t: None, corner: false, width: 1.0 }).collect(),
         geometry: StrokeGeometry::Spline,
         tension: 0.0,
         tip: VectorTip::GPen,

@@ -388,7 +388,7 @@ pub fn fill_shape_command(p: &Project, blobs: &mut BlobStore, req: &FillShapeReq
         } else {
             let stroke = Stroke {
                 id: Id::default(),
-                points: sh.points.iter().map(|q| StrokePoint { x: q[0], y: q[1], pressure: 1.0, tilt: None, t: None }).collect(),
+                points: sh.points.iter().map(|q| StrokePoint { x: q[0], y: q[1], pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0 }).collect(),
                 geometry: StrokeGeometry::Spline,
                 tension: 0.0,
                 tip: VectorTip::Marker,

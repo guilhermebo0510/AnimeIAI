@@ -20,6 +20,8 @@ struct P {
     x: f32,
     y: f32,
     p: f32,
+    /// Multiplicador da largura (do ponto do traço, interpolado).
+    w: f32,
 }
 
 impl P {
@@ -42,7 +44,8 @@ pub fn flatten_points(stroke: &Stroke) -> Vec<(f32, f32, f32)> {
 
 /// Pontos da curva (x, y, pressão) já achatados, antes da largura.
 fn flatten(stroke: &Stroke) -> Vec<P> {
-    let pts: Vec<P> = stroke.points.iter().map(|q| P { x: q.x, y: q.y, p: q.pressure }).collect();
+    let pts: Vec<P> = stroke.points.iter().map(|q| P { x: q.x, y: q.y, p: q.pressure, w: q.width }).collect();
+    let corners: Vec<bool> = stroke.points.iter().map(|q| q.corner).collect();
     if pts.len() == 1 {
         return pts;
     }
@@ -77,12 +80,12 @@ fn flatten(stroke: &Stroke) -> Vec<P> {
             out.push(*pts.last().expect("não vazio"));
             out
         }
-        StrokeGeometry::Spline | StrokeGeometry::Freehand => catmull_rom(&pts, stroke.closed, stroke.tension),
+        StrokeGeometry::Spline | StrokeGeometry::Freehand => catmull_rom(&pts, &corners, stroke.closed, stroke.tension),
     }
 }
 
 fn lerp(a: P, b: P, t: f32) -> P {
-    P { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, p: a.p + (b.p - a.p) * t }
+    P { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, p: a.p + (b.p - a.p) * t, w: a.w + (b.w - a.w) * t }
 }
 
 /// Achata uma cúbica (sem o ponto final) com passo ≤ STEP.
@@ -98,22 +101,24 @@ fn cubic(out: &mut Vec<P>, b0: P, b1: P, b2: P, b3: P) {
             y: w0 * b0.y + w1 * b1.y + w2 * b2.y + w3 * b3.y,
             // pressão segue o parâmetro entre os pontos de passagem (b0 e b3)
             p: b0.p + (b3.p - b0.p) * t,
+            w: b0.w + (b3.w - b0.w) * t,
         });
     }
 }
 
-fn catmull_rom(pts: &[P], closed: bool, tension: f32) -> Vec<P> {
+/// `corners[i]`: a curva quebra no ponto i (cada lado é feito como se o traço terminasse ali).
+fn catmull_rom(pts: &[P], corners: &[bool], closed: bool, tension: f32) -> Vec<P> {
     let n = pts.len();
     let get = |i: isize| -> P {
         if closed {
             pts[i.rem_euclid(n as isize) as usize]
         } else if i < 0 {
             // reflexão do primeiro segmento
-            P { x: 2.0 * pts[0].x - pts[1].x, y: 2.0 * pts[0].y - pts[1].y, p: pts[0].p }
+            P { x: 2.0 * pts[0].x - pts[1].x, y: 2.0 * pts[0].y - pts[1].y, ..pts[0] }
         } else if i as usize >= n {
             let a = pts[n - 1];
             let b = pts[n - 2];
-            P { x: 2.0 * a.x - b.x, y: 2.0 * a.y - b.y, p: a.p }
+            P { x: 2.0 * a.x - b.x, y: 2.0 * a.y - b.y, ..a }
         } else {
             pts[i as usize]
         }
@@ -122,7 +127,11 @@ fn catmull_rom(pts: &[P], closed: bool, tension: f32) -> Vec<P> {
     let segs = if closed { n } else { n - 1 };
     let mut out = Vec::new();
     for i in 0..segs as isize {
-        let (p0, p1, p2, p3) = (get(i - 1), get(i), get(i + 1), get(i + 2));
+        let (p1, p2) = (get(i), get(i + 1));
+        let corner = |k: isize| corners.get(k.rem_euclid(n as isize) as usize).copied().unwrap_or(false);
+        // num canto, o vizinho do outro lado é trocado pelo reflexo: a tangente segue o próprio segmento
+        let p0 = if corner(i) { P { x: 2.0 * p1.x - p2.x, y: 2.0 * p1.y - p2.y, ..p1 } } else { get(i - 1) };
+        let p3 = if corner(i + 1) { P { x: 2.0 * p2.x - p1.x, y: 2.0 * p2.y - p1.y, ..p2 } } else { get(i + 2) };
         let knot = |a: P, b: P| a.dist(b).sqrt().max(1e-4); // alfa = 0,5 (centrípeta)
         let (d01, d12, d23) = (knot(p0, p1), knot(p1, p2), knot(p2, p3));
         let (t0, t1, t2, t3) = (0.0, d01, d01 + d12, d01 + d12 + d23);
@@ -139,12 +148,24 @@ fn catmull_rom(pts: &[P], closed: bool, tension: f32) -> Vec<P> {
         let m1 = tangent(p0, p1, p2, t0, t1, t2);
         let m2 = tangent(p1, p2, p3, t1, t2, t3);
         let s = (t2 - t1) / 3.0 * k;
-        let b1 = P { x: p1.x + m1.0 * s, y: p1.y + m1.1 * s, p: p1.p };
-        let b2 = P { x: p2.x - m2.0 * s, y: p2.y - m2.1 * s, p: p2.p };
+        let b1 = P { x: p1.x + m1.0 * s, y: p1.y + m1.1 * s, ..p1 };
+        let b2 = P { x: p2.x - m2.0 * s, y: p2.y - m2.1 * s, ..p2 };
         cubic(&mut out, p1, b1, b2, p2);
     }
     out.push(if closed { pts[0] } else { pts[n - 1] });
     out
+}
+
+/// Largura (px) do traço no ponto `i`: largura × ponta(pressão) × multiplicador do ponto (sem o afinamento das
+/// pontas nem o perfil). É o número que o painel Editar pontos mostra e edita.
+pub fn width_at_point(stroke: &Stroke, i: usize) -> f32 {
+    stroke.points.get(i).map(|q| stroke.width * tip_factor(stroke.tip, q.pressure) * q.width).unwrap_or(stroke.width)
+}
+
+/// Multiplicador do ponto `i` que dá a largura `px` naquele ponto (inverso de [`width_at_point`]).
+pub fn point_width_for(stroke: &Stroke, i: usize, px: f32) -> f32 {
+    let q = stroke.points.get(i).map(|q| q.pressure).unwrap_or(1.0);
+    (px / (stroke.width * tip_factor(stroke.tip, q)).max(1e-4)).clamp(0.0, 20.0)
 }
 
 /// Multiplicador da ponta pela pressão.
@@ -217,7 +238,7 @@ pub fn sample_stroke(stroke: &Stroke) -> Vec<StrokeSample> {
             if !stroke.closed {
                 k = k.min(taper(stroke.tip, s, total, stroke.width));
             }
-            let r = 0.5 * stroke.width * tip_factor(stroke.tip, q.p) * k;
+            let r = 0.5 * stroke.width * tip_factor(stroke.tip, q.p) * q.w.max(0.0) * k;
             StrokeSample { x: q.x, y: q.y, r: r.max(min_r) }
         })
         .collect()
@@ -231,7 +252,7 @@ mod tests {
     pub(crate) fn mk(points: &[(f32, f32, f32)], geometry: StrokeGeometry, tip: VectorTip, width: f32) -> Stroke {
         Stroke {
             id: Id::from("s"),
-            points: points.iter().map(|&(x, y, p)| StrokePoint { x, y, pressure: p, tilt: None, t: None }).collect(),
+            points: points.iter().map(|&(x, y, p)| StrokePoint { x, y, pressure: p, tilt: None, t: None, corner: false, width: 1.0 }).collect(),
             geometry,
             tension: 0.0,
             tip,

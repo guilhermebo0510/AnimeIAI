@@ -5,7 +5,7 @@
 //! Escolher uma ferramenta traz este painel para a frente.
 
 use crate::app::brushes::{CATEGORIES, cat_label, cat_of};
-use crate::app::editor::{PenShape, SelMode};
+use crate::app::editor::{PenShape, PointsMode, SelMode};
 use crate::app::ui_kit::{Env, body_ui, section};
 use crate::i18n::tr;
 use crate::workspace::ToolId;
@@ -27,7 +27,20 @@ pub(crate) struct BrushPanelState {
     /// Miniaturas feitas pelo motor para as penas e as borrachas raster (refeitas com o tema).
     extra: std::collections::HashMap<String, egui::TextureHandle>,
     extra_dark: Option<bool>,
+    /// Altura da lista escolhida arrastando a divisória (`None` = automática: as propriedades ficam com o que
+    /// precisam e a lista com o resto). Dois cliques na divisória voltam ao automático.
+    pub list_h: Option<f32>,
+    /// Altura que as propriedades e a lista (itens e categorias) ocuparam no quadro anterior (divisória automática).
+    props_h: f32,
+    list_need: f32,
 }
+
+/// Cartão de item: largura mínima, altura, espaço entre cartões e altura da miniatura (proporção fixa 5:1).
+const CARD_MIN_W: f32 = 100.0;
+const CARD_H: f32 = 38.0;
+const CARD_GAP: f32 = 3.0;
+const THUMB_H: f32 = 20.0;
+const THUMB_ASPECT: f32 = 5.0;
 
 /// O que escolher um item faz.
 #[derive(Clone, Copy, PartialEq)]
@@ -39,6 +52,7 @@ enum Act {
     EraserVector(EraseMode),
     Fill(u8),
     Select(SelMode),
+    Points(PointsMode),
     Only,
 }
 
@@ -51,6 +65,7 @@ enum Thumb {
     Erase(EraseMode),
     Fill(u8),
     Select(SelMode),
+    Points(PointsMode),
     Icon(ToolId),
 }
 
@@ -83,20 +98,36 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
     } else {
         env.ed.brush_panel.cat_other.get(key).cloned().or_else(|| items.iter().find(|it| is_selected(env, it.act)).map(|it| it.cat.clone())).or_else(|| cats.first().cloned())
     };
-    // ---- em cima: categorias à esquerda, itens à direita
-    let list_h = (ui.available_height() * 0.46).clamp(110.0, 520.0);
+    // ---- em cima: categorias à esquerda, itens à direita; a divisória embaixo regula a altura
+    let avail_h = ui.available_height();
+    let max_list = (avail_h - 70.0).max(80.0);
+    let below = env.ed.brush_panel.props_h + if tool == ToolId::Brush { 64.0 } else { 36.0 };
+    let need = env.ed.brush_panel.list_need.max(60.0);
+    // automático: cabendo tudo, a lista fica do tamanho dos itens; senão, os itens até ~metade do painel e as
+    // propriedades com o resto (rolando)
+    let auto = if need + below + 10.0 <= avail_h { need } else { need.min(avail_h * 0.5).max(avail_h - below - 10.0) };
+    let list_h = match env.ed.brush_panel.list_h {
+        Some(h) => h,
+        None => auto,
+    }
+    .min(max_list)
+    .max(80.0f32.min(max_list));
     let total_w = ui.available_width();
     let left_w = (total_w * 0.36).clamp(92.0, 170.0);
+    let side = tool == ToolId::Brush || cats.len() > 1;
     let mut pick: Option<Act> = None;
     let mut delete: Option<usize> = None;
+    let (mut cats_need, mut items_need) = (0.0f32, 0.0f32);
     // a linha de cima tem altura fixa (o separador vertical não pode esticar até o fim do painel)
     ui.allocate_ui_with_layout(egui::vec2(total_w, list_h), egui::Layout::left_to_right(egui::Align::Min), |ui| {
         ui.set_max_height(list_h);
+        // uma categoria só (balde, seleção, editar pontos...): sem a coluna da esquerda, a grade usa a largura toda
+        if side {
         ui.allocate_ui_with_layout(egui::vec2(left_w, list_h), egui::Layout::top_down(egui::Align::Min), |ui| {
             ui.set_width(left_w);
-            let r = ui.add(egui::TextEdit::singleline(&mut env.ed.brush_panel.search).hint_text(tr("brushes.search")).desired_width(left_w));
+            let r = ui.add(egui::TextEdit::singleline(&mut env.ed.brush_panel.search).hint_text(tr(if tool == ToolId::Brush { "brushes.search" } else { "tool.search" })).desired_width(left_w));
             env.note("brushes:search", r.rect);
-            egui::ScrollArea::vertical().id_salt(("tool_cats", key)).max_height(list_h - 28.0).auto_shrink([false, true]).show(ui, |ui| {
+            let cats_out = egui::ScrollArea::vertical().id_salt(("tool_cats", key)).max_height(list_h - 28.0).auto_shrink([false, true]).show(ui, |ui| {
                 if tool == ToolId::Brush {
                     let r = ui.selectable_label(cur_cat.is_none(), egui::RichText::new(format!("{} ({})", tr("brushes.all"), items.len())).size(12.0));
                     env.note("brushes:cat:all", r.rect);
@@ -113,54 +144,66 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
                     }
                 }
             });
+            cats_need = cats_out.content_size.y + 30.0;
         });
         let (sep, _) = ui.allocate_exact_size(egui::vec2(9.0, list_h), Sense::hover());
         ui.painter().vline(sep.center().x, sep.y_range(), Stroke::new(1.0, env.t.border));
+        }
         ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), list_h), egui::Layout::top_down(egui::Align::Min), |ui| {
-            egui::ScrollArea::vertical().id_salt(("tool_items", key)).max_height(list_h).auto_shrink([false, true]).show(ui, |ui| {
+            let items_out = egui::ScrollArea::vertical().id_salt(("tool_items", key)).max_height(list_h).auto_shrink([false, true]).show(ui, |ui| {
                 let needle = env.ed.brush_panel.search.trim().to_lowercase();
                 let shown: Vec<usize> = (0..items.len())
                     .filter(|&i| cur_cat.as_ref().is_none_or(|c| items[i].cat == *c))
                     .filter(|&i| needle.is_empty() || items[i].name.to_lowercase().contains(&needle))
                     .collect();
-                for i in shown {
-                    let it = &items[i];
-                    let w = ui.available_width();
-                    // cartão de duas linhas: o nome inteiro em cima, o traço embaixo na largura toda
-                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 46.0), Sense::click());
-                    let note = match it.act {
-                        Act::Brush(b) => format!("brushes:item:{b}"),
-                        _ => format!("tool_item:{i}"),
-                    };
-                    env.note(note, rect);
-                    let sel = is_selected(env, it.act);
-                    let t = env.t;
-                    let painter = ui.painter().clone();
-                    let fill = if sel { t.accent_dim } else if resp.hovered() { t.bg_hover } else { t.bg_widget };
-                    painter.rect(rect, 4.0, fill, Stroke::new(1.0, if sel { t.accent } else { t.border }), StrokeKind::Inside);
-                    let name = if it.user { format!("{} ·", it.name) } else { it.name.clone() };
-                    let g = painter.layout_no_wrap(name, egui::FontId::proportional(11.5), t.text);
-                    painter.with_clip_rect(rect.shrink(2.0)).galley(egui::pos2(rect.left() + 6.0, rect.top() + 3.0), g, t.text);
-                    let tr_rect = Rect::from_min_size(rect.min + egui::vec2(4.0, 19.0), egui::vec2((w - 8.0).min(220.0), 24.0));
-                    paint_thumb(env, &painter, tr_rect, it.thumb);
-                    if resp.clicked() {
-                        pick = Some(it.act);
-                    }
-                    let (user, idx) = (it.user, if let Act::Brush(b) = it.act { Some(b) } else { None });
-                    let r = resp.on_hover_text(it.name.clone());
-                    if let Some(b) = idx {
-                        r.context_menu(|ui| {
-                            if ui.add_enabled(user, egui::Button::new(tr("brushes.delete"))).clicked() {
-                                delete = Some(b);
-                                ui.close();
+                // grade: cartões de tamanho fixo lado a lado; colunas conforme a largura (estreito = uma coluna, a
+                // miniatura é cortada, nunca achatada)
+                let avail_w = ui.available_width();
+                let cols = (((avail_w + CARD_GAP) / (CARD_MIN_W + CARD_GAP)).floor() as usize).max(1);
+                let card_w = ((avail_w - CARD_GAP * (cols - 1) as f32) / cols as f32).floor().max(24.0);
+                for row in shown.chunks(cols) {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = CARD_GAP;
+                        for &i in row {
+                            let it = &items[i];
+                            let (rect, resp) = ui.allocate_exact_size(egui::vec2(card_w, CARD_H), Sense::click());
+                            let note = match it.act {
+                                Act::Brush(b) => format!("brushes:item:{b}"),
+                                _ => format!("tool_item:{i}"),
+                            };
+                            env.note(note, rect);
+                            let sel = is_selected(env, it.act);
+                            let t = env.t;
+                            let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+                            let fill = if sel { t.accent_dim } else if resp.hovered() { t.bg_hover } else { t.bg_widget };
+                            painter.rect(rect, 3.0, fill, Stroke::new(1.0, if sel { t.accent } else { t.border }), StrokeKind::Inside);
+                            let name = if it.user { format!("{} ·", it.name) } else { it.name.clone() };
+                            let g = painter.layout_no_wrap(name, egui::FontId::proportional(10.5), t.text);
+                            painter.with_clip_rect(rect.shrink(2.0).intersect(ui.clip_rect())).galley(egui::pos2(rect.left() + 4.0, rect.top() + 2.0), g, t.text);
+                            let tr_rect = Rect::from_min_max(egui::pos2(rect.left() + 3.0, rect.bottom() - THUMB_H - 3.0), egui::pos2(rect.right() - 3.0, rect.bottom() - 3.0));
+                            paint_thumb(env, &painter, tr_rect, it.thumb);
+                            if resp.clicked() {
+                                pick = Some(it.act);
                             }
-                        });
-                    }
-                    ui.add_space(2.0);
+                            let (user, idx) = (it.user, if let Act::Brush(b) = it.act { Some(b) } else { None });
+                            let r = resp.on_hover_text(it.name.clone());
+                            if let Some(b) = idx {
+                                r.context_menu(|ui| {
+                                    if ui.add_enabled(user, egui::Button::new(tr("brushes.delete"))).clicked() {
+                                        delete = Some(b);
+                                        ui.close();
+                                    }
+                                });
+                            }
+                        }
+                    });
+                    ui.add_space(CARD_GAP);
                 }
             });
+            items_need = items_out.content_size.y;
         });
     });
+    env.ed.brush_panel.list_need = items_need.max(cats_need);
     if tool == ToolId::Brush {
         env.ed.brush_panel.cat = cur_cat;
     } else if let Some(c) = cur_cat {
@@ -178,15 +221,34 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
             env.ed.opts.brush_custom = None;
         }
     }
+    // divisória: arrastar sobe/desce o limite entre a lista e as propriedades; dois cliques = automático
+    let (div, dr) = ui.allocate_exact_size(egui::vec2(total_w, 9.0), Sense::click_and_drag());
+    env.note("brushes:divider", div);
+    let hot = dr.hovered() || dr.dragged();
+    if hot {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+    }
+    let lc = if hot { env.t.accent } else { env.t.border };
+    ui.painter().hline(div.x_range(), div.center().y, Stroke::new(1.0, lc));
+    for k in -1..=1 {
+        ui.painter().circle_filled(div.center() + egui::vec2(k as f32 * 6.0, 0.0), 1.6, if hot { env.t.accent } else { env.t.text_dim });
+    }
+    if dr.dragged() {
+        env.ed.brush_panel.list_h = Some((list_h + dr.drag_delta().y).min(max_list).max(80.0));
+    }
+    if dr.double_clicked() {
+        env.ed.brush_panel.list_h = None;
+    }
+    dr.on_hover_text(tr("brushes.divider.tip"));
     if tool == ToolId::Brush {
         save_form(env, ui);
     }
-    ui.separator();
     // ---- embaixo: as propriedades do item escolhido
-    egui::ScrollArea::vertical().id_salt("brush_props").auto_shrink([false, false]).show(ui, |ui| {
+    let out = egui::ScrollArea::vertical().id_salt("brush_props").auto_shrink([false, false]).show(ui, |ui| {
         section(ui, &env.t, "brushes.props");
         super::properties::tool_options_panel(env, ui);
     });
+    env.ed.brush_panel.props_h = out.content_size.y;
 }
 
 fn cat_label_any(c: &str) -> String {
@@ -226,6 +288,7 @@ fn items_for(env: &Env, tool: ToolId) -> Vec<Item> {
         }
         ToolId::Fill => FILLS.iter().enumerate().map(|(i, (k, ..))| it(tr(k).to_owned(), "tc.fill", Act::Fill(i as u8), Thumb::Fill(i as u8))).collect(),
         ToolId::Lasso => [(SelMode::Rect, "sel.rect"), (SelMode::Ellipse, "sel.ellipse"), (SelMode::Lasso, "sel.lasso"), (SelMode::Wand, "sel.wand")].into_iter().map(|(m, k)| it(tr(k).to_owned(), "tc.select", Act::Select(m), Thumb::Select(m))).collect(),
+        ToolId::Points => super::properties::POINTS_MODES.iter().map(|&m| it(tr(super::properties::points_mode_key(m)).to_owned(), "tc.points", Act::Points(m), Thumb::Points(m))).collect(),
         other => vec![it(tr(other.title_key()).to_owned(), "tc.tool", Act::Only, Thumb::Icon(other))],
     }
 }
@@ -243,6 +306,7 @@ fn is_selected(env: &Env, a: Act) -> bool {
             (o.fill_gap - gap).abs() < 1e-3 && o.fill_expand == expand && o.fill_close_leftovers == left
         }
         Act::Select(m) => o.select_mode == m,
+        Act::Points(m) => o.points_mode == m,
         Act::Only => true,
     }
 }
@@ -270,6 +334,7 @@ fn apply(env: &mut Env, a: Act) {
             o.fill_close_leftovers = left;
         }
         Act::Select(m) => env.ed.opts.select_mode = m,
+        Act::Points(m) => env.ed.opts.points_mode = m,
         Act::Only => {}
     }
 }
@@ -297,7 +362,7 @@ fn ensure_thumbs(env: &mut Env, ui: &Ui) {
         let pts: Vec<aiai_core::StrokePoint> = (0..40)
             .map(|k| {
                 let f = k as f32 / 39.0;
-                aiai_core::StrokePoint { x: 18.0 + f * (w as f32 - 36.0), y: h as f32 / 2.0 + 13.0 * (f * std::f32::consts::TAU).sin(), pressure: 0.3 + 0.7 * (f * std::f32::consts::PI).sin(), tilt: None, t: None }
+                aiai_core::StrokePoint { x: 18.0 + f * (w as f32 - 36.0), y: h as f32 / 2.0 + 13.0 * (f * std::f32::consts::TAU).sin(), pressure: 0.3 + 0.7 * (f * std::f32::consts::PI).sin(), tilt: None, t: None, corner: false, width: 1.0 }
             })
             .collect();
         let s = aiai_core::Stroke { id: aiai_core::Id(String::new()), points: pts, geometry: aiai_core::StrokeGeometry::Spline, tension: 0.0, tip, width: 9.0, profile: Default::default(), color: aiai_core::ColorRef::default(), opacity: 1.0, closed: false, aliased: false, color_trace: false };
@@ -352,8 +417,11 @@ fn tex(ui: &Ui, name: &str, img: &aiai_paint::Image) -> egui::TextureHandle {
     ui.ctx().load_texture(format!("tool-thumb-{name}"), ci, egui::TextureOptions::LINEAR)
 }
 
-fn paint_thumb(env: &mut Env, p: &egui::Painter, r: Rect, th: Thumb) {
+fn paint_thumb(env: &mut Env, p: &egui::Painter, cell: Rect, th: Thumb) {
     let t = env.t;
+    // proporção fixa: sobra = centrada; falta = cortada (nunca achatada)
+    let r = Rect::from_center_size(cell.center(), egui::vec2(cell.height() * THUMB_ASPECT, cell.height()));
+    let p = &p.with_clip_rect(cell.intersect(p.clip_rect()));
     let ink = Stroke::new(1.6, t.text);
     let dim = Stroke::new(1.2, t.text_dim);
     let at = |fx: f32, fy: f32| Pos2::new(r.left() + r.width() * fx, r.top() + r.height() * fy);
@@ -461,6 +529,57 @@ fn paint_thumb(env: &mut Env, p: &egui::Painter, r: Rect, th: Thumb) {
                         let a = k as f32 * std::f32::consts::FRAC_PI_2 + 0.4;
                         p.line_segment([c, c + Vec2::new(a.cos(), a.sin()) * 6.0], Stroke::new(1.2, t.accent));
                     }
+                }
+            }
+        }
+        Thumb::Points(m) => {
+            // curva com três pontos; o do meio mostra o que o modo faz
+            let (a, mid, b) = (at(0.1, 0.75), at(0.5, 0.3), at(0.9, 0.75));
+            let curve: Vec<Pos2> = (0..=24)
+                .map(|k| {
+                    let f = k as f32 / 24.0;
+                    if m == PointsMode::Corner {
+                        if f < 0.5 { a + (mid - a) * (f * 2.0) } else { mid + (b - mid) * (f * 2.0 - 1.0) }
+                    } else {
+                        let u = 1.0 - f;
+                        let c = mid + (mid - (a + (b - a) * 0.5)) * 0.9;
+                        Pos2::new(u * u * a.x + 2.0 * u * f * c.x + f * f * b.x, u * u * a.y + 2.0 * u * f * c.y + f * f * b.y)
+                    }
+                })
+                .collect();
+            if m == PointsMode::Width {
+                // traço que engrossa no ponto
+                for (k, q) in curve.iter().enumerate() {
+                    let f = k as f32 / 24.0;
+                    p.circle_filled(*q, 0.8 + 3.2 * (1.0 - (f - 0.5).abs() * 2.0), t.text);
+                }
+            } else {
+                p.add(egui::Shape::line(curve, ink));
+            }
+            for q in [a, b] {
+                p.circle(q, 2.4, Color32::WHITE, Stroke::new(1.0, t.accent));
+            }
+            match m {
+                PointsMode::Move => {
+                    p.circle(mid, 3.0, t.accent, Stroke::new(1.0, Color32::WHITE));
+                    p.arrow(mid + Vec2::new(4.0, -1.0), Vec2::new(10.0, -5.0), Stroke::new(1.2, t.accent));
+                }
+                PointsMode::Add => {
+                    p.circle(mid, 3.0, t.accent, Stroke::new(1.0, Color32::WHITE));
+                    let c = mid + Vec2::new(10.0, -2.0);
+                    p.line_segment([c - Vec2::new(3.5, 0.0), c + Vec2::new(3.5, 0.0)], Stroke::new(1.4, t.accent));
+                    p.line_segment([c - Vec2::new(0.0, 3.5), c + Vec2::new(0.0, 3.5)], Stroke::new(1.4, t.accent));
+                }
+                PointsMode::Delete => {
+                    let k = 3.0;
+                    p.line_segment([mid - Vec2::new(k, k), mid + Vec2::new(k, k)], Stroke::new(1.6, t.accent));
+                    p.line_segment([mid - Vec2::new(k, -k), mid + Vec2::new(k, -k)], Stroke::new(1.6, t.accent));
+                }
+                PointsMode::Corner => {
+                    p.rect(Rect::from_center_size(mid, egui::vec2(6.0, 6.0)), 0.0, t.accent, Stroke::new(1.0, Color32::WHITE), StrokeKind::Inside);
+                }
+                PointsMode::Width => {
+                    p.circle(mid, 2.6, t.accent, Stroke::new(1.0, Color32::WHITE));
                 }
             }
         }

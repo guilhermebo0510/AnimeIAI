@@ -81,7 +81,7 @@ fn piece(src: &Stroke, pts: &[(f32, f32, f32)]) -> Option<Stroke> {
     for (k, &(x, y, p)) in pts.iter().enumerate() {
         let last = k + 1 == pts.len();
         if keep.last().is_none_or(|l| ((l.x - x).powi(2) + (l.y - y).powi(2)).sqrt() >= 2.0) || last {
-            keep.push(StrokePoint { x, y, pressure: p, tilt: None, t: None });
+            keep.push(StrokePoint { x, y, pressure: p, tilt: None, t: None, corner: false, width: 1.0 });
         }
     }
     if keep.len() < 2 {

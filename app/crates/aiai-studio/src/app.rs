@@ -58,7 +58,8 @@ pub struct StudioApp {
     prefs_dirty: bool,
     ws: WorkspaceId,
     /// Ferramenta do quadro anterior (troca de ferramenta traz o painel Pincéis).
-    last_tool: Option<crate::workspace::ToolId>,
+    /// (ferramenta, área de trabalho) do quadro anterior: só troca de ferramenta na mesma área traz o painel.
+    last_tool: Option<(crate::workspace::ToolId, WorkspaceId)>,
     trees: HashMap<WorkspaceId, Tree<PanelKind>>,
     icons: Icons,
     tool: ToolId,
@@ -621,11 +622,12 @@ impl StudioApp {
         let t = self.tokens();
         let ws = self.ws;
         let tree = self.trees.entry(ws).or_insert_with(|| layout::default_tree(ws));
-        // caneta, pincel ou borracha escolhidos agora (clique ou atalho): o painel Pincéis vem para a frente
-        if self.last_tool.is_some_and(|t| t != self.tool) && matches!(self.tool, crate::workspace::ToolId::Pen | crate::workspace::ToolId::Brush | crate::workspace::ToolId::Eraser) {
+        // ferramenta com itens (caneta, pincel, borracha, balde, seleção, editar pontos) escolhida agora (clique ou
+        // atalho): o painel Ferramenta vem para a frente
+        if self.last_tool.is_some_and(|(t, w)| t != self.tool && w == ws) && !matches!(self.tool, crate::workspace::ToolId::Move | crate::workspace::ToolId::Hand | crate::workspace::ToolId::Zoom | crate::workspace::ToolId::Eyedropper) {
             self.ed.want_panel = Some(PanelKind::Brushes);
         }
-        self.last_tool = Some(self.tool);
+        self.last_tool = Some((self.tool, ws));
         if let Some(want) = self.ed.want_panel.take() {
             tree.make_active(|_, tile| matches!(tile, egui_tiles::Tile::Pane(k) if *k == want));
         }

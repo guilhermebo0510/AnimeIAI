@@ -115,7 +115,7 @@ pub fn perspective_command(p: &Project, req: &PerspectiveRequest) -> ToolResult<
     let color = Rgba::from_hex(&req.color).ok_or_else(|| ToolError::Invalid("cor inválida".into()))?;
     let mk = |pts: Vec<[f32; 2]>, width: f32| Stroke {
         id: Id(String::new()),
-        points: pts.into_iter().map(|q| StrokePoint { x: q[0], y: q[1], pressure: 1.0, tilt: None, t: None }).collect(),
+        points: pts.into_iter().map(|q| StrokePoint { x: q[0], y: q[1], pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0 }).collect(),
         geometry: StrokeGeometry::Polyline,
         tension: 0.0,
         tip: VectorTip::Marker,

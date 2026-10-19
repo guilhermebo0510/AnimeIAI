@@ -27,6 +27,8 @@ pub(crate) enum Mode {
     Brush,
     EraseRaster,
     EraseVector,
+    /// Editar pontos: o traço editado redesenhado pelo motor, com o original escondido (o quadro sem ele embaixo).
+    EditStroke,
 }
 
 /// O que a thread precisa para o gesto inteiro (tirado do documento uma vez, no começo do traço).
@@ -52,6 +54,8 @@ pub(crate) struct StartSpec {
     pub checker: ([Color32; 2], f32),
     pub erase_radius: f32,
     pub erase_mode: EraseMode,
+    /// Editar pontos: (cel, traço) que sai do quadro de baixo (o arrastado entra no lugar).
+    pub hide: Option<(NodeId, Id)>,
 }
 
 struct Req {
@@ -224,12 +228,15 @@ fn worker(spec: StartSpec, sh: Arc<(Mutex<State>, Condvar)>, tx: crossbeam_chann
     // borracha: o quadro sem a camada, sobre o xadrez (o que aparece onde ela tira); pincel: o que fica na frente
     let under = match spec.mode {
         Mode::Brush => None,
+        Mode::EditStroke => spec.project.as_ref().and_then(|p| render_without_stroke(p, &spec)),
         _ => spec.project.as_ref().and_then(|p| render_under(p, &spec)),
     };
     let above = match spec.mode {
-        Mode::Brush | Mode::Pen => spec.project.as_ref().map(|p| render_above(p, &spec)),
+        Mode::Brush | Mode::Pen | Mode::EditStroke => spec.project.as_ref().map(|p| render_above(p, &spec)),
         _ => None,
     };
+    // Editar pontos: onde o traço estava (o quadro sem ele aparece ali)
+    let old_box = spec.hide.as_ref().and_then(|(_, id)| spec.cel.as_ref()?.strokes.iter().find(|s| &s.id == id)).and_then(|s| stroke_box(s, spec.canvas));
     let mut inc = matches!(spec.mode, Mode::Brush | Mode::EraseRaster).then(|| Incremental::new(&spec));
     loop {
         let req = {
@@ -253,6 +260,7 @@ fn worker(spec: StartSpec, sh: Arc<(Mutex<State>, Condvar)>, tx: crossbeam_chann
             Mode::Brush => brush_overlay(&spec, &req, above.as_ref(), inc.as_mut()?),
             Mode::EraseRaster => under.as_ref().and_then(|u| raster_erase_overlay(&spec, &req, u, inc.as_mut()?)),
             Mode::EraseVector => under.as_ref().and_then(|u| vector_erase_overlay(&spec, &req, u)),
+            Mode::EditStroke => under.as_ref().and_then(|u| edit_overlay(&spec, &req, u, above.as_ref(), old_box)),
         }));
         if let Ok(Some(mut o)) = out {
             o.ms = t0.elapsed().as_secs_f32() * 1000.0;
@@ -321,6 +329,11 @@ fn render_under(p: &Project, spec: &StartSpec) -> Option<(u32, u32, Vec<[f32; 3]
     leaves_except(p, &spec.cut, &spec.layer, &mut others);
     let opts = aiai_render::RenderOptions { include_guides: spec.guides, include_reference: spec.reference, only_layers: Some(others), background: None, camera: false, layer_motion: true };
     let img = aiai_render::render_frame(p, &spec.blobs, &spec.cut, spec.frame, &opts).ok()?.image;
+    Some(over_checker(&img, spec))
+}
+
+/// Imagem do quadro composta sobre o xadrez do canvas: RGB opaco.
+fn over_checker(img: &aiai_paint::Image, spec: &StartSpec) -> (u32, u32, Vec<[f32; 3]>) {
     let ([a, b], cell) = spec.checker;
     let (ca, cb) = (a.to_normalized_gamma_f32(), b.to_normalized_gamma_f32());
     let cell = cell.max(0.5);
@@ -336,7 +349,63 @@ fn render_under(p: &Project, spec: &StartSpec) -> Option<(u32, u32, Vec<[f32; 3]
             [q[0] + c[0] * (1.0 - q[3]), q[1] + c[1] * (1.0 - q[3]), q[2] + c[2] * (1.0 - q[3])]
         })
         .collect();
-    Some((img.width, img.height, rgb))
+    (img.width, img.height, rgb)
+}
+
+/// Quadro inteiro sem o traço que está sendo editado, sobre o xadrez (Editar pontos).
+fn render_without_stroke(p: &Project, spec: &StartSpec) -> Option<(u32, u32, Vec<[f32; 3]>)> {
+    let (cel, id) = spec.hide.as_ref()?;
+    let mut q = p.clone();
+    if let Some(NodeKind::Cel(c)) = q.node_mut(cel).map(|n| &mut n.data) {
+        c.strokes.retain(|s| &s.id != id);
+    }
+    let opts = aiai_render::RenderOptions { include_guides: spec.guides, include_reference: spec.reference, only_layers: None, background: None, camera: false, layer_motion: true };
+    let img = aiai_render::render_frame(&q, &spec.blobs, &spec.cut, spec.frame, &opts).ok()?.image;
+    Some(over_checker(&img, spec))
+}
+
+/// Caixa (x0, y0, x1, y1) do traço rasterizado, em px do cel.
+fn stroke_box(s: &Stroke, canvas: (u32, u32)) -> Option<[i32; 4]> {
+    let cov = aiai_paint::stroke_raster::rasterize_stroke(&aiai_paint::sample_stroke(s), s.aliased, canvas.0, canvas.1)?;
+    Some([cov.x0, cov.y0, cov.x0 + cov.width as i32, cov.y0 + cov.height as i32])
+}
+
+/// Editar pontos: na área do traço antigo e do novo, o quadro sem o traço com o traço novo (motor) por cima, as
+/// camadas de cima na frente. Opaco: cobre o traço antigo do quadro mostrado.
+fn edit_overlay(spec: &StartSpec, req: &Req, u: &(u32, u32, Vec<[f32; 3]>), above: Option<&Above>, old: Option<[i32; 4]>) -> Option<Out> {
+    let new = pen_overlay(spec, req, above);
+    let mut b = old.unwrap_or([i32::MAX, i32::MAX, i32::MIN, i32::MIN]);
+    if let Some(o) = &new {
+        b = [b[0].min(o.origin[0]), b[1].min(o.origin[1]), b[2].max(o.origin[0] + o.image.size[0] as i32), b[3].max(o.origin[1] + o.image.size[1] as i32)];
+    }
+    let (cw, ch) = (spec.canvas.0 as i32, spec.canvas.1 as i32);
+    let (x0, y0, x1, y1) = ((b[0] - 1).max(0), (b[1] - 1).max(0), (b[2] + 1).min(cw), (b[3] + 1).min(ch));
+    if x0 >= x1 || y0 >= y1 {
+        return None;
+    }
+    let (w, h) = ((x1 - x0) as usize, (y1 - y0) as usize);
+    let mut pixels = Vec::with_capacity(w * h);
+    for y in 0..h {
+        for x in 0..w {
+            let (px0, py0) = (x0 + x as i32, y0 + y as i32);
+            let base = under_at(u, &spec.fwd, px0 as f32 + 0.5, py0 as f32 + 0.5);
+            let top = new.as_ref().and_then(|o| {
+                let (ox, oy) = (px0 - o.origin[0], py0 - o.origin[1]);
+                (ox >= 0 && oy >= 0 && (ox as usize) < o.image.size[0] && (oy as usize) < o.image.size[1]).then(|| o.image.pixels[oy as usize * o.image.size[0] + ox as usize])
+            });
+            pixels.push(match (base, top) {
+                (Some(c), t) => {
+                    let t = t.unwrap_or(Color32::TRANSPARENT);
+                    let k = 1.0 - t.a() as f32 / 255.0;
+                    let f = |v: u8, b: f32| (v as f32 / 255.0 + b * k).min(1.0);
+                    px([f(t.r(), c[0]), f(t.g(), c[1]), f(t.b(), c[2]), 1.0])
+                }
+                (None, Some(t)) => t,
+                (None, None) => Color32::TRANSPARENT,
+            });
+        }
+    }
+    Some(Out { origin: [x0, y0], image: ColorImage { size: [w, h], source_size: egui::vec2(w as f32, h as f32), pixels }, partial: None, ms: 0.0 })
 }
 
 /// Traço incremental do pincel/borracha raster: os trechos do caminho que já não mudam são carimbados uma vez só;

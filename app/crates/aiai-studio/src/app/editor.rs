@@ -249,6 +249,22 @@ pub(crate) fn stroke_hit(stroke: &Stroke, path: &[Vec2], radius: f32) -> bool {
     }))
 }
 
+/// O que o clique faz na ferramenta Editar pontos (itens do painel Ferramenta).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum PointsMode {
+    /// Escolhe e arrasta pontos (Ctrl+arrastar muda a largura; Shift+clique no traço insere; botão direito apaga).
+    #[default]
+    Move,
+    /// Clique no traço põe um ponto ali (em cima da curva).
+    Add,
+    /// Clique num ponto o apaga.
+    Delete,
+    /// Clique num ponto alterna canto (quebrado) e suave (arredondado).
+    Corner,
+    /// Arrastar um ponto para cima/baixo engrossa/afina o traço naquele ponto.
+    Width,
+}
+
 // ------------------------------------------------------------------------------------------------ seleção
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -438,6 +454,7 @@ pub(crate) struct ToolOptions {
     /// Balde fecha as frestas em volta (regiões sem tinta de até `LEFTOVER_PX`) com a cor que as cerca.
     pub fill_close_leftovers: bool,
     pub select_mode: SelMode,
+    pub points_mode: PointsMode,
     /// Tolerância de cor da varinha (0..1).
     pub wand_tolerance: f32,
 }
@@ -465,6 +482,7 @@ impl Default for ToolOptions {
             fill_expand: 2,
             fill_close_leftovers: false,
             select_mode: SelMode::Rect,
+            points_mode: PointsMode::Move,
             wand_tolerance: 0.12,
         }
     }
@@ -514,8 +532,8 @@ pub(crate) enum Gesture {
     Stroke(Box<StrokeGesture>),
     Select { start: Vec2, pts: Vec<Vec2>, mode: SelMode },
     MoveSel { last: Vec2 },
-    /// Mover em "Editar pontos": arrasto de um ponto de controle (posições no espaço do cel; `width` = muda a pressão).
-    DragNode { idx: usize, start: Vec2, cur: Vec2, width: bool },
+    /// Editar pontos: arrasto de um ponto de controle (posições no espaço do cel; `width` = muda a largura no ponto).
+    DragNode { idx: usize, start: Vec2, cur: Vec2, width: bool, t0: std::time::Instant },
     /// Caneta em forma de régua (linha, retângulo, elipse): do ponto de partida até o cursor.
     Shape { start: Vec2, cur: Vec2 },
     /// Caneta em curva por cliques: cada clique põe um ponto; Enter, duplo clique ou botão direito termina.
@@ -607,6 +625,10 @@ pub(crate) struct Editor {
     pub subview: super::panels::subview::SubViewState,
     /// Traço escolhido para editar pontos (Mover em "Editar pontos").
     pub node_stroke: Option<aiai_core::Id>,
+    /// Ponto escolhido no traço (índice; o painel mostra e edita posição, largura e canto dele).
+    pub node_sel: Option<usize>,
+    /// Campo numérico do Editar pontos em edição (chave, valor): grava ao soltar/sair do campo (um passo de desfazer).
+    pub node_field: Option<(&'static str, f32)>,
     /// Miniatura de traço de cada preset de pincel (feita pelo próprio motor, uma vez).
     /// Biblioteca de pincéis (fábrica + usuário) e estado do painel Pincéis.
     pub brushes: super::brushes::BrushLibrary,
@@ -717,6 +739,8 @@ impl Default for Editor {
             color_seen: Rgba::BLACK,
             subview: Default::default(),
             node_stroke: None,
+            node_sel: None,
+            node_field: None,
             shift: false,
             brushes: Default::default(),
             brush_panel: Default::default(),
@@ -973,7 +997,7 @@ mod tests {
     fn stroke(pts: &[(f32, f32)], width: f32) -> Stroke {
         Stroke {
             id: Id::from("s"),
-            points: pts.iter().map(|(x, y)| StrokePoint { x: *x, y: *y, pressure: 1.0, tilt: None, t: None }).collect(),
+            points: pts.iter().map(|(x, y)| StrokePoint { x: *x, y: *y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0 }).collect(),
             geometry: StrokeGeometry::Polyline,
             tension: 0.0,
             tip: VectorTip::Marker,

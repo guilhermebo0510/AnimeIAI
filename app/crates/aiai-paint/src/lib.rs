@@ -21,7 +21,7 @@ pub mod transform;
 pub mod warp;
 
 pub use crate::image::Image;
-pub use curve::{StrokeSample, flatten_points, sample_stroke};
+pub use curve::{StrokeSample, flatten_points, point_width_for, sample_stroke, width_at_point};
 pub use mask::Mask;
 pub use transform::{Affine, transform_image};
 pub use stroke_raster::{rasterize_stroke, StrokeCoverage};

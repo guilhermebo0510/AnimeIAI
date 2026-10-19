@@ -219,6 +219,43 @@ fn brush_settings(ui: &mut Ui, o: &mut super::super::editor::ToolOptions, base: 
     }
 }
 
+pub(crate) const POINTS_MODES: [PointsMode; 5] = [PointsMode::Move, PointsMode::Add, PointsMode::Delete, PointsMode::Corner, PointsMode::Width];
+
+pub(crate) fn points_mode_key(m: PointsMode) -> &'static str {
+    match m {
+        PointsMode::Move => "pts.mode.move",
+        PointsMode::Add => "pts.mode.add",
+        PointsMode::Delete => "pts.mode.delete",
+        PointsMode::Corner => "pts.mode.corner",
+        PointsMode::Width => "pts.mode.width",
+    }
+}
+
+/// Campo numérico do Editar pontos: enquanto arrasta/digita o valor fica guardado e grava ao soltar ou sair do
+/// campo (um passo de desfazer por edição, não um por quadro).
+#[allow(clippy::too_many_arguments)]
+fn pts_field(env: &mut Env, ui: &mut Ui, key: &'static str, label: &str, cur: f32, min: f32, max: f32, set: impl FnOnce(&mut aiai_core::Stroke, f32) -> bool) {
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(label).size(12.0).color(env.t.text_dim));
+        let mut v = match env.ed.node_field {
+            Some((k, v)) if k == key => v,
+            _ => cur,
+        };
+        let r = ui.add(egui::DragValue::new(&mut v).range(min..=max).speed(0.1).max_decimals(2).suffix(if key == "x" || key == "y" { "" } else { " px" }));
+        env.note(format!("pts:{key}"), r.rect);
+        let editing = r.dragged() || r.has_focus();
+        if editing {
+            env.ed.node_field = Some((key, v));
+        }
+        if r.drag_stopped() || r.lost_focus() || (r.changed() && !editing) {
+            env.ed.node_field = None;
+            if (v - cur).abs() > 1e-4 {
+                super::super::nodes::edit(env, label, |s| set(s, v));
+            }
+        }
+    });
+}
+
 fn row(ui: &mut Ui, t: &crate::theme::Tokens, compact: bool, key: &str, add: impl FnOnce(&mut Ui)) {
     if compact {
         // Na barra do canvas (linha que quebra) combo e slider são blocos aninhados que o egui não leva para a linha de baixo
@@ -462,13 +499,107 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
             }
         }
         ToolId::Points => {
-            let b = ui.add_enabled(env.ed.node_stroke.is_some(), egui::Button::new(tr("opt.simplify")));
-            env.note("opt:simplify", b.rect);
-            if b.on_hover_text(tr("opt.simplify.tip")).clicked() {
-                super::super::nodes::simplify(env, 1.5);
+            use super::super::nodes;
+            if !panel {
+                row(ui, &t, compact, "opt.points_mode", |ui| {
+                    let o = &mut env.ed.opts;
+                    egui::ComboBox::from_id_salt(("pts_mode", compact)).width(130.0).selected_text(tr(points_mode_key(o.points_mode))).show_ui(ui, |ui| {
+                        for m in POINTS_MODES {
+                            ui.selectable_value(&mut o.points_mode, m, tr(points_mode_key(m)));
+                        }
+                    });
+                });
+            }
+            // na barra do canvas só o modo: campos que aparecem ao escolher um traço quebrariam a linha e o canvas
+            // mudaria de tamanho (e de zoom) debaixo do mouse
+            match nodes::selection(env).filter(|_| !compact) {
+                None => {
+                    if !compact {
+                        dim_label(ui, &t, tr("pts.none"));
+                    }
+                }
+                Some((s, sel)) => {
+                    if !compact {
+                        ui.label(egui::RichText::new(format!("{} · {} {}", tr("pts.stroke"), s.points.len(), tr("pts.points"))).strong());
+                    }
+                    pts_field(env, ui, "stroke_w", tr("pts.stroke_width"), s.width, 0.5, 200.0, |st, v| {
+                        st.width = v;
+                        true
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        let b = ui.button(tr("pts.all_smooth"));
+                        env.note("pts:all_smooth", b.rect);
+                        if b.clicked() {
+                            nodes::edit(env, "todos suaves", |st| {
+                                let had = st.points.iter().any(|q| q.corner);
+                                st.points.iter_mut().for_each(|q| q.corner = false);
+                                had
+                            });
+                        }
+                        let b = ui.button(tr("pts.all_corner"));
+                        env.note("pts:all_corner", b.rect);
+                        if b.clicked() {
+                            nodes::edit(env, "todos cantos", |st| {
+                                let had = st.points.iter().any(|q| !q.corner);
+                                st.points.iter_mut().for_each(|q| q.corner = true);
+                                had
+                            });
+                        }
+                        let b = ui.button(tr("opt.simplify"));
+                        env.note("opt:simplify", b.rect);
+                        if b.on_hover_text(tr("opt.simplify.tip")).clicked() {
+                            nodes::simplify(env, 1.5);
+                        }
+                    });
+                    match sel {
+                        Some(i) => {
+                            let q = s.points[i];
+                            if !compact {
+                                ui.label(egui::RichText::new(format!("{} {i}", tr("pts.point"))).strong()).on_hover_text(tr("pts.point.tip"));
+                            }
+                            pts_field(env, ui, "w", tr("pts.width"), aiai_paint::width_at_point(&s, i), 0.0, 400.0, move |st, v| {
+                                st.points[i].width = aiai_paint::point_width_for(st, i, v);
+                                true
+                            });
+                            pts_field(env, ui, "x", "X", q.x, -100000.0, 100000.0, move |st, v| {
+                                st.points[i].x = v;
+                                true
+                            });
+                            pts_field(env, ui, "y", "Y", q.y, -100000.0, 100000.0, move |st, v| {
+                                st.points[i].y = v;
+                                true
+                            });
+                            let mut corner = q.corner;
+                            let r = ui.checkbox(&mut corner, tr("pts.corner"));
+                            env.note("pts:corner", r.rect);
+                            if r.on_hover_text(tr("pts.corner.tip")).changed() {
+                                nodes::edit(env, "canto/suave", move |st| {
+                                    st.points[i].corner = corner;
+                                    true
+                                });
+                            }
+                            let b = ui.add_enabled(s.points.len() > 2, egui::Button::new(tr("pts.delete")));
+                            env.note("pts:delete", b.rect);
+                            if b.clicked() {
+                                nodes::delete_selected(env);
+                            }
+                        }
+                        None => {
+                            if !compact {
+                                dim_label(ui, &t, tr("pts.pick_point"));
+                            }
+                        }
+                    }
+                }
             }
             if !compact {
-                dim_label(ui, &t, tr("opt.move_points.tip"));
+                dim_label(ui, &t, tr(match env.ed.opts.points_mode {
+                    PointsMode::Move => "opt.move_points.tip",
+                    PointsMode::Add => "pts.mode.add.tip",
+                    PointsMode::Delete => "pts.mode.delete.tip",
+                    PointsMode::Corner => "pts.mode.corner.tip",
+                    PointsMode::Width => "pts.mode.width.tip",
+                }));
             }
         }
         ToolId::Eyedropper | ToolId::Hand | ToolId::Zoom => {

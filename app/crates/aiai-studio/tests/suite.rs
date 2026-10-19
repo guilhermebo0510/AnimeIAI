@@ -284,6 +284,8 @@ fn script(c: &Client) {
 fn editor_script(c: &Client) {
     c.ok("NEW_PROJECT", json!({"name": "editor", "settings": {"width": 320, "height": 180}}));
     c.ok("UI_ACTION", json!({"action": "set_workspace", "workspace": "animacao"}));
+    // o balde escolhido antes trouxe o painel Ferramenta para a frente da aba do Projeto
+    c.ok("UI_ACTION", json!({"action": "open_panel", "panel": "project"}));
     // projeto vazio: o painel Projeto oferece começar com episódio, cena e corte (um passo de undo)
     c.click_widget("project:quick_start");
     let cut = c.state()["editor"]["cut"].as_str().expect("corte ativo depois de começar").to_string();

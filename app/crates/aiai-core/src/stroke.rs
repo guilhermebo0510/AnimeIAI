@@ -19,10 +19,21 @@ pub struct StrokePoint {
     /// Tempo relativo ao início do traço, em segundos (opcional; replay e dinâmica por velocidade).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub t: Option<f32>,
+    /// Canto: a curva quebra neste ponto (entra e sai em linha, sem arredondar). Só vale para Spline/Freehand.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub corner: bool,
+    /// Multiplicador da largura neste ponto (1 = a do traço), interpolado ao longo da curva como a pressão; vale
+    /// para qualquer ponta (a pressão não muda a largura do marcador).
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub width: f32,
 }
 
 fn one() -> f32 {
     1.0
+}
+
+fn is_one(v: &f32) -> bool {
+    *v == 1.0
 }
 
 fn empty_id() -> Id {
@@ -113,6 +124,9 @@ impl Stroke {
         for p in &self.points {
             if !(p.x.is_finite() && p.y.is_finite() && (0.0..=1.0).contains(&p.pressure)) {
                 return Err("ponto inválido (coordenada não finita ou pressão fora de 0..1)".into());
+            }
+            if !(p.width.is_finite() && (0.0..=20.0).contains(&p.width)) {
+                return Err(format!("largura do ponto fora de 0..20 (multiplicador): {}", p.width));
             }
         }
         for [t, m] in &self.profile.0 {

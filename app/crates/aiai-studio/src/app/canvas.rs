@@ -77,6 +77,12 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
             tools::feed_live(env, &g);
             env.ed.gesture = Gesture::Stroke(g);
         }
+    } else if let Gesture::DragNode { t0, .. } = env.ed.gesture {
+        // Editar pontos: a linha de verdade anda junto com o ponto
+        if env.ed.live_stroke.started_for() != Some(t0) {
+            super::nodes::start_live(env, &ctx, t0, xf.scale);
+        }
+        super::nodes::feed_live(env);
     } else if env.ed.live_stroke.active() {
         env.ed.live_stroke.release(None); // gesto cancelado
     }
@@ -613,7 +619,11 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
                 }
             }
         }
-        g @ Gesture::DragNode { .. } => super::nodes::release(env, g),
+        g @ Gesture::DragNode { .. } => {
+            super::nodes::release(env, g);
+            let counter = env.core.change_counter;
+            env.ed.live_stroke.release(Some(counter));
+        }
         Gesture::Shape { start, .. } => {
             let (pts, geo, closed) = tools::shape_points(env.ed.opts.pen_shape, start, c, env.ed.shift);
             tools::commit_vector_shape(env, pts, geo, closed);
@@ -1074,9 +1084,6 @@ fn variable_line(painter: &egui::Painter, pts: &[Vec2], radii: &[f32], color: Co
 }
 
 fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId) {
-    if *env.tool == ToolId::Points {
-        super::nodes::paint(env, painter, |p| xf.to_screen(p), env.t.accent);
-    }
     // o que o gesto anterior acabou de fazer, até o render novo chegar
     env.ed.ghosts.retain(|g| g.born.elapsed().as_secs_f32() < 5.0);
     for g in &env.ed.ghosts {
@@ -1102,6 +1109,10 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
         painter.add(quad(ov.tex.id(), pts, uv));
     });
     let has_live = live.is_some();
+    // pontos do Editar pontos por cima da prévia do traço
+    if *env.tool == ToolId::Points {
+        super::nodes::paint(env, painter, |p| xf.to_screen(p), env.t.accent);
+    }
     let t = env.t;
     match &env.ed.gesture {
         Gesture::Stroke(g) => {
@@ -1158,7 +1169,7 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
                 path.push(xf.to_canvas(cur));
             }
             // prévia pela spline do motor (a mesma do traço gravado)
-            let st = aiai_core::Stroke { id: aiai_core::Id(String::new()), points: path.iter().map(|p| aiai_core::StrokePoint { x: p.x, y: p.y, pressure: 1.0, tilt: None, t: None }).collect(), geometry: aiai_core::StrokeGeometry::Spline, tension: 0.0,
+            let st = aiai_core::Stroke { id: aiai_core::Id(String::new()), points: path.iter().map(|p| aiai_core::StrokePoint { x: p.x, y: p.y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0 }).collect(), geometry: aiai_core::StrokeGeometry::Spline, tension: 0.0,
                 tip: aiai_core::VectorTip::Marker, width: env.ed.opts.pen_width.max(0.1), profile: Default::default(), color: env.ed.color.clone(), opacity: 1.0, closed: false, aliased: false, color_trace: false };
             let (sp, sr) = super::tools::sampled(&st);
             variable_line(painter, &sp, &sr, color, xf);

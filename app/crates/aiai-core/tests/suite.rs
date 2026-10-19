@@ -38,8 +38,8 @@ fn stroke(id: &str, x: f32) -> Stroke {
     Stroke {
         id: Id::from(id),
         points: vec![
-            StrokePoint { x, y: 10.0, pressure: 0.5, tilt: None, t: None },
-            StrokePoint { x: x + 50.0, y: 60.0, pressure: 1.0, tilt: None, t: None },
+            StrokePoint { x, y: 10.0, pressure: 0.5, tilt: None, t: None, corner: false, width: 1.0 },
+            StrokePoint { x: x + 50.0, y: 60.0, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0 },
         ],
         geometry: StrokeGeometry::Spline,
         tension: 0.0,
