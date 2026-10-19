@@ -12,6 +12,9 @@ pub enum ToolError {
     Invalid(String),
     #[error("render: {0}")]
     Render(String),
+    /// O que o pedido diz ter lido (revisão, contagem) não bate com o documento: leia de novo antes de editar.
+    #[error("{0}")]
+    Stale(String),
 }
 
 pub type ToolResult<T> = Result<T, ToolError>;

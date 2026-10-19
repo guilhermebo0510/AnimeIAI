@@ -65,10 +65,27 @@ const TRANSFORM_DESC: &str = r##"Transforma o conteúdo de uma camada (vetorial:
 
 const REPEAT_DESC: &str = r##"Repete traços vetoriais ao longo de um caminho (cerca, folhagem, janelas de prédio, fios de cabelo): copia os traços `strokes` (ids dos traços do cel; o motivo é centrado em `origin` [x,y]) em posições espaçadas de `spacing` px ao longo de `path` (pontos [x,y]), com `offset`, `follow` (gira o motivo seguindo a tangente do caminho) e `scale_range` [escala no início, escala no fim] (perspectiva simples). Coordenadas em pixels do canvas. Entra no undo. Confirme com aiai_render."##;
 
+const POINTS_DESC: &str = r##"Lê os pontos de controle de um traço VETORIAL pelo endereço (id do traço, índice do ponto). Escolha o traço por `stroke` (id) ou por `at` [x, y] em px do canvas (o traço mais perto, até `tolerance` px, padrão 12; com `stroke` e `at` juntos só mede a distância). Devolve {cel, stroke, stroke_rev, point_count, revision, geometry, closed, tip, width, hit_distance?, nearest_point?, points:[{index, x, y (no cel), canvas_x, canvas_y (no canvas, com o movimento da camada no quadro), pressure, corner, width (multiplicador), width_px (largura em px naquele ponto)}]}. Use `stroke_rev` (ou `point_count`) como guarda em aiai_edit_points. Não altera o documento.
+Exemplo: {"cut":"<corte>","layer":"<camada vetorial>","at":[412,230]}"##;
+
+const EDIT_POINTS_DESC: &str = r##"Edita os pontos de controle de UM traço vetorial em lote, num único passo de desfazer. `ops` roda em ordem e cada índice se refere ao traço como ficou depois das operações anteriores: move {index, x, y} | insert {after, x, y} (põe o ponto logo depois de `after`) | insert {x, y, tolerance?} (sem `after`: põe o ponto EM CIMA da curva, no lugar mais perto de x,y, até `tolerance` px, padrão 12) | delete {index} (o traço fica com pelo menos 2) | corner {index, on} (canto: a curva quebra no ponto) | width_px {index, px} (largura em px naquele ponto). `space`: cel (padrão; as x/y de aiai_points) ou canvas (as canvas_x/canvas_y).
+GUARDA OBRIGATÓRIA: `stroke_rev` de aiai_points (ou `point_count`, ou `if_revision`). Se o traço mudou desde a leitura, nada muda e volta o erro -32010: leia de novo. Devolve o Outcome + stroke_rev, point_count e points do traço como ficou e `inserted` (índices finais dos pontos inseridos).
+Exemplo: {"cut":"<corte>","layer":"<camada>","stroke":"<traço>","stroke_rev":"<de aiai_points>","ops":[{"op":"insert","after":0,"x":120,"y":80},{"op":"corner","index":1,"on":true},{"op":"width_px","index":1,"px":6}]}"##;
+
 const LINT_DESC: &str = r##"Confere o balde de tinta: lista as regiões fechadas pelas linhas (camadas em line_refs da camada de cor) que AINDA não têm cor. Devolve {regions_total, painted, unpainted:[{label, area, point:[x,y], bounds}]}; use `point` de cada região como semente de aiai_fill. Regiões menores que min_area são ignoradas; as que tocam a borda do quadro também, salvo `include_border: true`. `point` é o pixel mais interno da região (bom para PROBE_COLOR na referência). Se `unpainted` vier vazio, tudo está pintado. Se uma região sumiu ou virou uma só, há buraco na linha: aumente `gap` ou feche o traço."##;
 
 pub(crate) fn schema_of<T: schemars::JsonSchema>() -> Value {
     serde_json::to_value(schemars::schema_for!(T)).unwrap_or_else(|_| json!({ "type": "object" }))
+}
+
+/// Schema de aiai_edit_points: o da requisição + `if_revision`/`author` (lidos pela bridge ao aplicar).
+fn edit_points_schema() -> Value {
+    let mut s = schema_of::<aiai_tools::points::PointsEditRequest>();
+    if let Some(props) = s.get_mut("properties").and_then(Value::as_object_mut) {
+        props.insert("if_revision".into(), json!({ "type": "integer", "minimum": 0, "description": "Guarda alternativa: revisão do projeto que você viu por último." }));
+        props.insert("author".into(), json!({ "type": "string" }));
+    }
+    s
 }
 
 /// Schema de aiai_paint: `preset` aceita também o nome (texto) e há `preset_overrides`.
@@ -214,10 +231,13 @@ Só grava em pastas permitidas (AIAI_MCP_ALLOWED_DIRS; padrão producoes/, calib
         },
         {
             "name": "aiai_schema",
-            "description": "Autodescrição: devolve o JSON Schema de `commands` (todos os comandos aceitos por aiai_apply), `queries` (todas as consultas de aiai_query) ou `project` (formato do documento). Use para descobrir comandos novos sem reiniciar a sessão.",
+            "description": "Autodescrição: devolve o JSON Schema de `commands` (todos os comandos aceitos por aiai_apply), `queries` (todas as consultas de aiai_query), `project` (formato do documento) ou `tools` (as ferramentas MCP com descrição e inputSchema; `name` filtra uma, ex.: aiai_edit_points). Use para descobrir comandos novos sem reiniciar a sessão.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "which": { "type": "string", "enum": ["commands", "queries", "project"] } },
+                "properties": {
+                    "which": { "type": "string", "enum": ["commands", "queries", "project", "tools"] },
+                    "name": { "type": "string", "description": "Com which=tools: só esta ferramenta." }
+                },
                 "additionalProperties": false
             }
         },
@@ -267,6 +287,16 @@ Só grava em pastas permitidas (AIAI_MCP_ALLOWED_DIRS; padrão producoes/, calib
             "name": "aiai_erase",
             "description": "Borracha vetorial numa camada VETORIAL: `path` (pontos [x,y] do canvas) e `radius` (px). `mode`: segment (padrão; apaga só o trecho coberto e divide o traço), intersection (apaga o trecho entre as interseções com outros traços mais próximas do toque) ou whole (apaga o traço inteiro). Os pedaços que sobram viram traços à mão livre com a mesma ponta, largura e cor. Um passo de undo.",
             "inputSchema": schema_of::<aiai_tools::erase::EraseVectorRequest>()
+        },
+        {
+            "name": "aiai_points",
+            "description": POINTS_DESC,
+            "inputSchema": schema_of::<aiai_tools::points::PointsRequest>()
+        },
+        {
+            "name": "aiai_edit_points",
+            "description": EDIT_POINTS_DESC,
+            "inputSchema": edit_points_schema()
         },
         {
             "name": "aiai_repeat",
@@ -421,6 +451,14 @@ pub fn plan(name: &str, args: &Value) -> Result<Plan, ToolError> {
             required(&m, &["cut", "layer", "strokes", "path"])?;
             simple("REPEAT", with_frame(m))
         }
+        "aiai_points" => {
+            required(&m, &["cut", "layer"])?;
+            simple("READ_POINTS", with_frame(m))
+        }
+        "aiai_edit_points" => {
+            required(&m, &["cut", "layer", "stroke", "ops"])?;
+            simple("EDIT_POINTS", with_frame(m))
+        }
         "aiai_brush_presets" => simple("BRUSH_PRESETS", json!({})),
         "aiai_screenshot" => {
             let mut params = pick(&m, &["region", "panel"]);
@@ -461,6 +499,9 @@ pub fn call_tool(ctx: &mut Ctx, name: &str, args: &Value) -> ToolResult {
 }
 
 fn run(ctx: &mut Ctx, name: &str, args: &Value) -> Result<ToolResult, ToolError> {
+    if let Some(mut tools) = schema_tools(name, args)? {
+        return finish(&mut tools, None);
+    }
     let plan = plan(name, args)?;
     let save_to: Option<PathBuf> = match &plan.save_png {
         Some(p) => Some(ctx.sandbox.check_write(p).map_err(|e| ToolError::invalid(format!("'out': {e}")))?),
@@ -468,6 +509,22 @@ fn run(ctx: &mut Ctx, name: &str, args: &Value) -> Result<ToolResult, ToolError>
     };
     let mut data = ctx.invoke(plan.action, plan.params, None)?;
     finish(&mut data, save_to.as_ref())
+}
+
+/// `aiai_schema {which: "tools", name?}`: o catálogo de ferramentas (sem passar pela bridge). `None` = outro pedido.
+pub fn schema_tools(name: &str, args: &Value) -> Result<Option<Value>, ToolError> {
+    if name != "aiai_schema" || args.get("which").and_then(Value::as_str) != Some("tools") {
+        return Ok(None);
+    }
+    let all = definitions();
+    let list = all.as_array().cloned().unwrap_or_default();
+    match args.get("name").and_then(Value::as_str) {
+        None => Ok(Some(json!({ "tools": list }))),
+        Some(n) => match list.into_iter().find(|t| t["name"] == n) {
+            Some(t) => Ok(Some(t)),
+            None => Err(ToolError::invalid(format!("aiai_schema: ferramenta desconhecida {n:?}"))),
+        },
+    }
 }
 
 /// Formata a resposta: imagem (se houver `png_base64`) reduzida + texto com o resto.

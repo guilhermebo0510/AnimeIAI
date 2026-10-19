@@ -1423,3 +1423,81 @@ fn unknown_param_keys_are_errors_naming_the_key() {
         assert!(e.code == code::INVALID_PARAMS && e.message.contains("'zz_inventada'"), "{action} não recusou a chave: {e}");
     }
 }
+
+// ------------------------------------------------------------------------------------------- pontos do traço
+
+#[test]
+fn points_are_read_and_edited_by_stroke_and_index_behind_a_revision_guard() {
+    let (mut s, cut, line, _, _) = tool_doc();
+    act(&mut s, "DRAW_CURVES", json!({"cut": cut, "frame": 0, "layer": line, "curves": [
+        {"points": [[60, 90], [160, 90], [260, 90]], "width": 4, "tip": "marker", "geometry": "spline", "color": {"type": "direct", "rgba": [0, 0, 0, 1]}}]}));
+    // a camada anda 20 px para a direita e 5 para baixo: canvas = cel + (20, 5)
+    act(&mut s, "APPLY_COMMAND", json!({"command": {"kind": "set_props", "id": line, "data": {"offset": [20.0, 5.0]}}}));
+
+    // ler pelo clique no canvas
+    let r = act(&mut s, "READ_POINTS", json!({"cut": cut, "frame": 0, "layer": line, "at": [181.0, 97.0]}));
+    let stroke = r["stroke"].as_str().unwrap().to_string();
+    let rev0 = r["stroke_rev"].as_str().unwrap().to_string();
+    assert_eq!(r["point_count"], 3);
+    assert_eq!(r["nearest_point"], 1);
+    assert!(r["hit_distance"].as_f64().unwrap() < 1.0, "{r}");
+    let p1 = &r["points"][1];
+    assert_eq!((p1["index"].as_u64(), p1["x"].as_f64(), p1["y"].as_f64()), (Some(1), Some(160.0), Some(90.0)));
+    assert_eq!((p1["canvas_x"].as_f64(), p1["canvas_y"].as_f64()), (Some(180.0), Some(95.0)));
+    assert_eq!((p1["pressure"].as_f64(), p1["corner"].as_bool(), p1["width"].as_f64(), p1["width_px"].as_f64()), (Some(1.0), Some(false), Some(1.0), Some(4.0)));
+    // pelo id dá o mesmo
+    let by_id = act(&mut s, "READ_POINTS", json!({"cut": cut, "frame": 0, "layer": line, "stroke": stroke}));
+    assert_eq!(by_id["stroke_rev"], rev0.as_str());
+    assert_eq!(act_err(&mut s, "READ_POINTS", json!({"cut": cut, "frame": 0, "layer": line, "at": [10.0, 170.0]})).code, code::INVALID_PARAMS, "clique longe de tudo");
+
+    let edit = |extra: Value| {
+        let mut p = json!({"cut": cut, "frame": 0, "layer": line, "stroke": stroke});
+        for (k, v) in extra.as_object().unwrap() {
+            p[k] = v.clone();
+        }
+        p
+    };
+    let rev_doc = s.project.revision;
+    // sem guarda, revisão errada, contagem errada, chave desconhecida na operação: nada muda
+    let ops = json!([{"op": "corner", "index": 1, "on": true}]);
+    assert_eq!(act_err(&mut s, "EDIT_POINTS", edit(json!({"ops": ops}))).code, code::INVALID_PARAMS);
+    let e = act_err(&mut s, "EDIT_POINTS", edit(json!({"ops": ops, "stroke_rev": "0123456789abcdef"})));
+    assert!(e.code == code::STALE_REVISION && e.message.contains("leia de novo"), "{e}");
+    assert_eq!(act_err(&mut s, "EDIT_POINTS", edit(json!({"ops": ops, "point_count": 4}))).code, code::STALE_REVISION);
+    assert_eq!(act_err(&mut s, "EDIT_POINTS", edit(json!({"ops": [{"op": "corner", "index": 1, "of": true}], "stroke_rev": rev0}))).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut s, "EDIT_POINTS", edit(json!({"ops": [{"op": "delete", "index": 7}], "stroke_rev": rev0}))).code, code::INVALID_PARAMS);
+    assert_eq!(s.project.revision, rev_doc, "edição recusada não muda nada");
+
+    // inserir na curva (canvas), mover, canto, largura e apagar: um passo de desfazer
+    let o = act(&mut s, "EDIT_POINTS", edit(json!({"stroke_rev": rev0, "space": "canvas", "ops": [
+        {"op": "insert", "x": 130.0, "y": 99.0},
+        {"op": "move", "index": 3, "x": 290.0, "y": 105.0},
+        {"op": "corner", "index": 2, "on": true},
+        {"op": "width_px", "index": 2, "px": 9.0},
+        {"op": "delete", "index": 0}
+    ]})));
+    assert_eq!(o["description"], "Editar 1 traço(s)");
+    assert_eq!((o["point_count"].as_u64(), o["inserted"].clone()), (Some(3), json!([0])));
+    let pts = o["points"].as_array().unwrap();
+    assert!((pts[0]["x"].as_f64().unwrap() - 110.0).abs() < 0.5 && (pts[0]["y"].as_f64().unwrap() - 90.0).abs() < 0.5, "ponto novo em cima da curva, no cel: {}", pts[0]);
+    assert_eq!((pts[1]["x"].as_f64(), pts[1]["corner"].as_bool(), pts[1]["width_px"].as_f64()), (Some(160.0), Some(true), Some(9.0)));
+    assert_eq!((pts[2]["x"].as_f64(), pts[2]["y"].as_f64(), pts[2]["canvas_x"].as_f64()), (Some(270.0), Some(100.0), Some(290.0)));
+    let rev1 = o["stroke_rev"].as_str().unwrap().to_string();
+    assert_ne!(rev1, rev0);
+    let back = act(&mut s, "READ_POINTS", json!({"cut": cut, "frame": 0, "layer": line, "stroke": stroke}));
+    assert_eq!(back["stroke_rev"], rev1.as_str(), "a revisão devolvida é a que a leitura vê");
+    assert_eq!(back["points"], o["points"]);
+
+    // índices lidos antes da edição não editam mais nada
+    let e = act_err(&mut s, "EDIT_POINTS", edit(json!({"stroke_rev": rev0, "ops": [{"op": "delete", "index": 1}]})));
+    assert_eq!(e.code, code::STALE_REVISION);
+    // if_revision também serve de guarda (e é conferida pela sessão)
+    let e = act_err(&mut s, "EDIT_POINTS", edit(json!({"if_revision": rev_doc, "ops": [{"op": "corner", "index": 0, "on": true}]})));
+    assert_eq!(e.code, code::STALE_REVISION);
+
+    // um desfazer volta os 3 pontos originais
+    act(&mut s, "UNDO", json!({}));
+    let undone = act(&mut s, "READ_POINTS", json!({"cut": cut, "frame": 0, "layer": line, "stroke": stroke}));
+    assert_eq!(undone["stroke_rev"], rev0.as_str());
+    assert_eq!(undone["point_count"], 3);
+}

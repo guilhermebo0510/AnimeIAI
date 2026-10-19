@@ -12,6 +12,7 @@ use super::commands::{self as cmds, NodeId};
 use super::editor::*;
 use super::ui_kit::Env;
 use aiai_core::*;
+use aiai_tools::points::delete_point;
 use egui::{Color32, Pos2, Stroke as EStroke, Vec2};
 
 struct Ctx {
@@ -94,76 +95,10 @@ pub(crate) fn delete_selected(env: &mut Env) {
     env.ed.node_sel = None;
 }
 
-fn delete_point(s: &mut Stroke, i: usize) -> bool {
-    if s.points.len() <= 2 || i >= s.points.len() {
-        return false;
-    }
-    s.points.remove(i);
-    if s.geometry == StrokeGeometry::Bezier {
-        s.geometry = StrokeGeometry::Spline;
-    }
-    true
-}
-
-/// Lugar na curva mais perto de `p`: (distância, índice do segmento, ponto na curva, fração no segmento).
-fn nearest_on_curve(s: &Stroke, p: Vec2) -> Option<(f32, usize, Vec2, f32)> {
-    let flat = aiai_paint::flatten_points(s);
-    if flat.len() < 2 || s.points.len() < 2 {
-        return None;
-    }
-    // onde cada ponto de controle cai na curva achatada (a curva passa por eles, em ordem)
-    let mut at = Vec::with_capacity(s.points.len());
-    let mut from = 0usize;
-    for q in &s.points {
-        let mut best = (f32::MAX, from);
-        for (k, f) in flat.iter().enumerate().skip(from) {
-            let d = (f.0 - q.x).hypot(f.1 - q.y);
-            if d < best.0 {
-                best = (d, k);
-            }
-            if d < 1e-3 {
-                break;
-            }
-        }
-        at.push(best.1);
-        from = best.1;
-    }
-    let (mut bd, mut bk, mut bt) = (f32::MAX, 0usize, 0.0f32);
-    for k in 0..flat.len() - 1 {
-        let (d, t) = seg_dist(p, Vec2::new(flat[k].0, flat[k].1), Vec2::new(flat[k + 1].0, flat[k + 1].1));
-        if d < bd {
-            (bd, bk, bt) = (d, k, t);
-        }
-    }
-    let on = Vec2::new(flat[bk].0 + (flat[bk + 1].0 - flat[bk].0) * bt, flat[bk].1 + (flat[bk + 1].1 - flat[bk].1) * bt);
-    let n = s.points.len();
-    let segs = if s.closed { n } else { n - 1 };
-    let mut seg = 0usize;
-    for (i, &a) in at.iter().enumerate().take(segs) {
-        if a <= bk {
-            seg = i;
-        }
-    }
-    let (a, b) = (at[seg], if seg + 1 < n { at[seg + 1] } else { flat.len() - 1 });
-    let frac = if b > a { ((bk as f32 + bt) - a as f32) / (b - a) as f32 } else { 0.5 };
-    Some((bd, seg, on, frac.clamp(0.0, 1.0)))
-}
-
-/// Põe um ponto na curva perto de `p` (até `tol`); devolve o índice novo.
+/// Põe um ponto na curva perto de `p` (até `tol`); devolve o índice novo. A lógica é a de `aiai_tools::points`, a
+/// mesma que a bridge usa (EDIT_POINTS).
 fn insert_at(s: &mut Stroke, p: Vec2, tol: f32) -> Option<usize> {
-    let (d, seg, on, f) = nearest_on_curve(s, p)?;
-    if d > tol {
-        return None;
-    }
-    let n = s.points.len();
-    let (a, b) = (s.points[seg], s.points[(seg + 1) % n]);
-    let q = StrokePoint { x: on.x, y: on.y, pressure: a.pressure + (b.pressure - a.pressure) * f, tilt: None, t: None, corner: false, width: a.width + (b.width - a.width) * f };
-    s.points.insert(seg + 1, q);
-    // Bézier tem 3n+1 pontos: vira spline (passa pelos mesmos pontos de passagem); na poligonal a forma não muda
-    if s.geometry == StrokeGeometry::Bezier {
-        s.geometry = StrokeGeometry::Spline;
-    }
-    Some(seg + 1)
+    aiai_tools::points::insert_on_curve(s, p.x, p.y, tol)
 }
 
 /// Clique no canvas com Editar pontos. `pix` = tamanho de 1 px de tela em px do cel.

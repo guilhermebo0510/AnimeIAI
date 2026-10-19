@@ -18,6 +18,7 @@ pub mod fx2d;
 pub mod guide;
 pub mod import;
 pub mod paint;
+pub mod points;
 pub mod preprod;
 pub mod preview;
 pub mod production;

@@ -1,5 +1,5 @@
 //! Ações de ferramenta que só dependem do documento (sem UI): `RENDER`, `DRAW_CURVES`, `FILL`, `LINT`, `PAINT`, `GRADIENT`,
-//! `TRANSFORM`, `REPEAT` e `BRUSH_PRESETS`. Cada operação de `aiai-tools` devolve um `Command`; aqui ele é aplicado pela
+//! `TRANSFORM`, `REPEAT`, `BRUSH_PRESETS`, `READ_POINTS` e `EDIT_POINTS`. Cada operação de `aiai-tools` devolve um `Command`; aqui ele é aplicado pela
 //! `CoreSession` (autor `agent:claude` por padrão, `author`/`if_revision` opcionais), então entra no undo/redo e no log e
 //! funciona igual no app, na bridge e no modo headless. As mutações devolvem o `Outcome` + `can_undo`/`can_redo`.
 //!
@@ -9,6 +9,11 @@
 //! `PAINT`: `preset` pode ser um objeto completo, o NOME de um preset de `BRUSH_PRESETS` (sem diferenciar maiúsculas) ou um
 //! objeto parcial com `name` de um preset conhecido (os campos dados sobrescrevem o preset); `preset_overrides` (objeto) é
 //! mesclado por cima em qualquer caso.
+//!
+//! `READ_POINTS {cut, frame, layer, stroke? | at?: [x,y] do canvas, tolerance?}` devolve os pontos do traço (índice, x/y
+//! no cel e no canvas, pressão, canto, multiplicador e largura em px) com `stroke_rev` e `point_count`.
+//! `EDIT_POINTS {cut, frame, layer, stroke, stroke_rev?, point_count?, space?, ops}` edita em lote num passo de desfazer;
+//! exige ao menos uma guarda (`stroke_rev`, `point_count` ou `if_revision`) e recusa com `-32010` se ela não bater.
 
 use crate::core_ops::{DEFAULT_AUTHOR, core_error, obj, opt_bool, opt_str, opt_u64, outcome_json};
 use crate::params_check::check_keys;
@@ -20,13 +25,14 @@ use aiai_tools::ToolError;
 use aiai_tools::draw::{DrawRequest, draw_command};
 use aiai_tools::fill::{FillRequest, fill_command, lint_with};
 use aiai_tools::paint::{GradientRequest, PaintRequest, gradient_command, paint_command};
+use aiai_tools::points::{PointsEditRequest, PointsRequest, cel_placement, describe, edit_points, read_points};
 use aiai_tools::transform::{RepeatRequest, TransformRequest, repeat_command, transform_command};
 use base64::Engine as _;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 use std::path::Path;
 
-pub const TOOL_ACTIONS: &[&str] = &["RENDER", "DRAW_CURVES", "FILL", "LINT", "PAINT", "GRADIENT", "TRANSFORM", "REPEAT", "ERASE_VECTOR", "BRUSH_PRESETS"];
+pub const TOOL_ACTIONS: &[&str] = &["RENDER", "DRAW_CURVES", "FILL", "LINT", "PAINT", "GRADIENT", "TRANSFORM", "REPEAT", "ERASE_VECTOR", "BRUSH_PRESETS", "READ_POINTS", "EDIT_POINTS"];
 
 /// Todas as ações de ferramenta de documento: as de aqui + as de [`crate::production_tools`].
 pub fn is_tool_action(action: &str) -> bool {
@@ -38,7 +44,7 @@ pub fn is_tool_action(action: &str) -> bool {
 
 /// Ações de ferramenta que mudam o documento.
 pub fn is_mutating_tool(action: &str) -> bool {
-    matches!(action, "DRAW_CURVES" | "FILL" | "PAINT" | "GRADIENT" | "TRANSFORM" | "REPEAT" | "ERASE_VECTOR") || crate::production_tools::is_mutating(action) || crate::preprod_tools::is_mutating(action) || crate::review_tools::is_mutating(action)
+    matches!(action, "DRAW_CURVES" | "FILL" | "PAINT" | "GRADIENT" | "TRANSFORM" | "REPEAT" | "ERASE_VECTOR" | "EDIT_POINTS") || crate::production_tools::is_mutating(action) || crate::preprod_tools::is_mutating(action) || crate::review_tools::is_mutating(action)
         || crate::satsuei_tools::is_mutating(action)
         || crate::preview_tools::is_mutating(action)
 }
@@ -50,6 +56,7 @@ pub fn tool_error(e: ToolError) -> BridgeError {
         ToolError::NotFound(m) => BridgeError::invalid_params(format!("não encontrado: {m}")),
         ToolError::Invalid(m) => BridgeError::invalid_params(m),
         ToolError::Render(m) => BridgeError::failed(format!("render: {m}")),
+        ToolError::Stale(m) => BridgeError::new(code::STALE_REVISION, m),
     }
 }
 
@@ -88,6 +95,11 @@ pub fn handle_tool_action(session: &mut CoreSession, action: &str, params: &Valu
             let cmd = repeat_command(&session.project, &r).map_err(tool_error)?;
             apply(session, params, cmd)
         }),
+        "READ_POINTS" => request::<PointsRequest>(params, "READ_POINTS").and_then(|r| {
+            let out = read_points(&session.project, &r).map_err(tool_error)?;
+            serde_json::to_value(out).map_err(|e| BridgeError::failed(e.to_string()))
+        }),
+        "EDIT_POINTS" => edit_points_action(session, params),
         _ => return None,
     })
 }
@@ -109,6 +121,28 @@ pub(crate) fn apply(session: &mut CoreSession, params: &Value, cmd: Command) -> 
     let if_revision = opt_u64(&p, "if_revision")?;
     let outcome = session.apply_as(cmd, &author, if_revision).map_err(core_error)?;
     outcome_json(session, &outcome)
+}
+
+// ------------------------------------------------------------------------------------------------------- pontos
+
+/// Edição de pontos: exige guarda (índices lidos antes de outra mudança nunca editam o ponto errado) e devolve o
+/// Outcome com o traço como ficou (`stroke_rev`, `point_count`, `points`) e os índices dos pontos inseridos.
+fn edit_points_action(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
+    let r = request::<PointsEditRequest>(params, "EDIT_POINTS")?;
+    let p = obj(params)?;
+    if r.stroke_rev.is_none() && r.point_count.is_none() && opt_u64(&p, "if_revision")?.is_none() {
+        return Err(BridgeError::invalid_params("EDIT_POINTS exige uma guarda: 'stroke_rev' (de READ_POINTS), 'point_count' ou 'if_revision'"));
+    }
+    let edit = edit_points(&session.project, &r).map_err(tool_error)?;
+    let mut out = apply(session, params, edit.command)?;
+    let place = cel_placement(&session.project, &r.cut, &r.layer, r.frame).map_err(tool_error)?;
+    let now = describe(&session.project, &edit.cel, &edit.stroke, &place);
+    out["stroke"] = json!(now.stroke);
+    out["stroke_rev"] = json!(now.stroke_rev);
+    out["point_count"] = json!(now.point_count);
+    out["points"] = serde_json::to_value(&now.points).map_err(|e| BridgeError::failed(e.to_string()))?;
+    out["inserted"] = json!(edit.inserted);
+    Ok(out)
 }
 
 // ------------------------------------------------------------------------------------------------------- pincéis

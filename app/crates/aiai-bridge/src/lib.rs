@@ -8,7 +8,7 @@
 //! * [`server`] — threads + limites + auth; NDJSON e HTTP na mesma porta; [`BridgeServer::start`];
 //! * [`host`] — ponte para a thread da UI (canal limitado, prazo, cancelamento): [`BridgeReceiver::try_recv_all`];
 //! * [`core_ops`] — ações de documento que só precisam da `CoreSession` ([`core_ops::handle_core_action`]);
-//! * [`core_tools`] — RENDER, DRAW_CURVES, FILL, LINT, PAINT, GRADIENT, TRANSFORM, REPEAT, BRUSH_PRESETS (também só o documento);
+//! * [`core_tools`] — RENDER, DRAW_CURVES, FILL, LINT, PAINT, GRADIENT, TRANSFORM, REPEAT, BRUSH_PRESETS, READ_POINTS, EDIT_POINTS (também só o documento);
 //! * [`preview_tools`] — prévia e entrega: RENDER_SHEET, EDIT_PREVIEW, EDIT_MIX, TTS_REGENERATE;
 //! * [`preprod_tools`] — pré-produção (S16): SCRIPT, BEATS, STORYBOARD, ANIMATIC, CUTS_FROM_STORYBOARD;
 //! * [`satsuei_tools`] — satsuei, câmera e cor tipados (S13/S15): EFFECTS, GRADE, CAMERA, LAYER_MOTION;
