@@ -22,6 +22,12 @@ A auditoria foi lida inteira e cada afirmação de P0 foi conferida no código a
 | 1.3 Vetor rasterizado antes da câmera | **feito** | Cel só de vetor com transformação é rasterizado já no lugar final. Teste com zoom 4×. |
 | 1.8 Rosas e Nuvem (carimbo de uma cor, escamas) | pendente (P1) | Precisa de carimbo bicolor/multiponta (auditoria 4.9.3). |
 
+## P1 feito
+
+| Item | Status |
+|---|---|
+| 7 Pressão da mesa no 1º ponto | **feito** (`63b8cd2`): o 1º ponto pega a pressão do `Touch Start` do mesmo quadro (antes ou depois do botão); achado no teste: os pontos de alcance do estabilizador ao soltar viravam 1,0 (fim do traço grosso) e agora mantêm a última pressão; mouse volta a 1,0. Lido de volta no log do app (0,15 → … → 0,2) e `evidencias/S23/auditoria/pressao_1o_ponto.png`. WM_POINTER/inclinação/curva de pressão: pendente. |
+
 ## P1/P2: registrados, não começados
 
 Desempenho em 4K (cache por camada, tiles locais, cache do balde), mesa digitalizadora (pressão no 1º ponto, WM_POINTER), áudio ao vivo e forma de onda, importar imagem e Sub View, miniaturas de pincel, edição de nós e borracha por interseção, onion skin, iro-tresse, 3D cel-shading, cor linear. A ordem segue a Parte 5 da auditoria, depois do curta.
