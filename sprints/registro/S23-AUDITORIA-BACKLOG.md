@@ -28,9 +28,37 @@ A auditoria foi lida inteira e cada afirmação de P0 foi conferida no código a
 |---|---|
 | 7 Pressão da mesa no 1º ponto | **feito** (`63b8cd2`): o 1º ponto pega a pressão do `Touch Start` do mesmo quadro (antes ou depois do botão); achado no teste: os pontos de alcance do estabilizador ao soltar viravam 1,0 (fim do traço grosso) e agora mantêm a última pressão; mouse volta a 1,0. Lido de volta no log do app (0,15 → … → 0,2) e `evidencias/S23/auditoria/pressao_1o_ponto.png`. WM_POINTER/inclinação/curva de pressão: pendente. |
 
-## P1/P2: registrados, não começados
+## P1 (Parte 5, itens 6 a 10)
 
-Desempenho em 4K (cache por camada, tiles locais, cache do balde), mesa digitalizadora (pressão no 1º ponto, WM_POINTER), áudio ao vivo e forma de onda, importar imagem e Sub View, miniaturas de pincel, edição de nós e borracha por interseção, onion skin, iro-tresse, 3D cel-shading, cor linear. A ordem segue a Parte 5 da auditoria, depois do curta.
+Medidas no caso da auditoria (4K, 24 camadas; `evidencias/S23/desempenho/bench4k.json`, perfil de teste):
+
+| Item | Status | O que foi feito / medido |
+|---|---|---|
+| 6 Cache por camada no render | **feito** (foto do composto abaixo) | Cachear as 24 camadas em 4K custaria ~3 GB; o canvas guarda uma foto do composto abaixo da primeira camada que mudou. Re-render depois de um traço: 1890 → 339 ms (21 camadas da foto), igual pixel a pixel ao render completo (teste). |
+| 6 Pincel local aos tiles | **feito** | Decodifica e pinta só os tiles tocados: 54 → 16 ms; igual ao canvas inteiro com textura, borrador e folhagem (teste). |
+| 6 Cache do balde | **feito** | 2º clique sem mexer na linha: 1007 → 6 ms; 1º clique 850 → 650 ms (distância em paralelo). |
+| 6 Máscara do balde recortada | não reproduziu | `mask_of` já recorta na caixa da região. |
+| 6 Tamanho do corte editável | **feito** | Propriedades: projeto, Full HD, QHD, 4K, panorama 2× horizontal/vertical, personalizado; Começo rápido do canvas respeita o tamanho. Mouse real: traço em 4K ~180 ms no build de depuração. |
+| 7 Pressão no 1º ponto | não reproduziu | Já vinha do toque do mesmo quadro, com teste. O `Win32_UI_Input_Pointer` citado não está no Cargo.toml; o winit já entrega caneta Windows Ink (WM_POINTER) como toque com força. |
+| 7 Curva de pressão | **feito** | Preferências: mínimo + expoente com desenho da curva; aviso se chegou caneta com pressão. |
+| 7 WinTab, inclinação, borracha da caneta | pendente | Precisa de mesa física para validar. |
+| 8 Som ao vivo | **feito** | Mixagem do corte pelo winmm junto com a reprodução, volta do laço, scrub do cabeçote; liga/desliga no painel Áudio. |
+| 8 Forma de onda | **feito** (mixer) | Picos a cada 10 ms nos clipes. Faixa compacta na linha do tempo principal: pendente. |
+| 8 Play na Edição | **feito** | Som da edição inteira; monitor segue como rascunho. |
+| 8 Botões de áudio | **feito** (menos BGM) | Importar WAV (IMPORT_AUDIO/aiai_import_audio), efeito, fala por TTS, lip-sync do clipe selecionado. BGM precisa de editor de música: segue pelo `aiai_bgm`. |
+| 9 Importar imagem | **feito** | IMPORT_IMAGE/aiai_import_image (PNG, JPEG, WebP, BMP, TIFF, GIF), Arquivo > Importar imagem, soltar arquivo na janela. |
+| 9 Exportar | **feito** (quadro PNG) | Arquivo > Exportar quadro. PSD, XDTS, OTIO, SVG: pendente. |
+| 9 Folha de e-conte na Prancha | **feito** | |
+| 9 Sub View | pendente | |
+| 10 Miniaturas e ajustes do pincel | **feito** | Miniatura desenhada pelo motor; parâmetros numa cópia do preset. |
+| 10 Borracha vetorial | **feito** | Trecho tocado (padrão), até a interseção, traço inteiro; ERASE_VECTOR/aiai_erase. |
+| 10 Seletor de cor fixo, 3 camadas no Começo rápido | **feito** | |
+| 10 Linha/curva/forma na caneta, edição de nós e largura, varinha na seleção, alças de escala/rotação no Mover | pendente | |
+| **Achado no teste** | **feito** | Slider de opacidade da camada reescrevia 0,6 a cada quadro (f32 arredondado), enchia o histórico e travava o canvas; teste de regressão. |
+
+## P2: registrado, não começado
+
+Iro-tresse e modelos de cor por iluminação, partículas e efeitos na interface, 3D cel-shading e importação .obj/.gltf, onion skin, dope sheet, rig 2D, cor linear/HDR, empacotamento sem dependência externa, multiartista, canetas calibradas, réguas com snap, importador .sut/.abr.
 
 ## Curta (auditoria 3.2)
 
