@@ -183,6 +183,9 @@ impl StudioApp {
             "overflow": self.layout_overflow(ctx),
             "dialogs": dialogs,
             "popup_open": egui::Popup::is_any_open(ctx),
+            "prefs_tab": self.prefs_tab.key(),
+            "key_capture": self.key_capture.map(|a| a.id()),
+            "shortcuts": crate::keymap::ACTIONS.iter().map(|a| (a.1.to_owned(), Value::from(self.ed.keys.label(a.0)))).collect::<Map<String, Value>>(),
             "focused": {
                 "window": vp.focused,
                 "text_input": ctx.egui_wants_keyboard_input(),
@@ -266,7 +269,7 @@ impl StudioApp {
     }
 
     /// `UI_ACTION {action, ...}`: set_workspace {workspace}, select_tool {tool}, toggle_panel {panel, visible?},
-    /// set_theme {theme: light|dark}, set_language {language: pt|en}, open_dialog/close_dialog {dialog: about|prefs|start},
+    /// set_theme {theme: light|dark}, set_language {language: pt|en}, open_dialog/close_dialog {dialog: about|prefs|start, tab?: general|keys|folders|performance},
     /// set_window_size {width, height, maximized?} (pontos lógicos),
     /// select_layer {layer}, select_cut {cut}, set_frame {frame}, set_color {color}, fit_view.
     /// Apelidos aceitos: set_tool = select_tool; open_panel = toggle_panel com visible=true.
@@ -366,7 +369,12 @@ impl StudioApp {
                 let open = action == "open_dialog";
                 match text(&m, &["dialog", "value"]) {
                     Some("about") => self.about_open = open,
-                    Some("prefs") => self.prefs_open = open,
+                    Some("prefs") => {
+                        self.prefs_open = open;
+                        if let Some(tab) = text(&m, &["tab"]).and_then(super::prefs_ui::PrefsTab::from_key) {
+                            self.prefs_tab = tab;
+                        }
+                    }
                     Some("start") => self.start.open = open,
                     other => return Err(BridgeError::invalid_params(format!("diálogo desconhecido: {other:?} (about|prefs|start)"))),
                 }

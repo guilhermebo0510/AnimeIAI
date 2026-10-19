@@ -201,6 +201,37 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("prefs.language", "Idioma", "Language"),
     ("prefs.zoom", "Zoom da interface", "Interface zoom"),
     ("prefs.file", "Arquivo", "File"),
+    ("prefs.tab.general", "Geral", "General"),
+    ("prefs.tab.keys", "Atalhos", "Shortcuts"),
+    ("prefs.tab.folders", "Pastas", "Folders"),
+    ("prefs.tab.performance", "Desempenho", "Performance"),
+    ("prefs.start", "Tela inicial", "Start screen"),
+    ("prefs.projects_dir", "Pasta de projetos", "Projects folder"),
+    ("prefs.projects_dir_help", "Onde Abrir e Salvar como começam quando não há projeto aberto com pasta.", "Where Open and Save as start when no saved project is open."),
+    ("prefs.default", "padrão", "default"),
+    ("prefs.choose", "Escolher…", "Choose…"),
+    ("prefs.gpu", "Placa de vídeo", "Graphics card"),
+    ("prefs.gpu.dedicated", "Dedicada (mais rápida)", "Dedicated (faster)"),
+    ("prefs.gpu.integrated", "Integrada (economiza bateria)", "Integrated (saves battery)"),
+    ("prefs.gpu.current", "Em uso agora", "In use now"),
+    ("prefs.restart", "Vale ao abrir o programa de novo.", "Takes effect the next time the program starts."),
+    ("keys.help", "Clique no atalho e aperte a nova tecla. Esc cancela, Backspace deixa sem atalho. Uma tecla já usada sai da outra ação.", "Click a shortcut and press the new key. Esc cancels, Backspace clears it. A key already in use is taken from the other action."),
+    ("keys.press", "Aperte a tecla…", "Press a key…"),
+    ("keys.none", "—", "—"),
+    ("keys.click_to_change", "Clique para trocar", "Click to change"),
+    ("keys.default", "Padrão", "Default"),
+    ("keys.reset_all", "Restaurar todos", "Restore all"),
+    ("keys.no_conflicts", "Nenhum conflito.", "No conflicts."),
+    ("keys.conflicts", "{n} conflito(s)", "{n} conflict(s)"),
+    ("keys.moved", "{key} saiu de \"{from}\" e agora é de \"{to}\"", "{key} was taken from \"{from}\" and now belongs to \"{to}\""),
+    ("keys.size_down", "Diminuir o pincel", "Smaller brush"),
+    ("keys.size_up", "Aumentar o pincel", "Bigger brush"),
+    ("keys.frame_prev", "Quadro anterior", "Previous frame"),
+    ("keys.frame_next", "Próximo quadro", "Next frame"),
+    ("keys.frame_first", "Primeiro quadro", "First frame"),
+    ("keys.frame_last", "Último quadro", "Last frame"),
+    ("keys.view_fit", "Enquadrar a vista", "Fit view"),
+    ("keys.view_actual", "Zoom 100%", "Zoom 100%"),
     ("prefs.no_session", "Sessão desativada: nada é salvo.", "Session disabled: nothing is saved."),
     // Editor (S03 B2): canvas, camadas, cores, linha do tempo, propriedades
     ("panel.project.title", "Projeto", "Project"),
@@ -859,6 +890,8 @@ mod tests {
             ("app/ui_kit.rs", include_str!("app/ui_kit.rs")),
             ("app/actions.rs", include_str!("app/actions.rs")),
             ("app/start.rs", include_str!("app/start.rs")),
+            ("app/prefs_ui.rs", include_str!("app/prefs_ui.rs")),
+            ("keymap.rs", include_str!("keymap.rs")),
             ("app/panels/board.rs", include_str!("app/panels/board.rs")),
             ("app/panels/outline.rs", include_str!("app/panels/outline.rs")),
             ("app/panels/script.rs", include_str!("app/panels/script.rs")),
@@ -882,7 +915,7 @@ mod tests {
             ("cli.rs", include_str!("cli.rs")),
             ("prefs.rs", include_str!("prefs.rs")),
         ];
-        const PREFIXES: &[&str] = &["workspace.", "tool.", "panel.", "menu.", "status.", "about.", "prefs.", "lang.", "doc.", "dialog.", "confirm.", "msg.", "blend.", "canvas.", "cel.", "cmd.", "err.", "fill.", "layer.", "layers.", "opt.", "palette.", "project.", "props.", "role.", "sel.", "stab.", "timeline.", "tip.", "tree.", "unit.", "outline.", "script.", "shots.", "board.", "prod.", "editing.", "deliver.", "audio.", "fx.", "char.", "start."];
+        const PREFIXES: &[&str] = &["workspace.", "tool.", "panel.", "menu.", "status.", "about.", "prefs.", "lang.", "doc.", "dialog.", "confirm.", "msg.", "blend.", "canvas.", "cel.", "cmd.", "err.", "fill.", "layer.", "layers.", "opt.", "palette.", "project.", "props.", "role.", "sel.", "stab.", "timeline.", "tip.", "tree.", "unit.", "outline.", "script.", "shots.", "board.", "prod.", "editing.", "deliver.", "audio.", "fx.", "char.", "start.", "keys."];
         let known: HashSet<&str> = TABLE.iter().map(|(k, _, _)| *k).collect();
         let mut used = 0;
         for (file, src) in SOURCES {
@@ -894,7 +927,9 @@ mod tests {
                 let Some(j) = after.find('"') else { break };
                 let lit = &after[..j];
                 rest = &after[j + 1..];
-                let is_tr_arg = src[..src.len() - rest.len() - lit.len() - 2].ends_with("tr(");
+                // `tr(` como chamada própria (`push_str(` também termina em "tr(")
+                let before = &src[..src.len() - rest.len() - lit.len() - 2];
+                let is_tr_arg = before.strip_suffix("tr(").is_some_and(|b| !b.ends_with(|c: char| c.is_alphanumeric() || c == '_'));
                 let looks_like_key = PREFIXES.iter().any(|p| lit.starts_with(p)) && !lit.contains(' ') && !lit.contains('{') && !lit.ends_with(".json");
                 if is_tr_arg || looks_like_key {
                     used += 1;

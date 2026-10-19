@@ -467,47 +467,40 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
     if ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(ctx) {
         return;
     }
+    use crate::keymap::Action as A;
     use egui::{Key, Modifiers};
     let none = Modifiers::NONE;
+    let keys = env.ed.keys.clone();
     let (tool_key, size_dir, enter, esc, step, home_end, fit, one) = ctx.input_mut(|i| {
+        // atalho configurável (Preferências > Atalhos): só dispara com os modificadores exatos
+        let mut hit = |a: A| keys.get(a).is_some_and(|c| c.take(i));
         let mut tk: Option<ToolId> = None;
-        for (k, t) in [
-            (Key::V, ToolId::Move),
-            (Key::B, ToolId::Brush),
-            (Key::P, ToolId::Pen),
-            (Key::E, ToolId::Eraser),
-            (Key::G, ToolId::Fill),
-            (Key::L, ToolId::Lasso),
-            (Key::I, ToolId::Eyedropper),
-            (Key::H, ToolId::Hand),
-            (Key::Z, ToolId::Zoom),
+        for (a, t) in [
+            (A::ToolMove, ToolId::Move),
+            (A::ToolBrush, ToolId::Brush),
+            (A::ToolPen, ToolId::Pen),
+            (A::ToolEraser, ToolId::Eraser),
+            (A::ToolFill, ToolId::Fill),
+            (A::ToolLasso, ToolId::Lasso),
+            (A::ToolEyedropper, ToolId::Eyedropper),
+            (A::ToolHand, ToolId::Hand),
+            (A::ToolZoom, ToolId::Zoom),
         ] {
-            if i.consume_key(none, k) {
+            if hit(a) {
                 tk = Some(t);
             }
         }
-        let mut sd = 0i32;
-        if i.consume_key(none, Key::OpenBracket) {
-            sd -= 1;
-        }
-        if i.consume_key(none, Key::CloseBracket) {
-            sd += 1;
-        }
-        let mut st = 0i32;
-        if i.consume_key(none, Key::ArrowLeft) {
-            st -= 1;
-        }
-        if i.consume_key(none, Key::ArrowRight) {
-            st += 1;
-        }
-        let mut he = 0i32;
-        if i.consume_key(none, Key::Home) {
-            he = -1;
-        }
-        if i.consume_key(none, Key::End) {
-            he = 1;
-        }
-        (tk, sd, i.consume_key(none, Key::Enter), i.consume_key(none, Key::Escape), st, he, i.consume_key(Modifiers::COMMAND, Key::Num0), i.consume_key(Modifiers::COMMAND, Key::Num1))
+        let sd = hit(A::SizeUp) as i32 - hit(A::SizeDown) as i32;
+        let st = hit(A::FrameNext) as i32 - hit(A::FramePrev) as i32;
+        let he = if hit(A::FrameFirst) {
+            -1
+        } else if hit(A::FrameLast) {
+            1
+        } else {
+            0
+        };
+        let (fit, one) = (hit(A::ViewFit), hit(A::ViewActual));
+        (tk, sd, i.consume_key(none, Key::Enter), i.consume_key(none, Key::Escape), st, he, fit, one)
     });
     if let Some(t) = tool_key {
         *env.tool = t;

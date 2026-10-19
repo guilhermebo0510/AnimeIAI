@@ -1,0 +1,103 @@
+{
+  "quando": "2026-10-19T01:56:16",
+  "segundos": 47.1,
+  "projeto": "C:/Users/leona/AppData/Local/Temp/claude/C--AnimeIAI/1fbeaa09-59d5-49f1-810c-282cc5d92e93/scratchpad/proj/ultima-rosa.aiai",
+  "janela": {
+    "client_origin_screen_physical": [
+      0.0,
+      29.0
+    ],
+    "inner_rect_logical": [
+      0.0,
+      23.2,
+      1536.0,
+      792.8
+    ],
+    "maximized": true,
+    "minimized": false,
+    "size_logical": [
+      1536.0,
+      792.81
+    ],
+    "size_physical": [
+      1920.0,
+      991.02
+    ],
+    "title": "AnimeIAI - 最後の一輪 — A última rosa"
+  },
+  "passos": [
+    {
+      "step": "janela maximizada e em foco",
+      "ok": true,
+      "titulo": "AnimeIAI - 最後の一輪 — A última rosa"
+    },
+    {
+      "step": "Editar > Preferências abre",
+      "ok": true,
+      "dialogos": [
+        "prefs"
+      ]
+    },
+    {
+      "step": "aba general das Preferências",
+      "ok": true,
+      "aba": "general"
+    },
+    {
+      "step": "aba folders das Preferências",
+      "ok": true,
+      "aba": "folders"
+    },
+    {
+      "step": "aba performance das Preferências",
+      "ok": true,
+      "aba": "performance"
+    },
+    {
+      "step": "aba keys das Preferências",
+      "ok": true,
+      "aba": "keys"
+    },
+    {
+      "step": "captura: K vira o atalho do balde",
+      "ok": true,
+      "captura": "tool.fill",
+      "balde": "K"
+    },
+    {
+      "step": "conflito: V vai para o pincel e o mover fica sem atalho",
+      "ok": true,
+      "pincel": "V",
+      "mover": ""
+    },
+    {
+      "step": "teclas novas no canvas: K balde, V pincel",
+      "ok": true,
+      "ativas": [
+        "fill",
+        "brush"
+      ]
+    },
+    {
+      "step": "Restaurar todos volta ao padrão",
+      "ok": true,
+      "atalhos": {
+        "tool.fill": "G",
+        "tool.brush": "B",
+        "tool.move": "V"
+      }
+    }
+  ],
+  "falhas": 0,
+  "ui_sem_resposta_10s": [],
+  "vigia": {
+    "physical": 0,
+    "injected": 20,
+    "moves_physical": 0,
+    "clicks_physical": 0,
+    "wheel_physical": 0,
+    "first_physical_ms": -1,
+    "seconds": 46.2,
+    "contaminated": false
+  }
+}

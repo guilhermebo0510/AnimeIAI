@@ -35,8 +35,12 @@ fn main() -> eframe::Result {
     };
     let (w, h) = cli.size.unwrap_or((1440.0, 900.0));
     let mut wgpu_setup = egui_wgpu::WgpuSetupCreateNew::without_display_handle();
-    // GTX 1650 (GPU dedicada) em vez da Intel UHD (licao 24)
-    wgpu_setup.power_preference = wgpu::PowerPreference::HighPerformance;
+    // GTX 1650 (GPU dedicada) em vez da Intel UHD (licao 24), salvo se o usuário escolheu a integrada nas Preferências
+    let startup = aiai_studio::prefs::load_for_startup(cli.no_session, cli.session_file.as_deref());
+    wgpu_setup.power_preference = match startup.gpu {
+        aiai_studio::prefs::GpuPref::Dedicated => wgpu::PowerPreference::HighPerformance,
+        aiai_studio::prefs::GpuPref::Integrated => wgpu::PowerPreference::LowPower,
+    };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("AnimeIAI")

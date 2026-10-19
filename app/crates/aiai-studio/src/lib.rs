@@ -9,6 +9,7 @@ pub mod brand;
 pub mod cli;
 pub mod i18n;
 pub mod icons;
+pub mod keymap;
 pub mod layout;
 pub mod prefs;
 pub mod sysmem;

@@ -5,7 +5,7 @@
 use super::StudioApp;
 use crate::i18n::tr;
 use aiai_bridge::core_ops::handle_core_action;
-use egui::{Align2, Key, Modifiers};
+use egui::{Align2, Key};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -24,6 +24,8 @@ pub(crate) enum Pending {
 pub(crate) enum DialogKind {
     Open,
     SaveAs,
+    /// Pasta de projetos das Preferências.
+    ProjectsDir,
 }
 
 pub(crate) struct DialogJob {
@@ -219,9 +221,14 @@ impl StudioApp {
         let title = match kind {
             DialogKind::Open => tr("dialog.open_title"),
             DialogKind::SaveAs => tr("dialog.save_title"),
+            DialogKind::ProjectsDir => tr("prefs.projects_dir"),
         }
         .to_owned();
-        let start = self.core.path.as_deref().and_then(Path::parent).map(Path::to_path_buf).or_else(default_projects_dir);
+        let prefs_dir = self.prefs.projects_dir.clone().filter(|d| d.is_dir());
+        let start = match kind {
+            DialogKind::ProjectsDir => prefs_dir.or_else(default_projects_dir),
+            _ => self.core.path.as_deref().and_then(Path::parent).map(Path::to_path_buf).or(prefs_dir).or_else(default_projects_dir),
+        };
         let file_name = suggested_folder_name(self.doc_name());
         let spawned = std::thread::Builder::new().name("aiai-file-dialog".into()).spawn(move || {
             let mut d = rfd::FileDialog::new().set_title(title);
@@ -229,7 +236,7 @@ impl StudioApp {
                 d = d.set_directory(dir);
             }
             let picked = match kind {
-                DialogKind::Open => d.pick_folder(),
+                DialogKind::Open | DialogKind::ProjectsDir => d.pick_folder(),
                 DialogKind::SaveAs => d.set_file_name(file_name).save_file(),
             };
             let _ = tx.send(picked);
@@ -250,6 +257,10 @@ impl StudioApp {
                 if let Some(path) = picked {
                     match kind {
                         DialogKind::Open => self.doc_open_path(&path),
+                        DialogKind::ProjectsDir => {
+                            self.prefs.projects_dir = Some(path);
+                            self.mark_dirty();
+                        }
                         DialogKind::SaveAs => {
                             if self.doc_save_to(Some(&path)) {
                                 if let Some(p) = then {
@@ -264,6 +275,10 @@ impl StudioApp {
             Err(crossbeam_channel::TryRecvError::Empty) => ctx.request_repaint_after(std::time::Duration::from_millis(100)),
             Err(crossbeam_channel::TryRecvError::Disconnected) => self.dialog = None,
         }
+    }
+
+    pub(crate) fn request_projects_dir(&mut self) {
+        self.spawn_dialog(DialogKind::ProjectsDir, None);
     }
 
     pub(crate) fn dialog_open(&self) -> bool {
@@ -292,19 +307,23 @@ impl StudioApp {
         }
     }
 
-    /// Ctrl+N/O/S/Shift+S, Ctrl+Z, Ctrl+Shift+Z e Ctrl+Y. Desfazer/refazer ficam com o campo de texto quando ele tem o foco.
+    /// Novo/Abrir/Salvar/Salvar como/Desfazer/Refazer pelo mapa de atalhos (padrão Ctrl+N/O/S/Shift+S/Z/Shift+Z) e Ctrl+Y
+    /// fixo para refazer. Desfazer/refazer ficam com o campo de texto quando ele tem o foco; nada durante a captura de
+    /// atalho nas Preferências.
     pub(crate) fn doc_shortcuts(&mut self, ctx: &egui::Context) {
-        let ctrl = Modifiers::COMMAND;
-        let ctrl_shift = Modifiers::COMMAND | Modifiers::SHIFT;
+        use crate::keymap::Action as A;
+        if self.key_capture.is_some() {
+            return;
+        }
+        let keys = self.ed.keys.clone();
         // com um campo de texto focado, Ctrl+Z/Y são dele (o evento não pode ser consumido aqui)
         let text_focus = ctx.egui_wants_keyboard_input();
         let (new, open, save_as, save, redo_shift, redo_y, undo) = ctx.input_mut(|i| {
-            let (rs, ry, u) = if text_focus {
-                (false, false, false)
-            } else {
-                (i.consume_key(ctrl_shift, Key::Z), i.consume_key(ctrl, Key::Y), i.consume_key(ctrl, Key::Z))
-            };
-            (i.consume_key(ctrl, Key::N), i.consume_key(ctrl, Key::O), i.consume_key(ctrl_shift, Key::S), i.consume_key(ctrl, Key::S), rs, ry, u)
+            let mut hit = |a: A| keys.get(a).is_some_and(|c| c.take(i));
+            let (save_as, save, new, open) = (hit(A::FileSaveAs), hit(A::FileSave), hit(A::FileNew), hit(A::FileOpen));
+            let (rs, u) = if text_focus { (false, false) } else { (hit(A::EditRedo), hit(A::EditUndo)) };
+            let ry = !text_focus && crate::keymap::Chord::ctrl(Key::Y).take(i);
+            (new, open, save_as, save, rs, ry, u)
         });
         if new {
             self.request_new();
@@ -390,7 +409,7 @@ impl StudioApp {
 }
 
 /// Pasta inicial dos diálogos: `producoes/` ao lado do app, se existir.
-fn default_projects_dir() -> Option<PathBuf> {
+pub(crate) fn default_projects_dir() -> Option<PathBuf> {
     let p = PathBuf::from(r"C:\AnimeIAI\producoes");
     p.is_dir().then_some(p)
 }

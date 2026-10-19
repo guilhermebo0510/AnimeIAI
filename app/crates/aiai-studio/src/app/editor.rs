@@ -519,6 +519,8 @@ pub(crate) struct Editor {
     pub pending_latency: Option<PendingLatency>,
     pub latency: Option<Latency>,
     pub latency_log: Vec<Latency>,
+    /// Atalhos em uso (cópia das preferências; o app atualiza quando o usuário muda).
+    pub keys: crate::keymap::Keymap,
     /// Formulários do painel de projeto.
     pub form_duration: u32,
     pub form_custom_size: bool,
@@ -564,6 +566,7 @@ pub(crate) struct Editor {
 impl Default for Editor {
     fn default() -> Self {
         Editor {
+            keys: crate::keymap::Keymap::default(),
             cut: None,
             layer: None,
             frame: 0,

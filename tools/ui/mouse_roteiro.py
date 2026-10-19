@@ -319,6 +319,65 @@ def start_screen(run: Run) -> None:
     run.check("Recente reabre o projeto anterior", now["path"] == prev["path"] and "start" not in st()["dialogs"], projeto=now["name"])
 
 
+def prefs_and_keys(run: Run) -> None:
+    """Editar > Preferências, aba Atalhos: troca o balde para K, dá o V do mover ao pincel (conflito), usa as teclas
+    novas no canvas, confere a dica da prateleira e restaura tudo."""
+    x, y = center(st(), "ws_tab:animacao")
+    ps(f"foco; click {x} {y}")
+    settle(0.8)
+    x, y = center(st(), "menu:edit")
+    ps(f"foco; click {x} {y}")
+    settle(0.4)
+    x, y = center(st(), "menu_item:edit.prefs")
+    ps(f"foco; click {x} {y}")
+    settle(0.6)
+    run.check("Editar > Preferências abre", "prefs" in st()["dialogs"], dialogos=st()["dialogs"])
+    for tab in ("general", "folders", "performance", "keys"):
+        x, y = center(st(), f"prefs:tab:{tab}")
+        ps(f"foco; click {x} {y}")
+        settle(0.4)
+        ps(f"cap {run.out / f'prefs_{tab}.png'}")
+        run.check(f"aba {tab} das Preferências", st()["prefs_tab"] == tab, aba=st()["prefs_tab"])
+    x, y = center(st(), "keys:chord:tool.fill")
+    ps(f"foco; click {x} {y}")
+    settle(0.3)
+    cap_on = st()["key_capture"]
+    ps("foco; key k")
+    settle(0.4)
+    s = st()
+    run.check("captura: K vira o atalho do balde", cap_on == "tool.fill" and s["shortcuts"]["tool.fill"] == "K" and s["key_capture"] is None, captura=cap_on, balde=s["shortcuts"]["tool.fill"])
+    x, y = center(st(), "keys:chord:tool.brush")
+    ps(f"foco; click {x} {y}")
+    settle(0.3)
+    ps("foco; key v")
+    settle(0.4)
+    s = st()
+    ps(f"cap {run.out / 'prefs_keys_conflito.png'}")
+    run.check("conflito: V vai para o pincel e o mover fica sem atalho", s["shortcuts"]["tool.brush"] == "V" and s["shortcuts"]["tool.move"] == "", pincel=s["shortcuts"]["tool.brush"], mover=s["shortcuts"]["tool.move"])
+    aiai.call("UI_ACTION", {"action": "close_dialog", "dialog": "prefs"})  # o X da janela não tem retângulo registrado
+    settle(0.4)
+    cx, cy = center(st(), "canvas:area")
+    ps(f"foco; move {cx} {cy}; key k")
+    settle(0.3)
+    a1 = st()["active_tool"]
+    ps("foco; key v")
+    settle(0.3)
+    a2 = st()["active_tool"]
+    run.check("teclas novas no canvas: K balde, V pincel", (a1, a2) == ("fill", "brush"), ativas=[a1, a2])
+    x, y = center(st(), "tool:fill")
+    ps(f"foco; move {x} {y}; wait 900")
+    ps(f"cap {run.out / 'dica_balde_K.png'}")
+    aiai.call("UI_ACTION", {"action": "open_dialog", "dialog": "prefs", "tab": "keys"})
+    settle(0.5)
+    x, y = center(st(), "keys:reset_all")
+    ps(f"foco; click {x} {y}")
+    settle(0.4)
+    s = st()
+    run.check("Restaurar todos volta ao padrão", (s["shortcuts"]["tool.fill"], s["shortcuts"]["tool.brush"], s["shortcuts"]["tool.move"]) == ("G", "B", "V"), atalhos={k: s["shortcuts"][k] for k in ("tool.fill", "tool.brush", "tool.move")})
+    aiai.call("UI_ACTION", {"action": "close_dialog", "dialog": "prefs"})
+    settle(0.3)
+
+
 def main() -> int:
     out = Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -335,7 +394,9 @@ def main() -> int:
         ps("foco; max")
         settle(1.5)
         run.check("janela maximizada e em foco", st()["window"]["maximized"], titulo=st()["window"]["title"])
-        for phase in (workspaces, tools_and_shortcuts, canvas_steps, timeline_steps, menus, start_screen):
+        phases = (workspaces, tools_and_shortcuts, canvas_steps, timeline_steps, menus, start_screen, prefs_and_keys)
+        only = set(sys.argv[2].split(",")) if len(sys.argv) > 2 else None  # ex.: prefs_and_keys
+        for phase in [p for p in phases if only is None or p.__name__ in only]:
             try:
                 phase(run)
             except Exception as e:  # passo que quebra vira falha registrada, o resto segue

@@ -12,6 +12,7 @@ mod bridge_host;
 mod canvas;
 mod commands;
 pub(crate) mod doc;
+mod prefs_ui;
 mod start;
 mod editor;
 mod input_queue;
@@ -56,6 +57,9 @@ pub struct StudioApp {
     about_open: bool,
     prefs_open: bool,
     start: start::StartState,
+    prefs_tab: prefs_ui::PrefsTab,
+    /// Ação cujo atalho está sendo capturado nas Preferências (os atalhos do app param enquanto isso).
+    key_capture: Option<crate::keymap::Action>,
     /// O documento: a mesma `CoreSession` que a bridge usa (autor "human" para as ações do usuário).
     core: CoreSession,
     /// Tamanho do log da sessão no último novo/abrir/salvar: o "sujo" é calculado do que aconteceu depois (ver `doc_dirty`).
@@ -120,6 +124,8 @@ impl StudioApp {
             about_open: false,
             prefs_open: false,
             start: start::StartState::default(),
+            prefs_tab: prefs_ui::PrefsTab::default(),
+            key_capture: None,
             core,
             saved_log_len: 0,
             bridge,
@@ -142,6 +148,7 @@ impl StudioApp {
             gpu_logged: false,
             screenshot_requested: false,
         };
+        app.ed.keys = crate::keymap::Keymap::from_overrides(&app.prefs.shortcuts);
         if let Some(dir) = app.cli.project.clone() {
             app.doc_open_path(std::path::Path::new(&dir));
         } else {
@@ -285,19 +292,19 @@ impl StudioApp {
                 self.start.open = true;
                 ui.close();
             }
-            if self.menu_item(ui, "file.new", "menu.file.new", "Ctrl+N", true) {
+            if self.menu_item(ui, "file.new", "menu.file.new", &self.ed.keys.label(crate::keymap::Action::FileNew), true) {
                 self.request_new();
                 ui.close();
             }
-            if self.menu_item(ui, "file.open", "menu.file.open", "Ctrl+O", true) {
+            if self.menu_item(ui, "file.open", "menu.file.open", &self.ed.keys.label(crate::keymap::Action::FileOpen), true) {
                 self.request_open();
                 ui.close();
             }
-            if self.menu_item(ui, "file.save", "menu.file.save", "Ctrl+S", true) {
+            if self.menu_item(ui, "file.save", "menu.file.save", &self.ed.keys.label(crate::keymap::Action::FileSave), true) {
                 self.request_save(None);
                 ui.close();
             }
-            if self.menu_item(ui, "file.save_as", "menu.file.save_as", "Ctrl+Shift+S", true) {
+            if self.menu_item(ui, "file.save_as", "menu.file.save_as", &self.ed.keys.label(crate::keymap::Action::FileSaveAs), true) {
                 self.request_save_as();
                 ui.close();
             }
@@ -314,11 +321,11 @@ impl StudioApp {
     fn menu_edit(&mut self, ui: &mut egui::Ui) {
         let r = ui.menu_button(tr("menu.edit"), |ui| {
             let (can_undo, can_redo) = (self.core.can_undo(), self.core.can_redo());
-            if self.menu_item(ui, "edit.undo", "menu.edit.undo", "Ctrl+Z", can_undo) {
+            if self.menu_item(ui, "edit.undo", "menu.edit.undo", &self.ed.keys.label(crate::keymap::Action::EditUndo), can_undo) {
                 self.doc_undo();
                 ui.close();
             }
-            if self.menu_item(ui, "edit.redo", "menu.edit.redo", "Ctrl+Shift+Z", can_redo) {
+            if self.menu_item(ui, "edit.redo", "menu.edit.redo", &self.ed.keys.label(crate::keymap::Action::EditRedo), can_redo) {
                 self.doc_redo();
                 ui.close();
             }
@@ -519,7 +526,12 @@ impl StudioApp {
                             }
                             let ink = if selected || resp.hovered() { t.text } else { t.text_dim };
                             self.icons.paint(p, tool.icon(), rect.shrink(7.0), ink);
-                            if resp.on_hover_text(tr(tool.title_key())).clicked() {
+                            // dica com o atalho em uso (Preferências > Atalhos)
+                            let tip = match self.ed.keys.get(crate::keymap::Action::for_tool(tool)) {
+                                Some(c) => format!("{} ({})", tr(tool.title_key()), c.label()),
+                                None => tr(tool.title_key()).to_owned(),
+                            };
+                            if resp.on_hover_text(tip).clicked() {
                                 self.tool = tool;
                             }
                         }
@@ -552,6 +564,9 @@ impl StudioApp {
 
     /// Atalhos do editor (ferramentas, tamanho do pincel, Enter/Esc do mover, quadros, ajustar visão).
     fn editor_shortcuts(&mut self, ctx: &egui::Context) {
+        if self.key_capture.is_some() {
+            return;
+        }
         if !(self.ws.has_canvas() || matches!(self.ws, WorkspaceId::Storyboard | WorkspaceId::Audio | WorkspaceId::Edicao)) {
             return;
         }
@@ -595,63 +610,6 @@ impl StudioApp {
             self.rects.note("dialog:about", w.response.rect);
         }
         self.about_open = open;
-    }
-
-    fn prefs_window(&mut self, ctx: &egui::Context) {
-        if !self.prefs_open {
-            return;
-        }
-        let t = self.tokens();
-        let mut open = true;
-        let win = egui::Window::new(tr("prefs.title"))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ctx, |ui| {
-                egui::Grid::new("prefs_grid").num_columns(2).spacing([16.0, 10.0]).show(ui, |ui| {
-                    ui.label(tr("prefs.theme"));
-                    let mut theme_sel = self.prefs.theme;
-                    egui::ComboBox::from_id_salt("prefs_theme")
-                        .selected_text(tr(if theme_sel == ThemeKind::Dark { "menu.view.theme.dark" } else { "menu.view.theme.light" }))
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut theme_sel, ThemeKind::Dark, tr("menu.view.theme.dark"));
-                            ui.selectable_value(&mut theme_sel, ThemeKind::Light, tr("menu.view.theme.light"));
-                        });
-                    self.set_theme(ctx, theme_sel);
-                    ui.end_row();
-
-                    ui.label(tr("prefs.language"));
-                    let mut lang_sel = self.prefs.lang;
-                    egui::ComboBox::from_id_salt("prefs_lang")
-                        .selected_text(tr(if lang_sel == Lang::Pt { "lang.pt" } else { "lang.en" }))
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut lang_sel, Lang::Pt, tr("lang.pt"));
-                            ui.selectable_value(&mut lang_sel, Lang::En, tr("lang.en"));
-                        });
-                    self.set_lang(lang_sel);
-                    ui.end_row();
-
-                    ui.label(tr("prefs.zoom"));
-                    let mut pct = self.prefs.ui_zoom * 100.0;
-                    let r = ui.add(egui::Slider::new(&mut pct, MIN_ZOOM * 100.0..=MAX_ZOOM * 100.0).suffix("%").step_by(5.0));
-                    // aplica ao soltar: mudar o zoom enquanto arrasta redimensiona o próprio slider
-                    if r.drag_stopped() || (r.changed() && !r.dragged()) {
-                        self.set_zoom(ctx, pct / 100.0);
-                    }
-                    ui.end_row();
-                });
-                ui.add_space(8.0);
-                let where_ = match &self.prefs_path {
-                    Some(p) => format!("{}: {}", tr("prefs.file"), p.display()),
-                    None => tr("prefs.no_session").to_owned(),
-                };
-                ui.label(RichText::new(where_).size(11.5).color(t.text_dim));
-            });
-        if let Some(w) = win {
-            self.rects.note("dialog:prefs", w.response.rect);
-        }
-        self.prefs_open = open;
     }
 
     // ------------------------------------------------------------------------------------------ screenshot

@@ -5,6 +5,7 @@ use crate::i18n::Lang;
 use crate::theme::ThemeKind;
 use crate::workspace::WorkspaceId;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub const MIN_ZOOM: f32 = 0.75;
@@ -21,13 +22,36 @@ pub struct Prefs {
     pub recent: Vec<PathBuf>,
     /// Mostrar a tela inicial ao abrir o app sem `--project`.
     pub show_start: bool,
+    /// Atalhos que diferem do padrão: id da ação → "Ctrl+Shift+Z" ("" = sem atalho). Ver `keymap.rs`.
+    pub shortcuts: BTreeMap<String, String>,
+    /// Pasta onde os diálogos Abrir/Salvar começam (vazio: `C:\AnimeIAI\producoes`, se existir).
+    pub projects_dir: Option<PathBuf>,
+    /// GPU usada pela interface e pelo viewport (vale ao abrir o programa de novo).
+    pub gpu: GpuPref,
+}
+
+/// Preferência de GPU do wgpu: a dedicada (padrão, GTX do notebook) ou a integrada (economiza bateria).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GpuPref {
+    #[default]
+    Dedicated,
+    Integrated,
+}
+
+/// Lê só as preferências que valem antes da janela existir (GPU), com as mesmas regras do app: nada com `--no-session`.
+pub fn load_for_startup(no_session: bool, session_file: Option<&str>) -> Prefs {
+    if no_session {
+        return Prefs::default();
+    }
+    session_file.map(PathBuf::from).or_else(default_path).map(|p| load(&p)).unwrap_or_default()
 }
 
 pub const MAX_RECENT: usize = 10;
 
 impl Default for Prefs {
     fn default() -> Self {
-        Prefs { theme: ThemeKind::Dark, lang: Lang::Pt, workspace: WorkspaceId::default(), ui_zoom: 1.0, recent: Vec::new(), show_start: true }
+        Prefs { theme: ThemeKind::Dark, lang: Lang::Pt, workspace: WorkspaceId::default(), ui_zoom: 1.0, recent: Vec::new(), show_start: true, shortcuts: BTreeMap::new(), projects_dir: None, gpu: GpuPref::Dedicated }
     }
 }
 
@@ -93,7 +117,7 @@ mod tests {
     #[test]
     fn round_trip() {
         let p = tmp("rt");
-        let prefs = Prefs { theme: ThemeKind::Light, lang: Lang::En, workspace: WorkspaceId::Animacao, ui_zoom: 1.25, recent: vec![PathBuf::from(r"C:\x\a.aiai")], show_start: false };
+        let prefs = Prefs { theme: ThemeKind::Light, lang: Lang::En, workspace: WorkspaceId::Animacao, ui_zoom: 1.25, recent: vec![PathBuf::from(r"C:\x\a.aiai")], show_start: false, shortcuts: [("tool.fill".to_owned(), "K".to_owned())].into(), projects_dir: Some(PathBuf::from(r"D:\anim")), gpu: GpuPref::Integrated };
         save(&p, &prefs).unwrap();
         assert_eq!(load(&p), prefs);
         let _ = std::fs::remove_dir_all(p.parent().unwrap());
