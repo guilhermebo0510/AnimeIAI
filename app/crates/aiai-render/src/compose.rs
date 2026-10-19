@@ -334,6 +334,15 @@ impl<'a> Renderer<'a> {
         let cel_node = self.exposed_cel(id, node, cut, frame)?;
         let NodeKind::Cel(cel) = &cel_node.data else { return None };
         let hide_trace = layer.params.get("hide_color_trace").and_then(|v| v.as_bool()).unwrap_or(false);
+        // cel só de vetor com câmera/movimento/escala: rasteriza os traços já transformados, na saída (a linha continua
+        // nítida num zoom; reamostrar o bitmap do canvas borrava a linha como uma imagem)
+        let xf = self.placement_affine(layer, frame, cel.transform);
+        let moved = !(xf.is_identity() && self.out_w == self.width && self.out_h == self.height);
+        if moved && cel.image.is_none() && cel.tiles.is_empty() && cel.fills.is_empty() && !cel.strokes.is_empty() {
+            let mut img = Image::new(self.out_w, self.out_h);
+            self.draw_strokes(&mut img, cel, hide_trace, Some(xf));
+            return Some(img);
+        }
         let img = self.render_cel(cel, hide_trace, &node.name);
         Some(self.place(img, layer, frame, cel.transform))
     }
@@ -392,6 +401,15 @@ impl<'a> Renderer<'a> {
 
     /// Aplica transformação do cel, chaves da camada e câmera (multiplano) a uma imagem do canvas.
     fn place(&self, img: Image, layer: &LayerData, frame: u32, cel_transform: [f32; 4]) -> Image {
+        let xf = self.placement_affine(layer, frame, cel_transform);
+        if xf.is_identity() && self.out_w == self.width && self.out_h == self.height {
+            return img;
+        }
+        transform_image(&img, xf, self.out_w, self.out_h)
+    }
+
+    /// Canvas do cel → imagem de saída: transformação do cel, movimento da camada e câmera (multiplano).
+    fn placement_affine(&self, layer: &LayerData, frame: u32, cel_transform: [f32; 4]) -> Affine {
         let mut xf = if self.layer_motion {
             layer_placement(layer, cel_transform, frame, self.width, self.height)
         } else {
@@ -401,10 +419,7 @@ impl<'a> Renderer<'a> {
         if let Some(cam) = &self.camera {
             xf = compose_affine(cam.affine(layer.depth, self.out_w, self.out_h), xf);
         }
-        if xf.is_identity() && self.out_w == self.width && self.out_h == self.height {
-            return img;
-        }
-        transform_image(&img, xf, self.out_w, self.out_h)
+        xf
     }
 
     pub fn resolve_color(&mut self, c: &ColorRef) -> [f32; 4] {
@@ -473,12 +488,29 @@ impl<'a> Renderer<'a> {
                 None => self.warnings.push(format!("{layer_name}: máscara sem blob {hash}")),
             }
         }
+        self.draw_strokes(&mut img, cel, hide_color_trace, None);
+        img
+    }
+
+    /// Traços vetoriais do cel sobre `img` (do tamanho de `img`); com `xf`, cada amostra é transformada e o raio
+    /// escala com a transformação (a linha é rasterizada já no lugar final).
+    fn draw_strokes(&mut self, img: &mut Image, cel: &CelData, hide_color_trace: bool, xf: Option<Affine>) {
+        let (w, h) = (img.width, img.height);
+        let k = xf.map(|a| (a.0[0] * a.0[4] - a.0[1] * a.0[3]).abs().sqrt()).unwrap_or(1.0);
         for s in &cel.strokes {
             if hide_color_trace && s.color_trace {
                 continue;
             }
             let color = self.resolve_color(&s.color);
-            let samples = sample_stroke(s);
+            let mut samples = sample_stroke(s);
+            if let Some(a) = xf {
+                for q in &mut samples {
+                    let (x, y) = a.apply(q.x, q.y);
+                    q.x = x;
+                    q.y = y;
+                    q.r *= k;
+                }
+            }
             let Some(cov) = rasterize_stroke(&samples, s.aliased, w, h) else { continue };
             let a = color[3] * s.opacity;
             let premul = [color[0] * a, color[1] * a, color[2] * a, a];
@@ -494,7 +526,6 @@ impl<'a> Renderer<'a> {
                 }
             }
         }
-        img
     }
 
     /// Valores de máscara (luminância × alfa) da camada `mask_id` no quadro.

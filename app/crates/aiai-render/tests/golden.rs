@@ -286,3 +286,25 @@ fn camera_pan_with_multiplane_parallax_and_layer_keys() {
     let raw = render_frame(&s.project, &s.blobs, &cut, 24, &RenderOptions { camera: false, ..Default::default() }).unwrap().image;
     assert_eq!(raw.width, 400);
 }
+
+#[test]
+fn vector_lines_stay_sharp_under_camera_zoom() {
+    // linha vertical de 2 px com câmera em zoom 4×: a borda tem de continuar com ~1 px de transição (vetor
+    // rasterizado no lugar), não ~4 px (bitmap do canvas ampliado)
+    let mut s = CoreSession::for_tests("zoom");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 200, "height": 100}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = create(&mut s, Some(&sc), "C", NodeKind::Cut(CutData::new(4)));
+    s.apply(Command::SetProps { id: cut.clone(), name: None, data: json!({"camera": {"zoom": 4.0}}) }).unwrap();
+    let (_l, c) = layer(&mut s, &cut, "L", LayerType::Vector, json!({}));
+    let mut m = gpen(&[(100.3, 20.0, 1.0), (100.3, 80.0, 1.0)], 2.0, ColorRef::Direct { rgba: Rgba::BLACK });
+    m.tip = VectorTip::Marker;
+    s.apply(Command::InsertStrokes { cel: c, items: vec![IndexedStroke { index: 0, stroke: m }] }).unwrap();
+    let img = render_frame(&s.project, &s.blobs, &cut, 0, &RenderOptions::default()).unwrap().image;
+    let row: Vec<f32> = (0..img.width).map(|x| img.get(x, 50)[3]).collect();
+    let partial = row.iter().filter(|&&a| a > 0.05 && a < 0.95).count();
+    let solid = row.iter().filter(|&&a| a >= 0.95).count();
+    assert!(solid >= 6, "a linha ampliada 4× tem ~8 px cheios: {solid}");
+    assert!(partial <= 2, "borda nítida (no máximo 1 px de transição de cada lado): {partial} px parciais em {row:?}");
+}
