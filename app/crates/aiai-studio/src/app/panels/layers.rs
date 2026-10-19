@@ -263,7 +263,7 @@ fn layer_settings(env: &mut Env, ui: &mut Ui, cut: &NodeId, layer: &NodeId, rows
     ui.horizontal(|ui| {
         dim_label(ui, &t, tr("layers.opacity"));
         ui.spacing_mut().slider_width = (ui.available_width() - 70.0).clamp(50.0, 220.0);
-        let cur = l.opacity * 100.0;
+        let cur = (l.opacity * 100.0).round();
         let r = commit_on_release(ui, Id::new(("opacity", layer)), cur, |ui, v| {
             let r = ui.add(egui::Slider::new(v, 0.0..=100.0).suffix("%").max_decimals(0).trailing_fill(true));
             env.notes.push(("layers:opacity".into(), r.rect));

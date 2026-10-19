@@ -21,7 +21,7 @@ serde_json = "1.0"
 schemars = "0.8.22"
 uuid = { version = "1.26", features = ["v7", "serde"] }
 blake3 = "1.8"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "bmp", "tiff", "gif"] }
 png = "0.17"
 base64 = "0.22"
 bytemuck = { version = "1.21", features = ["derive"] }

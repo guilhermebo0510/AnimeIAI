@@ -34,7 +34,9 @@ pub(crate) fn commit_on_release<T: Copy + Default + PartialEq + Send + Sync + 's
         ui.data_mut(|d| d.insert_temp(id, v));
     } else {
         ui.data_mut(|d| d.remove_temp::<T>(id));
-        if r.changed() && v != current {
+        // só um clique conta como mudança aqui: um slider que arredonda o valor (max_decimals) acusa "changed" sozinho
+        // a cada quadro quando o documento guarda 0,6 em f32 (60,000002%) e escrevia de volta sem parar
+        if r.changed() && r.clicked() && v != current {
             return Some(v);
         }
     }
@@ -89,4 +91,27 @@ pub(crate) fn text_commit_opt(ui: &mut Ui, id: Id, current: &str, width: f32, hi
         }
     }
     (r, out)
+}
+
+#[cfg(test)]
+mod commit_tests {
+    use super::*;
+
+    #[test]
+    fn a_rounding_slider_does_not_commit_by_itself() {
+        // opacidade 0,6 guardada em f32 = 60,000002%: o slider com 0 casas não pode escrever de volta sozinho
+        let ctx = egui::Context::default();
+        let current = 0.6f32 * 100.0;
+        let mut commits = 0;
+        for _ in 0..5 {
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let r = commit_on_release(ui, Id::new("op"), current, |ui, v| ui.add(egui::Slider::new(v, 0.0..=100.0).max_decimals(0)));
+                if r.is_some() {
+                    commits += 1;
+                }
+            });
+            out.textures_delta.clear();
+        }
+        assert_eq!(commits, 0);
+    }
 }

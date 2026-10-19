@@ -305,10 +305,6 @@ impl StudioApp {
         r.clicked()
     }
 
-    fn soon_item(ui: &mut egui::Ui, label_key: &str) {
-        ui.add_enabled(false, egui::Button::new(tr(label_key))).on_disabled_hover_text(tr("menu.soon"));
-    }
-
     fn menu_file(&mut self, ui: &mut egui::Ui) {
         let r = ui.menu_button(tr("menu.file"), |ui| {
             if self.menu_item(ui, "file.start", "menu.file.start", "", true) {
@@ -331,7 +327,15 @@ impl StudioApp {
                 self.request_save_as();
                 ui.close();
             }
-            Self::soon_item(ui, "menu.file.export");
+            ui.separator();
+            if self.menu_item(ui, "file.import_image", "menu.file.import_image", "", true) {
+                self.request_import_image();
+                ui.close();
+            }
+            if self.menu_item(ui, "file.export_frame", "menu.file.export_frame", "", self.ed.cut.is_some()) {
+                self.request_export_frame();
+                ui.close();
+            }
             ui.separator();
             if self.menu_item(ui, "file.quit", "menu.file.quit", "", true) {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -690,6 +694,11 @@ impl StudioApp {
         }
         self.editor_shortcuts(&ctx);
         self.poll_dialog(&ctx);
+        // arquivos soltos na janela: imagem → referência, WAV → clipe no cabeçote
+        let dropped: Vec<std::path::PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).filter(|p| !p.as_os_str().is_empty()).collect());
+        for p in dropped {
+            self.import_file(&p);
+        }
         self.doc_shortcuts(&ctx);
         self.handle_close_request(&ctx);
 

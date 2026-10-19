@@ -26,7 +26,13 @@ pub(crate) enum DialogKind {
     SaveAs,
     /// Pasta de projetos das Preferências.
     ProjectsDir,
+    /// Arquivo > Importar imagem (vira camada de referência no corte ativo).
+    ImportImage,
+    /// Arquivo > Exportar quadro (PNG do quadro atual, como o RENDER).
+    ExportFrame,
 }
+
+const IMAGE_EXTS: [&str; 8] = ["png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff", "gif"];
 
 pub(crate) struct DialogJob {
     kind: DialogKind,
@@ -252,8 +258,11 @@ impl StudioApp {
             DialogKind::Open => tr("dialog.open_title"),
             DialogKind::SaveAs => tr("dialog.save_title"),
             DialogKind::ProjectsDir => tr("prefs.projects_dir"),
+            DialogKind::ImportImage => tr("menu.file.import_image"),
+            DialogKind::ExportFrame => tr("menu.file.export_frame"),
         }
         .to_owned();
+        let frame_name = format!("{}_q{:03}.png", self.ed.cut.as_ref().and_then(|c| self.core.project.node(c)).map(|n| n.name.clone()).unwrap_or_else(|| "quadro".into()), self.ed.frame + 1);
         let prefs_dir = self.prefs.projects_dir.clone().filter(|d| d.is_dir());
         let start = match kind {
             DialogKind::ProjectsDir => prefs_dir.or_else(default_projects_dir),
@@ -268,6 +277,8 @@ impl StudioApp {
             let picked = match kind {
                 DialogKind::Open | DialogKind::ProjectsDir => d.pick_folder(),
                 DialogKind::SaveAs => d.set_file_name(file_name).save_file(),
+                DialogKind::ImportImage => d.add_filter("Imagem", &IMAGE_EXTS).pick_file(),
+                DialogKind::ExportFrame => d.add_filter("PNG", &["png"]).set_file_name(frame_name).save_file(),
             };
             let _ = tx.send(picked);
         });
@@ -298,12 +309,74 @@ impl StudioApp {
                                 }
                             }
                         }
+                        DialogKind::ImportImage => self.import_file(&path),
+                        DialogKind::ExportFrame => self.export_frame(&path),
                     }
                 }
                 ctx.request_repaint();
             }
             Err(crossbeam_channel::TryRecvError::Empty) => ctx.request_repaint_after(std::time::Duration::from_millis(100)),
             Err(crossbeam_channel::TryRecvError::Disconnected) => self.dialog = None,
+        }
+    }
+
+    pub(crate) fn request_import_image(&mut self) {
+        self.spawn_dialog(DialogKind::ImportImage, None);
+    }
+
+    pub(crate) fn request_export_frame(&mut self) {
+        self.spawn_dialog(DialogKind::ExportFrame, None);
+    }
+
+    /// Arquivo solto na janela ou escolhido em Importar: imagem vira camada de referência no corte ativo; WAV vira
+    /// clipe no cabeçote (trilha SE).
+    pub(crate) fn import_file(&mut self, path: &Path) {
+        let Some(cut) = self.ed.active_cut(&self.core) else {
+            self.notice(tr("err.no_cut").to_owned());
+            return;
+        };
+        let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+        let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let r: Result<String, String> = if ext == "wav" {
+            super::actions::run(&mut self.core, "IMPORT_AUDIO", json!({ "path": path.display().to_string(), "cut": cut, "start_frame": self.ed.frame, "track": "sfx" }))
+                .map(|_| format!("{}: {stem}", tr("msg.imported")))
+        } else if IMAGE_EXTS.contains(&ext.as_str()) {
+            // camada de referência nova no topo do corte, com um cel, e a imagem ajustada ao canvas
+            let (layer, cel) = (self.core.ids.next(), self.core.ids.next());
+            let mut ld = aiai_core::LayerData::new(aiai_core::LayerType::Reference);
+            ld.opacity = 0.6;
+            let batch = aiai_core::Command::Batch {
+                label: Some(format!("{}: {stem}", tr("menu.file.import_image"))),
+                commands: vec![
+                    aiai_core::Command::CreateNode { id: Some(layer.clone()), parent: Some(cut.clone()), index: None, name: format!("ref: {stem}"), data: aiai_core::NodeKind::Layer(ld) },
+                    aiai_core::Command::CreateNode { id: Some(cel), parent: Some(layer.clone()), index: None, name: "1".into(), data: aiai_core::NodeKind::Cel(aiai_core::CelData::new(1)) },
+                ],
+            };
+            super::commands::run(&mut self.core, batch)
+                .and_then(|_| super::actions::run(&mut self.core, "IMPORT_IMAGE", json!({ "cut": cut, "layer": layer, "frame": 0, "path": path.display().to_string(), "fit": "contain" })))
+                .map(|_| {
+                    self.ed.layer = Some(layer.clone());
+                    self.ed.show_reference = true;
+                    format!("{}: {stem}", tr("msg.imported"))
+                })
+        } else {
+            Err(format!("{}: .{ext}", tr("err.import_type")))
+        };
+        match r {
+            Ok(m) => self.notice(m),
+            Err(e) => self.doc_error("importar", e),
+        }
+    }
+
+    fn export_frame(&mut self, path: &Path) {
+        let Some(cut) = self.ed.active_cut(&self.core) else {
+            self.notice(tr("err.no_cut").to_owned());
+            return;
+        };
+        let r = super::actions::run(&mut self.core, "RENDER", json!({ "cut": cut, "frame": self.ed.frame, "out": path.display().to_string(), "camera": true }));
+        match r {
+            Ok(_) => self.notice(format!("{}: {}", tr("msg.exported"), path.display())),
+            Err(e) => self.doc_error("exportar quadro", e),
         }
     }
 

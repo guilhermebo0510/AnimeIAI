@@ -14,6 +14,7 @@ pub mod edit;
 pub mod fill;
 pub mod fx2d;
 pub mod guide;
+pub mod import;
 pub mod paint;
 pub mod preprod;
 pub mod preview;

@@ -57,6 +57,8 @@ Exemplo: {"cut":"<corte>","placement":"<id do clipe>","mouth_layer":"<camada boc
 
 const IMPORT_AUDIO_DESC: &str = r##"Importa um .wav do disco (caminho absoluto sob C:\AnimeIAI) como asset de áudio e, com `cut`, coloca o clipe na trilha `track` (dialogue | sfx | bgm | ambient; padrão sfx) em `start_frame`, com `gain_db`, `pan`, `fade_in`, `fade_out`. Devolve o Outcome + asset, placement, duration_s/duration_frames. Entra no undo."##;
 
+const IMPORT_IMAGE_DESC: &str = r##"Importa uma imagem do disco (PNG, JPEG, WebP, BMP, TIFF, GIF; caminho absoluto sob C:\AnimeIAI) para o cel exposto de `layer` no `frame` (padrão 0): camada de REFERÊNCIA guarda a imagem no cel (rascunho, layout, foto de referência; não sai no render final a menos de include_reference); camada RASTER recebe a imagem como tiles editáveis por cima do que já está pintado. `fit`: contain (padrão, cabe inteira e centralizada) | cover | actual. Entra no undo."##;
+
 const SFX_DESC: &str = r##"Efeito sonoro procedural (determinístico: mesma semente = mesmo áudio) como asset de áudio e, com `cut`, clipe posicionado na trilha SFX. `preset`: whoosh | impact | kira | footstep | door | wind | cloth | chime | pop | magic_swell | sfxr (usa `sfxr`); `seed`, `duration` (s), `pitch` (1 = padrão), `brightness` 0..1, `intensity`; posicionamento: `cut`, `start_frame`, `gain_db`, `pan`, `fade_in`, `fade_out`. Devolve o Outcome + asset, placement, duration_s/duration_frames. Entra no undo.
 Exemplo: {"preset":"impact","seed":3,"cut":"<corte>","start_frame":12,"gain_db":-3}"##;
 
@@ -136,6 +138,7 @@ pub fn definitions() -> Vec<Value> {
         json!({ "name": "aiai_sfx", "description": SFX_DESC, "inputSchema": schema_of::<audio::SfxRequest>() }),
         json!({ "name": "aiai_bgm", "description": BGM_DESC, "inputSchema": schema_of::<audio::BgmRequest>() }),
         json!({ "name": "aiai_import_audio", "description": IMPORT_AUDIO_DESC, "inputSchema": schema_of::<audio::ImportAudioRequest>() }),
+        json!({ "name": "aiai_import_image", "description": IMPORT_IMAGE_DESC, "inputSchema": schema_of::<aiai_tools::import::ImportImageRequest>() }),
         json!({ "name": "aiai_mix", "description": MIX_DESC, "inputSchema": schema_of::<pt::MixRequest>() }),
         json!({
             "name": "aiai_loudness", "description": LOUDNESS_DESC,
@@ -211,6 +214,7 @@ pub fn plan(name: &str, m: &Map<String, Value>) -> Option<Result<Plan, ToolError
         "aiai_sfx" => with_req(&["preset"], "SFX", false),
         "aiai_bgm" => with_req(&["song"], "BGM", false),
         "aiai_import_audio" => with_req(&["path"], "IMPORT_AUDIO", false),
+        "aiai_import_image" => with_req(&["cut", "layer", "path"], "IMPORT_IMAGE", false),
         "aiai_mix" => with_req(&["cut"], "MIX_CUT", false),
         "aiai_loudness" => simple("LOUDNESS", Value::Object(m.clone())),
         "aiai_compare" => with_req(&["cut", "reference"], "COMPARE", true),

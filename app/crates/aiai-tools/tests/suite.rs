@@ -429,3 +429,47 @@ fn local_tile_painting_matches_full_canvas_painting() {
         assert!(max < 2e-3, "{name}: recorte local = canvas inteiro (diferença máx {max})");
     }
 }
+
+#[test]
+fn import_image_fits_into_reference_and_raster_cels() {
+    use aiai_tools::import::{ImageFit, ImportImageRequest, import_image_command};
+    let dir = std::env::temp_dir().join(format!("aiai-import-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // imagem 200x100 vermelha com faixa azul em cima, salva em PNG e em BMP
+    let mut src = image::RgbaImage::from_pixel(200, 100, image::Rgba([220, 30, 30, 255]));
+    for y in 0..20 {
+        for x in 0..200 {
+            src.put_pixel(x, y, image::Rgba([30, 30, 220, 255]));
+        }
+    }
+    let png = dir.join("ref.png");
+    let bmp = dir.join("ref.bmp");
+    src.save(&png).unwrap();
+    src.save(&bmp).unwrap();
+    let mut s = CoreSession::for_tests("import");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 400, "height": 400}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = create(&mut s, Some(&sc), "C", NodeKind::Cut(CutData::new(4)));
+    let rf = create(&mut s, Some(&cut), "ref", NodeKind::Layer(LayerData::new(LayerType::Reference)));
+    create(&mut s, Some(&rf), "1", NodeKind::Cel(CelData::new(1)));
+    let rs = create(&mut s, Some(&cut), "R", NodeKind::Layer(LayerData::new(LayerType::Raster)));
+    create(&mut s, Some(&rs), "1", NodeKind::Cel(CelData::new(1)));
+    // contain: 200x100 → 400x200 centralizada (y 100..300)
+    let c = import_image_command(&s.project, &mut s.blobs, &ImportImageRequest { cut: cut.clone(), layer: rf.clone(), frame: 0, path: png.display().to_string(), fit: ImageFit::Contain }).unwrap();
+    s.apply(c).unwrap();
+    let opts = RenderOptions { only_layers: Some(vec![rf.clone()]), include_reference: true, camera: false, ..Default::default() };
+    let img = render_frame(&s.project, &s.blobs, &cut, 0, &opts).unwrap().image;
+    assert!(img.get(200, 50)[3] < 0.01, "acima da imagem: vazio");
+    let top = img.get(200, 110);
+    let mid = img.get(200, 250);
+    assert!(top[2] > 0.7 && top[0] < 0.3, "faixa azul no alto da imagem ajustada: {top:?}");
+    assert!(mid[0] > 0.7 && mid[3] > 0.99, "vermelho no meio: {mid:?}");
+    // raster: vira tiles (BMP também abre)
+    let c = import_image_command(&s.project, &mut s.blobs, &ImportImageRequest { cut: cut.clone(), layer: rs.clone(), frame: 0, path: bmp.display().to_string(), fit: ImageFit::Actual }).unwrap();
+    s.apply(c).unwrap();
+    let opts = RenderOptions { only_layers: Some(vec![rs.clone()]), camera: false, ..Default::default() };
+    let img = render_frame(&s.project, &s.blobs, &cut, 0, &opts).unwrap().image;
+    assert!(img.get(10, 10)[2] > 0.7 && img.get(150, 80)[0] > 0.7 && img.get(300, 300)[3] < 0.01);
+    let _ = std::fs::remove_dir_all(&dir);
+}
