@@ -127,6 +127,7 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     // Menus
     ("menu.soon", "disponível em breve", "coming soon"),
     ("menu.file", "Arquivo", "File"),
+    ("menu.file.start", "Início…", "Start…"),
     ("menu.file.new", "Novo", "New"),
     ("menu.file.open", "Abrir", "Open"),
     ("menu.file.save", "Salvar", "Save"),
@@ -173,6 +174,23 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("msg.undo", "Desfeito", "Undone"),
     ("msg.redo", "Refeito", "Redone"),
     // Sobre
+    ("start.title", "Início", "Start"),
+    ("start.new", "Projeto novo", "New project"),
+    ("start.name", "Nome", "Name"),
+    ("start.format", "Formato", "Format"),
+    ("start.rate", "Taxa de quadros", "Frame rate"),
+    ("start.fps", "qd/s", "fps"),
+    ("start.fmt.hd", "Full HD 1920 × 1080 (16:9)", "Full HD 1920 × 1080 (16:9)"),
+    ("start.fmt.uhd", "4K UHD 3840 × 2160 (16:9)", "4K UHD 3840 × 2160 (16:9)"),
+    ("start.fmt.hd720", "HD 1280 × 720 (16:9)", "HD 1280 × 720 (16:9)"),
+    ("start.fmt.vertical", "Vertical 1080 × 1920 (9:16)", "Vertical 1080 × 1920 (9:16)"),
+    ("start.fmt.square", "Quadrado 1080 × 1080 (1:1)", "Square 1080 × 1080 (1:1)"),
+    ("start.create", "Criar projeto", "Create project"),
+    ("start.open", "Abrir…", "Open…"),
+    ("start.recent", "Recentes", "Recent"),
+    ("start.no_recent", "Nenhum projeto aberto ainda.", "No projects opened yet."),
+    ("start.missing", "Pasta não encontrada", "Folder not found"),
+    ("start.show_on_launch", "Mostrar ao abrir o programa", "Show when the program starts"),
     ("about.title", "Sobre", "About"),
     ("about.version", "Versão", "Version"),
     ("about.tagline", "Estúdio de animação 2D com ferramentas próprias.", "2D animation studio with its own tools."),
@@ -840,6 +858,7 @@ mod tests {
             ("app/canvas.rs", include_str!("app/canvas.rs")),
             ("app/ui_kit.rs", include_str!("app/ui_kit.rs")),
             ("app/actions.rs", include_str!("app/actions.rs")),
+            ("app/start.rs", include_str!("app/start.rs")),
             ("app/panels/board.rs", include_str!("app/panels/board.rs")),
             ("app/panels/outline.rs", include_str!("app/panels/outline.rs")),
             ("app/panels/script.rs", include_str!("app/panels/script.rs")),
@@ -863,7 +882,7 @@ mod tests {
             ("cli.rs", include_str!("cli.rs")),
             ("prefs.rs", include_str!("prefs.rs")),
         ];
-        const PREFIXES: &[&str] = &["workspace.", "tool.", "panel.", "menu.", "status.", "about.", "prefs.", "lang.", "doc.", "dialog.", "confirm.", "msg.", "blend.", "canvas.", "cel.", "cmd.", "err.", "fill.", "layer.", "layers.", "opt.", "palette.", "project.", "props.", "role.", "sel.", "stab.", "timeline.", "tip.", "tree.", "unit.", "outline.", "script.", "shots.", "board.", "prod.", "editing.", "deliver.", "audio.", "fx.", "char."];
+        const PREFIXES: &[&str] = &["workspace.", "tool.", "panel.", "menu.", "status.", "about.", "prefs.", "lang.", "doc.", "dialog.", "confirm.", "msg.", "blend.", "canvas.", "cel.", "cmd.", "err.", "fill.", "layer.", "layers.", "opt.", "palette.", "project.", "props.", "role.", "sel.", "stab.", "timeline.", "tip.", "tree.", "unit.", "outline.", "script.", "shots.", "board.", "prod.", "editing.", "deliver.", "audio.", "fx.", "char.", "start."];
         let known: HashSet<&str> = TABLE.iter().map(|(k, _, _)| *k).collect();
         let mut used = 0;
         for (file, src) in SOURCES {

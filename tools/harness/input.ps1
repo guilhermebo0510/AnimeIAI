@@ -15,6 +15,7 @@
     drag X1 Y1 X2 Y2 [N]       botao esquerdo: aperta em (X1,Y1), desliza N passos, solta em (X2,Y2)
     wheel N                    roda (N positivo = para cima)
     key COMBO                  ex.: key esc | key ctrl+z | key ctrl+shift+s
+    keydown K | keyup K        segura / solta uma tecla (ex.: keydown space; drag ...; keyup space)
     type TEXTO                 digita texto Unicode
   Saida: nao-zero se qualquer SendInput falhar (retorno != 1), se a janela nao for achada, se o foco/titulo nao conferir.
   Licoes aplicadas (00-LICOES-DE-IMPLEMENTACAO): 15 DPI (SetProcessDPIAware), 16 sizeof(INPUT)=40, 17 uniao montada em
@@ -110,6 +111,12 @@ function Focus-App {
     [void][AiaiIn]::SetForegroundWindow($h)
     [void][AiaiIn]::AttachThreadInput($me, $th, $false)
     Start-Sleep -Milliseconds 250
+    if ([AiaiIn]::GetForegroundWindow() -ne $h) {
+        # trava de primeiro plano do Windows: um toque de Alt libera o SetForegroundWindow
+        Chk ([AiaiIn]::Key(18, $false)) 'alt'; Chk ([AiaiIn]::Key(18, $true)) 'alt'
+        [void][AiaiIn]::SetForegroundWindow($h)
+        Start-Sleep -Milliseconds 250
+    }
     if ([AiaiIn]::GetForegroundWindow() -ne $h) { throw 'foco nao confirmado: outra janela esta na frente' }
     $t = Assert-Title $h
     Write-Output "[foco] ok titulo='$t'"
@@ -201,6 +208,8 @@ try {
                 foreach ($k in $keys) { Chk ([AiaiIn]::Key((VkOf $k), $true)) "ku $k"; Start-Sleep -Milliseconds 25 }
                 Start-Sleep -Milliseconds 80
             }
+            'keydown' { Chk ([AiaiIn]::Key((VkOf $parts[1]), $false)) "kd $($parts[1])"; Start-Sleep -Milliseconds 60 }
+            'keyup' { Chk ([AiaiIn]::Key((VkOf $parts[1]), $true)) "ku $($parts[1])"; Start-Sleep -Milliseconds 60 }
             'type' {
                 $t = $c.Substring(4).TrimStart()
                 foreach ($ch in $t.ToCharArray()) { Chk ([AiaiIn]::Uni($ch, $false)) 'ud'; Chk ([AiaiIn]::Uni($ch, $true)) 'uu'; Start-Sleep -Milliseconds 15 }

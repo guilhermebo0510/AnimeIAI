@@ -1,0 +1,482 @@
+{
+  "quando": "2026-10-19T01:05:55",
+  "segundos": 612.6,
+  "projeto": "C:/Users/leona/AppData/Local/Temp/claude/C--AnimeIAI/1fbeaa09-59d5-49f1-810c-282cc5d92e93/scratchpad/proj/ultima-rosa.aiai",
+  "janela": {
+    "client_origin_screen_physical": [
+      0.0,
+      29.0
+    ],
+    "inner_rect_logical": [
+      0.0,
+      23.2,
+      1536.0,
+      792.8
+    ],
+    "maximized": true,
+    "minimized": false,
+    "size_logical": [
+      1536.0,
+      792.81
+    ],
+    "size_physical": [
+      1920.0,
+      991.02
+    ],
+    "title": "AnimeIAI - 最後の一輪 — A última rosa"
+  },
+  "passos": [
+    {
+      "step": "janela maximizada e em foco",
+      "ok": true,
+      "titulo": "AnimeIAI - 最後の一輪 — A última rosa"
+    },
+    {
+      "step": "aba roteiro",
+      "ok": true,
+      "ativo": "roteiro",
+      "paineis": [
+        "outline",
+        "properties",
+        "script"
+      ],
+      "captura": "ws_roteiro.png"
+    },
+    {
+      "step": "aba personagens",
+      "ok": true,
+      "ativo": "personagens",
+      "paineis": [
+        "properties",
+        "characters",
+        "sheet",
+        "palette"
+      ],
+      "captura": "ws_personagens.png"
+    },
+    {
+      "step": "aba storyboard",
+      "ok": true,
+      "ativo": "storyboard",
+      "paineis": [
+        "board",
+        "properties",
+        "timeline",
+        "shots"
+      ],
+      "captura": "ws_storyboard.png"
+    },
+    {
+      "step": "aba layout",
+      "ok": true,
+      "ativo": "layout",
+      "paineis": [
+        "navigator",
+        "layers",
+        "properties",
+        "project",
+        "canvas",
+        "palette"
+      ],
+      "captura": "ws_layout.png"
+    },
+    {
+      "step": "aba animacao",
+      "ok": true,
+      "ativo": "animacao",
+      "paineis": [
+        "properties",
+        "project",
+        "timeline",
+        "canvas",
+        "palette",
+        "layers"
+      ],
+      "captura": "ws_animacao.png"
+    },
+    {
+      "step": "aba pintura",
+      "ok": true,
+      "ativo": "pintura",
+      "paineis": [
+        "properties",
+        "palette",
+        "project",
+        "canvas",
+        "layers",
+        "navigator"
+      ],
+      "captura": "ws_pintura.png"
+    },
+    {
+      "step": "aba cenario",
+      "ok": true,
+      "ativo": "cenario",
+      "paineis": [
+        "project",
+        "properties",
+        "navigator",
+        "layers",
+        "canvas",
+        "palette"
+      ],
+      "captura": "ws_cenario.png"
+    },
+    {
+      "step": "aba composicao",
+      "ok": true,
+      "ativo": "composicao",
+      "paineis": [
+        "project",
+        "properties",
+        "palette",
+        "navigator",
+        "canvas",
+        "layers"
+      ],
+      "captura": "ws_composicao.png"
+    },
+    {
+      "step": "aba cor",
+      "ok": true,
+      "ativo": "cor",
+      "paineis": [
+        "navigator",
+        "palette",
+        "properties"
+      ],
+      "captura": "ws_cor.png"
+    },
+    {
+      "step": "aba audio",
+      "ok": true,
+      "ativo": "audio",
+      "paineis": [
+        "preview",
+        "timeline",
+        "mixer",
+        "media"
+      ],
+      "captura": "ws_audio.png"
+    },
+    {
+      "step": "aba edicao",
+      "ok": true,
+      "ativo": "edicao",
+      "paineis": [
+        "properties",
+        "media",
+        "preview",
+        "timeline"
+      ],
+      "captura": "ws_edicao.png"
+    },
+    {
+      "step": "aba entrega",
+      "ok": true,
+      "ativo": "entrega",
+      "paineis": [
+        "queue",
+        "presets",
+        "properties"
+      ],
+      "captura": "ws_entrega.png"
+    },
+    {
+      "step": "aba producao",
+      "ok": true,
+      "ativo": "producao",
+      "paineis": [
+        "properties",
+        "episodes",
+        "tasks"
+      ],
+      "captura": "ws_producao.png"
+    },
+    {
+      "step": "botão da ferramenta move",
+      "ok": true,
+      "ativa": "move"
+    },
+    {
+      "step": "botão da ferramenta brush",
+      "ok": true,
+      "ativa": "brush"
+    },
+    {
+      "step": "botão da ferramenta pen",
+      "ok": true,
+      "ativa": "pen"
+    },
+    {
+      "step": "botão da ferramenta eraser",
+      "ok": true,
+      "ativa": "eraser"
+    },
+    {
+      "step": "botão da ferramenta fill",
+      "ok": true,
+      "ativa": "fill"
+    },
+    {
+      "step": "botão da ferramenta lasso",
+      "ok": true,
+      "ativa": "lasso"
+    },
+    {
+      "step": "botão da ferramenta eyedropper",
+      "ok": true,
+      "ativa": "eyedropper"
+    },
+    {
+      "step": "botão da ferramenta hand",
+      "ok": true,
+      "ativa": "hand"
+    },
+    {
+      "step": "botão da ferramenta zoom",
+      "ok": true,
+      "ativa": "zoom"
+    },
+    {
+      "step": "atalho V -> move",
+      "ok": true,
+      "ativa": "move"
+    },
+    {
+      "step": "atalho B -> brush",
+      "ok": true,
+      "ativa": "brush"
+    },
+    {
+      "step": "atalho P -> pen",
+      "ok": true,
+      "ativa": "pen"
+    },
+    {
+      "step": "atalho E -> eraser",
+      "ok": true,
+      "ativa": "eraser"
+    },
+    {
+      "step": "atalho G -> fill",
+      "ok": true,
+      "ativa": "fill"
+    },
+    {
+      "step": "atalho L -> lasso",
+      "ok": true,
+      "ativa": "lasso"
+    },
+    {
+      "step": "atalho I -> eyedropper",
+      "ok": true,
+      "ativa": "eyedropper"
+    },
+    {
+      "step": "atalho H -> hand",
+      "ok": true,
+      "ativa": "hand"
+    },
+    {
+      "step": "atalho Z -> zoom",
+      "ok": true,
+      "ativa": "zoom"
+    },
+    {
+      "step": "clique na linha da camada seleciona",
+      "ok": true,
+      "camada": "linha"
+    },
+    {
+      "step": "arrasto da caneta desenha no canvas",
+      "ok": true,
+      "revisao": [
+        7553,
+        7554
+      ],
+      "pixels_mudados": 684
+    },
+    {
+      "step": "Ctrl+Z desfaz o traço",
+      "ok": true,
+      "pixels_diferentes_do_inicio": 0
+    },
+    {
+      "step": "Ctrl+Y refaz o traço",
+      "ok": true,
+      "pixels_diferentes_do_traco": 0
+    },
+    {
+      "step": "espaço + arrasto faz pan",
+      "ok": true,
+      "origem": [
+        [
+          448.799988,
+          196.800003
+        ],
+        [
+          544.799988,
+          244.800003
+        ]
+      ]
+    },
+    {
+      "step": "ferramenta mão faz pan",
+      "ok": true,
+      "origem": [
+        [
+          544.799988,
+          244.800003
+        ],
+        [
+          448.799988,
+          176.0
+        ]
+      ]
+    },
+    {
+      "step": "roda do mouse aproxima",
+      "ok": true,
+      "zoom": [
+        0.391891,
+        0.596017
+      ]
+    },
+    {
+      "step": "botão enquadrar volta o zoom",
+      "ok": true,
+      "zoom": [
+        0.596017,
+        0.391891
+      ]
+    },
+    {
+      "step": "clique no C001 da árvore abre o corte",
+      "ok": true,
+      "corte": [
+        "01a1474d-a754-7284-b680-640e8b32167a",
+        "01a14765-b5e9-7782-832e-7536d1617faf"
+      ]
+    },
+    {
+      "step": "botão avançar quadro",
+      "ok": true,
+      "quadro": [
+        0,
+        1
+      ]
+    },
+    {
+      "step": "seta para a direita avança",
+      "ok": true,
+      "quadro": [
+        1,
+        3
+      ]
+    },
+    {
+      "step": "Home volta ao início",
+      "ok": true,
+      "quadro": [
+        3,
+        0
+      ]
+    },
+    {
+      "step": "menu file abre",
+      "ok": true,
+      "pixels_do_menu": 10309,
+      "popup": true
+    },
+    {
+      "step": "Esc fecha o menu file",
+      "ok": true,
+      "pixels_que_ficaram": 2180,
+      "popup": false
+    },
+    {
+      "step": "menu edit abre",
+      "ok": true,
+      "pixels_do_menu": 5969,
+      "popup": true
+    },
+    {
+      "step": "Esc fecha o menu edit",
+      "ok": true,
+      "pixels_que_ficaram": 1988,
+      "popup": false
+    },
+    {
+      "step": "menu view abre",
+      "ok": true,
+      "pixels_do_menu": 5115,
+      "popup": true
+    },
+    {
+      "step": "Esc fecha o menu view",
+      "ok": true,
+      "pixels_que_ficaram": 1663,
+      "popup": false
+    },
+    {
+      "step": "menu window abre",
+      "ok": true,
+      "pixels_do_menu": 22548,
+      "popup": true
+    },
+    {
+      "step": "Esc fecha o menu window",
+      "ok": true,
+      "pixels_que_ficaram": 1645,
+      "popup": false
+    },
+    {
+      "step": "menu help abre",
+      "ok": true,
+      "pixels_do_menu": 3508,
+      "popup": true
+    },
+    {
+      "step": "Esc fecha o menu help",
+      "ok": true,
+      "pixels_que_ficaram": 1633,
+      "popup": false
+    },
+    {
+      "step": "Arquivo > Início abre a tela inicial",
+      "ok": true,
+      "dialogos": [
+        "start"
+      ]
+    },
+    {
+      "step": "Criar projeto usa nome, formato vertical e 30 qd/s",
+      "ok": true,
+      "nome": "Teste do mouse",
+      "settings": {
+        "width": 1080,
+        "height": 1920,
+        "fps_num": 30,
+        "fps_den": 1
+      }
+    },
+    {
+      "step": "Recente reabre o projeto anterior",
+      "ok": true,
+      "projeto": "最後の一輪 — A última rosa"
+    }
+  ],
+  "falhas": 0,
+  "ui_sem_resposta_10s": [],
+  "vigia": {
+    "physical": 0,
+    "injected": 99,
+    "moves_physical": 0,
+    "clicks_physical": 0,
+    "wheel_physical": 0,
+    "first_physical_ms": -1,
+    "seconds": 607,
+    "contaminated": false
+  }
+}

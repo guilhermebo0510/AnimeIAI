@@ -461,9 +461,10 @@ pub(crate) fn cancel_move(ed: &mut Editor) {
 
 // ------------------------------------------------------------------------------------------------ atalhos
 
-/// Teclas do editor. Ficam desligadas enquanto um campo de texto tem o foco.
+/// Teclas do editor. Ficam desligadas enquanto um campo de texto tem o foco ou um menu/popup está aberto (roda antes da
+/// barra de menus no quadro: consumir Esc/setas aqui impedia o menu de fechar com Esc).
 pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
-    if ctx.egui_wants_keyboard_input() {
+    if ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(ctx) {
         return;
     }
     use egui::{Key, Modifiers};

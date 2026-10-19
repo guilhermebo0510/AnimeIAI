@@ -12,6 +12,7 @@ mod bridge_host;
 mod canvas;
 mod commands;
 pub(crate) mod doc;
+mod start;
 mod editor;
 mod input_queue;
 mod panels;
@@ -54,6 +55,7 @@ pub struct StudioApp {
     tool: ToolId,
     about_open: bool,
     prefs_open: bool,
+    start: start::StartState,
     /// O documento: a mesma `CoreSession` que a bridge usa (autor "human" para as ações do usuário).
     core: CoreSession,
     /// Tamanho do log da sessão no último novo/abrir/salvar: o "sujo" é calculado do que aconteceu depois (ver `doc_dirty`).
@@ -117,6 +119,7 @@ impl StudioApp {
             tool: ToolId::default(),
             about_open: false,
             prefs_open: false,
+            start: start::StartState::default(),
             core,
             saved_log_len: 0,
             bridge,
@@ -141,6 +144,9 @@ impl StudioApp {
         };
         if let Some(dir) = app.cli.project.clone() {
             app.doc_open_path(std::path::Path::new(&dir));
+        } else {
+            // sem projeto na linha de comando: tela inicial (nunca nas execuções de teste/captura)
+            app.start.open = app.prefs.show_start && !app.cli.no_session && app.cli.screenshot.is_none();
         }
         app
     }
@@ -275,6 +281,10 @@ impl StudioApp {
 
     fn menu_file(&mut self, ui: &mut egui::Ui) {
         let r = ui.menu_button(tr("menu.file"), |ui| {
+            if self.menu_item(ui, "file.start", "menu.file.start", "", true) {
+                self.start.open = true;
+                ui.close();
+            }
             if self.menu_item(ui, "file.new", "menu.file.new", "Ctrl+N", true) {
                 self.request_new();
                 ui.close();
@@ -701,6 +711,7 @@ impl StudioApp {
         self.workspace_ui(ui);
         self.about_window(&ctx);
         self.prefs_window(&ctx);
+        self.start_window(&ctx);
         self.confirm_window(&ctx);
         self.persist();
         self.handle_screenshot(&ctx);

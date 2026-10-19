@@ -4,7 +4,25 @@ use aiai_studio::cli;
 const USAGE: &str = "uso: aiai-studio [--no-session] [--session-file <json>] [--project <pasta>] [--lang pt|en] [--theme light|dark] \
 [--workspace <chave>] [--size LxA] [--bridge] [--screenshot <png>] [--frames <n>]";
 
+/// Pânico vira arquivo em `%LOCALAPPDATA%\AnimeIAI\logs\crash-<unix>.txt` (mensagem, local, backtrace): aberto pelo
+/// Explorer ou pelo harness o app não tem console, e uma queda sumia sem rastro (S20 P6e).
+fn install_crash_log() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let dir = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir).join("AnimeIAI").join("logs");
+        let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let thread = std::thread::current().name().unwrap_or("?").to_string();
+        let bt = std::backtrace::Backtrace::force_capture();
+        let text = format!("AnimeIAI Studio {} (pid {})\nthread '{thread}': {info}\n\n{bt}\n", env!("CARGO_PKG_VERSION"), std::process::id());
+        if std::fs::create_dir_all(&dir).is_ok() {
+            let _ = std::fs::write(dir.join(format!("crash-{secs}.txt")), text);
+        }
+        default(info);
+    }));
+}
+
 fn main() -> eframe::Result {
+    install_crash_log();
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,wgpu=warn,naga=warn".into()))
         .init();

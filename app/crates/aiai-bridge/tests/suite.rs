@@ -395,6 +395,20 @@ fn host_request_reaches_the_ui_and_the_reply_comes_back() {
 }
 
 #[test]
+fn a_long_frame_right_after_drawing_is_busy_not_hidden() {
+    // a UI desenhou um quadro e logo entra num quadro de 3 s (> carência de 2,5 s): o pedido espera e é atendido
+    let (backend, rx) = host::channel(4, Arc::new(|| {}));
+    let backend = backend.with_timeout(|_| Duration::from_secs(8));
+    assert!(rx.try_recv_all().is_empty()); // pulso
+    let h = std::thread::spawn(move || backend.call(&req("GET_UI_STATE")));
+    std::thread::sleep(Duration::from_millis(3000));
+    let mut got = rx.try_recv_all();
+    assert_eq!(got.len(), 1, "o pedido não pode ter sido cancelado como 'janela oculta'");
+    got.remove(0).reply.send(Ok(json!({"ok": true}))).unwrap();
+    assert_eq!(h.join().unwrap().unwrap()["ok"], true);
+}
+
+#[test]
 fn timeout_cancels_the_request_and_a_late_mutation_is_dropped() {
     let (backend, rx) = host::channel(4, Arc::new(|| {}));
     let backend = backend.with_timeout(|_| Duration::from_millis(60));

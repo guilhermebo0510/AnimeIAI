@@ -164,6 +164,9 @@ impl StudioApp {
         if self.prefs_open {
             dialogs.push("prefs");
         }
+        if self.start.open {
+            dialogs.push("start");
+        }
         if self.confirm.is_some() {
             dialogs.push("confirm");
         }
@@ -179,6 +182,7 @@ impl StudioApp {
             "widgets": widgets,
             "overflow": self.layout_overflow(ctx),
             "dialogs": dialogs,
+            "popup_open": egui::Popup::is_any_open(ctx),
             "focused": {
                 "window": vp.focused,
                 "text_input": ctx.egui_wants_keyboard_input(),
@@ -262,7 +266,7 @@ impl StudioApp {
     }
 
     /// `UI_ACTION {action, ...}`: set_workspace {workspace}, select_tool {tool}, toggle_panel {panel, visible?},
-    /// set_theme {theme: light|dark}, set_language {language: pt|en}, open_dialog/close_dialog {dialog: about|prefs},
+    /// set_theme {theme: light|dark}, set_language {language: pt|en}, open_dialog/close_dialog {dialog: about|prefs|start},
     /// set_window_size {width, height, maximized?} (pontos lógicos),
     /// select_layer {layer}, select_cut {cut}, set_frame {frame}, set_color {color}, fit_view.
     /// Apelidos aceitos: set_tool = select_tool; open_panel = toggle_panel com visible=true.
@@ -363,9 +367,10 @@ impl StudioApp {
                 match text(&m, &["dialog", "value"]) {
                     Some("about") => self.about_open = open,
                     Some("prefs") => self.prefs_open = open,
-                    other => return Err(BridgeError::invalid_params(format!("diálogo desconhecido: {other:?} (about|prefs)"))),
+                    Some("start") => self.start.open = open,
+                    other => return Err(BridgeError::invalid_params(format!("diálogo desconhecido: {other:?} (about|prefs|start)"))),
                 }
-                json!({ "about": self.about_open, "prefs": self.prefs_open })
+                json!({ "about": self.about_open, "prefs": self.prefs_open, "start": self.start.open })
             }
             other => {
                 return Err(BridgeError::invalid_params(format!(

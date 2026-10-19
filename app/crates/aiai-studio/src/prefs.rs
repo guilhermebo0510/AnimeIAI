@@ -17,11 +17,17 @@ pub struct Prefs {
     pub lang: Lang,
     pub workspace: WorkspaceId,
     pub ui_zoom: f32,
+    /// Projetos abertos/salvos por último (mais recente primeiro, no máximo `MAX_RECENT`).
+    pub recent: Vec<PathBuf>,
+    /// Mostrar a tela inicial ao abrir o app sem `--project`.
+    pub show_start: bool,
 }
+
+pub const MAX_RECENT: usize = 10;
 
 impl Default for Prefs {
     fn default() -> Self {
-        Prefs { theme: ThemeKind::Dark, lang: Lang::Pt, workspace: WorkspaceId::default(), ui_zoom: 1.0 }
+        Prefs { theme: ThemeKind::Dark, lang: Lang::Pt, workspace: WorkspaceId::default(), ui_zoom: 1.0, recent: Vec::new(), show_start: true }
     }
 }
 
@@ -29,7 +35,17 @@ impl Prefs {
     /// Zoom dentro dos limites (um JSON editado à mão nunca deixa a UI ilegível).
     pub fn sanitized(mut self) -> Prefs {
         self.ui_zoom = if self.ui_zoom.is_finite() { self.ui_zoom.clamp(MIN_ZOOM, MAX_ZOOM) } else { 1.0 };
+        self.recent.truncate(MAX_RECENT);
         self
+    }
+
+    /// Põe `path` no topo dos recentes, sem duplicar (compara sem caixa, com `/` = `\` e sem barra final).
+    pub fn push_recent(&mut self, path: &Path) {
+        let key = |p: &Path| p.to_string_lossy().replace('/', "\\").trim_end_matches('\\').to_lowercase();
+        let k = key(path);
+        self.recent.retain(|p| key(p) != k);
+        self.recent.insert(0, path.to_path_buf());
+        self.recent.truncate(MAX_RECENT);
     }
 }
 
@@ -77,10 +93,23 @@ mod tests {
     #[test]
     fn round_trip() {
         let p = tmp("rt");
-        let prefs = Prefs { theme: ThemeKind::Light, lang: Lang::En, workspace: WorkspaceId::Animacao, ui_zoom: 1.25 };
+        let prefs = Prefs { theme: ThemeKind::Light, lang: Lang::En, workspace: WorkspaceId::Animacao, ui_zoom: 1.25, recent: vec![PathBuf::from(r"C:\x\a.aiai")], show_start: false };
         save(&p, &prefs).unwrap();
         assert_eq!(load(&p), prefs);
         let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    #[test]
+    fn recent_moves_to_top_without_duplicates() {
+        let mut p = Prefs::default();
+        for i in 0..12 {
+            p.push_recent(&PathBuf::from(format!(r"C:\p\{i}.aiai")));
+        }
+        assert_eq!(p.recent.len(), MAX_RECENT);
+        p.push_recent(Path::new("c:/P/5.aiai/"));
+        assert_eq!(p.recent.len(), MAX_RECENT);
+        assert_eq!(p.recent[0], PathBuf::from("c:/P/5.aiai/"));
+        assert_eq!(p.recent.iter().filter(|r| r.to_string_lossy().to_lowercase().contains("5.aiai")).count(), 1);
     }
 
     #[test]

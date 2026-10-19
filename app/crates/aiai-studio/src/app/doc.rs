@@ -15,6 +15,8 @@ use std::time::Instant;
 pub(crate) enum Pending {
     New,
     Open,
+    /// Abrir um recente da tela inicial (o caminho fica em `start.open_path`).
+    OpenPath,
     Quit,
 }
 
@@ -93,10 +95,13 @@ impl StudioApp {
 
     // ------------------------------------------------------------------------------------------ arquivo
 
-    /// Projeto novo e vazio (sem pasta até o primeiro Salvar).
+    /// Projeto novo e vazio (sem pasta até o primeiro Salvar). Vindo da tela inicial, com o nome, formato e taxa escolhidos.
     pub(crate) fn doc_new(&mut self) {
-        let name = tr("doc.untitled").to_owned();
-        match handle_core_action(&mut self.core, "NEW_PROJECT", &json!({ "name": name })) {
+        let params = match self.start.request.take() {
+            Some(r) => json!({ "name": r.name, "settings": { "width": r.width, "height": r.height, "fps_num": r.fps_num, "fps_den": r.fps_den } }),
+            None => json!({ "name": tr("doc.untitled") }),
+        };
+        match handle_core_action(&mut self.core, "NEW_PROJECT", &params) {
             Some(Ok(_)) => {
                 self.mark_saved();
                 self.notice(tr("msg.new").to_owned());
@@ -110,6 +115,7 @@ impl StudioApp {
         match handle_core_action(&mut self.core, "OPEN_PROJECT", &json!({ "path": path.display().to_string() })) {
             Some(Ok(_)) => {
                 self.mark_saved();
+                self.note_recent();
                 self.notice(format!("{}: {}", tr("msg.opened"), self.core.project.name));
             }
             Some(Err(e)) => self.doc_error("abrir projeto", e),
@@ -125,6 +131,7 @@ impl StudioApp {
         match handle_core_action(&mut self.core, "SAVE_PROJECT", &params) {
             Some(Ok(_)) => {
                 self.mark_saved();
+                self.note_recent();
                 self.notice(tr("msg.saved").to_owned());
                 true
             }
@@ -169,11 +176,34 @@ impl StudioApp {
         }
     }
 
+    /// Abrir uma pasta conhecida (recente): pergunta antes se houver alterações não salvas.
+    pub(crate) fn request_open_path(&mut self, path: PathBuf) {
+        self.start.open_path = Some(path);
+        if self.doc_dirty() {
+            self.confirm = Some(Pending::OpenPath);
+        } else {
+            self.run_pending(Pending::OpenPath);
+        }
+    }
+
+    /// O projeto atual (com pasta) vai para o topo dos recentes.
+    fn note_recent(&mut self) {
+        if let Some(p) = self.core.path.clone() {
+            self.prefs.push_recent(&p);
+            self.mark_dirty();
+        }
+    }
+
     /// Executa a ação que estava esperando a decisão sobre as alterações.
     fn run_pending(&mut self, p: Pending) {
         match p {
             Pending::New => self.doc_new(),
             Pending::Open => self.spawn_dialog(DialogKind::Open, None),
+            Pending::OpenPath => {
+                if let Some(p) = self.start.open_path.take() {
+                    self.doc_open_path(&p);
+                }
+            }
             Pending::Quit => {
                 self.quit_confirmed = true;
                 self.ctx_close = true;
@@ -336,7 +366,12 @@ impl StudioApp {
                 self.confirm = None;
                 self.run_pending(pending);
             }
-            Some(_) => self.confirm = None,
+            Some(_) => {
+                // Cancelar desiste também do pedido da tela inicial (o próximo Novo volta ao padrão)
+                self.confirm = None;
+                self.start.request = None;
+                self.start.open_path = None;
+            }
             None => {}
         }
     }

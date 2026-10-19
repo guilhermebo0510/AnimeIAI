@@ -106,6 +106,9 @@ impl BridgeReceiver {
 /// Quanto esperar por UM quadro antes de concluir que a UI não está desenhando.
 const FRAME_GRACE: Duration = Duration::from_millis(2500);
 
+/// Um quadro desenhado há menos que isto conta como UI viva (ver `ChannelBackend::call`).
+const RECENT_FRAME: Duration = Duration::from_millis(1500);
+
 /// Prazo de cada ação (tempo para a UI responder).
 pub fn action_timeout(action: &str) -> Duration {
     match action {
@@ -166,6 +169,9 @@ impl Backend for ChannelBackend {
         }
         let sent = Instant::now();
         let beats_before = self.beat.count();
+        // a UI desenhou há pouco? então um quadro sem pulso durante a carência é um quadro LONGO (trocar de workspace com
+        // miniaturas, máquina paginando), não janela oculta: espera o prazo inteiro em vez de acusar minimização
+        let drew_recently = self.beat.idle().is_some_and(|d| d < RECENT_FRAME);
         (self.wake)();
         let limit = (self.timeout)(&req.action);
         // 1ª espera curta: se a UI nem desenhou um quadro nesse tempo, a janela está minimizada/oculta (sem quadros não há
@@ -175,7 +181,7 @@ impl Backend for ChannelBackend {
             Ok(r) => Ok(r),
             Err(_) => {
                 // a UI drenou a fila depois do pedido? então está viva, só ocupada: espera o resto do prazo
-                let alive = self.beat.count() != beats_before;
+                let alive = drew_recently || self.beat.count() != beats_before;
                 if alive {
                     rrx.recv_timeout(limit.saturating_sub(sent.elapsed()))
                 } else {
