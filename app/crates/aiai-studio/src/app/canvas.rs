@@ -317,7 +317,14 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
     for (idx, ev) in events.iter().enumerate() {
         match ev {
             Event::Touch { force: Some(f), phase, .. } => {
-                env.ed.pressure = if *phase == egui::TouchPhase::End || *phase == egui::TouchPhase::Cancel { 1.0 } else { f.clamp(0.02, 1.0) };
+                // o fim do toque chega antes do botão solto: com traço aberto, os pontos de alcance do estabilizador
+                // ainda usam a última pressão; volta a 1,0 (mouse) depois de soltar
+                let ended = *phase == egui::TouchPhase::End || *phase == egui::TouchPhase::Cancel;
+                if !ended {
+                    env.ed.pressure = f.clamp(0.02, 1.0);
+                } else if matches!(env.ed.gesture, Gesture::None) {
+                    env.ed.pressure = 1.0;
+                }
             }
             Event::PointerMoved(pos) => {
                 env.ed.cursor = Some(*pos);
@@ -330,11 +337,19 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
             }
             Event::PointerButton { pos, button, pressed: true, modifiers } => {
                 if matches!(env.ed.gesture, Gesture::None) && over_canvas(ui, rect, *pos) {
+                    // o 1º ponto usa a pressão do toque que abriu o traço neste quadro, venha antes (egui-winit)
+                    // ou depois (botão promovido do Windows, fila da bridge) do botão; sem toque, a última lida
+                    if let Some(p) = touch_start_pressure(&events, idx) {
+                        env.ed.pressure = p;
+                    }
                     on_press(env, rect, ppp, *pos, *button, *modifiers, space, r_held);
                 }
             }
             Event::PointerButton { pos, button, pressed: false, .. } => {
                 on_release(env, rect, ppp, *pos, *button);
+                if events.iter().any(|e| matches!(e, Event::Touch { phase: egui::TouchPhase::End | egui::TouchPhase::Cancel, .. })) {
+                    env.ed.pressure = 1.0;
+                }
             }
             Event::MouseWheel { unit, delta, .. } => {
                 let at = env.ed.cursor.unwrap_or(rect.center());
@@ -358,6 +373,19 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
             on_release(env, rect, ppp, p, egui::PointerButton::Middle);
         }
     }
+}
+
+/// Pressão do `Touch Start` mais próximo do evento `idx` no mesmo quadro.
+fn touch_start_pressure(events: &[Event], idx: usize) -> Option<f32> {
+    events
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| match e {
+            Event::Touch { force: Some(f), phase: egui::TouchPhase::Start, .. } => Some((i.abs_diff(idx), f.clamp(0.02, 1.0))),
+            _ => None,
+        })
+        .min_by_key(|(d, _)| *d)
+        .map(|(_, f)| f)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -832,5 +860,26 @@ fn readout(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, c: Vec2)
                 painter.text(rect.center_top() + egui::vec2(0.0, 10.0), egui::Align2::CENTER_TOP, msg, egui::FontId::proportional(12.0), env.t.danger);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn touch(phase: egui::TouchPhase, f: f32) -> Event {
+        Event::Touch { device_id: egui::TouchDeviceId(1), id: egui::TouchId(1), phase, pos: Pos2::ZERO, force: Some(f) }
+    }
+
+    #[test]
+    fn first_point_pressure_comes_from_the_touch_start_of_the_same_frame() {
+        let press = Event::PointerButton { pos: Pos2::ZERO, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE };
+        // ordem da bridge / botão promovido: botão antes do toque
+        let after = [Event::PointerMoved(Pos2::ZERO), press.clone(), touch(egui::TouchPhase::Start, 0.2)];
+        assert_eq!(touch_start_pressure(&after, 1), Some(0.2));
+        // ordem do egui-winit: toque antes do botão; o fim do traço anterior no mesmo quadro não conta
+        let before = [touch(egui::TouchPhase::End, 0.9), touch(egui::TouchPhase::Start, 0.35), Event::PointerMoved(Pos2::ZERO), press];
+        assert_eq!(touch_start_pressure(&before, 3), Some(0.35));
+        assert_eq!(touch_start_pressure(&[Event::PointerMoved(Pos2::ZERO)], 0), None);
     }
 }
