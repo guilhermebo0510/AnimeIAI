@@ -108,7 +108,8 @@ pub(crate) fn open_drawing(env: &mut Env, p: &Panel) {
         return;
     };
     env.ed.set_cut(cut.clone());
-    env.ed.sel_node = Some(cut);
+    env.ed.sel_node = Some(cut.clone());
+    env.ed.back_to_board = Some(cut);
     env.ed.want_workspace = Some(WorkspaceId::Layout);
 }
 

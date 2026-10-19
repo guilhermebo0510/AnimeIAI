@@ -71,9 +71,17 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
     if matches!(env.ed.gesture, Gesture::Stroke(_)) {
         if let Gesture::Stroke(mut g) = std::mem::replace(&mut env.ed.gesture, Gesture::None) {
             tools::update_eraser_hits(env, &mut g);
+            if env.ed.live_stroke.started_for() != Some(g.t0) {
+                tools::start_live(env, &ctx, &g, xf.scale);
+            }
+            tools::feed_live(env, &g);
             env.ed.gesture = Gesture::Stroke(g);
         }
+    } else if env.ed.live_stroke.active() {
+        env.ed.live_stroke.release(None); // gesto cancelado
     }
+    let shown_counter = env.ed.shown.as_ref().map(|s| s.rendered.key.counter);
+    env.ed.live_stroke.poll(&ctx, shown_counter);
 
     let painter = ui.painter().with_clip_rect(rect);
     paint_canvas(env, &painter, rect, &xf, &cut, canvas, ppp);
@@ -134,6 +142,16 @@ fn toolbar(env: &mut Env, ui: &mut Ui, has_cut: bool) {
     ui.spacing_mut().item_spacing = egui::vec2(4.0, 3.0);
     ui.horizontal_wrapped(|ui| {
         let rect = env.ed.canvas_rect;
+        // desenho de um painel do storyboard: o caminho de volta fica à vista
+        if env.ed.back_to_board.is_some() && env.ed.back_to_board == env.ed.cut {
+            let b = ui.button(tr("canvas.back_to_board")).on_hover_text(tr("canvas.back_to_board.tip"));
+            env.note("canvas:back_to_board", b.rect);
+            if b.clicked() {
+                env.ed.back_to_board = None;
+                env.ed.want_workspace = Some(crate::workspace::WorkspaceId::Storyboard);
+            }
+            ui.separator();
+        }
         if env.icon_button(ui, IconId::Fit, "canvas.fit", false, has_cut, "canvas:fit").clicked() {
             env.ed.fit_pending = true;
         }
@@ -199,7 +217,7 @@ fn sep(ui: &mut Ui, t: &crate::theme::Tokens) {
 
 // ------------------------------------------------------------------------------------------------ render e textura
 
-fn checker_colors(dark: bool) -> [Color32; 2] {
+pub(crate) fn checker_colors(dark: bool) -> [Color32; 2] {
     if dark { [Color32::from_rgb(0x9c, 0x9e, 0xa5), Color32::from_rgb(0x8d, 0x8f, 0x96)] } else { [Color32::from_rgb(0xe6, 0xe7, 0xea), Color32::from_rgb(0xcf, 0xd0, 0xd5)] }
 }
 
@@ -567,7 +585,10 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
         _ if button != egui::PointerButton::Primary => env.ed.gesture = g,
         Gesture::Stroke(mut g) => {
             g.push(c, env.ed.pressure);
+            tools::feed_live(env, &g);
             tools::finish_stroke(env, g, at);
+            let counter = env.core.change_counter;
+            env.ed.live_stroke.release(Some(counter));
         }
         Gesture::Select { start, mut pts, mode } => {
             if mode != SelMode::Lasso {
@@ -588,6 +609,11 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
     }
 }
 
+/// Ferramentas cuja mira o canvas desenha (no mesmo quadro do contorno do pincel).
+fn own_cursor(tool: ToolId) -> bool {
+    matches!(tool, ToolId::Pen | ToolId::Brush | ToolId::Eraser | ToolId::Fill | ToolId::Eyedropper | ToolId::Lasso)
+}
+
 fn set_cursor(env: &Env, ctx: &egui::Context, resp: &egui::Response, tool: ToolId) {
     use egui::CursorIcon as C;
     if !resp.hovered() && matches!(env.ed.gesture, Gesture::None) {
@@ -606,6 +632,9 @@ fn set_cursor(env: &Env, ctx: &egui::Context, resp: &egui::Response, tool: ToolI
                     ToolId::Hand => C::Grab,
                     ToolId::Zoom => C::ZoomIn,
                     ToolId::Move => C::Move,
+                    // a mira é desenhada pelo canvas junto com o contorno do pincel (paint_canvas): a do Windows anda
+                    // na hora e o contorno um quadro depois, e os dois se separavam ao mover rápido
+                    t if own_cursor(t) => C::None,
                     _ => C::Crosshair,
                 }
             }
@@ -666,7 +695,10 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
     paint_gestures(env, painter, xf, cut);
 
     // ponta/pincel sob o cursor
-    if let (Some(p), true) = (env.ed.cursor, matches!(env.ed.gesture, Gesture::None | Gesture::Stroke(_))) {
+    if let Some(p) = env.ed.cursor {
+        let ring = matches!(env.ed.gesture, Gesture::None | Gesture::Stroke(_));
+        // espaço/R = mão/girar (o set_cursor mostra o ícone do sistema): sem a mira própria
+        let nav = matches!(env.ed.gesture, Gesture::Pan { .. } | Gesture::Rotate { .. }) || painter.ctx().input(|i| i.key_down(egui::Key::Space) || i.key_down(egui::Key::R));
         if rect.contains(p) {
             let o = &env.ed.opts;
             let d = match *env.tool {
@@ -675,10 +707,19 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
                 ToolId::Eraser => Some(o.eraser_size),
                 _ => None,
             };
-            if let Some(d) = d {
+            if let Some(d) = d.filter(|_| ring && !nav) {
                 let r = (d * xf.scale / 2.0).max(1.5);
                 painter.circle_stroke(p, r + 0.5, Stroke::new(1.0, Color32::from_black_alpha(160)));
                 painter.circle_stroke(p, r - 0.5, Stroke::new(1.0, Color32::from_white_alpha(200)));
+            }
+            if own_cursor(*env.tool) && !nav {
+                // mira fina em duas cores (aparece em fundo claro e escuro), com um vão no meio para ver o ponto
+                let (gap, arm) = (2.5, 7.0);
+                for (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+                    let (a, b) = (p + egui::vec2(dx, dy) * gap, p + egui::vec2(dx, dy) * (gap + arm));
+                    painter.line_segment([a, b], Stroke::new(3.0, Color32::from_black_alpha(150)));
+                    painter.line_segment([a, b], Stroke::new(1.0, Color32::WHITE));
+                }
             }
         }
     }
@@ -907,6 +948,22 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
             variable_line(painter, &g.pts, &g.radii, g.color, xf);
         }
     }
+    // resultado real do motor (pincel/borracha) durante o arrasto e até o render do traço gravado chegar
+    let live = env.ed.live_stroke.overlay.as_ref().map(|ov| {
+        let (x0, y0) = (ov.origin[0] as f32, ov.origin[1] as f32);
+        let (x1, y1) = (x0 + ov.size[0] as f32, y0 + ov.size[1] as f32);
+        let to = |x: f32, y: f32| {
+            let (cx, cy) = match &ov.fwd {
+                Some(a) => a.apply(x, y),
+                None => (x, y),
+            };
+            xf.to_screen(Vec2::new(cx, cy))
+        };
+        let pts = [to(x0, y0), to(x1, y0), to(x1, y1), to(x0, y1)];
+        let uv = [Pos2::new(0.0, 0.0), Pos2::new(1.0, 0.0), Pos2::new(1.0, 1.0), Pos2::new(0.0, 1.0)];
+        painter.add(quad(ov.tex.id(), pts, uv));
+    });
+    let has_live = live.is_some();
     let t = env.t;
     match &env.ed.gesture {
         Gesture::Stroke(g) => {
@@ -927,11 +984,13 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
                         None => polyline(painter, &pts, env.ed.opts.pen_width, color, xf),
                     }
                 }
+                ToolId::Brush if has_live => {}
                 ToolId::Brush => {
                     let c = cmds::resolve_color(&env.core.project, &env.ed.color);
                     let a = (env.ed.opts.brush_opacity * 0.85).clamp(0.1, 0.95);
                     polyline(painter, &pts, env.ed.opts.brush_size, super::ui_kit::rgba_to_color32(Rgba([c.0[0], c.0[1], c.0[2], a])), xf);
                 }
+                ToolId::Eraser if has_live => {}
                 _ => {
                     let path: Vec<Vec2> = g.path.iter().map(|p| g.to_canvas(*p)).collect();
                     polyline(painter, &path, env.ed.opts.eraser_size, Color32::from_white_alpha(70), xf);

@@ -2,6 +2,7 @@
 //!
 //! ```text
 //! meu-projeto.aiai/
+//!   meu-projeto.aiaiproj  arquivo para abrir o projeto (Arquivo > Abrir, Explorer): aponta para a própria pasta
 //!   project.json      documento canônico (chaves ordenadas, indentado: diffs legíveis em git)
 //!   blobs/ab/<hash>   conteúdo por BLAKE3 (tiles, máscaras, imagens, áudio)
 //!   wal.ndjson        comandos aplicados depois do último salvamento (recuperação após queda)
@@ -21,6 +22,38 @@ use std::path::{Path, PathBuf};
 pub const PROJECT_FILE: &str = "project.json";
 pub const WAL_FILE: &str = "wal.ndjson";
 pub const BLOB_DIR: &str = "blobs";
+/// Extensão do arquivo que abre o projeto (fica dentro da pasta, com o nome dela).
+pub const OPENER_EXT: &str = "aiaiproj";
+
+/// Caminho do arquivo que abre o projeto: `meu-projeto.aiai/meu-projeto.aiaiproj`.
+pub fn opener_path(dir: &Path) -> PathBuf {
+    let stem = dir.file_stem().map(|s| s.to_string_lossy().into_owned()).filter(|s| !s.is_empty()).unwrap_or_else(|| "projeto".into());
+    dir.join(format!("{stem}.{OPENER_EXT}"))
+}
+
+/// Grava (ou atualiza) o arquivo que abre o projeto. Pequeno JSON: quem lê é o próprio programa (a pasta é o projeto).
+pub fn write_opener(dir: &Path, project: &Project) -> CoreResult<()> {
+    let body = serde_json::to_string_pretty(&serde_json::json!({ "aiai_project": PROJECT_FILE, "name": project.name, "format": project.format }))?;
+    let path = opener_path(dir);
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(body.as_str()) {
+        write_atomic(&path, body.as_bytes())?;
+    }
+    Ok(())
+}
+
+/// Pasta do projeto a partir do que o usuário escolheu: a própria pasta, o `.aiaiproj` ou o `project.json` dentro dela.
+pub fn resolve_project_dir(path: &Path) -> Option<PathBuf> {
+    if path.is_dir() {
+        return path.join(PROJECT_FILE).is_file().then(|| path.to_path_buf());
+    }
+    let is_opener = path.extension().is_some_and(|e| e.eq_ignore_ascii_case(OPENER_EXT));
+    let is_doc = path.file_name().is_some_and(|n| n.eq_ignore_ascii_case(PROJECT_FILE));
+    if is_opener || is_doc {
+        let dir = path.parent()?;
+        return dir.join(PROJECT_FILE).is_file().then(|| dir.to_path_buf());
+    }
+    None
+}
 
 /// Espaço mínimo livre para aceitar salvar (bytes).
 pub const MIN_FREE_BYTES: u64 = 512 * 1024 * 1024;
@@ -167,6 +200,7 @@ pub fn save(session: &mut CoreSession, dir: &Path) -> CoreResult<()> {
     }
     write_blobs_parallel(dir, &pending)?;
     write_atomic(&dir.join(PROJECT_FILE), json.as_bytes())?;
+    write_opener(dir, &session.project)?;
     // WAL recomeça a partir desta revisão.
     let wal = Wal::create(dir, session.project.revision)?;
     session.attach_wal(wal);

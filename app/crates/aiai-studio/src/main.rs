@@ -54,6 +54,9 @@ fn main() -> eframe::Result {
         persistence_path: Some(std::env::temp_dir().join("aiai-eframe-unused.ron")),
         wgpu_options: egui_wgpu::WgpuConfiguration {
             wgpu_setup: egui_wgpu::WgpuSetup::CreateNew(wgpu_setup),
+            // 1 quadro na fila em vez de 2: o que se desenha acompanha o mouse um quadro mais cedo (o canvas de
+            // pintura pede latência, não vazão)
+            surface: egui_wgpu::SurfaceConfig::LOW_LATENCY,
             ..Default::default()
         },
         ..Default::default()

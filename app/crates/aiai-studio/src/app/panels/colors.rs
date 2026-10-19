@@ -31,19 +31,136 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
     });
 }
 
-/// Seletor fixo (quadrado saturação × valor + faixa de matiz) para a cor direta, sempre à mão como nos programas de
-/// pintura; recolhível.
+/// Seletor fixo (quadrado saturação × valor + faixa de matiz + RGB/hex) para a cor direta, sempre à mão como nos
+/// programas de pintura; recolhível. Desenhado aqui (não o do egui): o marcador do egui é um círculo proporcional à
+/// largura, que num painel largo virava uma bola grande saindo da área.
 fn color_wheel(env: &mut Env, ui: &mut Ui) {
     let rgba = cmds::resolve_color(&env.core.project, &env.ed.color);
-    let mut c32 = rgba_to_color32(Rgba([rgba.0[0], rgba.0[1], rgba.0[2], 1.0]));
-    let r = egui::CollapsingHeader::new(tr("colors.wheel")).id_salt("colors_wheel").default_open(true).show(ui, |ui| {
-        ui.spacing_mut().slider_width = (ui.available_width() - 40.0).clamp(120.0, 260.0);
-        let changed = egui::color_picker::color_picker_color32(ui, &mut c32, egui::color_picker::Alpha::Opaque);
-        if changed {
-            env.ed.set_color_direct(color32_to_rgba(c32));
+    let c32 = rgba_to_color32(Rgba([rgba.0[0], rgba.0[1], rgba.0[2], 1.0]));
+    // a matiz fica guardada enquanto a cor for a mesma (no cinza/preto a matiz da cor não existe e o quadrado "pulava")
+    let mut hsv = match env.ed.wheel_hsv {
+        Some((c, h)) if c == c32 => h,
+        _ => {
+            let h = egui::ecolor::Hsva::from(c32);
+            [h.h, h.s, h.v]
         }
+    };
+    let before = hsv;
+    let r = egui::CollapsingHeader::new(tr("colors.wheel")).id_salt("colors_wheel").default_open(true).show(ui, |ui| {
+        let w = ui.available_width().clamp(120.0, 300.0);
+        sv_square(env, ui, w, &mut hsv);
+        hue_strip(env, ui, w, &mut hsv);
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            let cur = egui::ecolor::Hsva::new(hsv[0], hsv[1], hsv[2], 1.0).to_srgba_unmultiplied();
+            let mut rgb = [cur[0], cur[1], cur[2]];
+            let mut changed = false;
+            for (k, label) in ["R", "G", "B"].iter().enumerate() {
+                let r = ui.add(egui::DragValue::new(&mut rgb[k]).range(0..=255).prefix(format!("{label} ")));
+                env.note(format!("colors:{}", label.to_lowercase()), r.rect);
+                changed |= r.changed();
+            }
+            let mut hex = format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2]);
+            let r = ui.add(egui::TextEdit::singleline(&mut hex).desired_width(70.0).font(egui::TextStyle::Monospace));
+            env.note("colors:hex", r.rect);
+            if r.changed() {
+                if let Some(c) = Rgba::from_hex(hex.trim()) {
+                    let c = rgba_to_color32(c);
+                    rgb = [c.r(), c.g(), c.b()];
+                    changed = true;
+                }
+            }
+            if changed {
+                let h = egui::ecolor::Hsva::from(Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
+                hsv = [if h.s > 0.0 && h.v > 0.0 { h.h } else { hsv[0] }, h.s, h.v];
+            }
+        });
     });
     env.note("colors:wheel", r.header_response.rect);
+    if hsv != before {
+        let c = egui::ecolor::Hsva::new(hsv[0], hsv[1], hsv[2], 1.0).to_srgba_unmultiplied();
+        let c32 = Color32::from_rgb(c[0], c[1], c[2]);
+        env.ed.set_color_direct(color32_to_rgba(c32));
+        env.ed.wheel_hsv = Some((c32, hsv));
+    } else if env.ed.wheel_hsv.is_none_or(|(c, _)| c != c32) {
+        env.ed.wheel_hsv = Some((c32, hsv));
+    }
+}
+
+/// Onde o ponteiro pegou o controle: arrastando ou num clique rápido (pressionar e soltar entre dois quadros).
+fn pick_pos(ui: &Ui, resp: &egui::Response) -> Option<egui::Pos2> {
+    resp.interact_pointer_pos().or_else(|| if resp.clicked() || resp.is_pointer_button_down_on() { ui.ctx().input(|i| i.pointer.interact_pos()) } else { None })
+}
+
+/// Marcador pequeno em duas cores (aparece em fundo claro e escuro), sempre dentro da área.
+fn marker(painter: &egui::Painter, area: Rect, p: egui::Pos2) {
+    let p = p.clamp(area.min, area.max);
+    painter.with_clip_rect(area.expand(1.0)).circle_stroke(p, 5.0, Stroke::new(3.0, Color32::from_black_alpha(170)));
+    painter.with_clip_rect(area.expand(1.0)).circle_stroke(p, 5.0, Stroke::new(1.2, Color32::WHITE));
+}
+
+fn sv_square(env: &mut Env, ui: &mut Ui, w: f32, hsv: &mut [f32; 3]) {
+    let h = (w * 0.62).clamp(90.0, 170.0);
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, h), Sense::click_and_drag());
+    env.note("colors:sv", rect);
+    if let Some(p) = pick_pos(ui, &resp) {
+        hsv[1] = ((p.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+        hsv[2] = 1.0 - ((p.y - rect.top()) / rect.height()).clamp(0.0, 1.0);
+    }
+    // grade de vértices com a cor de cada ponto (o egui interpola dentro de cada célula)
+    let n = 16;
+    let mut mesh = egui::Mesh::default();
+    for j in 0..=n {
+        for i in 0..=n {
+            let (s, v) = (i as f32 / n as f32, 1.0 - j as f32 / n as f32);
+            let c = egui::ecolor::Hsva::new(hsv[0], s, v, 1.0).to_srgba_unmultiplied();
+            mesh.colored_vertex(egui::pos2(rect.left() + rect.width() * s, rect.top() + rect.height() * (1.0 - v)), Color32::from_rgb(c[0], c[1], c[2]));
+        }
+    }
+    for j in 0..n {
+        for i in 0..n {
+            let a = (j * (n + 1) + i) as u32;
+            let b = a + (n + 1) as u32;
+            mesh.add_triangle(a, a + 1, b);
+            mesh.add_triangle(a + 1, b + 1, b);
+        }
+    }
+    let painter = ui.painter_at(rect);
+    painter.add(egui::Shape::mesh(mesh));
+    painter.rect_stroke(rect, 2.0, Stroke::new(1.0, env.t.border), StrokeKind::Inside);
+    marker(&painter, rect, egui::pos2(rect.left() + rect.width() * hsv[1], rect.top() + rect.height() * (1.0 - hsv[2])));
+    if resp.hovered() || resp.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+    }
+}
+
+fn hue_strip(env: &mut Env, ui: &mut Ui, w: f32, hsv: &mut [f32; 3]) {
+    ui.add_space(4.0);
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 14.0), Sense::click_and_drag());
+    env.note("colors:hue", rect);
+    if let Some(p) = pick_pos(ui, &resp) {
+        hsv[0] = ((p.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+    }
+    let n = 36;
+    let mut mesh = egui::Mesh::default();
+    for i in 0..=n {
+        let t = i as f32 / n as f32;
+        let c = egui::ecolor::Hsva::new(t, 1.0, 1.0, 1.0).to_srgba_unmultiplied();
+        let c = Color32::from_rgb(c[0], c[1], c[2]);
+        let x = rect.left() + rect.width() * t;
+        mesh.colored_vertex(egui::pos2(x, rect.top()), c);
+        mesh.colored_vertex(egui::pos2(x, rect.bottom()), c);
+    }
+    for i in 0..n as u32 {
+        mesh.add_triangle(2 * i, 2 * i + 1, 2 * i + 2);
+        mesh.add_triangle(2 * i + 1, 2 * i + 3, 2 * i + 2);
+    }
+    let painter = ui.painter_at(rect);
+    painter.add(egui::Shape::mesh(mesh));
+    let x = rect.left() + rect.width() * hsv[0];
+    let m = Rect::from_min_max(egui::pos2(x - 2.5, rect.top()), egui::pos2(x + 2.5, rect.bottom()));
+    painter.rect_stroke(m, 1.0, Stroke::new(2.5, Color32::from_black_alpha(170)), StrokeKind::Outside);
+    painter.rect_stroke(m, 1.0, Stroke::new(1.0, Color32::WHITE), StrokeKind::Outside);
 }
 
 fn current_color(env: &mut Env, ui: &mut Ui) {

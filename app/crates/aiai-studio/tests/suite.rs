@@ -240,15 +240,18 @@ fn script(c: &Client) {
     // Menu Arquivo > Novo com o documento sujo pergunta antes; Descartar zera
     c.ok("INPUT", json!({"wait": true, "events": [{"kind": "key", "key": "Y", "modifiers": ["ctrl"]}, {"kind": "wait", "frames": 2}]}));
     assert_eq!(c.ok("GET_STATUS", json!({}))["dirty"], true);
+    // Novo abre a janela de projeto; Criar pergunta antes de descartar
     c.click_widget("menu:file");
     c.click_widget("menu_item:file.new");
+    assert!(c.state()["dialogs"].as_array().unwrap().iter().any(|d| d == "start"), "Novo abre a janela de projeto");
+    c.click_widget("start:create");
     let ui = c.state();
     assert!(ui["dialogs"].as_array().unwrap().iter().any(|d| d == "confirm"), "pergunta sobre alterações não salvas: {}", ui["dialogs"]);
     c.click_widget("confirm:cancel");
     assert_eq!(c.ok("GET_STATUS", json!({}))["nodes"], 1, "Cancelar mantém o documento");
-    c.click_widget("menu:file");
-    c.click_widget("menu_item:file.new");
+    c.click_widget("start:create");
     c.click_widget("confirm:discard");
+    assert!(!c.state()["dialogs"].as_array().unwrap().iter().any(|d| d == "start"), "a janela fecha com o projeto criado");
     let st = c.ok("GET_STATUS", json!({}));
     assert_eq!((st["dirty"].clone(), st["revision"].clone(), st["nodes"].clone()), (json!(false), json!(0), json!(0)), "{st}");
 

@@ -1,5 +1,6 @@
-//! Tela inicial (Arquivo > Início; abre sozinha ao iniciar sem `--project`): projeto novo com formato e taxa de quadros,
-//! projetos recentes e Abrir. O projeto novo passa pelo mesmo `NEW_PROJECT` da bridge (`doc_new`), com `settings`.
+//! Janela de projeto (Arquivo > Novo / Ctrl+N; abre sozinha ao iniciar sem `--project`): projeto novo com nome, pasta,
+//! formato e taxa de quadros (já nasce salvo na pasta), projetos recentes e Abrir. O projeto novo passa pelo mesmo
+//! `NEW_PROJECT` da bridge (`doc_new`), com `settings`, e é salvo na pasta escolhida.
 
 use super::StudioApp;
 use crate::brand;
@@ -27,6 +28,8 @@ pub(crate) struct NewRequest {
     pub height: u32,
     pub fps_num: u32,
     pub fps_den: u32,
+    /// Pasta do projeto (`<pasta escolhida>/<nome>.aiai`): o projeto já nasce salvo nela.
+    pub dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Default)]
@@ -36,6 +39,8 @@ pub(crate) struct StartState {
     pub format: usize,
     pub rate: usize,
     pub request: Option<NewRequest>,
+    /// Pasta onde a pasta do projeto novo é criada (padrão: a pasta de projetos das Preferências).
+    pub parent: Option<PathBuf>,
     /// Recente escolhido esperando a decisão sobre alterações não salvas.
     pub open_path: Option<PathBuf>,
 }
@@ -45,12 +50,15 @@ impl StartState {
         let (_, width, height) = FORMATS[self.format.min(FORMATS.len() - 1)];
         let (_, fps_num, fps_den) = RATES[self.rate.min(RATES.len() - 1)];
         let name = self.name.trim();
-        NewRequest { name: if name.is_empty() { tr("doc.untitled").to_owned() } else { name.to_owned() }, width, height, fps_num, fps_den }
+        let name = if name.is_empty() { tr("doc.untitled").to_owned() } else { name.to_owned() };
+        let dir = self.parent.as_ref().map(|p| p.join(super::doc::suggested_folder_name(&name)));
+        NewRequest { name, width, height, fps_num, fps_den, dir }
     }
 }
 
 enum Act {
     Create,
+    ChooseParent,
     Open,
     Recent(PathBuf),
     Recover(PathBuf),
@@ -69,6 +77,10 @@ impl StudioApp {
         }
         if self.start.name.is_empty() {
             self.start.name = tr("doc.untitled").to_owned();
+        }
+        // execuções sem sessão (testes, capturas) não sugerem pasta: Criar faz um projeto sem pasta (Salvar pergunta)
+        if self.start.parent.is_none() && !self.cli.no_session {
+            self.start.parent = self.prefs.projects_dir.clone().filter(|d| d.is_dir()).or_else(super::doc::default_projects_dir);
         }
         let t = self.tokens();
         let mut open = true;
@@ -125,9 +137,27 @@ impl StudioApp {
                     self.rects.note("start:rate", r.response.rect);
                     let req = self.start.request();
                     ui.label(RichText::new(format!("{} × {} px · {} {}", req.width, req.height, RATES[self.start.rate].0, tr("start.fps"))).size(11.5).color(t.text_dim));
+                    ui.add_space(4.0);
+                    // pasta: o projeto já nasce salvo (Salvar não pergunta de novo)
+                    ui.label(tr("start.folder"));
+                    ui.horizontal(|ui| {
+                        let shown = self.start.parent.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| tr("start.no_folder").to_owned());
+                        let b = ui.button(tr("start.choose_folder"));
+                        self.rects.note("start:folder", b.rect);
+                        if b.clicked() {
+                            act = Some(Act::ChooseParent);
+                        }
+                        ui.add(egui::Label::new(RichText::new(shown).size(11.5)).truncate());
+                    });
+                    if let Some(d) = &req.dir {
+                        let exists = d.join("project.json").is_file();
+                        let (text, color) = if exists { (format!("{}: {}", tr("start.exists"), d.display()), t.danger) } else { (format!("{}: {}", tr("start.will_create"), d.display()), t.text_dim) };
+                        ui.add(egui::Label::new(RichText::new(text).size(11.0).color(color)).wrap());
+                    }
                     ui.add_space(8.0);
                     ui.horizontal_wrapped(|ui| {
-                        let c = ui.button(tr("start.create"));
+                        let taken = req.dir.as_ref().is_some_and(|d| d.join("project.json").is_file());
+                        let c = ui.add_enabled(!taken, egui::Button::new(tr("start.create")));
                         self.rects.note("start:create", c.rect);
                         if c.clicked() {
                             act = Some(Act::Create);
@@ -201,9 +231,9 @@ impl StudioApp {
         match act {
             Some(Act::Create) => {
                 self.start.request = Some(self.start.request());
-                self.start.open = false;
                 self.request_new();
             }
+            Some(Act::ChooseParent) => self.request_new_parent(),
             Some(Act::Open) => {
                 self.start.open = false;
                 self.request_open();
@@ -234,7 +264,9 @@ mod tests {
     #[test]
     fn request_uses_chosen_format_and_rate() {
         let s = StartState { name: "  Piloto ".into(), format: 3, rate: 4, ..Default::default() };
-        assert_eq!(s.request(), NewRequest { name: "Piloto".into(), width: 1080, height: 1920, fps_num: 30, fps_den: 1 });
+        assert_eq!(s.request(), NewRequest { name: "Piloto".into(), width: 1080, height: 1920, fps_num: 30, fps_den: 1, dir: None });
+        let with_dir = StartState { name: "Piloto".into(), parent: Some(PathBuf::from("C:/proj")), ..Default::default() };
+        assert_eq!(with_dir.request().dir, Some(PathBuf::from("C:/proj").join("Piloto.aiai")));
         let d = StartState::default().request();
         assert_eq!((d.width, d.height, d.fps_num, d.fps_den), (1920, 1080, 24_000, 1001));
         assert!(!d.name.is_empty());

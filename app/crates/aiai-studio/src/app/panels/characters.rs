@@ -47,11 +47,22 @@ pub(crate) struct CharState {
     pub cons: ConsForm,
     /// Última medição: (personagem, change_counter, resultado).
     pub report: Option<(NodeId, u64, Result<Value, String>)>,
+    /// Diálogo "Novo personagem" aberto.
+    pub new_form: Option<NewCharForm>,
+}
+
+/// Diálogo de personagem novo: nada é criado até "Criar"; a folha de modelo já sai junto se marcada.
+#[derive(Clone)]
+pub(crate) struct NewCharForm {
+    pub name: String,
+    pub heads: f32,
+    pub views: [bool; 5],
+    pub sheet: bool,
 }
 
 impl Default for CharState {
     fn default() -> Self {
-        CharState { sel: None, sheet: EditPreview::default(), views: [true; 5], figure_px: 800.0, guides: true, cons: ConsForm::default(), report: None }
+        CharState { sel: None, sheet: EditPreview::default(), views: [true; 5], figure_px: 800.0, guides: true, cons: ConsForm::default(), report: None, new_form: None }
     }
 }
 
@@ -96,13 +107,92 @@ fn set_char(core: &mut CoreSession, id: &NodeId, patch: Value) -> Result<(), Str
     cmds::run(core, Command::SetProps { id: id.clone(), name: None, data: patch }).map(|_| ())
 }
 
-/// Personagem novo ("Personagem N") com a altura padrão de 6,5 cabeças.
+/// Personagem novo ("Personagem N") com a altura padrão de 6,5 cabeças (testes; a interface passa pelo diálogo).
+#[cfg(test)]
 pub(crate) fn add_character(core: &mut CoreSession) -> Result<NodeId, String> {
     let n = core.project.roots.characters.len() + 1;
+    add_character_named(core, &format!("{} {n}", tr("char.name")), 6.5)
+}
+
+pub(crate) fn add_character_named(core: &mut CoreSession, name: &str, heads: f32) -> Result<NodeId, String> {
     let id = core.ids.next();
-    let data = CharacterData { heads_tall: 6.5, ..Default::default() };
-    cmds::run(core, Command::CreateNode { id: Some(id.clone()), parent: None, index: None, name: format!("{} {n}", tr("char.name")), data: NodeKind::Character(data) })?;
+    let data = CharacterData { heads_tall: heads, ..Default::default() };
+    cmds::run(core, Command::CreateNode { id: Some(id.clone()), parent: None, index: None, name: name.to_owned(), data: NodeKind::Character(data) })?;
     Ok(id)
+}
+
+/// Gera a folha de modelo do personagem (vistas marcadas, altura em cabeças).
+fn make_sheet(env: &mut Env, ch: &NodeId, heads: f32, views_on: [bool; 5]) {
+    let views: Vec<f32> = VIEWS.iter().zip(views_on).filter(|(_, on)| *on).map(|((d, _), _)| *d).collect();
+    if views.is_empty() {
+        return;
+    }
+    let name = format!("{} {}", tr("panel.sheet.title"), env.core.project.node(ch).map(|n| n.name.clone()).unwrap_or_default());
+    let r = actions::run(env.core, "MODEL_SHEET", json!({ "character": ch, "name": name, "heads_tall": heads, "figure_px": env.ed.chars.figure_px, "views": views }));
+    actions::notify_err(env.ed, r);
+}
+
+/// Janela "Novo personagem" (nome, altura em cabeças, vistas da folha de modelo).
+fn new_character_window(env: &mut Env, ctx: &egui::Context) {
+    let Some(mut f) = env.ed.chars.new_form.clone() else { return };
+    let mut open = true;
+    let (mut create, mut cancel) = (false, false);
+    let r = egui::Window::new(tr("char.new_title"))
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+        .show(ctx, |ui| {
+            egui::Grid::new("new_char").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                ui.label(tr("char.f.name"));
+                let r = ui.add(egui::TextEdit::singleline(&mut f.name).desired_width(220.0));
+                env.note("char_new:name", r.rect);
+                ui.end_row();
+                ui.label(tr("char.f.heads"));
+                let r = ui.add(egui::DragValue::new(&mut f.heads).range(2.0..=10.0).speed(0.1).max_decimals(1));
+                env.note("char_new:heads", r.rect);
+                ui.end_row();
+            });
+            ui.add_space(6.0);
+            let r = ui.checkbox(&mut f.sheet, tr("char.new_with_sheet"));
+            env.note("char_new:sheet", r.rect);
+            ui.add_enabled_ui(f.sheet, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    for (i, (_, key)) in VIEWS.iter().enumerate() {
+                        ui.checkbox(&mut f.views[i], tr(key));
+                    }
+                });
+            });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                let ok = !f.name.trim().is_empty() && (!f.sheet || f.views.iter().any(|v| *v));
+                let c = ui.add_enabled(ok, egui::Button::new(tr("char.create")));
+                env.note("char_new:create", c.rect);
+                create = c.clicked();
+                let x = ui.button(tr("confirm.cancel"));
+                env.note("char_new:cancel", x.rect);
+                cancel = x.clicked();
+            });
+        });
+    if let Some(r) = r {
+        env.note("dialog:char_new", r.response.rect);
+    }
+    if create {
+        match add_character_named(env.core, f.name.trim(), f.heads) {
+            Ok(id) => {
+                select(env, id.clone());
+                if f.sheet {
+                    make_sheet(env, &id, f.heads, f.views);
+                }
+            }
+            Err(e) => env.ed.notify(e),
+        }
+        env.ed.chars.new_form = None;
+    } else if cancel || !open {
+        env.ed.chars.new_form = None;
+    } else {
+        env.ed.chars.new_form = Some(f);
+    }
 }
 
 /// Texto curto da voz: "VOICEVOX: nome (#8)" ou "sem voz".
@@ -131,12 +221,12 @@ pub(crate) fn list(env: &mut Env, ui: &mut Ui, body: Rect) {
     let sel = sync_sel(env);
     let b = ui.button(tr("char.new"));
     env.note("char:new", b.rect);
-    if b.clicked() {
-        let r = add_character(env.core);
-        if let Some(id) = actions::notify_err(env.ed, r) {
-            select(env, id);
-        }
+    if b.clicked() && env.ed.chars.new_form.is_none() {
+        let n = env.core.project.roots.characters.len() + 1;
+        env.ed.chars.new_form = Some(NewCharForm { name: format!("{} {n}", tr("char.name")), heads: 6.5, views: env.ed.chars.views, sheet: true });
     }
+    let ctx = ui.ctx().clone();
+    new_character_window(env, &ctx);
     ui.add_space(4.0);
     let ids = env.core.project.roots.characters.clone();
     if ids.is_empty() {
@@ -211,7 +301,21 @@ pub(crate) fn sheet(env: &mut Env, ui: &mut Ui, body: Rect) {
         return;
     };
     let Some(cut) = sheet_cut(&env.core.project, &ch) else {
+        // sem folha: gerar aqui mesmo, com as vistas marcadas e a altura do personagem
         ui.label(egui::RichText::new(tr("char.sheet_none")).color(t.text_dim));
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            for (i, (_, key)) in VIEWS.iter().enumerate() {
+                ui.checkbox(&mut env.ed.chars.views[i], tr(key));
+            }
+        });
+        let heads = char_data(&env.core.project, &ch).map(|c| c.heads_tall).unwrap_or(6.5);
+        let views = env.ed.chars.views;
+        let b = ui.add_enabled(views.iter().any(|v| *v), egui::Button::new(tr("char.sheet_new")));
+        env.note("char:sheet_new_here", b.rect);
+        if b.clicked() {
+            make_sheet(env, &ch, heads, views);
+        }
         return;
     };
     ui.horizontal(|ui| {

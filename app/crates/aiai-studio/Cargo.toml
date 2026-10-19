@@ -29,6 +29,7 @@ base64 = { workspace = true }
 crossbeam-channel = { workspace = true }
 aiai-core = { workspace = true }
 aiai-render = { workspace = true }
+aiai-fx = { workspace = true }
 aiai-bridge = { workspace = true }
 aiai-paint = { workspace = true }
 aiai-tools = { workspace = true }

@@ -83,7 +83,34 @@ impl StrokeGesture {
     }
 }
 
+/// Caneta numa camada que não é vetorial, ou pincel numa que não é raster: em vez de recusar o traço (o aviso na barra
+/// de status passava despercebido e parecia que o programa não desenhava), cria a camada certa logo acima da ativa,
+/// seleciona e avisa. Camada travada ou oculta continua sendo recusada (é escolha do usuário).
+fn ensure_layer_for(env: &mut Env, tool: ToolId) {
+    let want = match tool {
+        ToolId::Pen => LayerType::Vector,
+        ToolId::Brush => LayerType::Raster,
+        _ => return,
+    };
+    let Some(cut) = env.ed.active_cut(env.core) else { return };
+    let active = env.ed.active_layer(env.core);
+    if active.as_ref().and_then(|l| cmds::layer_data(&env.core.project, l)).is_some_and(|l| l.kind == want) {
+        return;
+    }
+    match cmds::add_layer(env.core, &cut, want, active.as_ref()) {
+        Ok(id) => {
+            let name = env.core.project.node(&id).map(|n| n.name.clone()).unwrap_or_default();
+            env.ed.layer = Some(id);
+            env.ed.cel_number = None;
+            let key = if want == LayerType::Vector { "msg.auto_vector_layer" } else { "msg.auto_raster_layer" };
+            env.ed.notify(format!("{} \u{201c}{name}\u{201d}", tr(key)));
+        }
+        Err(e) => env.ed.notify(e),
+    }
+}
+
 pub(crate) fn begin_stroke(env: &mut Env, tool: ToolId, p: Vec2, pressure: f32, scale: f32) -> Gesture {
+    ensure_layer_for(env, tool);
     let (allowed, wrong): (&[LayerType], &str) = match tool {
         ToolId::Pen => (&[LayerType::Vector], "err.need_vector"),
         ToolId::Brush => (&[LayerType::Raster], "err.need_raster"),
@@ -324,20 +351,18 @@ fn ghost_color(env: &Env, alpha: f32) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(q(c.0[0]), q(c.0[1]), q(c.0[2]), q(alpha))
 }
 
-fn commit_brush(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant, erase: bool) {
-    if g.samples.is_empty() {
-        return;
-    }
-    // espaça as amostras (~1,5 px) e sempre guarda a última: o motor de dab cuida do espaçamento fino
+/// Pontos do pincel a partir das amostras (~1,5 px entre eles, sempre com a última): o motor de dab cuida do
+/// espaçamento fino. O commit e a prévia ao vivo usam esta mesma lista.
+fn brush_points(samples: &[Sample]) -> Vec<Vec<f32>> {
     let mut pts: Vec<Vec<f32>> = Vec::new();
     let mut last: Option<Vec2> = None;
-    for s in &g.samples {
+    for s in samples {
         if last.is_none_or(|l| (l - s.p).length() >= 1.5) {
             pts.push(vec![s.p.x, s.p.y, s.pressure]);
             last = Some(s.p);
         }
     }
-    if let Some(s) = g.samples.last() {
+    if let Some(s) = samples.last() {
         if last != Some(s.p) {
             pts.push(vec![s.p.x, s.p.y, s.pressure]);
         }
@@ -346,26 +371,97 @@ fn commit_brush(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Insta
         let q = pts[0].clone();
         pts.push(vec![q[0] + 0.01, q[1], q[2]]);
     }
+    pts
+}
+
+/// Preset do traço (o do pincel com tamanho/opacidade da barra, ou o da borracha).
+fn stroke_preset(env: &Env, erase: bool) -> BrushPreset {
     let o = &env.ed.opts;
-    let preset = if erase {
+    if erase {
         eraser_preset(o.eraser_size)
     } else {
         let mut p = o.brush_custom.clone().or_else(|| presets().get(o.brush_preset).cloned()).or_else(|| presets().first().cloned()).unwrap_or_else(|| BrushPreset::round("Pincel", 24.0, 0.9));
         p.size = o.brush_size.max(0.5);
         p.opacity = o.brush_opacity.clamp(0.0, 1.0);
         p
+    }
+}
+
+/// Semente do traço: a mesma no começo (prévia) e no commit, enquanto nada mais mudou no documento.
+fn stroke_seed(env: &Env) -> u64 {
+    env.core.change_counter.wrapping_mul(2654435761)
+}
+
+/// Liga a prévia ao vivo para o traço que acabou de começar (pincel em raster, borracha em raster ou vetor).
+pub(crate) fn start_live(env: &mut Env, ctx: &egui::Context, g: &StrokeGesture, screen_scale: f32) {
+    let Some(cut) = env.ed.cut.clone() else { return };
+    let Some(l) = cmds::layer_data(&env.core.project, &g.layer).cloned() else { return };
+    let mode = match (g.tool, l.kind) {
+        (ToolId::Brush, LayerType::Raster) => super::live::Mode::Brush,
+        (ToolId::Eraser, LayerType::Raster) => super::live::Mode::EraseRaster,
+        (ToolId::Eraser, LayerType::Vector) => super::live::Mode::EraseVector,
+        _ => return,
     };
+    let erase = g.tool == ToolId::Eraser;
+    let preset = match aiai_tools::paint::load_tip_mask(&env.core.blobs, &stroke_preset(env, erase)) {
+        Ok(p) => p,
+        Err(_) => return,
+    };
+    let color = if erase { [0.0, 0.0, 0.0, 1.0] } else { cmds::resolve_color(&env.core.project, &env.ed.color).0 };
+    let frame = env.ed.frame;
+    let cel = cmds::exposed_cel(&env.core.project, &cut, &g.layer, frame).and_then(|c| cmds::cel_data(&env.core.project, &c).cloned());
+    let canvas = cmds::canvas_size(&env.core.project, &cut);
+    let spec = super::live::StartSpec {
+        mode,
+        project: Some(env.core.project.clone()),
+        blobs: env.core.blobs.clone(),
+        cut,
+        layer: g.layer.clone(),
+        frame,
+        cel,
+        canvas,
+        preset,
+        color,
+        seed: stroke_seed(env),
+        layer_opacity: l.opacity,
+        fwd: g.fwd,
+        guides: env.ed.show_guides,
+        reference: env.ed.show_reference,
+        checker: (super::canvas::checker_colors(env.ed.checker_dark), 8.0 / screen_scale.max(1e-3)),
+        erase_radius: env.ed.opts.eraser_size / 2.0,
+        erase_mode: env.ed.opts.eraser_mode,
+    };
+    env.ed.live_stroke.start(ctx, spec, g.t0);
+}
+
+/// Manda o traço até aqui para a prévia ao vivo.
+pub(crate) fn feed_live(env: &mut Env, g: &StrokeGesture) {
+    if !env.ed.live_stroke.active() {
+        return;
+    }
+    let pts = brush_points(&g.samples);
+    let path: Vec<[f32; 2]> = g.path.iter().map(|p| [p.x, p.y]).collect();
+    env.ed.live_stroke.feed(pts, path, g.samples.len() + g.path.len());
+}
+
+fn commit_brush(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant, erase: bool) {
+    if g.samples.is_empty() {
+        return;
+    }
+    let pts = brush_points(&g.samples);
+    let preset = stroke_preset(env, erase);
     let color = if erase { ColorRef::Direct { rgba: Rgba::BLACK } } else { env.ed.color.clone() };
     let size = preset.size;
     let opacity = preset.opacity;
-    let seed = env.core.change_counter.wrapping_mul(2654435761);
+    let seed = stroke_seed(env);
     let (cut, layer, frame, pref) = (t.cut.clone(), t.layer.clone(), t.frame, env.ed.cel_number);
     let ghost_pts: Vec<Vec2> = g.samples.iter().map(|s| g.to_canvas(s.p)).collect();
     let planned = cmds::plan_with_prep(env.core, &cut, &layer, frame, pref, vec![], |p, blobs| {
         let req = tpaint::PaintRequest { cut: cut.clone(), frame, layer: layer.clone(), preset, color, strokes: vec![tpaint::PaintStrokeSpec { points: pts, smooth: true }], seed };
         tpaint::paint_command(p, blobs, &req).map_err(|e| e.to_string())
     });
-    let ghost = if erase { None } else { Some((ghost_pts, Vec::new(), size, ghost_color(env, opacity.min(0.9)))) };
+    // com a prévia ao vivo na tela, ela mesma fica até o render chegar (o fantasma em polilinha "mudava" o traço)
+    let ghost = if erase || env.ed.live_stroke.overlay.is_some() { None } else { Some((ghost_pts, Vec::new(), size, ghost_color(env, opacity.min(0.9)))) };
     commit(env, planned, released_at, if erase { "erase_raster" } else { "brush" }, ghost);
 }
 

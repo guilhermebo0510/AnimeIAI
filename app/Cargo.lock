@@ -215,6 +215,7 @@ dependencies = [
  "aiai-audio",
  "aiai-bridge",
  "aiai-core",
+ "aiai-fx",
  "aiai-paint",
  "aiai-render",
  "aiai-tools",

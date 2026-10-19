@@ -366,6 +366,11 @@ fn cel_list(env: &mut Env, ui: &mut Ui, layer: &NodeId) {
                 Err(e) => env.ed.notify(e),
             }
         }
+        // a coluna da direita é o papel do desenho na animação (não um botão da linha)
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_space(30.0);
+            ui.label(egui::RichText::new(tr("layers.cel_role")).size(11.0).color(t.text_dim)).on_hover_text(tr("layers.cel_role.tip"));
+        });
     });
     ui.spacing_mut().item_spacing.y = 2.0;
     for (n, id) in cels {
@@ -381,17 +386,24 @@ fn cel_list(env: &mut Env, ui: &mut Ui, layer: &NodeId) {
         }
         p.text(egui::pos2(rect.left() + 10.0, rect.center().y), Align2::LEFT_CENTER, format!("{} {n}", tr("layers.cel")), FontId::proportional(13.0), t.text);
         if exposed == Some(n) {
-            p.circle_filled(egui::pos2(rect.left() + 66.0, rect.center().y), 3.0, t.accent);
+            let dot = egui::pos2(rect.left() + 66.0, rect.center().y);
+            p.circle_filled(dot, 3.0, t.accent);
+            ui.interact(Rect::from_center_size(dot, egui::vec2(12.0, 12.0)), ui.id().with(("cel_exposed", n)), Sense::hover()).on_hover_text(tr("layers.cel_exposed"));
         }
         // papel do cel
         let role_rect = Rect::from_min_max(egui::pos2(rect.right() - 108.0, rect.top() + 2.0), egui::pos2(rect.right() - 4.0, rect.bottom() - 2.0));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(role_rect));
         let mut new_role = role;
-        egui::ComboBox::from_id_salt(("cel_role", n)).width(role_rect.width() - 8.0).selected_text(tr(cmds::cel_role_key(role))).show_ui(&mut child, |ui| {
-            for r in [CelRole::Key, CelRole::Breakdown, CelRole::Inbetween] {
-                ui.selectable_value(&mut new_role, r, tr(cmds::cel_role_key(r)));
-            }
-        });
+        egui::ComboBox::from_id_salt(("cel_role", n))
+            .width(role_rect.width() - 8.0)
+            .selected_text(egui::RichText::new(tr(cmds::cel_role_key(role))).size(11.5))
+            .show_ui(&mut child, |ui| {
+                for r in [CelRole::Key, CelRole::Breakdown, CelRole::Inbetween] {
+                    ui.selectable_value(&mut new_role, r, tr(cmds::cel_role_key(r)));
+                }
+            })
+            .response
+            .on_hover_text(tr("layers.cel_role.tip"));
         if new_role != role {
             let _ = cmds::set_cel_role(env.core, &id, new_role);
         }

@@ -209,8 +209,11 @@ fn new_project(session: &mut CoreSession, params: &Value) -> Result<Value, Bridg
 fn open_project(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
     let p = obj(params)?;
     check_keys(params, "OPEN_PROJECT", &["path"])?;
-    let dir = path_param(&p)?.ok_or_else(|| BridgeError::invalid_params("'path' (pasta .aiai) é obrigatório"))?;
+    let given = path_param(&p)?.ok_or_else(|| BridgeError::invalid_params("'path' (pasta .aiai, arquivo .aiaiproj ou project.json) é obrigatório"))?;
+    let dir = persist::resolve_project_dir(&given).ok_or_else(|| BridgeError::invalid_params(format!("{} não é um projeto do AnimeIAI (pasta .aiai com project.json, ou o arquivo .aiaiproj dela)", given.display())))?;
     let (opened, report) = persist::open(&dir).map_err(core_error)?;
+    // projetos de antes do arquivo de abrir ganham o arquivo (melhor esforço: pasta só de leitura abre igual)
+    let _ = persist::write_opener(&dir, &opened.project);
     session.detach_wal();
     // mantém o histórico da recuperação (os comandos reaplicados do WAL continuam no undo)
     session.adopt_document(opened);

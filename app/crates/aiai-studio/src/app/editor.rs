@@ -615,6 +615,10 @@ pub(crate) struct Editor {
     /// Nó selecionado na árvore do projeto (para criar cena/corte dentro dele).
     pub sel_node: Option<NodeId>,
     pub color: ColorRef,
+    /// Prévia ao vivo do pincel/borracha (o resultado real do motor durante o arrasto).
+    pub live_stroke: super::live::Live,
+    /// Último valor real da cor do pincel (para não perder a cor quando a paleta some).
+    pub color_seen: Rgba,
     pub palette: Option<NodeId>,
     pub opts: ToolOptions,
     pub view: View,
@@ -655,6 +659,8 @@ pub(crate) struct Editor {
     pub rename: Option<(NodeId, String)>,
     /// Edição de cor da paleta: (paleta, cor, nome, rgba) ainda não aplicada.
     pub color_edit: Option<(NodeId, NodeId, String, egui::Color32)>,
+    /// Seletor de cor: matiz/saturação/valor guardados para a cor mostrada (no cinza a matiz não se perde).
+    pub wheel_hsv: Option<(egui::Color32, [f32; 3])>,
     /// Rolagem e zoom do timeline.
     pub tl_scroll: Vec2,
     pub tl_cell_w: f32,
@@ -688,11 +694,16 @@ pub(crate) struct Editor {
     pub chars: super::panels::characters::CharState,
     /// Pedido de troca de workspace feito por um painel (o app atende no fim do quadro).
     pub want_workspace: Option<crate::workspace::WorkspaceId>,
+    /// Corte de desenho aberto a partir de um painel do storyboard: o canvas mostra "Voltar ao storyboard".
+    pub back_to_board: Option<NodeId>,
 }
 
 impl Default for Editor {
     fn default() -> Self {
         Editor {
+            back_to_board: None,
+            live_stroke: Default::default(),
+            color_seen: Rgba::BLACK,
             subview: Default::default(),
             node_stroke: None,
             shift: false,
@@ -737,6 +748,7 @@ impl Default for Editor {
             form_size: [1920, 1080],
             rename: None,
             color_edit: None,
+            wheel_hsv: None,
             tl_scroll: Vec2::ZERO,
             tl_cell_w: 14.0,
             tl_ctx_cell: None,
@@ -835,6 +847,26 @@ impl Editor {
 
     pub(crate) fn set_color_direct(&mut self, rgba: Rgba) {
         self.color = ColorRef::Direct { rgba };
+    }
+
+    /// A cor do pincel pode apontar para uma paleta que não existe neste projeto (outro projeto aberto, sessão
+    /// antiga, paleta apagada): vira cor direta com o último valor visto, senão o traço é gravado em magenta
+    /// ("cor de paleta ausente") enquanto a prévia mostra preto. Roda a cada quadro (uma busca de nó).
+    pub(crate) fn sanitize_color(&mut self, p: &Project) {
+        let live = |pal: &NodeId| match p.node(pal).map(|n| &n.data) {
+            Some(NodeKind::Palette(pd)) => Some(pd),
+            _ => None,
+        };
+        match &self.color {
+            ColorRef::Direct { rgba } => self.color_seen = *rgba,
+            ColorRef::Palette { palette, color } => match live(palette).and_then(|pd| pd.resolve(color)) {
+                Some(c) => self.color_seen = c,
+                None => self.color = ColorRef::Direct { rgba: self.color_seen },
+            },
+        }
+        if self.palette.as_ref().is_some_and(|pl| live(pl).is_none()) {
+            self.palette = None;
+        }
     }
 }
 

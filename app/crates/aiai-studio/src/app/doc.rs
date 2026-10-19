@@ -24,6 +24,8 @@ pub(crate) enum Pending {
 pub(crate) enum DialogKind {
     Open,
     SaveAs,
+    /// Pasta onde o projeto novo é criado (janela de projeto novo).
+    NewParent,
     /// Pasta de projetos das Preferências.
     ProjectsDir,
     /// Arquivo > Importar imagem (vira camada de referência no corte ativo).
@@ -111,14 +113,29 @@ impl StudioApp {
 
     /// Projeto novo e vazio (sem pasta até o primeiro Salvar). Vindo da tela inicial, com o nome, formato e taxa escolhidos.
     pub(crate) fn doc_new(&mut self) {
-        let params = match self.start.request.take() {
+        let req = self.start.request.take();
+        let params = match &req {
             Some(r) => json!({ "name": r.name, "settings": { "width": r.width, "height": r.height, "fps_num": r.fps_num, "fps_den": r.fps_den } }),
             None => json!({ "name": tr("doc.untitled") }),
         };
+        let dir = req.and_then(|r| r.dir);
+        if let Some(d) = dir.as_ref().filter(|d| d.join(aiai_core::persist::PROJECT_FILE).is_file()) {
+            self.doc_error("novo projeto", format!("{} {}", tr("start.exists"), d.display()));
+            return;
+        }
         match handle_core_action(&mut self.core, "NEW_PROJECT", &params) {
             Some(Ok(_)) => {
                 self.mark_saved();
-                self.notice(tr("msg.new").to_owned());
+                self.start.open = false;
+                // com pasta: o projeto já nasce salvo nela, com o arquivo .aiaiproj para abrir depois
+                match dir {
+                    Some(d) => {
+                        if self.doc_save_to(Some(&d)) {
+                            self.notice(format!("{}: {}", tr("msg.new_saved"), aiai_core::persist::opener_path(&d).display()));
+                        }
+                    }
+                    None => self.notice(tr("msg.new").to_owned()),
+                }
             }
             Some(Err(e)) => self.doc_error("novo projeto", e),
             None => {}
@@ -129,6 +146,8 @@ impl StudioApp {
         match handle_core_action(&mut self.core, "OPEN_PROJECT", &json!({ "path": path.display().to_string() })) {
             Some(Ok(v)) => {
                 self.mark_saved();
+                // a janela de projeto (aberta no começo ou pelo menu) não fica por cima do projeto aberto
+                self.start.open = false;
                 self.note_recent();
                 let replayed = v["wal_replayed"].as_u64().unwrap_or(0);
                 if super::autosave::is_recovery(path) {
@@ -193,6 +212,16 @@ impl StudioApp {
         self.spawn_dialog(DialogKind::SaveAs, None);
     }
 
+    /// Arquivo > Novo (Ctrl+N): a janela de projeto novo (nome, pasta, formato, taxa).
+    pub(crate) fn open_new_project(&mut self) {
+        self.start.open = true;
+    }
+
+    pub(crate) fn request_new_parent(&mut self) {
+        self.spawn_dialog(DialogKind::NewParent, None);
+    }
+
+    /// Cria o projeto pedido na janela de projeto (perguntando antes se há alterações não salvas).
     pub(crate) fn request_new(&mut self) {
         if self.doc_dirty() {
             self.confirm = Some(Pending::New);
@@ -263,6 +292,7 @@ impl StudioApp {
         let title = match kind {
             DialogKind::Open => tr("dialog.open_title"),
             DialogKind::SaveAs => tr("dialog.save_title"),
+            DialogKind::NewParent => tr("start.folder"),
             DialogKind::ProjectsDir => tr("prefs.projects_dir"),
             DialogKind::ImportImage => tr("menu.file.import_image"),
             DialogKind::ExportFrame => tr("menu.file.export_frame"),
@@ -289,7 +319,9 @@ impl StudioApp {
                 d = d.set_directory(dir);
             }
             let picked = match kind {
-                DialogKind::Open | DialogKind::ProjectsDir => d.pick_folder(),
+                // o projeto se abre pelo arquivo .aiaiproj da pasta (ou pelo project.json, nos projetos antigos)
+                DialogKind::Open => d.add_filter(tr("dialog.project_filter"), &["aiaiproj", "json"]).pick_file(),
+                DialogKind::ProjectsDir | DialogKind::NewParent => d.pick_folder(),
                 DialogKind::SaveAs => d.set_file_name(file_name).save_file(),
                 DialogKind::ImportImage => d.add_filter("Imagem", &IMAGE_EXTS).pick_file(),
                 DialogKind::ExportFrame => d.add_filter("PNG", &["png"]).set_file_name(frame_name).save_file(),
@@ -320,6 +352,7 @@ impl StudioApp {
                             self.prefs.projects_dir = Some(path);
                             self.mark_dirty();
                         }
+                        DialogKind::NewParent => self.start.parent = Some(path),
                         DialogKind::SaveAs => {
                             if self.doc_save_to(Some(&path)) {
                                 if let Some(p) = then {
@@ -489,7 +522,7 @@ impl StudioApp {
             (new, open, save_as, save, rs, ry, u)
         });
         if new {
-            self.request_new();
+            self.open_new_project();
         }
         if open {
             self.request_open();

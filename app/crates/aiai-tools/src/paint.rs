@@ -206,13 +206,36 @@ pub fn paint_command(p: &Project, blobs: &mut BlobStore, req: &PaintRequest) -> 
     req.preset.validate().map_err(ToolError::Invalid)?;
     let (node, cel, w, h) = raster_cel(p, &req.cut, &req.layer, req.frame)?;
     let color = resolve_color(p, &req.color)?;
-    let mut preset = req.preset.clone();
+    let preset = load_tip_mask(blobs, &req.preset)?;
+    let r = paint_on_cel(blobs, Some(cel), w, h, &preset, color, &req.strokes, req.seed, false)?;
+    Ok(Command::SetTiles { cel: node.id.clone(), tiles: tiles_for_region_at(blobs, &r.after, r.origin, r.bounds) })
+}
+
+/// Preset com a máscara da ponta de imagem carregada do blob (o motor não lê blobs).
+pub fn load_tip_mask(blobs: &BlobStore, preset: &BrushPreset) -> ToolResult<BrushPreset> {
+    let mut preset = preset.clone();
     if let BrushTip::Image { blob, mask } = &mut preset.tip {
         let b = blobs.get(blob).ok_or_else(|| ToolError::NotFound(format!("máscara da ponta {blob}")))?;
         *mask = Some(Mask::decode(&b).map_err(ToolError::Invalid)?);
     }
+    Ok(preset)
+}
+
+/// Recorte da camada pintado pelos traços: `after` começa em `origin` (canvas px); `before` = o mesmo recorte antes
+/// (se pedido); `bounds` = caixa que os carimbos tocaram [x0, y0, x1, y1).
+pub struct PaintedRegion {
+    pub origin: [i32; 2],
+    pub before: Option<Image>,
+    pub after: Image,
+    pub bounds: [i32; 4],
+}
+
+/// Pinta `strokes` sobre o cel (ou sobre uma camada vazia, sem cel) de um canvas `w`×`h`: o caminho que o commit do
+/// pincel/borracha raster usa e que a prévia ao vivo do app roda a cada movimento (a prévia sai igual ao traço gravado).
+#[allow(clippy::too_many_arguments)]
+pub fn paint_on_cel(blobs: &BlobStore, cel: Option<&CelData>, w: u32, h: u32, preset: &BrushPreset, color: [f32; 4], strokes: &[PaintStrokeSpec], seed: u64, keep_before: bool) -> ToolResult<PaintedRegion> {
     let mut paths = Vec::new();
-    for s in &req.strokes {
+    for s in strokes {
         let pts: Vec<BrushPoint> = s
             .points
             .iter()
@@ -241,11 +264,15 @@ pub fn paint_command(p: &Project, blobs: &mut BlobStore, req: &PaintRequest) -> 
         return Err(ToolError::Invalid("o traço ficou fora do canvas".into()));
     }
     let origin = [area[0], area[1]];
-    let mut img = cel_raster_region(blobs, cel, area)?;
+    let mut img = match cel {
+        Some(cel) => cel_raster_region(blobs, cel, area)?,
+        None => Image::new((area[2] - area[0]) as u32, (area[3] - area[1]) as u32),
+    };
+    let before = keep_before.then(|| img.clone());
     let mut bounds = [i32::MAX, i32::MAX, i32::MIN, i32::MIN];
     for (k, path) in paths.iter().enumerate() {
         let local: Vec<BrushPoint> = path.iter().map(|q| BrushPoint { x: q.x - origin[0] as f32, y: q.y - origin[1] as f32, pressure: q.pressure }).collect();
-        if let Some(r) = paint_stroke_at(&mut img, origin, &preset, &local, color, req.seed.wrapping_add(k as u64 * 7919)) {
+        if let Some(r) = paint_stroke_at(&mut img, origin, preset, &local, color, seed.wrapping_add(k as u64 * 7919)) {
             let rb = [r.bounds[0] + origin[0], r.bounds[1] + origin[1], r.bounds[2] + origin[0], r.bounds[3] + origin[1]];
             bounds = [bounds[0].min(rb[0]), bounds[1].min(rb[1]), bounds[2].max(rb[2]), bounds[3].max(rb[3])];
         }
@@ -253,7 +280,7 @@ pub fn paint_command(p: &Project, blobs: &mut BlobStore, req: &PaintRequest) -> 
     if bounds[0] >= bounds[2] {
         return Err(ToolError::Invalid("o traço ficou fora do canvas".into()));
     }
-    Ok(Command::SetTiles { cel: node.id.clone(), tiles: tiles_for_region_at(blobs, &img, origin, bounds) })
+    Ok(PaintedRegion { origin, before, after: img, bounds })
 }
 
 pub fn gradient_command(p: &Project, blobs: &mut BlobStore, req: &GradientRequest) -> ToolResult<Command> {

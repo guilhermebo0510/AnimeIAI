@@ -18,6 +18,7 @@ mod prefs_ui;
 mod start;
 mod editor;
 mod input_queue;
+mod live;
 mod nodes;
 mod panels;
 mod render_service;
@@ -308,12 +309,8 @@ impl StudioApp {
 
     fn menu_file(&mut self, ui: &mut egui::Ui) {
         let r = ui.menu_button(tr("menu.file"), |ui| {
-            if self.menu_item(ui, "file.start", "menu.file.start", "", true) {
-                self.start.open = true;
-                ui.close();
-            }
             if self.menu_item(ui, "file.new", "menu.file.new", &self.ed.keys.label(crate::keymap::Action::FileNew), true) {
-                self.request_new();
+                self.open_new_project();
                 ui.close();
             }
             if self.menu_item(ui, "file.open", "menu.file.open", &self.ed.keys.label(crate::keymap::Action::FileOpen), true) {
@@ -759,6 +756,7 @@ impl eframe::App for StudioApp {
                 tracing::info!("GPU: {} ({:?}, {:?})", info.name, info.device_type, info.backend);
             }
         }
+        self.ed.sanitize_color(&self.core.project);
         self.frame(ui);
     }
 
