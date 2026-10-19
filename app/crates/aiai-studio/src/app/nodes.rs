@@ -259,7 +259,8 @@ pub(crate) fn simplify(env: &mut Env, tolerance: f32) {
         *k |= q.corner;
     }
     let mut ns = s.clone();
-    ns.points = s.points.iter().zip(&keep).filter(|(_, k)| **k).map(|(q, _)| *q).collect();
+    ns.materialize_point_ids(); // os pontos que ficam mantêm os ids
+    ns.points = ns.points.iter().zip(&keep).filter(|(_, k)| **k).map(|(q, _)| *q).collect();
     if ns.points.len() >= 2 && ns.points.len() < s.points.len() {
         if ns.geometry == StrokeGeometry::Freehand {
             ns.geometry = StrokeGeometry::Spline;
@@ -343,7 +344,7 @@ mod tests {
     fn stroke(pts: &[(f32, f32)]) -> Stroke {
         Stroke {
             id: Id::from("s"),
-            points: pts.iter().map(|&(x, y)| StrokePoint { x, y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0 }).collect(),
+            points: pts.iter().map(|&(x, y)| StrokePoint { x, y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect(),
             geometry: StrokeGeometry::Spline,
             tension: 0.0,
             tip: VectorTip::Marker,

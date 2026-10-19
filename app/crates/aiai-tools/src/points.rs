@@ -90,7 +90,7 @@ fn unbezier(s: &mut Stroke) {
 
 /// Ponto novo entre `a` e `b` (pressão e largura interpoladas em `f`).
 fn between(a: StrokePoint, b: StrokePoint, f: f32, x: f32, y: f32) -> StrokePoint {
-    StrokePoint { x, y, pressure: a.pressure + (b.pressure - a.pressure) * f, tilt: None, t: None, corner: false, width: a.width + (b.width - a.width) * f }
+    StrokePoint { x, y, pressure: a.pressure + (b.pressure - a.pressure) * f, tilt: None, t: None, corner: false, width: a.width + (b.width - a.width) * f, id: 0, handle: None }
 }
 
 /// Põe um ponto em cima da curva, no lugar mais perto de (x, y) (até `tol`); devolve o índice novo.
@@ -100,7 +100,9 @@ pub fn insert_on_curve(s: &mut Stroke, x: f32, y: f32, tol: f32) -> Option<usize
         return None;
     }
     let n = s.points.len();
-    let q = between(s.points[hit.seg], s.points[(hit.seg + 1) % n], hit.frac, hit.x, hit.y);
+    let mut q = between(s.points[hit.seg], s.points[(hit.seg + 1) % n], hit.frac, hit.x, hit.y);
+    s.materialize_point_ids();
+    q.id = s.next_point_id();
     s.points.insert(hit.seg + 1, q);
     unbezier(s);
     Some(hit.seg + 1)
@@ -114,7 +116,10 @@ pub fn insert_after(s: &mut Stroke, after: usize, x: f32, y: f32) -> Result<usiz
     }
     let a = s.points[after];
     let b = if after + 1 < n { s.points[after + 1] } else if s.closed { s.points[0] } else { a };
-    s.points.insert(after + 1, between(a, b, 0.5, x, y));
+    let mut q = between(a, b, 0.5, x, y);
+    s.materialize_point_ids();
+    q.id = s.next_point_id();
+    s.points.insert(after + 1, q);
     unbezier(s);
     Ok(after + 1)
 }
@@ -124,6 +129,8 @@ pub fn delete_point(s: &mut Stroke, i: usize) -> bool {
     if s.points.len() <= 2 || i >= s.points.len() {
         return false;
     }
+    // os ids dos outros pontos não podem mudar com a remoção
+    s.materialize_point_ids();
     s.points.remove(i);
     unbezier(s);
     true
@@ -459,7 +466,7 @@ mod tests {
     use super::*;
 
     fn pt(x: f32, y: f32) -> StrokePoint {
-        StrokePoint { x, y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0 }
+        StrokePoint { x, y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }
     }
 
     fn line(geometry: StrokeGeometry) -> Stroke {

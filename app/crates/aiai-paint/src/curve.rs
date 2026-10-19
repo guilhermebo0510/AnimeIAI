@@ -46,6 +46,7 @@ pub fn flatten_points(stroke: &Stroke) -> Vec<(f32, f32, f32)> {
 fn flatten(stroke: &Stroke) -> Vec<P> {
     let pts: Vec<P> = stroke.points.iter().map(|q| P { x: q.x, y: q.y, p: q.pressure, w: q.width }).collect();
     let corners: Vec<bool> = stroke.points.iter().map(|q| q.corner).collect();
+    let handles: Vec<Option<[f32; 2]>> = stroke.points.iter().map(|q| q.handle.filter(|_| !q.corner)).collect();
     if pts.len() == 1 {
         return pts;
     }
@@ -80,7 +81,7 @@ fn flatten(stroke: &Stroke) -> Vec<P> {
             out.push(*pts.last().expect("não vazio"));
             out
         }
-        StrokeGeometry::Spline | StrokeGeometry::Freehand => catmull_rom(&pts, &corners, stroke.closed, stroke.tension),
+        StrokeGeometry::Spline | StrokeGeometry::Freehand => catmull_rom(&pts, &corners, &handles, stroke.closed, stroke.tension),
     }
 }
 
@@ -106,8 +107,23 @@ fn cubic(out: &mut Vec<P>, b0: P, b1: P, b2: P, b3: P) {
     }
 }
 
-/// `corners[i]`: a curva quebra no ponto i (cada lado é feito como se o traço terminasse ali).
-fn catmull_rom(pts: &[P], corners: &[bool], closed: bool, tension: f32) -> Vec<P> {
+/// `corners[i]`: a curva quebra no ponto i (cada lado é feito como se o traço terminasse ali). `handles[i]`: tangente
+/// explícita (sai por +h, chega por -h) no lugar da automática.
+fn catmull_rom(pts: &[P], corners: &[bool], handles: &[Option<[f32; 2]>], closed: bool, tension: f32) -> Vec<P> {
+    let n = pts.len();
+    let segs = if closed { n } else { n - 1 };
+    let mut out = Vec::new();
+    for i in 0..segs {
+        let (p1, b1, b2, p2) = segment_controls(pts, corners, handles, closed, tension, i);
+        cubic(&mut out, p1, b1, b2, p2);
+    }
+    out.push(if closed { pts[0] } else { pts[n - 1] });
+    out
+}
+
+/// Controles da cúbica do segmento `i` (de `pts[i]` a `pts[i+1]`).
+fn segment_controls(pts: &[P], corners: &[bool], handles: &[Option<[f32; 2]>], closed: bool, tension: f32, i: usize) -> (P, P, P, P) {
+    let i = i as isize;
     let n = pts.len();
     let get = |i: isize| -> P {
         if closed {
@@ -124,9 +140,7 @@ fn catmull_rom(pts: &[P], corners: &[bool], closed: bool, tension: f32) -> Vec<P
         }
     };
     let k = (1.0 - tension).clamp(0.0, 2.0);
-    let segs = if closed { n } else { n - 1 };
-    let mut out = Vec::new();
-    for i in 0..segs as isize {
+    {
         let (p1, p2) = (get(i), get(i + 1));
         let corner = |k: isize| corners.get(k.rem_euclid(n as isize) as usize).copied().unwrap_or(false);
         // num canto, o vizinho do outro lado é trocado pelo reflexo: a tangente segue o próprio segmento
@@ -148,12 +162,40 @@ fn catmull_rom(pts: &[P], corners: &[bool], closed: bool, tension: f32) -> Vec<P
         let m1 = tangent(p0, p1, p2, t0, t1, t2);
         let m2 = tangent(p1, p2, p3, t1, t2, t3);
         let s = (t2 - t1) / 3.0 * k;
-        let b1 = P { x: p1.x + m1.0 * s, y: p1.y + m1.1 * s, ..p1 };
-        let b2 = P { x: p2.x - m2.0 * s, y: p2.y - m2.1 * s, ..p2 };
-        cubic(&mut out, p1, b1, b2, p2);
+        let mut b1 = P { x: p1.x + m1.0 * s, y: p1.y + m1.1 * s, ..p1 };
+        let mut b2 = P { x: p2.x - m2.0 * s, y: p2.y - m2.1 * s, ..p2 };
+        let h = |k: isize| handles.get(k.rem_euclid(n as isize) as usize).copied().flatten();
+        if let Some([hx, hy]) = h(i) {
+            b1 = P { x: p1.x + hx, y: p1.y + hy, ..p1 };
+        }
+        if let Some([hx, hy]) = h(i + 1) {
+            b2 = P { x: p2.x - hx, y: p2.y - hy, ..p2 };
+        }
+        (p1, b1, b2, p2)
     }
-    out.push(if closed { pts[0] } else { pts[n - 1] });
-    out
+}
+
+/// Alça (tangente) do ponto `i` como o motor usa: a explícita, ou a automática da spline (o controle de saída menos o
+/// ponto; no último ponto de um traço aberto, o ponto menos o controle de chegada). `None` fora de Spline/Freehand.
+pub fn point_handle(stroke: &Stroke, i: usize) -> Option<[f32; 2]> {
+    if !matches!(stroke.geometry, StrokeGeometry::Spline | StrokeGeometry::Freehand) || i >= stroke.points.len() || stroke.points.len() < 2 {
+        return None;
+    }
+    if let Some(h) = stroke.points[i].handle {
+        return Some(h);
+    }
+    let pts: Vec<P> = stroke.points.iter().map(|q| P { x: q.x, y: q.y, p: q.pressure, w: q.width }).collect();
+    let corners: Vec<bool> = stroke.points.iter().map(|q| q.corner).collect();
+    let handles: Vec<Option<[f32; 2]>> = stroke.points.iter().map(|q| q.handle.filter(|_| !q.corner)).collect();
+    let n = pts.len();
+    let segs = if stroke.closed { n } else { n - 1 };
+    if i < segs {
+        let (p1, b1, _, _) = segment_controls(&pts, &corners, &handles, stroke.closed, stroke.tension, i);
+        Some([b1.x - p1.x, b1.y - p1.y])
+    } else {
+        let (_, _, b2, p2) = segment_controls(&pts, &corners, &handles, stroke.closed, stroke.tension, i - 1);
+        Some([p2.x - b2.x, p2.y - b2.y])
+    }
 }
 
 /// Largura (px) do traço no ponto `i`: largura × ponta(pressão) × multiplicador do ponto (sem o afinamento das
@@ -252,7 +294,7 @@ mod tests {
     pub(crate) fn mk(points: &[(f32, f32, f32)], geometry: StrokeGeometry, tip: VectorTip, width: f32) -> Stroke {
         Stroke {
             id: Id::from("s"),
-            points: points.iter().map(|&(x, y, p)| StrokePoint { x, y, pressure: p, tilt: None, t: None, corner: false, width: 1.0 }).collect(),
+            points: points.iter().map(|&(x, y, p)| StrokePoint { x, y, pressure: p, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect(),
             geometry,
             tension: 0.0,
             tip,

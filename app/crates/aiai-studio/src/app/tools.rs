@@ -180,7 +180,7 @@ fn target_for_commit(env: &mut Env, g: &StrokeGesture) -> Option<Target> {
 }
 
 fn commit_pen(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant) {
-    let mut points: Vec<StrokePoint> = g.samples.iter().map(|s| StrokePoint { x: s.p.x, y: s.p.y, pressure: s.pressure, tilt: None, t: Some(s.t), corner: false, width: 1.0 }).collect();
+    let mut points: Vec<StrokePoint> = g.samples.iter().map(|s| StrokePoint { x: s.p.x, y: s.p.y, pressure: s.pressure, tilt: None, t: Some(s.t), corner: false, width: 1.0, id: 0, handle: None }).collect();
     if points.is_empty() {
         return;
     }
@@ -280,7 +280,7 @@ pub(crate) fn commit_vector_shape(env: &mut Env, pts: Vec<Vec2>, geometry: Strok
         id: Id(String::new()),
         points: pts.iter().map(|p| {
             let q = local(*p);
-            StrokePoint { x: q.x, y: q.y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0 }
+            StrokePoint { x: q.x, y: q.y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }
         }).collect(),
         geometry,
         tension: 0.0,
@@ -312,7 +312,7 @@ pub(crate) fn sampled(stroke: &Stroke) -> (Vec<Vec2>, Vec<f32>) {
 
 /// O traço que a caneta gravaria com estes pontos agora (para a prévia durante o arrasto).
 pub(crate) fn pen_preview(env: &Env, g: &StrokeGesture) -> Option<Stroke> {
-    let mut points: Vec<StrokePoint> = g.samples.iter().map(|s| StrokePoint { x: s.p.x, y: s.p.y, pressure: s.pressure, tilt: None, t: Some(s.t), corner: false, width: 1.0 }).collect();
+    let mut points: Vec<StrokePoint> = g.samples.iter().map(|s| StrokePoint { x: s.p.x, y: s.p.y, pressure: s.pressure, tilt: None, t: Some(s.t), corner: false, width: 1.0, id: 0, handle: None }).collect();
     if points.is_empty() {
         return None;
     }
@@ -1019,7 +1019,7 @@ mod tests {
         let corners = [(80.0f32, 40.0f32), (240.0, 40.0), (240.0, 140.0), (80.0, 140.0), (80.0, 40.0)];
         let mut stab = Stabilizer::new(StabMode::Average, 4, 0.0);
         let mut pts: Vec<StrokePoint> = Vec::new();
-        let push = |p: Vec2, pr: f32, pts: &mut Vec<StrokePoint>| pts.push(StrokePoint { x: p.x, y: p.y, pressure: pr, tilt: None, t: None, corner: false, width: 1.0 });
+        let push = |p: Vec2, pr: f32, pts: &mut Vec<StrokePoint>| pts.push(StrokePoint { x: p.x, y: p.y, pressure: pr, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None });
         let mut raw = vec![];
         for w in corners.windows(2) {
             let (a, b) = (Vec2::new(w[0].0, w[0].1), Vec2::new(w[1].0, w[1].1));
@@ -1069,7 +1069,7 @@ mod tests {
     }
 
     fn sp(x: f32, y: f32) -> StrokePoint {
-        StrokePoint { x, y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0 }
+        StrokePoint { x, y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }
     }
 
     #[test]
@@ -1091,7 +1091,7 @@ mod tests {
         let (mut core, cut, line, _, _) = doc();
         let mk = |y: f32| Stroke {
             id: Id(String::new()),
-            points: vec![StrokePoint { x: 5.0, y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0 }, StrokePoint { x: 55.0, y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0 }],
+            points: vec![StrokePoint { x: 5.0, y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }, StrokePoint { x: 55.0, y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }],
             geometry: StrokeGeometry::Polyline,
             tension: 0.0,
             tip: VectorTip::Marker,

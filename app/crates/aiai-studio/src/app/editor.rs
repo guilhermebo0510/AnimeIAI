@@ -1005,7 +1005,7 @@ mod tests {
     fn stroke(pts: &[(f32, f32)], width: f32) -> Stroke {
         Stroke {
             id: Id::from("s"),
-            points: pts.iter().map(|(x, y)| StrokePoint { x: *x, y: *y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0 }).collect(),
+            points: pts.iter().map(|(x, y)| StrokePoint { x: *x, y: *y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect(),
             geometry: StrokeGeometry::Polyline,
             tension: 0.0,
             tip: VectorTip::Marker,

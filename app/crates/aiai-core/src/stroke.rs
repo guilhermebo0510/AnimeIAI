@@ -26,10 +26,23 @@ pub struct StrokePoint {
     /// para qualquer ponta (a pressão não muda a largura do marcador).
     #[serde(default = "one", skip_serializing_if = "is_one")]
     pub width: f32,
+    /// Id estável do ponto dentro do traço (0 = ainda sem id: vale índice+1 até a primeira inserção/remoção, quando
+    /// os ids são gravados; ver [`Stroke::point_id`] e [`Stroke::materialize_point_ids`]).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub id: u32,
+    /// Alça (tangente) explícita do ponto em px do cel: a curva sai na direção `+handle` e chega por `-handle`; o
+    /// comprimento abre (mais redondo) ou fecha (mais justo) a curva ali. `None` = automática (spline). Só para
+    /// Spline/Freehand e quando o ponto não é canto.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<[f32; 2]>,
 }
 
 fn one() -> f32 {
     1.0
+}
+
+fn is_zero(v: &u32) -> bool {
+    *v == 0
 }
 
 fn is_one(v: &f32) -> bool {
@@ -111,6 +124,40 @@ fn is_empty_profile(p: &WidthProfile) -> bool {
 }
 
 impl Stroke {
+    /// Id estável do ponto `i` (o gravado, ou índice+1 enquanto o traço nunca teve ponto inserido/apagado).
+    pub fn point_id(&self, i: usize) -> u32 {
+        match self.points.get(i) {
+            Some(q) if q.id != 0 => q.id,
+            _ => i as u32 + 1,
+        }
+    }
+
+    /// Índice do ponto com este id estável.
+    pub fn point_index(&self, id: u32) -> Option<usize> {
+        (0..self.points.len()).find(|&i| self.point_id(i) == id)
+    }
+
+    /// Grava os ids antes de inserir/apagar pontos (assim os ids lidos antes continuam valendo): sem nenhum gravado,
+    /// cada ponto recebe índice+1; os que faltarem depois recebem o maior + 1, em ordem.
+    pub fn materialize_point_ids(&mut self) {
+        if self.points.iter().all(|q| q.id == 0) {
+            for (i, q) in self.points.iter_mut().enumerate() {
+                q.id = i as u32 + 1;
+            }
+            return;
+        }
+        let mut next = self.points.iter().map(|q| q.id).max().unwrap_or(0) + 1;
+        for q in self.points.iter_mut().filter(|q| q.id == 0) {
+            q.id = next;
+            next += 1;
+        }
+    }
+
+    /// Id para um ponto novo (depois de `materialize_point_ids`).
+    pub fn next_point_id(&self) -> u32 {
+        self.points.iter().map(|q| q.id).max().unwrap_or(self.points.len() as u32) + 1
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         if self.points.is_empty() {
             return Err("traço sem pontos".into());
@@ -125,6 +172,9 @@ impl Stroke {
             if !(p.x.is_finite() && p.y.is_finite() && (0.0..=1.0).contains(&p.pressure)) {
                 return Err("ponto inválido (coordenada não finita ou pressão fora de 0..1)".into());
             }
+            if p.handle.is_some_and(|h| !(h[0].is_finite() && h[1].is_finite())) {
+                return Err("alça do ponto não finita".into());
+            }
             if !(p.width.is_finite() && (0.0..=20.0).contains(&p.width)) {
                 return Err(format!("largura do ponto fora de 0..20 (multiplicador): {}", p.width));
             }
@@ -138,5 +188,28 @@ impl Stroke {
             return Err("Bézier precisa de 3n+1 pontos".into());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod point_id_tests {
+    use super::*;
+
+    fn pt(x: f32) -> StrokePoint {
+        StrokePoint { x, y: 0.0, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }
+    }
+
+    #[test]
+    fn ids_read_before_an_insert_still_point_to_the_same_points() {
+        let mut s = Stroke { id: Id::from("s"), points: vec![pt(0.0), pt(10.0), pt(20.0)], geometry: StrokeGeometry::Spline, tension: 0.0, tip: VectorTip::Marker, width: 2.0, profile: Default::default(), color: ColorRef::default(), opacity: 1.0, closed: false, aliased: false, color_trace: false };
+        assert_eq!((s.point_id(0), s.point_id(2)), (1, 3), "sem ids gravados: índice+1");
+        s.materialize_point_ids();
+        let mut q = pt(5.0);
+        q.id = s.next_point_id();
+        s.points.insert(1, q);
+        assert_eq!(s.point_index(2), Some(2), "o ponto 2 (x=10) continua com o id 2");
+        assert_eq!(s.points[s.point_index(4).unwrap()].x, 5.0, "o novo ganhou o id 4");
+        let json = serde_json::to_string(&pt(1.0)).unwrap();
+        assert!(!json.contains("id") && !json.contains("handle"), "sem id/alça não grava nada: {json}");
     }
 }

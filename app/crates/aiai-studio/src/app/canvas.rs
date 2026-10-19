@@ -1179,7 +1179,7 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
                 path.push(xf.to_canvas(cur));
             }
             // prévia pela spline do motor (a mesma do traço gravado)
-            let st = aiai_core::Stroke { id: aiai_core::Id(String::new()), points: path.iter().map(|p| aiai_core::StrokePoint { x: p.x, y: p.y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0 }).collect(), geometry: aiai_core::StrokeGeometry::Spline, tension: 0.0,
+            let st = aiai_core::Stroke { id: aiai_core::Id(String::new()), points: path.iter().map(|p| aiai_core::StrokePoint { x: p.x, y: p.y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect(), geometry: aiai_core::StrokeGeometry::Spline, tension: 0.0,
                 tip: aiai_core::VectorTip::Marker, width: env.ed.opts.pen_width.max(0.1), profile: Default::default(), color: env.ed.color.clone(), opacity: 1.0, closed: false, aliased: false, color_trace: false };
             let (sp, sr) = super::tools::sampled(&st);
             variable_line(painter, &sp, &sr, color, xf);

@@ -297,7 +297,7 @@ pub fn inbetween(a: &[Stroke], b: &[Stroke], t: f32, opts: &InbetweenOptions) ->
                 let pts = interpolate_points(&pr.pa, &pr.pb, t, rigid, opts.bend);
                 let mut s = pr.sa.clone();
                 s.id = Id(String::new());
-                s.points = pts.iter().map(|q| StrokePoint { x: q.x, y: q.y, pressure: q.p.clamp(0.0, 1.0), tilt: None, t: None, corner: false, width: 1.0 }).collect();
+                s.points = pts.iter().map(|q| StrokePoint { x: q.x, y: q.y, pressure: q.p.clamp(0.0, 1.0), tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect();
                 if !pr.direct {
                     s.geometry = StrokeGeometry::Spline;
                 }
@@ -351,7 +351,7 @@ mod tests {
     fn st(pts: &[(f32, f32)], closed: bool) -> Stroke {
         Stroke {
             id: Id::from("x"),
-            points: pts.iter().map(|&(x, y)| StrokePoint { x, y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0 }).collect(),
+            points: pts.iter().map(|&(x, y)| StrokePoint { x, y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect(),
             geometry: StrokeGeometry::Polyline,
             tension: 0.0,
             tip: VectorTip::Marker,

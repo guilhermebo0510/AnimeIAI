@@ -362,7 +362,7 @@ fn ensure_thumbs(env: &mut Env, ui: &Ui) {
         let pts: Vec<aiai_core::StrokePoint> = (0..40)
             .map(|k| {
                 let f = k as f32 / 39.0;
-                aiai_core::StrokePoint { x: 18.0 + f * (w as f32 - 36.0), y: h as f32 / 2.0 + 13.0 * (f * std::f32::consts::TAU).sin(), pressure: 0.3 + 0.7 * (f * std::f32::consts::PI).sin(), tilt: None, t: None, corner: false, width: 1.0 }
+                aiai_core::StrokePoint { x: 18.0 + f * (w as f32 - 36.0), y: h as f32 / 2.0 + 13.0 * (f * std::f32::consts::TAU).sin(), pressure: 0.3 + 0.7 * (f * std::f32::consts::PI).sin(), tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }
             })
             .collect();
         let s = aiai_core::Stroke { id: aiai_core::Id(String::new()), points: pts, geometry: aiai_core::StrokeGeometry::Spline, tension: 0.0, tip, width: 9.0, profile: Default::default(), color: aiai_core::ColorRef::default(), opacity: 1.0, closed: false, aliased: false, color_trace: false };

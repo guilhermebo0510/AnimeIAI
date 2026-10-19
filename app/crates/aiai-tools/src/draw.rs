@@ -51,8 +51,8 @@ impl CurveSpec {
             .points
             .iter()
             .map(|p| match p.as_slice() {
-                [x, y] => Ok(StrokePoint { x: *x, y: *y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0 }),
-                [x, y, pr] => Ok(StrokePoint { x: *x, y: *y, pressure: pr.clamp(0.0, 1.0), tilt: None, t: None, corner: false, width: 1.0 }),
+                [x, y] => Ok(StrokePoint { x: *x, y: *y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }),
+                [x, y, pr] => Ok(StrokePoint { x: *x, y: *y, pressure: pr.clamp(0.0, 1.0), tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }),
                 _ => Err(ToolError::Invalid("cada ponto é [x, y] ou [x, y, pressão]".into())),
             })
             .collect::<ToolResult<Vec<_>>>()?;
