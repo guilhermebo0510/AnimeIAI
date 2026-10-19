@@ -12,6 +12,7 @@ use crate::app::actions::{self, DocKind};
 use crate::app::commands::NodeId;
 use crate::app::ui_kit::{Env, body_ui, dim_label, section};
 use crate::i18n::tr;
+use crate::icons::IconId;
 use aiai_core::{CoreSession, Id, NodeKind, Project};
 use aiai_tools::edit::{EditClip, EditDoc, SubtitleEntry, Transition, TransitionKind, load_edit};
 use egui::{Color32, FontId, Id as EId, Rect, Sense, Stroke, StrokeKind, Ui};
@@ -372,16 +373,14 @@ pub(crate) fn timeline(env: &mut Env, ui: &mut Ui, body: Rect) {
         if b.clicked() {
             env.ed.edit.zoom = None;
         }
-        let b = ui.button("−");
-        env.note("edit:zoom_out", b.rect);
+        let b = env.icon_button(ui, IconId::ZoomOut, "editing.zoom_out", false, true, "edit:zoom_out");
         let full = (ui.available_width() + 120.0 - LABEL_W).max(50.0) / layout.total.max(1) as f32;
         let cur = env.ed.edit.zoom.unwrap_or(full);
-        if b.on_hover_text(tr("editing.zoom_out")).clicked() {
+        if b.clicked() {
             env.ed.edit.zoom = Some((cur / 1.5).max(0.2));
         }
-        let b = ui.button("+");
-        env.note("edit:zoom_in", b.rect);
-        if b.on_hover_text(tr("editing.zoom_in")).clicked() {
+        let b = env.icon_button(ui, IconId::ToolZoom, "editing.zoom_in", false, true, "edit:zoom_in");
+        if b.clicked() {
             env.ed.edit.zoom = Some((cur * 1.5).min(40.0));
         }
         ui.separator();

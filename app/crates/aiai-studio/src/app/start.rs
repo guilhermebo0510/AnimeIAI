@@ -4,7 +4,6 @@
 use super::StudioApp;
 use crate::brand;
 use crate::i18n::tr;
-use crate::icons::IconId;
 use egui::{Align2, RichText};
 use std::path::PathBuf;
 
@@ -80,7 +79,7 @@ impl StudioApp {
             .fixed_size([600.0, 0.0])
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    let tex = self.icons.texture(ctx, IconId::Logo, 44.0);
+                    let tex = self.icons.texture(ctx, brand::logo_for(self.prefs.theme), 44.0);
                     ui.add(egui::Image::new((tex, egui::vec2(44.0, 44.0))));
                     ui.vertical(|ui| {
                         ui.label(RichText::new(brand::APP_NAME).heading().strong());

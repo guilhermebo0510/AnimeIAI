@@ -32,6 +32,7 @@ pub enum IconId {
     ToolEyedropper,
     ToolHand,
     ToolZoom,
+    ZoomOut,
     Eye,
     EyeOff,
     Lock,
@@ -72,10 +73,14 @@ pub enum IconId {
     NodeDocument,
     /// Marca do app (colorida, não é recolorida).
     Logo,
+    /// A marca para o tema claro.
+    LogoLight,
+    /// A marca simplificada para 16 a 32 px (barra de menus, ícone pequeno).
+    LogoSmall,
 }
 
 impl IconId {
-    pub const ALL: [IconId; 61] = [
+    pub const ALL: [IconId; 64] = [
         IconId::WsRoteiro,
         IconId::WsPersonagens,
         IconId::WsStoryboard,
@@ -98,6 +103,7 @@ impl IconId {
         IconId::ToolEyedropper,
         IconId::ToolHand,
         IconId::ToolZoom,
+        IconId::ZoomOut,
         IconId::Eye,
         IconId::EyeOff,
         IconId::Lock,
@@ -137,7 +143,14 @@ impl IconId {
         IconId::NodeCharacter,
         IconId::NodeDocument,
         IconId::Logo,
+        IconId::LogoLight,
+        IconId::LogoSmall,
     ];
+
+    /// Marca colorida (não segue a grade de 24 px nem a cor do texto; pintada sem tingimento).
+    pub fn is_brand(self) -> bool {
+        matches!(self, IconId::Logo | IconId::LogoLight | IconId::LogoSmall)
+    }
 
     pub fn svg(self) -> &'static str {
         match self {
@@ -163,6 +176,7 @@ impl IconId {
             IconId::ToolEyedropper => include_str!("../assets/icons/tool-eyedropper.svg"),
             IconId::ToolHand => include_str!("../assets/icons/tool-hand.svg"),
             IconId::ToolZoom => include_str!("../assets/icons/tool-zoom.svg"),
+            IconId::ZoomOut => include_str!("../assets/icons/zoom-out.svg"),
             IconId::Eye => include_str!("../assets/icons/eye.svg"),
             IconId::EyeOff => include_str!("../assets/icons/eye-off.svg"),
             IconId::Lock => include_str!("../assets/icons/lock.svg"),
@@ -202,6 +216,8 @@ impl IconId {
             IconId::NodeCharacter => include_str!("../assets/icons/node-character.svg"),
             IconId::NodeDocument => include_str!("../assets/icons/node-document.svg"),
             IconId::Logo => include_str!("../assets/brand/logo.svg"),
+            IconId::LogoLight => include_str!("../assets/brand/logo-light.svg"),
+            IconId::LogoSmall => include_str!("../assets/brand/logo-small.svg"),
         }
     }
 }
@@ -272,7 +288,7 @@ mod tests {
     #[test]
     fn monochrome_icons_follow_the_24px_grid_with_current_color() {
         for id in IconId::ALL {
-            if id == IconId::Logo {
+            if id.is_brand() {
                 continue;
             }
             let s = id.svg();
@@ -309,7 +325,7 @@ mod tests {
                     let a = p[3] as f32 / 255.0;
                     let dst = img.get_pixel_mut(ox + x, oy + y);
                     for c in 0..3 {
-                        let src = if *id == IconId::Logo { p[c] as f32 } else { p[c] as f32 * 0.87 };
+                        let src = if id.is_brand() { p[c] as f32 } else { p[c] as f32 * 0.87 };
                         dst.0[c] = (src + dst.0[c] as f32 * (1.0 - a)).min(255.0) as u8;
                     }
                 }

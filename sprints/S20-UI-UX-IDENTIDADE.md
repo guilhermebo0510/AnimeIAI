@@ -7,8 +7,8 @@ Deixar o programa com cara de software profissional: logomarca e ícone originai
 Blender 4/5, DaVinci Resolve, Clip Studio, Toon Boom Harmony (organização de workspaces, densidade, iconografia), preferências do usuário registradas no ANIGO (abas verticais de propriedades, painéis recolhíveis com aba de reabrir, sem termos como "Inspetor", sem info de GPU na barra de status, sem ferramenta duplicada entre barra e painel).
 
 ## Tarefas
-- [ ] Logomarca e ícone do app (SVG original, versões clara/escura, 16–512 px, splash), desenhados no próprio AnimeIAI ou em SVG à mão; sem semelhança com marcas existentes.
-- [ ] Iconografia completa e coerente (grade de 24 px, traço uniforme) para todas as ferramentas e painéis; substitui qualquer ícone provisório.
+- [x] Logomarca e ícone do app (SVG original, versões clara/escura, 16–512 px, splash), desenhados no próprio AnimeIAI ou em SVG à mão; sem semelhança com marcas existentes. (2026-10-19: `assets/brand/logo.svg`, `logo-light.svg`, `logo-small.svg` para ≤ 32 px; PNG 16–512 pelo teste `brand_pngs`; splash e prancha por `tools/brand/splash.py`; barra de menus usa a pequena, Sobre/Início usam a do tema; evidencias/S20/marca/)
+- [x] Iconografia completa e coerente (grade de 24 px, traço uniforme) para todas as ferramentas e painéis; substitui qualquer ícone provisório. (61 ícones, todos 24 px / traço 1,75 / currentColor, garantido por teste; os últimos botões de texto "−"/"+" da linha do tempo da Edição viraram ícones de lupa)
 - [ ] Auditoria de cada workspace: painéis certos, ordem lógica, nada duplicado, propriedades em abas verticais, painéis recolhíveis.
 - [ ] Barra de ferramentas contextual por ferramenta ativa; painel de propriedades da ferramenta; dicas (tooltip) com atalho.
 - [x] Atalhos padrão (inspirados em CSP/Photoshop: B pincel, E borracha, G balde, V mover, espaço pan, Ctrl+Z…), editor de atalhos, detecção de conflito. (P6h)

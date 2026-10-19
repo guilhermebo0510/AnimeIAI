@@ -257,7 +257,7 @@ impl StudioApp {
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
                     let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), Sense::hover());
-                    self.icons.paint(ui.painter(), IconId::Logo, rect, Color32::WHITE);
+                    self.icons.paint(ui.painter(), IconId::LogoSmall, rect, Color32::WHITE);
                     ui.add_space(4.0);
                     egui::MenuBar::new().ui(ui, |ui| {
                         self.menu_file(ui);
@@ -594,7 +594,7 @@ impl StudioApp {
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.add_space(6.0);
-                    let tex = self.icons.texture(ctx, IconId::Logo, 88.0);
+                    let tex = self.icons.texture(ctx, brand::logo_for(self.prefs.theme), 88.0);
                     ui.add(egui::Image::new((tex, egui::vec2(88.0, 88.0))));
                     ui.add_space(8.0);
                     ui.label(RichText::new(brand::APP_NAME).heading().strong());
