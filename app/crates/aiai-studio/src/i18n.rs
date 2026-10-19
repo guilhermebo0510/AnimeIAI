@@ -408,6 +408,8 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("props.depth", "Profundidade", "Depth"),
     ("props.offset", "Deslocamento", "Offset"),
     ("props.canvas", "Canvas", "Canvas"),
+    ("audio.live", "Som ao vivo", "Live sound"),
+    ("audio.live.tip", "Toca a mixagem do corte junto com a reprodução e um trecho curto ao arrastar o cabeçote", "Plays the cut mix with playback and a short slice when scrubbing the playhead"),
     ("prefs.pen", "Caneta", "Pen"),
     ("prefs.pen_min", "pressão mínima", "minimum pressure"),
     ("prefs.pen_gamma", "curva (dureza)", "curve (firmness)"),

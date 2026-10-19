@@ -494,6 +494,8 @@ pub(crate) struct Shown {
 }
 
 pub(crate) struct Editor {
+    /// Som ao vivo (reprodução e scrub da mixagem do corte).
+    pub live: super::audio_out::AudioOut,
     pub cut: Option<NodeId>,
     pub layer: Option<NodeId>,
     pub frame: u32,
@@ -580,6 +582,7 @@ pub(crate) struct Editor {
 impl Default for Editor {
     fn default() -> Self {
         Editor {
+            live: super::audio_out::AudioOut::new(false),
             keys: crate::keymap::Keymap::default(),
             cut: None,
             layer: None,

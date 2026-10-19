@@ -8,6 +8,7 @@
 //! Cores, Linha do tempo, Propriedades).
 
 mod actions;
+mod audio_out;
 mod autosave;
 mod bridge_host;
 mod canvas;
@@ -166,6 +167,8 @@ impl StudioApp {
             // sem projeto na linha de comando: tela inicial (nunca nas execuções de teste/captura)
             app.start.open = app.prefs.show_start && !app.cli.no_session && app.cli.screenshot.is_none();
         }
+        // som ao vivo mudo nas execuções de teste/captura (AIAI_AUDIO=1 liga mesmo assim)
+        app.ed.live = audio_out::AudioOut::new(cli_no_autosave);
         if !cli_no_autosave {
             if let Some(root) = autosave::recovery_root() {
                 app.recoveries = autosave::leftovers(&root, app.autosave.dir.as_deref());
@@ -677,6 +680,14 @@ impl StudioApp {
         self.ed.pressure_curve = (self.prefs.pen_pressure_min, self.prefs.pen_pressure_gamma);
         self.autosave_tick();
         panels::timeline::tick(&self.core, &mut self.ed, &ctx);
+        {
+            // som ao vivo acompanha a reprodução e o cabeçote
+            let cut = self.ed.cut.clone();
+            let dur = cut.as_ref().and_then(|c| commands::cut_data(&self.core.project, c)).map(|c| c.duration).unwrap_or(1);
+            let (_, hi) = self.ed.playback.range(dur);
+            let (frame, playing) = (self.ed.frame, self.ed.playback.playing);
+            self.ed.live.sync(&self.core, cut.as_ref(), frame, playing, hi);
+        }
         self.editor_shortcuts(&ctx);
         self.poll_dialog(&ctx);
         self.doc_shortcuts(&ctx);

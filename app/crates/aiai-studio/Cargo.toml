@@ -32,6 +32,7 @@ aiai-render = { workspace = true }
 aiai-bridge = { workspace = true }
 aiai-paint = { workspace = true }
 aiai-tools = { workspace = true }
+aiai-audio = { workspace = true }
 # dialogos nativos de abrir/salvar pasta de projeto (Arquivo > Abrir/Salvar como)
 rfd = { version = "0.15", default-features = false }
 # Rasterizacao dos icones SVG. Sem as features padrao: nao precisamos de texto nem de imagens raster dentro dos SVGs
@@ -40,7 +41,7 @@ resvg = { version = "0.45", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 # memoria do processo na barra de status (GetProcessMemoryInfo); 0.61.2 ja esta no Cargo.lock
-windows-sys = { version = "0.61", features = ["Win32_System_ProcessStatus", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_Media_Audio"] }
 
 [dev-dependencies]
 tempfile = "3"

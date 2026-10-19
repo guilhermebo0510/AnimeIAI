@@ -323,7 +323,15 @@ fn mixer_body(env: &mut Env, ui: &mut Ui) {
             dim_label(ui, &t, tr("audio.targets"));
         }
     }
-    dim_label(ui, &t, tr("audio.no_live"));
+    let mut on = env.ed.live.enabled();
+    let c = ui.checkbox(&mut on, tr("audio.live")).on_hover_text(tr("audio.live.tip"));
+    env.note("audio:live", c.rect);
+    if c.changed() {
+        env.ed.live.set_enabled(on);
+    }
+    if let Some(e) = &env.ed.live.last_error {
+        dim_label(ui, &t, e);
+    }
 }
 
 fn out_dir(core: &CoreSession) -> Option<std::path::PathBuf> {

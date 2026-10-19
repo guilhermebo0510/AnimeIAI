@@ -212,6 +212,7 @@ dependencies = [
 name = "aiai-studio"
 version = "0.1.0"
 dependencies = [
+ "aiai-audio",
  "aiai-bridge",
  "aiai-core",
  "aiai-paint",
