@@ -41,6 +41,11 @@ pub(crate) struct AudioState {
     pub monitor: super::edit::EditPreview,
     /// Duração (s) de cada asset de áudio, lida uma vez do WAV.
     durations: HashMap<String, Option<f32>>,
+    /// Formulário "Adicionar ao corte": texto da fala, personagem, preset de efeito, importação em andamento.
+    tts_text: String,
+    tts_character: Option<Id>,
+    sfx_preset: usize,
+    import_job: Option<crossbeam_channel::Receiver<Option<std::path::PathBuf>>>,
     /// Forma de onda de cada asset: pico (0..1) a cada 10 ms, lida uma vez.
     waves: HashMap<String, Option<Vec<f32>>>,
     /// Última medição: (corte, change_counter, relatório).
@@ -313,6 +318,8 @@ fn mixer_body(env: &mut Env, ui: &mut Ui) {
         actions::notify_err(env.ed, r);
     }
 
+    add_to_cut(env, ui, &cut);
+
     // ---- loudness e saídas
     section(ui, &t, "audio.loudness");
     ui.horizontal_wrapped(|ui| {
@@ -363,6 +370,94 @@ fn mixer_body(env: &mut Env, ui: &mut Ui) {
     }
     if let Some(e) = &env.ed.live.last_error {
         dim_label(ui, &t, e);
+    }
+}
+
+const SFX_PRESETS: [&str; 10] = ["whoosh", "impact", "kira", "footstep", "door", "wind", "cloth", "chime", "pop", "magic_swell"];
+
+/// Adicionar áudio no cabeçote do corte: importar WAV, fala por TTS (VOICEVOX local), efeito sonoro procedural e
+/// lip-sync do clipe de fala selecionado — as mesmas ações da bridge/MCP.
+fn add_to_cut(env: &mut Env, ui: &mut Ui, cut: &NodeId) {
+    let t = env.t;
+    section(ui, &t, "audio.add");
+    let frame = env.ed.frame;
+    // importar WAV (diálogo nativo numa thread; o resultado chega por canal)
+    if let Some(rx) = &env.ed.audio.import_job {
+        if let Ok(res) = rx.try_recv() {
+            env.ed.audio.import_job = None;
+            if let Some(path) = res {
+                let r = actions::run(env.core, "IMPORT_AUDIO", json!({ "path": path.display().to_string(), "cut": cut, "start_frame": frame, "track": "sfx" }));
+                actions::notify_err(env.ed, r);
+            }
+        } else {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
+        }
+    }
+    ui.horizontal_wrapped(|ui| {
+        let b = ui.add_enabled(env.ed.audio.import_job.is_none(), egui::Button::new(tr("audio.import")));
+        env.note("audio:import", b.rect);
+        if b.on_hover_text(tr("audio.import.tip")).clicked() {
+            let (tx, rx) = crossbeam_channel::bounded(1);
+            let start = env.core.path.clone();
+            let _ = std::thread::Builder::new().name("aiai-import-audio".into()).spawn(move || {
+                let mut d = rfd::FileDialog::new().add_filter("WAV", &["wav"]);
+                if let Some(p) = start {
+                    d = d.set_directory(p);
+                }
+                let _ = tx.send(d.pick_file());
+            });
+            env.ed.audio.import_job = Some(rx);
+        }
+        // efeito sonoro
+        let mut k = env.ed.audio.sfx_preset.min(SFX_PRESETS.len() - 1);
+        let r = egui::ComboBox::from_id_salt("audio_sfx_preset").selected_text(SFX_PRESETS[k]).show_ui(ui, |ui| {
+            for (i, p) in SFX_PRESETS.iter().enumerate() {
+                ui.selectable_value(&mut k, i, *p);
+            }
+        });
+        env.note("audio:sfx_preset", r.response.rect);
+        env.ed.audio.sfx_preset = k;
+        let b = ui.button(tr("audio.add_sfx"));
+        env.note("audio:add_sfx", b.rect);
+        if b.clicked() {
+            let r = actions::run(env.core, "SFX", json!({ "preset": SFX_PRESETS[k], "seed": frame, "cut": cut, "start_frame": frame }));
+            actions::notify_err(env.ed, r);
+        }
+    });
+    // fala por TTS
+    let chars: Vec<(Id, String)> = env.core.project.nodes.values().filter(|n| matches!(n.data, NodeKind::Character(_))).map(|n| (n.id.clone(), n.name.clone())).collect();
+    ui.horizontal_wrapped(|ui| {
+        let te = ui.add(egui::TextEdit::singleline(&mut env.ed.audio.tts_text).hint_text(tr("audio.tts_hint")).desired_width(180.0));
+        env.note("audio:tts_text", te.rect);
+        let cur = env.ed.audio.tts_character.clone().filter(|c| chars.iter().any(|(i, _)| i == c)).or_else(|| chars.first().map(|c| c.0.clone()));
+        let label = cur.as_ref().and_then(|c| chars.iter().find(|(i, _)| i == c)).map(|c| c.1.clone()).unwrap_or_else(|| tr("audio.no_character").to_owned());
+        let mut pick = cur.clone();
+        let r = egui::ComboBox::from_id_salt("audio_tts_char").selected_text(label).show_ui(ui, |ui| {
+            for (i, n) in &chars {
+                ui.selectable_value(&mut pick, Some(i.clone()), n);
+            }
+        });
+        env.note("audio:tts_character", r.response.rect);
+        env.ed.audio.tts_character = pick.clone();
+        let b = ui.add_enabled(pick.is_some() && !env.ed.audio.tts_text.trim().is_empty(), egui::Button::new(tr("audio.add_tts")));
+        env.note("audio:add_tts", b.rect);
+        if b.on_hover_text(tr("audio.add_tts.tip")).clicked() {
+            let r = actions::run(env.core, "TTS_LINE", json!({ "text": env.ed.audio.tts_text.trim(), "character": pick, "cut": cut, "start_frame": frame, "track": "dialogue" }));
+            if r.is_ok() {
+                env.ed.audio.tts_text.clear();
+            }
+            actions::notify_err(env.ed, r);
+        }
+    });
+    // lip-sync do clipe selecionado na camada ativa (cels 1..6 = fechada, a, i, u, e, o, como o settei de bocas)
+    let sel = env.ed.audio.sel.clone();
+    let layer = env.ed.active_layer(env.core);
+    let b = ui.add_enabled(sel.is_some() && layer.is_some(), egui::Button::new(tr("audio.lipsync")));
+    env.note("audio:lipsync", b.rect);
+    if b.on_hover_text(tr("audio.lipsync.tip")).clicked() {
+        let mapping = json!({ "closed": 1, "a": 2, "i": 3, "u": 4, "e": 5, "o": 6 });
+        let r = actions::run(env.core, "LIPSYNC", json!({ "cut": cut, "placement": sel, "mouth_layer": layer, "mapping": mapping }));
+        actions::notify_err(env.ed, r);
     }
 }
 

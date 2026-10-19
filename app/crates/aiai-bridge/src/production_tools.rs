@@ -43,14 +43,14 @@ use std::time::Instant;
 
 pub const PRODUCTION_ACTIONS: &[&str] = &[
     "SKY", "PATTERN_FILL", "TEXT", "LINES", "GAG_BG", "PARTICLES", "GUIDE3D", "PERSPECTIVE", "MODEL_SHEET", "CONSISTENCY", "INBETWEEN", "PROPAGATE_FILLS",
-    "TTS_LINE", "TTS_KOKORO", "VOICE_PROFILE", "LIPSYNC", "SFX", "BGM", "MIX_CUT", "LOUDNESS", "COMPARE", "PROBE_COLOR", "MEASURE_LINE", "MEASURE_EDGE", "FILL_SHAPE", "EDIT_SET", "EXPORT_VIDEO",
+    "TTS_LINE", "TTS_KOKORO", "VOICE_PROFILE", "LIPSYNC", "SFX", "BGM", "IMPORT_AUDIO", "MIX_CUT", "LOUDNESS", "COMPARE", "PROBE_COLOR", "MEASURE_LINE", "MEASURE_EDGE", "FILL_SHAPE", "EDIT_SET", "EXPORT_VIDEO",
 ];
 
 /// Ações que mudam o documento (o headless salva o projeto depois delas).
 pub fn is_mutating(action: &str) -> bool {
     matches!(
         action,
-        "SKY" | "PATTERN_FILL" | "TEXT" | "LINES" | "GAG_BG" | "PARTICLES" | "GUIDE3D" | "PERSPECTIVE" | "MODEL_SHEET" | "INBETWEEN" | "PROPAGATE_FILLS" | "TTS_LINE" | "TTS_KOKORO" | "VOICE_PROFILE" | "LIPSYNC" | "SFX" | "BGM" | "FILL_SHAPE" | "EDIT_SET"
+        "SKY" | "PATTERN_FILL" | "TEXT" | "LINES" | "GAG_BG" | "PARTICLES" | "GUIDE3D" | "PERSPECTIVE" | "MODEL_SHEET" | "INBETWEEN" | "PROPAGATE_FILLS" | "TTS_LINE" | "TTS_KOKORO" | "VOICE_PROFILE" | "LIPSYNC" | "SFX" | "BGM" | "IMPORT_AUDIO" | "FILL_SHAPE" | "EDIT_SET"
     )
 }
 
@@ -176,6 +176,13 @@ pub fn handle(session: &mut CoreSession, action: &str, params: &Value) -> Result
             });
             extra["soundfont"] = json!(out.soundfont);
             apply_with(session, params, cmd, extra)
+        }
+        "IMPORT_AUDIO" => {
+            let r: audio::ImportAudioRequest = request(params, action)?;
+            check_abs(&r.path, "path")?;
+            let out = audio::import_audio(&session.project, &mut session.ids, &mut session.blobs, &r).map_err(tool_error)?;
+            let cmd = out.batch("Importar áudio");
+            apply_with(session, params, cmd, clip_info(&out))
         }
         "MIX_CUT" => mix_cut(session, params),
         "LOUDNESS" => loudness(session, params),

@@ -55,6 +55,8 @@ Exemplo: {"character":"<id>","speaker":8,"speaker_name":"春日部つむぎ","pa
 const LIPSYNC_DESC: &str = r##"Lip-sync: transforma um clipe de fala do corte em exposições de boca no timesheet (cria a coluna de boca se faltar; um passo de undo). `placement` (id do clipe em cut.audio) ou `asset`+`start_frame`; `mouth_layer`: camada cujos cels são as bocas; `mapping`: forma→número do cel (a, i, u, e, o, n, closed/rest, half, open). `mode`: auto (moras do VOICEVOX se houver, senão energia), moras, energy; `shapes`: three = fechada/meia/aberta; `min_hold_frames`, `close_gap_frames`, `lead_frames` (adianta a boca). Devolve o Outcome + track, first_frame, frames, exposures (quadro absoluto → cel), used_moras.
 Exemplo: {"cut":"<corte>","placement":"<id do clipe>","mouth_layer":"<camada boca>","mapping":{"a":1,"i":2,"u":3,"e":4,"o":5,"closed":6}}"##;
 
+const IMPORT_AUDIO_DESC: &str = r##"Importa um .wav do disco (caminho absoluto sob C:\AnimeIAI) como asset de áudio e, com `cut`, coloca o clipe na trilha `track` (dialogue | sfx | bgm | ambient; padrão sfx) em `start_frame`, com `gain_db`, `pan`, `fade_in`, `fade_out`. Devolve o Outcome + asset, placement, duration_s/duration_frames. Entra no undo."##;
+
 const SFX_DESC: &str = r##"Efeito sonoro procedural (determinístico: mesma semente = mesmo áudio) como asset de áudio e, com `cut`, clipe posicionado na trilha SFX. `preset`: whoosh | impact | kira | footstep | door | wind | cloth | chime | pop | magic_swell | sfxr (usa `sfxr`); `seed`, `duration` (s), `pitch` (1 = padrão), `brightness` 0..1, `intensity`; posicionamento: `cut`, `start_frame`, `gain_db`, `pan`, `fade_in`, `fade_out`. Devolve o Outcome + asset, placement, duration_s/duration_frames. Entra no undo.
 Exemplo: {"preset":"impact","seed":3,"cut":"<corte>","start_frame":12,"gain_db":-3}"##;
 
@@ -133,6 +135,7 @@ pub fn definitions() -> Vec<Value> {
         json!({ "name": "aiai_lipsync", "description": LIPSYNC_DESC, "inputSchema": schema_of::<audio::LipsyncRequest>() }),
         json!({ "name": "aiai_sfx", "description": SFX_DESC, "inputSchema": schema_of::<audio::SfxRequest>() }),
         json!({ "name": "aiai_bgm", "description": BGM_DESC, "inputSchema": schema_of::<audio::BgmRequest>() }),
+        json!({ "name": "aiai_import_audio", "description": IMPORT_AUDIO_DESC, "inputSchema": schema_of::<audio::ImportAudioRequest>() }),
         json!({ "name": "aiai_mix", "description": MIX_DESC, "inputSchema": schema_of::<pt::MixRequest>() }),
         json!({
             "name": "aiai_loudness", "description": LOUDNESS_DESC,
@@ -207,6 +210,7 @@ pub fn plan(name: &str, m: &Map<String, Value>) -> Option<Result<Plan, ToolError
         "aiai_lipsync" => with_req(&["cut", "mouth_layer", "mapping"], "LIPSYNC", false),
         "aiai_sfx" => with_req(&["preset"], "SFX", false),
         "aiai_bgm" => with_req(&["song"], "BGM", false),
+        "aiai_import_audio" => with_req(&["path"], "IMPORT_AUDIO", false),
         "aiai_mix" => with_req(&["cut"], "MIX_CUT", false),
         "aiai_loudness" => simple("LOUDNESS", Value::Object(m.clone())),
         "aiai_compare" => with_req(&["cut", "reference"], "COMPARE", true),

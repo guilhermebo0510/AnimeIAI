@@ -168,6 +168,29 @@ pub fn asset_audio(p: &Project, blobs: &BlobStore, asset: &Id) -> ToolResult<Aud
     }
 }
 
+/// Importar um WAV do disco como clipe de áudio (e colocar no corte, se `cut` vier).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ImportAudioRequest {
+    /// Caminho absoluto do .wav (PCM 16/24/32 bits ou float).
+    pub path: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default = "default_track_sfx")]
+    pub track: AudioTrack,
+    #[serde(flatten)]
+    pub place: PlacementOpts,
+}
+
+pub fn import_audio(p: &Project, idgen: &mut IdGen, blobs: &mut BlobStore, req: &ImportAudioRequest) -> ToolResult<ClipOutput> {
+    let bytes = std::fs::read(&req.path).map_err(|e| ToolError::Invalid(format!("não consegui ler {}: {e}", req.path)))?;
+    let audio = wav::read_wav(&bytes).map_err(|e| ToolError::Invalid(format!("{} não é um WAV legível: {e}", req.path)))?;
+    let name = req.name.clone().unwrap_or_else(|| {
+        std::path::Path::new(&req.path).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "áudio".into())
+    });
+    let params = json!({ "imported_from": std::path::Path::new(&req.path).file_name().map(|s| s.to_string_lossy().into_owned()) });
+    finish_clip(p, idgen, blobs, bytes, audio.duration_s(), &truncate_name(&name), params, "import", req.track, &req.place, None)
+}
+
 fn asset_params(p: &Project, asset: &Id) -> ToolResult<Value> {
     match &node(p, asset)?.data {
         NodeKind::Asset(a) => Ok(a.params.clone()),
