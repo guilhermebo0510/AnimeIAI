@@ -13,6 +13,7 @@
     move X Y | glide X Y [N]   posiciona o cursor / desliza em N passos
     click X Y | rclick X Y | dclick X Y | mclick X Y
     drag X1 Y1 X2 Y2 [N]       botao esquerdo: aperta em (X1,Y1), desliza N passos, solta em (X2,Y2)
+    ldown X Y | lup            aperta o botao esquerdo em (X,Y) / solta onde o cursor estiver (glide entre os dois arrasta)
     wheel N                    roda (N positivo = para cima)
     key COMBO                  ex.: key esc | key ctrl+z | key ctrl+shift+s
     keydown K | keyup K        segura / solta uma tecla (ex.: keydown space; drag ...; keyup space)
@@ -200,6 +201,8 @@ try {
                 Glide ([int]$parts[3]) ([int]$parts[4]) $steps; Start-Sleep -Milliseconds 60
                 Chk ([AiaiIn]::Mouse(0,0,4,0)) 'lu'; Start-Sleep -Milliseconds 80
             }
+            'ldown' { Hover ([int]$parts[1]) ([int]$parts[2]); Chk ([AiaiIn]::Mouse(0,0,2,0)) 'ld'; Start-Sleep -Milliseconds 60 }
+            'lup' { Chk ([AiaiIn]::Mouse(0,0,4,0)) 'lu'; Start-Sleep -Milliseconds 80 }
             'wheel' { $d = 120 * [int]$parts[1]; $data = [uint32](([int64]$d) -band 0xFFFFFFFFL); Chk ([AiaiIn]::Mouse(0,0,0x800,$data)) 'wheel'; Start-Sleep -Milliseconds 50 }
             'key' {
                 $keys = $parts[1] -split '\+'

@@ -123,6 +123,17 @@ fn layer_prop(layer: &LayerData, prop: &str, frame: u32, default: f32) -> f32 {
     layer.keys.eval(prop, frame as f32).unwrap_or(default)
 }
 
+/// Onde o conteúdo do cel (coordenadas cruas) aparece no canvas: transformação do cel + movimento da camada no
+/// quadro (sem câmera). O editor usa o inverso para o traço cair embaixo do cursor numa camada que se move.
+pub fn layer_placement(layer: &LayerData, cel_transform: [f32; 4], frame: u32, width: u32, height: u32) -> Affine {
+    let [tx, ty, s, rot] = cel_transform;
+    let ox = layer_prop(layer, "offset_x", frame, layer.offset[0]);
+    let oy = layer_prop(layer, "offset_y", frame, layer.offset[1]);
+    let ks = layer_prop(layer, "scale", frame, 1.0);
+    let kr = layer_prop(layer, "rotation", frame, 0.0);
+    Affine::from_trs(tx + ox, ty + oy, s * ks, rot + kr, [width as f32 / 2.0, height as f32 / 2.0])
+}
+
 /// Tamanho do canvas do corte.
 pub fn cut_canvas(project: &Project, cut: &CutData) -> (u32, u32) {
     match cut.canvas {
@@ -381,18 +392,12 @@ impl<'a> Renderer<'a> {
 
     /// Aplica transformação do cel, chaves da camada e câmera (multiplano) a uma imagem do canvas.
     fn place(&self, img: Image, layer: &LayerData, frame: u32, cel_transform: [f32; 4]) -> Image {
-        let [tx, ty, s, rot] = cel_transform;
-        let (ox, oy, ks, kr) = if self.layer_motion {
-            (
-                layer_prop(layer, "offset_x", frame, layer.offset[0]),
-                layer_prop(layer, "offset_y", frame, layer.offset[1]),
-                layer_prop(layer, "scale", frame, 1.0),
-                layer_prop(layer, "rotation", frame, 0.0),
-            )
+        let mut xf = if self.layer_motion {
+            layer_placement(layer, cel_transform, frame, self.width, self.height)
         } else {
-            (0.0, 0.0, 1.0, 0.0)
+            let [tx, ty, s, rot] = cel_transform;
+            Affine::from_trs(tx, ty, s, rot, [self.width as f32 / 2.0, self.height as f32 / 2.0])
         };
-        let mut xf = Affine::from_trs(tx + ox, ty + oy, s * ks, rot + kr, [self.width as f32 / 2.0, self.height as f32 / 2.0]);
         if let Some(cam) = &self.camera {
             xf = compose_affine(cam.affine(layer.depth, self.out_w, self.out_h), xf);
         }

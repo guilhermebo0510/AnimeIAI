@@ -66,6 +66,13 @@ pub(crate) fn target(env: &mut Env, allowed: &[LayerType], wrong_key: &str) -> O
 
 impl StrokeGesture {
     pub(crate) fn push(&mut self, p: Vec2, pressure: f32) {
+        let p = match &self.inv {
+            Some(a) => {
+                let (x, y) = a.apply(p.x, p.y);
+                Vec2::new(x, y)
+            }
+            None => p,
+        };
         self.path.push(p);
         let keep = if self.tool == ToolId::Eraser { Some(p) } else { self.stab.feed(p) };
         if let Some(q) = keep {
@@ -86,7 +93,12 @@ pub(crate) fn begin_stroke(env: &mut Env, tool: ToolId, p: Vec2, pressure: f32, 
     let o = &env.ed.opts;
     let mode = if tool == ToolId::Eraser { StabMode::Off } else { o.stab_mode };
     let stab = Stabilizer::new(mode, o.stab_window as usize, o.stab_radius / scale.max(1e-3));
-    let mut g = StrokeGesture { tool, layer: t.layer, samples: Vec::new(), stab, t0: Instant::now(), hits: Vec::new(), path: Vec::new(), screen_scale: scale };
+    // camada que se move neste quadro: o traço é gravado no espaço do cel para aparecer embaixo do cursor
+    let fwd = cmds::layer_placement(&env.core.project, &t.cut, &t.layer, t.frame);
+    let inv = fwd.and_then(|a| a.inverse());
+    let fwd = inv.and(fwd);
+    let scale = scale * fwd.map(|a| a.0[0].hypot(a.0[3])).unwrap_or(1.0);
+    let mut g = StrokeGesture { tool, layer: t.layer, samples: Vec::new(), stab, t0: Instant::now(), hits: Vec::new(), path: Vec::new(), screen_scale: scale, fwd, inv };
     g.push(p, pressure);
     Gesture::Stroke(Box::new(g))
 }
@@ -171,14 +183,50 @@ fn commit_pen(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant
     };
     let (cut, layer, frame, pref) = (t.cut.clone(), t.layer.clone(), t.frame, env.ed.cel_number);
     let width = stroke.width;
-    let ghost_pts: Vec<Vec2> = g.samples.iter().map(|s| s.p).collect();
+    // o fantasma é a mesma geometria do traço gravado (afinamento, fechamento), não a polilinha do arrasto
+    let (ghost_pts, mut ghost_radii) = sampled(&stroke);
+    let k = g.fwd.map(|a| a.0[0].hypot(a.0[3])).unwrap_or(1.0);
+    ghost_radii.iter_mut().for_each(|r| *r *= k);
+    let ghost_pts: Vec<Vec2> = ghost_pts.into_iter().map(|p| g.to_canvas(p)).collect();
     let planned = cmds::plan_with_prep(env.core, &cut, &layer, frame, pref, vec![], |p, _| {
         let cel = cmds::exposed_cel(p, &cut, &layer, frame).ok_or_else(|| tr("err.no_cel").to_owned())?;
         let index = cmds::cel_data(p, &cel).map(|c| c.strokes.len()).unwrap_or(0);
         Ok(Command::InsertStrokes { cel, items: vec![IndexedStroke { index, stroke }] })
     });
     let color = ghost_color(env, 1.0);
-    commit(env, planned, released_at, "pen", Some((ghost_pts, width, color)));
+    commit(env, planned, released_at, "pen", Some((ghost_pts, ghost_radii, width, color)));
+}
+
+/// Amostras (posição, raio) de um traço vetorial como o motor desenha.
+pub(crate) fn sampled(stroke: &Stroke) -> (Vec<Vec2>, Vec<f32>) {
+    aiai_paint::sample_stroke(stroke).iter().map(|q| (Vec2::new(q.x, q.y), q.r)).unzip()
+}
+
+/// O traço que a caneta gravaria com estes pontos agora (para a prévia durante o arrasto).
+pub(crate) fn pen_preview(env: &Env, g: &StrokeGesture) -> Option<Stroke> {
+    let mut points: Vec<StrokePoint> = g.samples.iter().map(|s| StrokePoint { x: s.p.x, y: s.p.y, pressure: s.pressure, tilt: None, t: Some(s.t) }).collect();
+    if points.is_empty() {
+        return None;
+    }
+    if points.len() == 1 {
+        let q = points[0];
+        points.push(StrokePoint { x: q.x + 0.01, ..q });
+    }
+    let o = &env.ed.opts;
+    Some(Stroke {
+        id: Id(String::new()),
+        points,
+        geometry: StrokeGeometry::Freehand,
+        tension: 0.0,
+        tip: o.pen_tip,
+        width: o.pen_width.max(0.1),
+        profile: WidthProfile::default(),
+        color: env.ed.color.clone(),
+        opacity: 1.0,
+        closed: false,
+        aliased: o.pen_aliased,
+        color_trace: false,
+    })
 }
 
 /// O traço termina perto de onde começou (a menos de 2 larguras ou 10 pontos da tela) depois de percorrer um caminho bem maior?
@@ -234,12 +282,12 @@ fn commit_brush(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Insta
     let opacity = preset.opacity;
     let seed = env.core.change_counter.wrapping_mul(2654435761);
     let (cut, layer, frame, pref) = (t.cut.clone(), t.layer.clone(), t.frame, env.ed.cel_number);
-    let ghost_pts: Vec<Vec2> = g.samples.iter().map(|s| s.p).collect();
+    let ghost_pts: Vec<Vec2> = g.samples.iter().map(|s| g.to_canvas(s.p)).collect();
     let planned = cmds::plan_with_prep(env.core, &cut, &layer, frame, pref, vec![], |p, blobs| {
         let req = tpaint::PaintRequest { cut: cut.clone(), frame, layer: layer.clone(), preset, color, strokes: vec![tpaint::PaintStrokeSpec { points: pts, smooth: true }], seed };
         tpaint::paint_command(p, blobs, &req).map_err(|e| e.to_string())
     });
-    let ghost = if erase { None } else { Some((ghost_pts, size, ghost_color(env, opacity.min(0.9)))) };
+    let ghost = if erase { None } else { Some((ghost_pts, Vec::new(), size, ghost_color(env, opacity.min(0.9)))) };
     commit(env, planned, released_at, if erase { "erase_raster" } else { "brush" }, ghost);
 }
 
@@ -275,7 +323,7 @@ fn commit_erase_fill(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: 
 }
 
 /// Aplica o comando planejado; erro vira aviso. Mede a latência e deixa o "fantasma" do traço no overlay até o render novo.
-fn commit(env: &mut Env, planned: Result<Command, String>, released_at: Instant, label: &str, ghost: Option<(Vec<Vec2>, f32, egui::Color32)>) {
+fn commit(env: &mut Env, planned: Result<Command, String>, released_at: Instant, label: &str, ghost: Option<(Vec<Vec2>, Vec<f32>, f32, egui::Color32)>) {
     let cmd = match planned {
         Ok(c) => c,
         Err(e) => {
@@ -285,8 +333,8 @@ fn commit(env: &mut Env, planned: Result<Command, String>, released_at: Instant,
     };
     if env.ed.apply(env.core, cmd) {
         env.ed.begin_latency(released_at, label, env.core);
-        if let Some((pts, width, color)) = ghost {
-            env.ed.ghosts.push(Ghost { pts, width, color, until_counter: env.core.change_counter, born: Instant::now() });
+        if let Some((pts, radii, width, color)) = ghost {
+            env.ed.ghosts.push(Ghost { pts, radii, width, color, until_counter: env.core.change_counter, born: Instant::now() });
         }
     }
 }
@@ -333,6 +381,13 @@ pub(crate) fn do_fill(env: &mut Env, p: Vec2, released_at: Instant) {
         env.ed.notify(tr(if l.locked { "err.layer_locked" } else { "err.layer_hidden" }));
         return;
     }
+    let p = match cmds::layer_placement(&env.core.project, &cut, &fill_layer, env.ed.frame).and_then(|a| a.inverse()) {
+        Some(a) => {
+            let (x, y) = a.apply(p.x, p.y);
+            Vec2::new(x, y)
+        }
+        None => p,
+    };
     let (w, h) = cmds::canvas_size(&env.core.project, &cut);
     if p.x < 0.0 || p.y < 0.0 || p.x >= w as f32 || p.y >= h as f32 {
         return;

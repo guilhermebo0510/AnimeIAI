@@ -111,6 +111,15 @@ pub(crate) fn layer_cels(p: &Project, layer: &NodeId) -> Vec<(u32, NodeId)> {
 }
 
 /// Cel exposto pela camada no quadro (mesma regra do compositor).
+/// Transformação cel → canvas da camada no quadro (cel exposto + movimento da camada); `None` se for a identidade.
+pub(crate) fn layer_placement(p: &Project, cut: &NodeId, layer: &NodeId, frame: u32) -> Option<aiai_paint::Affine> {
+    let l = layer_data(p, layer)?;
+    let ct = exposed_cel(p, cut, layer, frame).and_then(|c| cel_data(p, &c).map(|d| d.transform)).unwrap_or([0.0, 0.0, 1.0, 0.0]);
+    let (w, h) = canvas_size(p, cut);
+    let a = aiai_render::compose::layer_placement(l, ct, frame, w, h);
+    (!a.is_identity()).then_some(a)
+}
+
 pub(crate) fn exposed_cel(p: &Project, cut: &NodeId, layer: &NodeId, frame: u32) -> Option<NodeId> {
     let c = cut_data(p, cut)?;
     aiai_tools::context::exposed_cel(p, c, layer, frame).map(|n| n.id.clone())

@@ -719,20 +719,69 @@ fn polyline(painter: &egui::Painter, pts: &[Vec2], width_canvas: f32, color: Col
     painter.circle_filled(*sp.last().expect("não vazio"), w / 2.0, color);
 }
 
+/// Traço de largura variável (raio por ponto, unidades do canvas): segmentos como trapézios + discos nos pontos.
+/// Com cor opaca as sobreposições não aparecem; é a forma que o motor vetorial rasteriza (cápsulas).
+fn variable_line(painter: &egui::Painter, pts: &[Vec2], radii: &[f32], color: Color32, xf: &Xf) {
+    if pts.is_empty() || pts.len() != radii.len() {
+        return;
+    }
+    let mut mesh = egui::Mesh::default();
+    let sp: Vec<Pos2> = pts.iter().map(|p| xf.to_screen(*p)).collect();
+    let sr: Vec<f32> = radii.iter().map(|r| (r * xf.scale).max(0.5)).collect();
+    for i in 0..sp.len().saturating_sub(1) {
+        let (a, b) = (sp[i], sp[i + 1]);
+        let d = b - a;
+        let len = d.length();
+        if len < 1e-3 {
+            continue;
+        }
+        let n = egui::vec2(-d.y, d.x) / len;
+        let base = mesh.vertices.len() as u32;
+        for p in [a + n * sr[i], a - n * sr[i], b - n * sr[i + 1], b + n * sr[i + 1]] {
+            mesh.colored_vertex(p, color);
+        }
+        mesh.add_triangle(base, base + 1, base + 2);
+        mesh.add_triangle(base, base + 2, base + 3);
+    }
+    painter.add(Shape::mesh(mesh));
+    // discos só onde a direção muda (juntas) e nas pontas, para não pesar em traços longos
+    let step = (sp.len() / 400).max(1);
+    for (i, (p, r)) in sp.iter().zip(&sr).enumerate() {
+        if i == 0 || i + 1 == sp.len() || i % step == 0 {
+            painter.circle_filled(*p, *r, color);
+        }
+    }
+}
+
 fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId) {
     // o que o gesto anterior acabou de fazer, até o render novo chegar
     env.ed.ghosts.retain(|g| g.born.elapsed().as_secs_f32() < 5.0);
     for g in &env.ed.ghosts {
-        polyline(painter, &g.pts, g.width, g.color, xf);
+        if g.radii.is_empty() {
+            polyline(painter, &g.pts, g.width, g.color, xf);
+        } else {
+            variable_line(painter, &g.pts, &g.radii, g.color, xf);
+        }
     }
     let t = env.t;
     match &env.ed.gesture {
         Gesture::Stroke(g) => {
-            let pts: Vec<Vec2> = g.samples.iter().map(|s| s.p).collect();
+            let pts: Vec<Vec2> = g.samples.iter().map(|s| g.to_canvas(s.p)).collect();
+            let k = g.fwd.map(|a| a.0[0].hypot(a.0[3])).unwrap_or(1.0);
             match g.tool {
                 ToolId::Pen => {
+                    // a prévia é o traço que a caneta gravaria agora (ponta, pressão e afinamento do motor)
                     let c = cmds::resolve_color(&env.core.project, &env.ed.color);
-                    polyline(painter, &pts, env.ed.opts.pen_width, super::ui_kit::rgba_to_color32(Rgba([c.0[0], c.0[1], c.0[2], 1.0])), xf);
+                    let color = super::ui_kit::rgba_to_color32(Rgba([c.0[0], c.0[1], c.0[2], 1.0]));
+                    match super::tools::pen_preview(env, g) {
+                        Some(stroke) => {
+                            let (sp, sr) = super::tools::sampled(&stroke);
+                            let sp: Vec<Vec2> = sp.into_iter().map(|p| g.to_canvas(p)).collect();
+                            let sr: Vec<f32> = sr.into_iter().map(|r| r * k).collect();
+                            variable_line(painter, &sp, &sr, color, xf);
+                        }
+                        None => polyline(painter, &pts, env.ed.opts.pen_width, color, xf),
+                    }
                 }
                 ToolId::Brush => {
                     let c = cmds::resolve_color(&env.core.project, &env.ed.color);
@@ -740,11 +789,12 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
                     polyline(painter, &pts, env.ed.opts.brush_size, super::ui_kit::rgba_to_color32(Rgba([c.0[0], c.0[1], c.0[2], a])), xf);
                 }
                 _ => {
-                    polyline(painter, &g.path, env.ed.opts.eraser_size, Color32::from_white_alpha(70), xf);
+                    let path: Vec<Vec2> = g.path.iter().map(|p| g.to_canvas(*p)).collect();
+                    polyline(painter, &path, env.ed.opts.eraser_size, Color32::from_white_alpha(70), xf);
                     // traços vetoriais que a borracha apagaria agora
                     if let Some(cel) = cmds::exposed_cel(&env.core.project, cut, &g.layer, env.ed.frame).and_then(|c| cmds::cel_data(&env.core.project, &c)) {
                         for s in cel.strokes.iter().filter(|s| g.hits.contains(&s.id)) {
-                            let sp: Vec<Vec2> = aiai_paint::sample_stroke(s).iter().map(|q| Vec2::new(q.x, q.y)).collect();
+                            let sp: Vec<Vec2> = aiai_paint::sample_stroke(s).iter().map(|q| g.to_canvas(Vec2::new(q.x, q.y))).collect();
                             polyline(painter, &sp, s.width.max(2.0), env.t.danger.gamma_multiply(0.8), xf);
                         }
                     }

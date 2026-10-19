@@ -355,7 +355,7 @@ impl Default for ToolOptions {
             pen_width: 3.0,
             pen_tip: VectorTip::GPen,
             pen_aliased: false,
-            pen_autoclose: false,
+            pen_autoclose: true,
             stab_mode: StabMode::Average,
             stab_window: 4,
             stab_radius: 10.0,
@@ -388,6 +388,23 @@ pub(crate) struct StrokeGesture {
     /// Caminho bruto do cursor (borracha).
     pub path: Vec<Vec2>,
     pub screen_scale: f32,
+    /// Camada que se move no quadro (movimento de camada / transformação do cel): `fwd` leva do cel ao canvas e
+    /// `inv` do canvas ao cel. As amostras e o caminho ficam no espaço do cel (o que é gravado); a prévia volta ao canvas.
+    pub fwd: Option<aiai_paint::Affine>,
+    pub inv: Option<aiai_paint::Affine>,
+}
+
+impl StrokeGesture {
+    /// Ponto do cel → canvas (para desenhar a prévia onde o render vai mostrar).
+    pub(crate) fn to_canvas(&self, p: Vec2) -> Vec2 {
+        match &self.fwd {
+            Some(a) => {
+                let (x, y) = a.apply(p.x, p.y);
+                Vec2::new(x, y)
+            }
+            None => p,
+        }
+    }
 }
 
 pub(crate) enum Gesture {
@@ -406,6 +423,8 @@ pub(crate) enum Gesture {
 /// Formas "fantasma": o que o gesto acabou de fazer, mostrado no overlay até o render novo chegar.
 pub(crate) struct Ghost {
     pub pts: Vec<Vec2>,
+    /// Raio de cada ponto (unidades do canvas) quando o fantasma é a geometria real do traço; vazio = largura fixa.
+    pub radii: Vec<f32>,
     pub width: f32,
     pub color: egui::Color32,
     pub until_counter: u64,
