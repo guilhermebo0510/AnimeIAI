@@ -9,8 +9,8 @@ Blender 4/5, DaVinci Resolve, Clip Studio, Toon Boom Harmony (organização de w
 ## Tarefas
 - [x] Logomarca e ícone do app (SVG original, versões clara/escura, 16–512 px, splash), desenhados no próprio AnimeIAI ou em SVG à mão; sem semelhança com marcas existentes. (2026-10-19: `assets/brand/logo.svg`, `logo-light.svg`, `logo-small.svg` para ≤ 32 px; PNG 16–512 pelo teste `brand_pngs`; splash e prancha por `tools/brand/splash.py`; barra de menus usa a pequena, Sobre/Início usam a do tema; evidencias/S20/marca/)
 - [x] Iconografia completa e coerente (grade de 24 px, traço uniforme) para todas as ferramentas e painéis; substitui qualquer ícone provisório. (61 ícones, todos 24 px / traço 1,75 / currentColor, garantido por teste; os últimos botões de texto "−"/"+" da linha do tempo da Edição viraram ícones de lupa)
-- [ ] Auditoria de cada workspace: painéis certos, ordem lógica, nada duplicado, propriedades em abas verticais, painéis recolhíveis.
-- [ ] Barra de ferramentas contextual por ferramenta ativa; painel de propriedades da ferramenta; dicas (tooltip) com atalho.
+- [x] Auditoria de cada workspace: painéis certos, ordem lógica, nada duplicado, propriedades em abas verticais, painéis recolhíveis. (P6a–P6f + prancha final de 2026-10-19: nenhum painel vazio nos 13 workspaces; Camadas/Propriedades em abas; painéis liga/desliga por Janela e `toggle_panel`)
+- [x] Barra de ferramentas contextual por ferramenta ativa; painel de propriedades da ferramenta; dicas (tooltip) com atalho. (barra do canvas muda por ferramenta; dicas da prateleira com o atalho em uso desde a P6h)
 - [x] Atalhos padrão (inspirados em CSP/Photoshop: B pincel, E borracha, G balde, V mover, espaço pan, Ctrl+Z…), editor de atalhos, detecção de conflito. (P6h)
 - [x] Varredura automática de estouro de layout (PT e EN, larguras mínimas) como no ANIGO; zero estouros.
 - [x] Tema: contraste AA nos textos, estados de foco/hover/ativo, sem cor solta fora dos tokens. (2026-10-19: teste AA cobre texto/atenuado/acento/erro × painel/cabeçalho/widget/hover/moldura/canvas e texto × etiquetas de etapa nos dois temas; ajustados acento claro #914709, atenuado claro #454850, atenuado escuro #a6a8b1; token `danger` novo; 4 cores soltas trocadas por tokens; as que sobram são tinta de imagem e papel das miniaturas. evidencias/S20/contraste/)
@@ -22,7 +22,7 @@ Blender 4/5, DaVinci Resolve, Clip Studio, Toon Boom Harmony (organização de w
 - Roteiro de mouse percorrendo cada workspace e as ferramentas principais.
 
 ## Critério de pronto
-- [ ] Prancha de capturas (todos os workspaces, 2 idiomas, 2 temas) e a logomarca em evidências; zero estouros; zero emoji; zero ícone provisório.
+- [x] Prancha de capturas (todos os workspaces, 2 idiomas, 2 temas) e a logomarca em evidências; zero estouros; zero emoji; zero ícone provisório. (2026-10-19: evidencias/S20/prancha/ refeita com o tema ajustado; estouro 192 combinações / 0; varredura de emoji nas fontes da UI: 0; 61 ícones na grade com teste; marca em evidencias/S20/marca/)
 
 ## Execução (P6, a partir de 2026-10-17)
 
