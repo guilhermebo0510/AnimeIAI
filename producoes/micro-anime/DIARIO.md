@@ -77,3 +77,12 @@ mechas, alças como forma, aba da gola, avesso das mangas); frestas de até 300 
 `close_leftovers` do balde (cor que mais aparece em volta, opção visível no MCP e na interface); `c20_revisao.py`
 mede topo, olhos e queixo no render. O C999 de ensaio saiu do projeto. Números novos em `repintura.json` e
 `revisao.json`.
+
+**Segunda correção (mesmo dia).** Ao abrir o model sheet no Sub View apareceu o cabelo da Hana em 3/4 cor de pele,
+no sheet e no C006 do vídeo entregue. A semente de pele entre mechas (adicionada na correção acima) cai em cima da
+linha quando a cabeça gira, e o balde pintava "a região mais perto", que era a mecha. O lint não pega cor errada, e
+a revisão por ΔE olhava só a vista de frente. Correção no balde: semente na linha pode ser pulada
+(`skip_seeds_on_line`, a região aparece no lint) e semente de reserva só pinta região sem tinta (`only_unpainted`).
+O curta usa as duas; a pele entre mechas virou reserva (a testa do Ren fica semente normal: é sempre pele). As opções acharam mais um caso igual (a
+semente da boca "a"/"grito" ficava em cima da língua), corrigido no rig. Os 7 cortes foram repintados e o MP4
+reexportado.

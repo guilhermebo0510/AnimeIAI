@@ -77,9 +77,13 @@ if DRAW:
     seeds_A, seeds_B = drawings[0][1], drawings[1][1]
     assert [a["name"] for a in seeds_A] == [b["name"] for b in seeds_B]
     for j, t in enumerate(T):
-        fs = [{"x": a["x"] + (b["x"] - a["x"]) * t, "y": a["y"] + (b["y"] - a["y"]) * t, "color": {"type": "direct", "rgba": rig.hexrgba(PALETTE["hana"][a["name"]])}}
-              for a, b in zip(seeds_A, seeds_B) if a["name"] in PALETTE["hana"] and 0 <= a["y"] < 1080 and 0 <= b["y"] < 1080]
-        d.call("FILL", {"cut": cut, "frame": 14 + 2 * j, "layer": Lh["cor"], "seeds": fs, "gap": 4, "close_leftovers": LEFTOVER_PX})
+        for reserve in (False, True):  # reserva (pele entre mechas) só onde ainda não há tinta; ver curta.paint
+            fs = [{"x": a["x"] + (b["x"] - a["x"]) * t, "y": a["y"] + (b["y"] - a["y"]) * t, "color": {"type": "direct", "rgba": rig.hexrgba(PALETTE["hana"][a["name"]])}}
+                  for a, b in zip(seeds_A, seeds_B) if a["name"] in PALETTE["hana"] and bool(a.get("reserve")) == reserve and 0 <= a["y"] < 1080 and 0 <= b["y"] < 1080]
+            req = {"cut": cut, "frame": 14 + 2 * j, "layer": Lh["cor"], "seeds": fs, "gap": 4, "skip_seeds_on_line": True, "only_unpainted": reserve}
+            if reserve:
+                req["close_leftovers"] = LEFTOVER_PX
+            d.call("FILL", req)
         lint = d.call("LINT", {"cut": cut, "frame": 14 + 2 * j, "layer": Lh["cor"], "gap": 4, "min_area": 30})
         print(f"  intercalação {j + 2}: sem cor {len(lint['unpainted'])}", [u["point"] for u in lint["unpainted"]][:5])
     # alças do avental: na escala do plano as pontas mal cruzam a linha do ombro e, nas intercalações, a região da alça se

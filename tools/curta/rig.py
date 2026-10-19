@@ -171,7 +171,8 @@ def mouth(h, ink, shape="closed", y=0.875):
     else:
         pts = [(cx + rx * math.cos(t), y + ry * 0.2 + ry * 0.6 * math.sin(t)) for t in [k * math.tau / 8 for k in range(8)]]
     out = [h.curve(pts, 0.9, ink, closed=True, tip="marker")]
-    seeds = [h.seed(cx, y + ry * 0.35, "boca")]
+    # com língua, o meio da boca (y + 0.35 ry) é o ponto do meio da língua: a semente vai entre o topo e a língua
+    seeds = [h.seed(cx, y + ry * (0.05 if shape in ("a", "shout") else 0.35), "boca")]
     if shape in ("a", "shout"):
         # língua
         out.append(h.curve([(cx - rx * 0.45, y + ry * 0.55), (cx, y + ry * 0.35), (cx + rx * 0.45, y + ry * 0.55)], 0.6, ink, tip="marker"))
@@ -241,7 +242,7 @@ def hair_hana(h, ink):
     seeds += [h.seed(-0.27, 0.218, "presilha"), h.seed(0.02, 0.10, "cabelo", rot=False), h.seed(-0.47, 0.72, "cabelo", rot=False), h.seed(0.48, 0.72, "cabelo", rot=False)]
     # pele entre duas mechas da franja (embaixo de cada vale): a sobrancelha pode fechar esse triângulo
     # (centroide do triângulo ponta anterior, vale, ponta seguinte: fica dentro mesmo quando as mechas são estreitas)
-    seeds += [h.seed((tips[i][0] + valleys[i + 1][0] + tips[i + 1][0]) / 3, (tips[i][1] + valleys[i + 1][1] + tips[i + 1][1]) / 3, "pele") for i in range(len(tips) - 1)]
+    seeds += [h.seed((tips[i][0] + valleys[i + 1][0] + tips[i + 1][0]) / 3, (tips[i][1] + valleys[i + 1][1] + tips[i + 1][1]) / 3, "pele") | {"reserve": True} for i in range(len(tips) - 1)]
     return out, seeds
 
 
@@ -319,7 +320,7 @@ def hair_ren(h, ink):
     seeds += [h.seed((valleys[i][0] + valleys[i + 1][0] + t[0]) / 3, (valleys[i][1] + valleys[i + 1][1] + t[1]) / 3, "cabelo") for i, t in enumerate(tips)]
     # pele entre duas mechas (embaixo de cada vale): a sobrancelha pode fechar esse triângulo, então semente própria
     # (centroide do triângulo ponta anterior, vale, ponta seguinte: fica dentro mesmo quando as mechas são estreitas)
-    seeds += [h.seed((tips[i][0] + valleys[i + 1][0] + tips[i + 1][0]) / 3, (tips[i][1] + valleys[i + 1][1] + tips[i + 1][1]) / 3, "pele") for i in range(len(tips) - 1)]
+    seeds += [h.seed((tips[i][0] + valleys[i + 1][0] + tips[i + 1][0]) / 3, (tips[i][1] + valleys[i + 1][1] + tips[i + 1][1]) / 3, "pele") | {"reserve": True} for i in range(len(tips) - 1)]
     # realce azulado do cabelo preto (faixa curva no alto) e sombra sob a bandana
     hl = [(-0.36, 0.06), (-0.18, 0.02), (0.0, 0.0), (0.18, 0.02), (0.36, 0.06), (0.34, 0.10), (0.18, 0.065), (0.0, 0.05), (-0.18, 0.065), (-0.34, 0.10)]
     h.shadow_shapes = [("cabelo_realce", [h.p(x, y, None, False) for x, y in hl])]

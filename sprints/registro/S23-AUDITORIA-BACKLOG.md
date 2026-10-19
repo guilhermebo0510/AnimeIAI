@@ -47,13 +47,17 @@ Medidas no caso da auditoria (4K, 24 camadas; `evidencias/S23/desempenho/bench4k
 | 8 Play na Edição | **feito** | Som da edição inteira; monitor segue como rascunho. |
 | 8 Botões de áudio | **feito** (menos BGM) | Importar WAV (IMPORT_AUDIO/aiai_import_audio), efeito, fala por TTS, lip-sync do clipe selecionado. BGM precisa de editor de música: segue pelo `aiai_bgm`. |
 | 9 Importar imagem | **feito** | IMPORT_IMAGE/aiai_import_image (PNG, JPEG, WebP, BMP, TIFF, GIF), Arquivo > Importar imagem, soltar arquivo na janela. |
-| 9 Exportar | **feito** (quadro PNG) | Arquivo > Exportar quadro. PSD, XDTS, OTIO, SVG: pendente. |
+| 9 Exportar | **feito** (quadro PNG, PSD, XDTS) | Arquivo > Exportar quadro / PSD / XDTS. PSD em camadas (recortada no conteúdo, nome Unicode, visibilidade, mistura, composto), lido de volta pelo Pillow no C003 (6 camadas). XDTS v5 pelo formato público Celsys/Toei (células e falas). EXPORT_PSD/EXPORT_XDTS, aiai_export_psd/aiai_export_xdts (`9273374`). OTIO, SVG: pendente. |
 | 9 Folha de e-conte na Prancha | **feito** | |
-| 9 Sub View | pendente | |
+| 9 Sub View | **feito** (`b557a6a`) | Painel em abas com o Navegador (Layout, Pintura, Cenário): imagens do disco fora do projeto, anterior/próxima, clique pega a cor como cor direta. Mouse real: 2 imagens, cor #F3EFE4. |
 | 10 Miniaturas e ajustes do pincel | **feito** | Miniatura desenhada pelo motor; parâmetros numa cópia do preset. |
 | 10 Borracha vetorial | **feito** | Trecho tocado (padrão), até a interseção, traço inteiro; ERASE_VECTOR/aiai_erase. |
 | 10 Seletor de cor fixo, 3 camadas no Começo rápido | **feito** | |
-| 10 Linha/curva/forma na caneta, edição de nós e largura, varinha na seleção, alças de escala/rotação no Mover | pendente | |
+| 10 Linha/curva/forma na caneta | **feito** (`3289b64`) | Linha reta, curva por cliques (Enter/duplo clique/botão direito), retângulo, elipse; Shift: 15°, quadrado, círculo; no espaço do cel. Mouse real: retângulo fechado de 4 pontos, curva de 4 cliques vira spline. |
+| 10 Edição de nós e largura | **feito** (`3289b64`) | Mover > Editar pontos: arrastar ponto, Ctrl+arrastar muda a largura, Shift+clique insere, botão direito apaga, Simplificar (RDP) vira spline. Mouse real: canto arrastado (700,600)→(801,679); 76 → 16 pontos. |
+| 10 Varinha na seleção | **feito** (`3a3d923`) | Máscara do motor nos pixels da camada ativa com tolerância; camada vetorial usa a camada renderizada. Mouse real: faixa do céu do C003 (1920×465). |
+| 10 Alças de escala/rotação no Mover | **feito** (`3a3d923`) | Cantos escalam, alça de cima gira, em volta do centro; Aplicar vira Affine com pivô. |
+| **Regressão achada no teste do Sub View** | **feito** | Abrindo o model sheet no Sub View: o cabelo da Hana em 3/4 estava cor de pele (sheet e C006 no vídeo). Causa: a semente de pele entre mechas (centroide do triângulo) cai na linha quando a cabeça gira, e o balde pintava "a região mais perto", que era a mecha. Era o mesmo tipo de erro da correção anterior; o lint não pega cor errada. Correção na raiz, no FILL: `skip_seeds_on_line` (semente na linha é pulada, a região sem tinta aparece no lint) e `only_unpainted` (semente de reserva só pinta região sem tinta), com teste; o curta usa as duas (pele entre mechas como reserva; a testa do Ren segue semente normal, porque é sempre pele: fazer dela reserva deixou a têmpora em 3/4 com cabelo, visto na comparação com o sheet anterior e desfeito). As opções acharam outro caso igual: a semente da boca "a"/"grito" ficava em cima da língua; movida no rig. 7 cortes repintados. |
 | **Achado no teste** | **feito** | Slider de opacidade da camada reescrevia 0,6 a cada quadro (f32 arredondado), enchia o histórico e travava o canvas; teste de regressão. |
 
 ## P2: registrado, não começado

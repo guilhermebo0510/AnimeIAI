@@ -69,13 +69,21 @@ def paint(cut, frame, L, drawings, gap=4):
     import rig
     allc = [c for _, st, _, _, _, _ in drawings for c in st]
     d.call("DRAW_CURVES", {"cut": cut, "frame": frame, "layer": L["linha"], "curves": allc})
-    for k, (who, _, seeds, _, _, _) in enumerate(drawings):
+    # semente que cai na linha (o giro da cabeça encosta pontos de rig no traço) é pulada em vez de pintar a região
+    # vizinha; sementes "de reserva" (pele entre mechas, que só existe separada quando a sobrancelha fecha o
+    # triângulo) só pintam região ainda sem tinta, para nunca repintar uma mecha de cabelo com a cor da pele
+    reqs = []
+    for who, _, seeds, _, _, _ in drawings:
         pal = PALETTE[who]
-        fs = [{"x": s["x"], "y": s["y"], "color": {"type": "direct", "rgba": rig.hexrgba(pal[s["name"]])}} for s in seeds
-              if s["name"] in pal and 0 <= s["x"] < 1920 and 0 <= s["y"] < 1080]  # partes cortadas pelo quadro ficam de fora
-        req = {"cut": cut, "frame": frame, "layer": L["cor"], "seeds": fs, "gap": gap}
-        if k == len(drawings) - 1:
-            req["close_leftovers"] = LEFTOVER_PX  # depois de todas as sementes
+        for reserve in (False, True):
+            fs = [{"x": s["x"], "y": s["y"], "color": {"type": "direct", "rgba": rig.hexrgba(pal[s["name"]])}} for s in seeds
+                  if s["name"] in pal and bool(s.get("reserve")) == reserve
+                  and 0 <= s["x"] < 1920 and 0 <= s["y"] < 1080]  # partes cortadas pelo quadro ficam de fora
+            if fs or not reserve:
+                reqs.append({"cut": cut, "frame": frame, "layer": L["cor"], "seeds": fs, "gap": gap,
+                             "skip_seeds_on_line": True, "only_unpainted": reserve})
+    reqs[-1]["close_leftovers"] = LEFTOVER_PX  # depois de todas as sementes
+    for req in reqs:
         d.call("FILL", req)
     for who, _, _, shapes, _, _ in drawings:
         pal = PALETTE[who]
