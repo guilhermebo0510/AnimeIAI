@@ -69,7 +69,7 @@ fn draw_fill_lint_render() {
             FillSeed { x, y, color }
         })
         .collect();
-    let req = FillRequest { cut: cut.clone(), frame: 0, layer: fill_layer.clone(), seeds, line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35, close_leftovers: None };
+    let req = FillRequest { cut: cut.clone(), frame: 0, layer: fill_layer.clone(), seeds, line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35, close_leftovers: None, skip_seeds_on_line: false, only_unpainted: false };
     let cmd = fill_command(&s.project, &mut s.blobs, &req).unwrap();
     s.apply(cmd).unwrap();
     let after = lint(&s.project, &s.blobs, &cut, 0, &fill_layer, 3.0, 30).unwrap();
@@ -111,7 +111,7 @@ fn fill_ignores_animated_layer_offset() {
         s.apply(Command::SetProps { id: l.clone(), name: None, data: json!({"keys": {"offset_x": [{"frame": 0, "value": -300.0, "ease": "ease_out"}, {"frame": 12, "value": 0.0, "ease": "hold"}]}}) }).unwrap();
     }
     let red = ColorRef::Direct { rgba: Rgba::from_hex("#d03030").unwrap() };
-    let req = FillRequest { cut: cut.clone(), frame: 0, layer: fill_layer.clone(), seeds: vec![FillSeed { x: 320.0, y: 180.0, color: red }], line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35, close_leftovers: None };
+    let req = FillRequest { cut: cut.clone(), frame: 0, layer: fill_layer.clone(), seeds: vec![FillSeed { x: 320.0, y: 180.0, color: red }], line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35, close_leftovers: None, skip_seeds_on_line: false, only_unpainted: false };
     let cmd = fill_command(&s.project, &mut s.blobs, &req).unwrap();
     s.apply(cmd).unwrap();
     let raw = RenderOptions { only_layers: Some(vec![fill_layer.clone()]), camera: false, layer_motion: false, ..Default::default() };
@@ -315,7 +315,7 @@ fn inbetween_with_timesheet_and_fill_propagation() {
             let big = r.unpainted.iter().max_by_key(|g| g.area).unwrap();
             (big.point[0] as f32, big.point[1] as f32)
         };
-        let req = FillRequest { cut: cut.clone(), frame: f, layer: fill.clone(), seeds: vec![FillSeed { x: sx, y: sy, color: skin.clone() }], line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35, close_leftovers: None };
+        let req = FillRequest { cut: cut.clone(), frame: f, layer: fill.clone(), seeds: vec![FillSeed { x: sx, y: sy, color: skin.clone() }], line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35, close_leftovers: None, skip_seeds_on_line: false, only_unpainted: false };
         let c = fill_command(&s.project, &mut s.blobs, &req).unwrap();
         s.apply(c).unwrap();
     }
@@ -372,7 +372,7 @@ fn close_leftovers_fills_only_small_gaps_with_the_surrounding_color() {
     let red = ColorRef::Direct { rgba: Rgba::from_hex("#d03030").unwrap() };
     let seeds = vec![FillSeed { x: 90.0, y: 90.0, color: red.clone() }, FillSeed { x: 196.0, y: 90.0, color: red.clone() }];
     let before = {
-        let req = FillRequest { cut: cut.clone(), frame: 0, layer: fill_layer.clone(), seeds: seeds.clone(), line_layers: vec![], gap: 0.0, expand: 2, line_threshold: 0.35, close_leftovers: None };
+        let req = FillRequest { cut: cut.clone(), frame: 0, layer: fill_layer.clone(), seeds: seeds.clone(), line_layers: vec![], gap: 0.0, expand: 2, line_threshold: 0.35, close_leftovers: None, skip_seeds_on_line: false, only_unpainted: false };
         let c = fill_command(&s.project, &mut s.blobs, &req).unwrap();
         let mut t = CoreSession::for_tests("x");
         t.project = s.project.clone();
@@ -381,7 +381,7 @@ fn close_leftovers_fills_only_small_gaps_with_the_surrounding_color() {
         lint(&t.project, &t.blobs, &cut, 0, &fill_layer, 0.0, 1).unwrap()
     };
     assert!(before.unpainted.iter().any(|r| r.area < 600), "sem fechar, a fresta aparece no lint: {:?}", before.unpainted);
-    let req = FillRequest { cut: cut.clone(), frame: 0, layer: fill_layer.clone(), seeds, line_layers: vec![], gap: 0.0, expand: 2, line_threshold: 0.35, close_leftovers: Some(600) };
+    let req = FillRequest { cut: cut.clone(), frame: 0, layer: fill_layer.clone(), seeds, line_layers: vec![], gap: 0.0, expand: 2, line_threshold: 0.35, close_leftovers: Some(600), skip_seeds_on_line: false, only_unpainted: false };
     let c = fill_command(&s.project, &mut s.blobs, &req).unwrap();
     s.apply(c).unwrap();
     let raw = RenderOptions { only_layers: Some(vec![fill_layer.clone()]), camera: false, ..Default::default() };
@@ -598,4 +598,41 @@ fn psd_and_xdts_exports_read_back() {
     let vals: Vec<(u64, String)> = frames.as_array().unwrap().iter().map(|fr| (fr["frame"].as_u64().unwrap(), fr["data"][0]["values"][0].as_str().unwrap().to_string())).collect();
     assert_eq!(vals, vec![(0, "1".into()), (6, "2".into()), (10, "SYMBOL_NULL_CELL".into()), (12, "SYMBOL_NULL_CELL".into())]);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn seeds_on_the_line_can_be_skipped_instead_of_painting_the_neighbour() {
+    let mut s = CoreSession::for_tests("skip");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 200, "height": 120}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = create(&mut s, Some(&sc), "C", NodeKind::Cut(CutData::new(4)));
+    let fill_layer = create(&mut s, Some(&cut), "cor", NodeKind::Layer(LayerData::new(LayerType::Fill)));
+    let line_layer = create(&mut s, Some(&cut), "linha", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+    create(&mut s, Some(&fill_layer), "1", NodeKind::Cel(CelData::new(1)));
+    create(&mut s, Some(&line_layer), "1", NodeKind::Cel(CelData::new(1)));
+    s.apply(Command::SetProps { id: fill_layer.clone(), name: None, data: json!({"line_refs": [line_layer.0]}) }).unwrap();
+    let ink = ColorRef::Direct { rgba: Rgba::BLACK };
+    let mut sq = curve(&[[40.0, 20.0, 1.0], [160.0, 20.0, 1.0], [160.0, 100.0, 1.0], [40.0, 100.0, 1.0]], 6.0, &ink, true);
+    sq.geometry = serde_json::from_value(json!("polyline")).unwrap();
+    s.apply(draw_command(&s.project, &DrawRequest { cut: cut.clone(), frame: 0, layer: line_layer.clone(), curves: vec![sq], mirror_x: None }).unwrap()).unwrap();
+    let red = ColorRef::Direct { rgba: Rgba::from_hex("#d03030").unwrap() };
+    // semente bem em cima da linha de cima do quadrado
+    let mk = |skip: bool| FillRequest { cut: cut.clone(), frame: 0, layer: fill_layer.clone(), seeds: vec![FillSeed { x: 100.0, y: 20.0, color: red.clone() }], line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35, close_leftovers: None, skip_seeds_on_line: skip, only_unpainted: false };
+    let skipped = fill_command(&s.project, &mut s.blobs, &mk(true)).unwrap();
+    let n = match &skipped { Command::ReplaceFills { fills, .. } => fills.len(), _ => 99 };
+    assert_eq!(n, 0, "com skip_seeds_on_line a semente na linha não pinta nada");
+    let painted = fill_command(&s.project, &mut s.blobs, &mk(false)).unwrap();
+    let n = match &painted { Command::ReplaceFills { fills, .. } => fills.len(), _ => 99 };
+    assert_eq!(n, 1, "sem a opção, pinta a região mais perto (comportamento antigo)");
+    // semente de reserva (only_unpainted) numa região já pintada não repinta; numa região sem tinta, pinta
+    let before = match &painted { Command::ReplaceFills { fills, .. } => fills.clone(), _ => unreachable!() };
+    s.apply(painted).unwrap();
+    let blue = ColorRef::Direct { rgba: Rgba::from_hex("#3050d0").unwrap() };
+    let reserve = |x: f32| FillRequest { seeds: vec![FillSeed { x, y: 60.0, color: blue.clone() }], skip_seeds_on_line: true, only_unpainted: true, ..mk(true) };
+    let kept = fill_command(&s.project, &mut s.blobs, &reserve(100.0)).unwrap();
+    let same = |a: &[FillRegion], b: &[FillRegion]| a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.mask == y.mask && x.color == y.color);
+    assert!(matches!(&kept, Command::ReplaceFills { fills, .. } if same(fills, &before)), "a reserva não repinta a região já pintada: {kept:?}");
+    let outside = fill_command(&s.project, &mut s.blobs, &reserve(10.0)).unwrap();
+    assert!(matches!(&outside, Command::ReplaceFills { fills, .. } if fills.len() == 2), "região sem tinta recebe a reserva");
 }

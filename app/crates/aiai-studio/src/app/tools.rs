@@ -489,7 +489,7 @@ pub(crate) fn do_fill(env: &mut Env, p: Vec2, released_at: Instant) {
     let close = o.fill_close_leftovers.then_some(300u32);
     let color = env.ed.color.clone();
     let planned = cmds::plan_with_prep(env.core, &cut, &fill_layer, frame, pref, extra, |pr, blobs| {
-        let req = tfill::FillRequest { cut: cut.clone(), frame, layer: fill_layer.clone(), seeds: vec![tfill::FillSeed { x: p.x, y: p.y, color }], line_layers: lines, gap, expand, line_threshold: 0.35, close_leftovers: close };
+        let req = tfill::FillRequest { cut: cut.clone(), frame, layer: fill_layer.clone(), seeds: vec![tfill::FillSeed { x: p.x, y: p.y, color }], line_layers: lines, gap, expand, line_threshold: 0.35, close_leftovers: close, skip_seeds_on_line: false, only_unpainted: false };
         tfill::fill_command(pr, blobs, &req).map_err(|e| e.to_string())
     });
     commit(env, planned, released_at, "fill", None);
@@ -824,7 +824,7 @@ mod tests {
         let (fill_layer, lines, _) = fill_plan(&core.project, &cut, &line).unwrap();
         assert_eq!((fill_layer.clone(), lines), (fill.clone(), vec![line.clone()]));
         let mut blobs = core.blobs.clone();
-        let req = tfill::FillRequest { cut: cut.clone(), frame: 0, layer: fill.clone(), seeds: vec![tfill::FillSeed { x: 160.0, y: 90.0, color: ColorRef::Direct { rgba: Rgba::rgb8(255, 0, 0) } }], line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35, close_leftovers: None };
+        let req = tfill::FillRequest { cut: cut.clone(), frame: 0, layer: fill.clone(), seeds: vec![tfill::FillSeed { x: 160.0, y: 90.0, color: ColorRef::Direct { rgba: Rgba::rgb8(255, 0, 0) } }], line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35, close_leftovers: None, skip_seeds_on_line: false, only_unpainted: false };
         let cmd = tfill::fill_command(&core.project, &mut blobs, &req).unwrap();
         core.blobs = blobs;
         cmds::run(&mut core, cmd).unwrap();

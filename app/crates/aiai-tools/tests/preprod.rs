@@ -560,7 +560,7 @@ fn preproduction_to_review_end_to_end() {
         let (fill_layer, _) = mk_layer(s, cut, "cor", fl);
         let seeds: Vec<FillSeed> = [(360.0, 270.0, "#f2c9a0"), (600.0, 270.0, "#3a5aa0")].iter().take(paint).map(|(x, y, h)| FillSeed { x: *x, y: *y, color: ColorRef::Direct { rgba: Rgba::from_hex(h).unwrap() } }).collect();
         if !seeds.is_empty() {
-            let c = fill_command(&s.project, &mut s.blobs, &FillRequest { cut: cut.clone(), frame: 0, layer: fill_layer.clone(), seeds, line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35, close_leftovers: None }).unwrap();
+            let c = fill_command(&s.project, &mut s.blobs, &FillRequest { cut: cut.clone(), frame: 0, layer: fill_layer.clone(), seeds, line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35, close_leftovers: None, skip_seeds_on_line: false, only_unpainted: false }).unwrap();
             apply(s, c);
         }
         line

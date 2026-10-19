@@ -68,7 +68,7 @@ fn bench_4k_24_layers() {
     let mut fill_ms = Vec::new();
     for (x, y) in [(300.0, 400.0), (640.0, 400.0)] {
         let t = Instant::now();
-        let req = FillRequest { cut: cut.clone(), frame: 0, layer: fill.clone(), seeds: vec![FillSeed { x, y, color: blue.clone() }], line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35, close_leftovers: None };
+        let req = FillRequest { cut: cut.clone(), frame: 0, layer: fill.clone(), seeds: vec![FillSeed { x, y, color: blue.clone() }], line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35, close_leftovers: None, skip_seeds_on_line: false, only_unpainted: false };
         let c = fill_command(&s.project, &mut s.blobs, &req).unwrap();
         fill_ms.push(ms(t));
         s.apply(c).unwrap();

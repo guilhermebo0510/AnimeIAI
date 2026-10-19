@@ -36,6 +36,15 @@ pub struct FillRequest {
     /// maiores continuam no lint e pedem semente com a cor certa.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub close_leftovers: Option<u32>,
+    /// Semente que cai em cima da linha é ignorada (em vez de pintar a região mais perto, que pode ser a vizinha
+    /// errada — num giro de cabeça a semente da pele entre mechas cai na linha e pintava o cabelo de pele). A região
+    /// sem tinta aparece no lint.
+    #[serde(default)]
+    pub skip_seeds_on_line: bool,
+    /// Só pinta regiões ainda sem tinta: semente numa região já pintada é ignorada (sementes "de reserva", que só
+    /// valem quando a região existe separada — ex.: a pele entre duas mechas que a sobrancelha fecha).
+    #[serde(default)]
+    pub only_unpainted: bool,
 }
 
 fn default_gap() -> f32 {
@@ -148,9 +157,15 @@ pub fn fill_command(p: &Project, blobs: &mut BlobStore, req: &FillRequest) -> To
             return Err(ToolError::Invalid(format!("semente ({}, {}) fora do canvas {}x{}", s.x, s.y, lr.width, lr.height)));
         }
         let (sx, sy) = (s.x as u32, s.y as u32);
+        if req.skip_seeds_on_line && lr.regions.label_at(sx, sy) == 0 {
+            continue;
+        }
         let label = lr.regions.label_near(sx, sy);
         if label == 0 {
             return Err(ToolError::Invalid(format!("semente ({}, {}) caiu sobre a linha, sem região por perto", s.x, s.y)));
+        }
+        if req.only_unpainted && fills.iter().any(|f| fill_covers(blobs, f, sx, sy)) {
+            continue;
         }
         let (bounds, mask) = lr.regions.mask_of(label).expect("rótulo existe");
         // remove preenchimentos anteriores que cobrem a semente
