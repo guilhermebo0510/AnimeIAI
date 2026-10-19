@@ -78,136 +78,8 @@ fn brush_settings(ui: &mut Ui, o: &mut super::super::editor::ToolOptions, base: 
     let Some(mut p) = o.brush_custom.clone().or(base.clone()) else { return };
     let before = p.clone();
     let mut all = o.brush_show_all;
-    // o que aparece: o que este pincel usa (valor ligado ou próprio da ponta); o resto com "Mostrar todos"
-    let shape_tip = matches!(p.tip, aiai_paint::brush::BrushTip::Shape { .. });
     egui::CollapsingHeader::new(tr("brush.settings")).id_salt("brush_settings").default_open(true).show(ui, |ui| {
-        egui::Grid::new("brush_settings_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
-            let slider = |ui: &mut Ui, key: &str, v: &mut f32, lo: f32, hi: f32| {
-                ui.label(tr(key));
-                ui.add(egui::Slider::new(v, lo..=hi).max_decimals(2));
-                ui.end_row();
-            };
-            // ponta: redonda (dureza, achatamento, ângulo) ou forma de cenário (folha, grama, nuvem...)
-            {
-                use aiai_paint::brush::{BrushTip, TipShape};
-                const SHAPES: [(TipShape, &str); 7] = [
-                    (TipShape::Leaf, "tipshape.leaf"),
-                    (TipShape::Petal, "tipshape.petal"),
-                    (TipShape::GrassBlade, "tipshape.grass"),
-                    (TipShape::CloudPuff, "tipshape.cloud"),
-                    (TipShape::Star, "tipshape.star"),
-                    (TipShape::Square, "tipshape.square"),
-                    (TipShape::Rose, "tipshape.rose"),
-                ];
-                let current = match &p.tip {
-                    BrushTip::Round { .. } => tr("tipshape.round").to_owned(),
-                    BrushTip::Shape { shape, .. } => SHAPES.iter().find(|(s, _)| s == shape).map(|(_, k)| tr(k).to_owned()).unwrap_or_default(),
-                    BrushTip::Image { .. } => tr("tipshape.image").to_owned(),
-                };
-                ui.label(tr("brush.tip"));
-                let mut next: Option<BrushTip> = None;
-                egui::ComboBox::from_id_salt("brush_tip_kind").selected_text(current).show_ui(ui, |ui| {
-                    if ui.selectable_label(matches!(p.tip, BrushTip::Round { .. }), tr("tipshape.round")).clicked() {
-                        next = Some(BrushTip::Round { hardness: 0.8, roundness: 1.0, angle: 0.0 });
-                    }
-                    for (s, k) in SHAPES {
-                        if ui.selectable_label(matches!(&p.tip, BrushTip::Shape { shape, .. } if *shape == s), tr(k)).clicked() {
-                            next = Some(BrushTip::Shape { shape: s, aspect: 1.0 });
-                        }
-                    }
-                });
-                ui.end_row();
-                if let Some(n) = next {
-                    p.tip = n;
-                }
-                match &mut p.tip {
-                    BrushTip::Round { hardness, roundness, angle } => {
-                        slider(ui, "brush.hardness", hardness, 0.0, 1.0);
-                        slider(ui, "brush.roundness", roundness, 0.1, 1.0);
-                        slider(ui, "brush.angle", angle, -90.0, 90.0);
-                    }
-                    BrushTip::Shape { aspect, .. } => slider(ui, "brush.aspect", aspect, 0.2, 3.0),
-                    BrushTip::Image { .. } => {}
-                }
-            }
-            slider(ui, "brush.flow", &mut p.flow, 0.02, 1.0);
-            slider(ui, "brush.spacing", &mut p.spacing, 0.02, 2.0);
-            slider(ui, "brush.size_pressure", &mut p.size_pressure_min, 0.0, 1.0);
-            slider(ui, "brush.opacity_pressure", &mut p.opacity_pressure_min, 0.0, 1.0);
-            if all || p.flow_pressure_min < 1.0 {
-                slider(ui, "brush.flow_pressure", &mut p.flow_pressure_min, 0.0, 1.0);
-            }
-            if all || p.scatter > 0.0 || shape_tip {
-                slider(ui, "brush.scatter", &mut p.scatter, 0.0, 2.0);
-            }
-            if all || p.size_jitter > 0.0 || shape_tip {
-                slider(ui, "brush.size_jitter", &mut p.size_jitter, 0.0, 1.0);
-            }
-            if all || p.angle_jitter > 0.0 || shape_tip {
-                slider(ui, "brush.angle_jitter", &mut p.angle_jitter, 0.0, 180.0);
-            }
-            if all || p.value_jitter > 0.0 || p.hue_jitter > 0.0 {
-                slider(ui, "brush.value_jitter", &mut p.value_jitter, 0.0, 1.0);
-                slider(ui, "brush.hue_jitter", &mut p.hue_jitter, 0.0, 1.0);
-            }
-            if all || p.wet_edges > 0.0 {
-                slider(ui, "brush.wet_edges", &mut p.wet_edges, 0.0, 1.0);
-            }
-            if all || p.mix > 0.0 {
-                slider(ui, "brush.mix", &mut p.mix, 0.0, 1.0);
-                slider(ui, "brush.smudge", &mut p.smudge_carry, 0.0, 1.0);
-            }
-            if let Some(tx) = &mut p.texture {
-                slider(ui, "brush.texture_depth", &mut tx.depth, 0.0, 1.0);
-                slider(ui, "brush.texture_scale", &mut tx.scale, 0.5, 30.0);
-            }
-            let elliptic = matches!(p.tip, aiai_paint::brush::BrushTip::Round { roundness, .. } if roundness < 0.98);
-            if all || p.follow_direction || shape_tip || elliptic {
-                ui.label(tr("brush.follow"));
-                ui.checkbox(&mut p.follow_direction, "");
-                ui.end_row();
-            }
-            // modo de mistura do traço e antisserrilhado
-            {
-                use aiai_paint::brush::BrushMode as M;
-                let key = |m: M| match m {
-                    M::Normal => "bmode.normal",
-                    M::Multiply => "bmode.multiply",
-                    M::Screen => "bmode.screen",
-                    M::Overlay => "bmode.overlay",
-                    M::Add => "bmode.add",
-                    M::Behind => "bmode.behind",
-                    M::Erase => "bmode.erase",
-                };
-                ui.label(tr("brush.mode"));
-                egui::ComboBox::from_id_salt("brush_mode").selected_text(tr(key(p.mode))).show_ui(ui, |ui| {
-                    for m in [M::Normal, M::Multiply, M::Screen, M::Overlay, M::Add, M::Behind, M::Erase] {
-                        ui.selectable_value(&mut p.mode, m, tr(key(m)));
-                    }
-                });
-                ui.end_row();
-                if all || p.aliased {
-                    ui.label(tr("brush.aliased"));
-                    ui.checkbox(&mut p.aliased, "").on_hover_text(tr("brush.aliased.tip"));
-                    ui.end_row();
-                }
-            }
-            // duas cores no carimbo (pontas de forma): sombra derivada da cor do pincel por um tom e uma quantidade
-            if matches!(p.tip, aiai_paint::brush::BrushTip::Shape { .. }) {
-                ui.label(tr("brush.two_tone"));
-                let mut on = p.two_tone.is_some();
-                if ui.checkbox(&mut on, "").changed() {
-                    p.two_tone = on.then(|| base.as_ref().and_then(|b| b.two_tone.clone()).unwrap_or(aiai_paint::brush::TwoTone { tint: [0.55, 0.55, 0.7], amount: 0.8, color: None }));
-                }
-                ui.end_row();
-                if let Some(tt) = &mut p.two_tone {
-                    slider(ui, "brush.two_tone_amount", &mut tt.amount, 0.0, 1.0);
-                    ui.label(tr("brush.two_tone_tint"));
-                    ui.color_edit_button_rgb(&mut tt.tint);
-                    ui.end_row();
-                }
-            }
-        });
+        preset_grid(ui, &mut p, all, base.as_ref(), "tool");
         ui.checkbox(&mut all, tr("brush.show_all")).on_hover_text(tr("brush.show_all.tip"));
         if ui.add_enabled(o.brush_custom.is_some(), egui::Button::new(tr("brush.reset"))).clicked() {
             o.brush_custom = None;
@@ -217,6 +89,139 @@ fn brush_settings(ui: &mut Ui, o: &mut super::super::editor::ToolOptions, base: 
     if p != before && p.validate().is_ok() {
         o.brush_custom = Some(p);
     }
+}
+
+/// Grade dos parâmetros do motor de um preset (painel da ferramenta e criador de pincel). `all` = todos; senão só os
+/// que o pincel usa. `salt` separa os ids quando duas grades aparecem juntas.
+pub(crate) fn preset_grid(ui: &mut Ui, p: &mut aiai_paint::brush::BrushPreset, all: bool, base: Option<&aiai_paint::brush::BrushPreset>, salt: &str) {
+    let shape_tip = matches!(p.tip, aiai_paint::brush::BrushTip::Shape { .. });
+    egui::Grid::new(("brush_settings_grid", salt)).num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+        let slider = |ui: &mut Ui, key: &str, v: &mut f32, lo: f32, hi: f32| {
+            ui.label(tr(key));
+            ui.add(egui::Slider::new(v, lo..=hi).max_decimals(2));
+            ui.end_row();
+        };
+        // ponta: redonda (dureza, achatamento, ângulo) ou forma de cenário (folha, grama, nuvem...)
+        {
+            use aiai_paint::brush::{BrushTip, TipShape};
+            const SHAPES: [(TipShape, &str); 7] = [
+                (TipShape::Leaf, "tipshape.leaf"),
+                (TipShape::Petal, "tipshape.petal"),
+                (TipShape::GrassBlade, "tipshape.grass"),
+                (TipShape::CloudPuff, "tipshape.cloud"),
+                (TipShape::Star, "tipshape.star"),
+                (TipShape::Square, "tipshape.square"),
+                (TipShape::Rose, "tipshape.rose"),
+            ];
+            let current = match &p.tip {
+                BrushTip::Round { .. } => tr("tipshape.round").to_owned(),
+                BrushTip::Shape { shape, .. } => SHAPES.iter().find(|(s, _)| s == shape).map(|(_, k)| tr(k).to_owned()).unwrap_or_default(),
+                BrushTip::Image { .. } => tr("tipshape.image").to_owned(),
+            };
+            ui.label(tr("brush.tip"));
+            let mut next: Option<BrushTip> = None;
+            egui::ComboBox::from_id_salt(("brush_tip_kind", salt)).selected_text(current).show_ui(ui, |ui| {
+                if ui.selectable_label(matches!(p.tip, BrushTip::Round { .. }), tr("tipshape.round")).clicked() {
+                    next = Some(BrushTip::Round { hardness: 0.8, roundness: 1.0, angle: 0.0 });
+                }
+                for (s, k) in SHAPES {
+                    if ui.selectable_label(matches!(&p.tip, BrushTip::Shape { shape, .. } if *shape == s), tr(k)).clicked() {
+                        next = Some(BrushTip::Shape { shape: s, aspect: 1.0 });
+                    }
+                }
+            });
+            ui.end_row();
+            if let Some(n) = next {
+                p.tip = n;
+            }
+            match &mut p.tip {
+                BrushTip::Round { hardness, roundness, angle } => {
+                    slider(ui, "brush.hardness", hardness, 0.0, 1.0);
+                    slider(ui, "brush.roundness", roundness, 0.1, 1.0);
+                    slider(ui, "brush.angle", angle, -90.0, 90.0);
+                }
+                BrushTip::Shape { aspect, .. } => slider(ui, "brush.aspect", aspect, 0.2, 3.0),
+                BrushTip::Image { .. } => {}
+            }
+        }
+        slider(ui, "brush.flow", &mut p.flow, 0.02, 1.0);
+        slider(ui, "brush.spacing", &mut p.spacing, 0.02, 2.0);
+        slider(ui, "brush.size_pressure", &mut p.size_pressure_min, 0.0, 1.0);
+        slider(ui, "brush.opacity_pressure", &mut p.opacity_pressure_min, 0.0, 1.0);
+        if all || p.flow_pressure_min < 1.0 {
+            slider(ui, "brush.flow_pressure", &mut p.flow_pressure_min, 0.0, 1.0);
+        }
+        if all || p.scatter > 0.0 || shape_tip {
+            slider(ui, "brush.scatter", &mut p.scatter, 0.0, 2.0);
+        }
+        if all || p.size_jitter > 0.0 || shape_tip {
+            slider(ui, "brush.size_jitter", &mut p.size_jitter, 0.0, 1.0);
+        }
+        if all || p.angle_jitter > 0.0 || shape_tip {
+            slider(ui, "brush.angle_jitter", &mut p.angle_jitter, 0.0, 180.0);
+        }
+        if all || p.value_jitter > 0.0 || p.hue_jitter > 0.0 {
+            slider(ui, "brush.value_jitter", &mut p.value_jitter, 0.0, 1.0);
+            slider(ui, "brush.hue_jitter", &mut p.hue_jitter, 0.0, 1.0);
+        }
+        if all || p.wet_edges > 0.0 {
+            slider(ui, "brush.wet_edges", &mut p.wet_edges, 0.0, 1.0);
+        }
+        if all || p.mix > 0.0 {
+            slider(ui, "brush.mix", &mut p.mix, 0.0, 1.0);
+            slider(ui, "brush.smudge", &mut p.smudge_carry, 0.0, 1.0);
+        }
+        if let Some(tx) = &mut p.texture {
+            slider(ui, "brush.texture_depth", &mut tx.depth, 0.0, 1.0);
+            slider(ui, "brush.texture_scale", &mut tx.scale, 0.5, 30.0);
+        }
+        let elliptic = matches!(p.tip, aiai_paint::brush::BrushTip::Round { roundness, .. } if roundness < 0.98);
+        if all || p.follow_direction || shape_tip || elliptic {
+            ui.label(tr("brush.follow"));
+            ui.checkbox(&mut p.follow_direction, "");
+            ui.end_row();
+        }
+        // modo de mistura do traço e antisserrilhado
+        {
+            use aiai_paint::brush::BrushMode as M;
+            let key = |m: M| match m {
+                M::Normal => "bmode.normal",
+                M::Multiply => "bmode.multiply",
+                M::Screen => "bmode.screen",
+                M::Overlay => "bmode.overlay",
+                M::Add => "bmode.add",
+                M::Behind => "bmode.behind",
+                M::Erase => "bmode.erase",
+            };
+            ui.label(tr("brush.mode"));
+            egui::ComboBox::from_id_salt(("brush_mode", salt)).selected_text(tr(key(p.mode))).show_ui(ui, |ui| {
+                for m in [M::Normal, M::Multiply, M::Screen, M::Overlay, M::Add, M::Behind, M::Erase] {
+                    ui.selectable_value(&mut p.mode, m, tr(key(m)));
+                }
+            });
+            ui.end_row();
+            if all || p.aliased {
+                ui.label(tr("brush.aliased"));
+                ui.checkbox(&mut p.aliased, "").on_hover_text(tr("brush.aliased.tip"));
+                ui.end_row();
+            }
+        }
+        // duas cores no carimbo (pontas de forma): sombra derivada da cor do pincel por um tom e uma quantidade
+        if matches!(p.tip, aiai_paint::brush::BrushTip::Shape { .. }) {
+            ui.label(tr("brush.two_tone"));
+            let mut on = p.two_tone.is_some();
+            if ui.checkbox(&mut on, "").changed() {
+                p.two_tone = on.then(|| base.and_then(|b| b.two_tone.clone()).unwrap_or(aiai_paint::brush::TwoTone { tint: [0.55, 0.55, 0.7], amount: 0.8, color: None }));
+            }
+            ui.end_row();
+            if let Some(tt) = &mut p.two_tone {
+                slider(ui, "brush.two_tone_amount", &mut tt.amount, 0.0, 1.0);
+                ui.label(tr("brush.two_tone_tint"));
+                ui.color_edit_button_rgb(&mut tt.tint);
+                ui.end_row();
+            }
+        }
+    });
 }
 
 pub(crate) const POINTS_MODES: [PointsMode; 5] = [PointsMode::Move, PointsMode::Add, PointsMode::Delete, PointsMode::Corner, PointsMode::Width];

@@ -186,9 +186,12 @@ version = "0.1.0"
 dependencies = [
  "ab_glyph",
  "aiai-core",
+ "flate2",
  "image",
  "lz4_flex",
+ "png 0.17.16",
  "rayon",
+ "roxmltree",
  "schemars",
  "serde",
  "thiserror 2.0.21",

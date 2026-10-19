@@ -30,6 +30,9 @@ pub(crate) struct BrushPanelState {
     /// Altura da lista escolhida arrastando a divisória (`None` = automática: as propriedades ficam com o que
     /// precisam e a lista com o resto). Dois cliques na divisória voltam ao automático.
     pub list_h: Option<f32>,
+    /// Janelas "Criar pincel" e "Importar pincéis".
+    pub maker: Option<super::brush_maker::Maker>,
+    pub importer: Option<super::brush_maker::Importer>,
     /// Altura que as propriedades e a lista (itens e categorias) ocuparam no quadro anterior (divisória automática).
     props_h: f32,
     list_need: f32,
@@ -117,6 +120,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
     let side = tool == ToolId::Brush || cats.len() > 1;
     let mut pick: Option<Act> = None;
     let mut delete: Option<usize> = None;
+    let mut make_from: Option<usize> = None;
     let (mut cats_need, mut items_need) = (0.0f32, 0.0f32);
     // a linha de cima tem altura fixa (o separador vertical não pode esticar até o fim do painel)
     ui.allocate_ui_with_layout(egui::vec2(total_w, list_h), egui::Layout::left_to_right(egui::Align::Min), |ui| {
@@ -189,6 +193,10 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
                             let r = resp.on_hover_text(it.name.clone());
                             if let Some(b) = idx {
                                 r.context_menu(|ui| {
+                                    if ui.button(tr("brushes.make_from")).clicked() {
+                                        make_from = Some(b);
+                                        ui.close();
+                                    }
                                     if ui.add_enabled(user, egui::Button::new(tr("brushes.delete"))).clicked() {
                                         delete = Some(b);
                                         ui.close();
@@ -242,7 +250,23 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
     dr.on_hover_text(tr("brushes.divider.tip"));
     if tool == ToolId::Brush {
         save_form(env, ui);
+        ui.horizontal_wrapped(|ui| {
+            let b = ui.button(tr("brushes.maker_open"));
+            env.note("brushes:maker", b.rect);
+            if b.on_hover_text(tr("brushes.maker_open.tip")).clicked() {
+                super::brush_maker::open_maker(env, None);
+            }
+            let b = ui.button(tr("brushes.import_open"));
+            env.note("brushes:import", b.rect);
+            if b.on_hover_text(tr("brushes.import_open.tip")).clicked() {
+                super::brush_maker::pick_import(env, ui.ctx());
+            }
+        });
     }
+    if let Some(i) = make_from {
+        super::brush_maker::open_maker(env, Some(i));
+    }
+    super::brush_maker::windows(env, ui.ctx());
     // ---- embaixo: as propriedades do item escolhido
     let out = egui::ScrollArea::vertical().id_salt("brush_props").auto_shrink([false, false]).show(ui, |ui| {
         section(ui, &env.t, "brushes.props");
@@ -346,7 +370,7 @@ fn ensure_thumbs(env: &mut Env, ui: &Ui) {
     let dark = ui.ctx().theme() == egui::Theme::Dark;
     let key = (env.ed.brushes.version, dark);
     if env.ed.brush_panel.thumbs_key != key || env.ed.brush_panel.thumbs.len() != env.ed.brushes.items.len() {
-        let presets: Vec<_> = env.ed.brushes.items.iter().map(|b| b.preset.clone()).collect();
+        let presets: Vec<_> = env.ed.brushes.items.iter().map(|b| env.ed.brushes.with_masks(&b.preset)).collect();
         env.ed.brush_panel.thumbs = super::properties::brush_thumbnails(ui.ctx(), &presets, t.bg_widget, t.text);
         env.ed.brush_panel.thumbs_key = key;
     }

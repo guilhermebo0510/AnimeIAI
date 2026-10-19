@@ -227,6 +227,12 @@ pub fn load_tip_mask(blobs: &BlobStore, preset: &BrushPreset) -> ToolResult<Brus
         let b = blobs.get(blob).ok_or_else(|| ToolError::NotFound(format!("máscara da ponta {blob}")))?;
         *mask = Some(Mask::decode(&b).map_err(ToolError::Invalid)?);
     }
+    if let Some(t) = &mut preset.texture {
+        if let (Some(h), None) = (&t.image, &t.image_mask) {
+            let b = blobs.get(h).ok_or_else(|| ToolError::NotFound(format!("imagem da textura {h}")))?;
+            t.image_mask = Some(std::sync::Arc::new(Mask::decode(&b).map_err(ToolError::Invalid)?));
+        }
+    }
     Ok(preset)
 }
 

@@ -7,7 +7,7 @@ use aiai_paint::brush::BrushPreset;
 use std::path::PathBuf;
 
 /// Categorias de fábrica (chave, chave i18n), na ordem do painel.
-pub(crate) const CATEGORIES: [(&str, &str); 7] = [
+pub(crate) const CATEGORIES: [(&str, &str); 8] = [
     ("lapis", "brushcat.lapis"),
     ("pintura", "brushcat.pintura"),
     ("aquarela", "brushcat.aquarela"),
@@ -15,6 +15,7 @@ pub(crate) const CATEGORIES: [(&str, &str); 7] = [
     ("cenario", "brushcat.cenario"),
     ("borracha", "brushcat.borracha"),
     ("meus", "brushcat.meus"),
+    ("importados", "brushcat.importados"),
 ];
 
 #[derive(Clone)]
@@ -30,6 +31,10 @@ pub(crate) struct BrushLibrary {
     path: Option<PathBuf>,
     /// Muda a cada alteração (miniaturas refeitas).
     pub version: u64,
+    /// Imagens das pontas e texturas dos pincéis do usuário (máscaras "AIM1" por hash), em
+    /// `%APPDATA%\AnimeIAI\brush_assets\<hash>.aim`; também em memória (execuções sem sessão não gravam).
+    assets_dir: Option<PathBuf>,
+    mem_assets: std::collections::HashMap<aiai_core::BlobHash, Vec<u8>>,
 }
 
 impl Default for BrushLibrary {
@@ -45,7 +50,7 @@ pub(crate) fn default_path() -> Option<PathBuf> {
 
 impl BrushLibrary {
     pub(crate) fn factory() -> Self {
-        BrushLibrary { items: BrushPreset::defaults().into_iter().map(|preset| LibBrush { preset, user: false }).collect(), path: None, version: 1 }
+        BrushLibrary { items: BrushPreset::defaults().into_iter().map(|preset| LibBrush { preset, user: false }).collect(), path: None, version: 1, assets_dir: None, mem_assets: Default::default() }
     }
 
     /// Fábrica + os do usuário do arquivo (ausente = nenhum; ilegível = registrado, o app segue com os de fábrica).
@@ -61,8 +66,74 @@ impl BrushLibrary {
                 Err(e) => tracing::warn!("pincéis do usuário: {}: {e}", p.display()),
             }
         }
+        lib.assets_dir = path.as_ref().and_then(|p| p.parent().map(|d| d.join("brush_assets")));
         lib.path = path;
         lib
+    }
+
+    /// Guarda a imagem (máscara "AIM1") de uma ponta/textura; devolve o hash que o preset referencia.
+    pub(crate) fn put_asset(&mut self, bytes: Vec<u8>) -> Result<aiai_core::BlobHash, String> {
+        let h = aiai_core::BlobHash::of(&bytes);
+        if let Some(d) = &self.assets_dir {
+            let f = d.join(format!("{h}.aim"));
+            if !f.exists() {
+                std::fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
+                std::fs::write(&f, &bytes).map_err(|e| format!("{}: {e}", f.display()))?;
+            }
+        }
+        self.mem_assets.insert(h.clone(), bytes);
+        Ok(h)
+    }
+
+    pub(crate) fn has_asset(&self, h: &aiai_core::BlobHash) -> bool {
+        self.asset(h).is_some()
+    }
+
+    fn asset(&self, h: &aiai_core::BlobHash) -> Option<Vec<u8>> {
+        if let Some(b) = self.mem_assets.get(h) {
+            return Some(b.clone());
+        }
+        let d = self.assets_dir.as_ref()?;
+        std::fs::read(d.join(format!("{h}.aim"))).ok().filter(|b| aiai_core::BlobHash::of(b) == *h)
+    }
+
+    /// Hashes de imagem que o preset usa (ponta e textura).
+    fn asset_refs(p: &BrushPreset) -> Vec<aiai_core::BlobHash> {
+        let mut v = Vec::new();
+        if let aiai_paint::brush::BrushTip::Image { blob, .. } = &p.tip {
+            v.push(blob.clone());
+        }
+        if let Some(h) = p.texture.as_ref().and_then(|t| t.image.clone()) {
+            v.push(h);
+        }
+        v
+    }
+
+    /// O preset com as máscaras de imagem carregadas da biblioteca (miniaturas e prévia do criador).
+    pub(crate) fn with_masks(&self, p: &BrushPreset) -> BrushPreset {
+        let mut q = p.clone();
+        if let aiai_paint::brush::BrushTip::Image { blob, mask } = &mut q.tip {
+            if mask.is_none() {
+                *mask = self.asset(blob).and_then(|b| aiai_paint::mask::Mask::decode(&b).ok());
+            }
+        }
+        if let Some(t) = &mut q.texture {
+            if let (Some(h), None) = (t.image.clone(), &t.image_mask) {
+                t.image_mask = self.asset(&h).and_then(|b| aiai_paint::mask::Mask::decode(&b).ok()).map(std::sync::Arc::new);
+            }
+        }
+        q
+    }
+
+    /// Põe no projeto as imagens que o preset usa e que ele ainda não tem (pincel do usuário usado num projeto novo).
+    pub(crate) fn ensure_blobs(&self, blobs: &mut aiai_core::BlobStore, p: &BrushPreset) {
+        for h in Self::asset_refs(p) {
+            if !blobs.contains(&h) {
+                if let Some(b) = self.asset(&h) {
+                    blobs.put(b);
+                }
+            }
+        }
     }
 
     pub(crate) fn get(&self, i: usize) -> Option<&BrushPreset> {

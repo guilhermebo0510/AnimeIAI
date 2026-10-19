@@ -14,5 +14,8 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 schemars = { workspace = true }
 ab_glyph = "0.2.32"
+flate2 = "1.1"
+roxmltree = "0.20"
+png = { workspace = true }
 
 [dev-dependencies]

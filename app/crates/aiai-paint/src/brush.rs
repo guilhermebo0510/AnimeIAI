@@ -235,6 +235,14 @@ pub struct BrushTexture {
     /// Inverte a textura (os vales viram picos).
     #[serde(default)]
     pub invert: bool,
+    /// Textura de imagem (escala de cinza, blob "AIM1"; importada ou feita pelo usuário) no lugar da procedural:
+    /// repetida pelo canvas, `scale` = zoom (1 = um pixel da imagem por pixel do canvas).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<aiai_core::BlobHash>,
+    /// A máscara de `image`, carregada do blob por quem chama (aiai-tools) antes de pintar.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub image_mask: Option<std::sync::Arc<crate::mask::Mask>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -251,6 +259,9 @@ pub struct BrushPreset {
     /// Categoria na biblioteca (lapis, pintura, aquarela, textura, cenario, borracha ou uma do usuário).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub category: String,
+    /// De onde veio (pincel importado: arquivo e pasta dentro dele); a licença é a do autor do pacote.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source: String,
     #[serde(default)]
     pub tip: BrushTip,
     /// Diâmetro em px com pressão máxima.
@@ -347,6 +358,7 @@ impl BrushPreset {
         BrushPreset {
             name: name.into(),
             category: String::new(),
+            source: String::new(),
             tip: BrushTip::Round { hardness, roundness: 1.0, angle: 0.0 },
             size,
             spacing: d_spacing(),
@@ -407,7 +419,7 @@ impl BrushPreset {
         let mut v = Vec::new();
         let mut pencil = BrushPreset::round("Lápis de rascunho", 3.0, 0.9);
         pencil.opacity_pressure_min = 0.3;
-        pencil.texture = Some(BrushTexture { kind: TextureKind::Grain, scale: 1.5, depth: 0.6, mode: TextureMode::Multiply, seed: 3, invert: false });
+        pencil.texture = Some(BrushTexture { kind: TextureKind::Grain, scale: 1.5, depth: 0.6, mode: TextureMode::Multiply, seed: 3, invert: false, image: None, image_mask: None });
         v.push(pencil);
         v.push(BrushPreset::round("Redondo duro", 24.0, 0.95));
         let mut soft = BrushPreset::round("Redondo macio", 60.0, 0.0);
@@ -425,22 +437,22 @@ impl BrushPreset {
         wc.opacity = 0.7;
         wc.wet_edges = 0.7;
         wc.mix = 0.15;
-        wc.texture = Some(BrushTexture { kind: TextureKind::Paper, scale: 6.0, depth: 0.35, mode: TextureMode::Multiply, seed: 7, invert: false });
+        wc.texture = Some(BrushTexture { kind: TextureKind::Paper, scale: 6.0, depth: 0.35, mode: TextureMode::Multiply, seed: 7, invert: false, image: None, image_mask: None });
         v.push(wc);
         let mut gouache = BrushPreset::round("Guache seco", 36.0, 0.75);
         gouache.tip = BrushTip::Round { hardness: 0.75, roundness: 0.55, angle: 35.0 };
         gouache.follow_direction = true;
-        gouache.texture = Some(BrushTexture { kind: TextureKind::Canvas, scale: 3.0, depth: 0.55, mode: TextureMode::Subtract, seed: 11, invert: false });
+        gouache.texture = Some(BrushTexture { kind: TextureKind::Canvas, scale: 3.0, depth: 0.55, mode: TextureMode::Subtract, seed: 11, invert: false, image: None, image_mask: None });
         gouache.opacity_pressure_min = 0.5;
         v.push(gouache);
         let mut charcoal = BrushPreset::round("Carvão", 14.0, 0.6);
-        charcoal.texture = Some(BrushTexture { kind: TextureKind::Grain, scale: 2.5, depth: 0.85, mode: TextureMode::Subtract, seed: 5, invert: false });
+        charcoal.texture = Some(BrushTexture { kind: TextureKind::Grain, scale: 2.5, depth: 0.85, mode: TextureMode::Subtract, seed: 5, invert: false, image: None, image_mask: None });
         charcoal.scatter = 0.1;
         charcoal.opacity_pressure_min = 0.2;
         v.push(charcoal);
         let mut paper = BrushPreset::round("Textura de papel", 80.0, 0.3);
         paper.flow = 0.4;
-        paper.texture = Some(BrushTexture { kind: TextureKind::Paper, scale: 10.0, depth: 0.9, mode: TextureMode::Multiply, seed: 13, invert: false });
+        paper.texture = Some(BrushTexture { kind: TextureKind::Paper, scale: 10.0, depth: 0.9, mode: TextureMode::Multiply, seed: 13, invert: false, image: None, image_mask: None });
         v.push(paper);
         let mut smudge = BrushPreset::round("Borrador", 30.0, 0.4);
         smudge.mix = 0.95;
@@ -537,6 +549,18 @@ pub struct BrushPoint {
 }
 
 fn texture_value(t: &BrushTexture, x: f32, y: f32) -> f32 {
+    if let Some(m) = t.image_mask.as_deref().filter(|m| m.width > 0 && m.height > 0) {
+        // imagem repetida, bilinear
+        let z = t.scale.max(0.05);
+        let (u, v) = (x / z, y / z);
+        let (x0, y0) = (u.floor(), v.floor());
+        let (fx, fy) = (u - x0, v - y0);
+        let at = |xx: f32, yy: f32| m.get((xx as i64).rem_euclid(m.width as i64) as u32, (yy as i64).rem_euclid(m.height as i64) as u32);
+        let top = at(x0, y0) * (1.0 - fx) + at(x0 + 1.0, y0) * fx;
+        let bot = at(x0, y0 + 1.0) * (1.0 - fx) + at(x0 + 1.0, y0 + 1.0) * fx;
+        let r = top * (1.0 - fy) + bot * fy;
+        return if t.invert { 1.0 - r } else { r };
+    }
     let s = t.scale.max(0.25);
     let (u, v) = (x / s, y / s);
     let raw = match t.kind {
@@ -1175,7 +1199,7 @@ mod tests {
         paint_stroke(&mut img, &e, &line(30), [0.0, 0.0, 0.0, 1.0], 1).unwrap();
         assert!(img.get(60, 50)[3] < 0.01);
         let mut t = BrushPreset::round("t", 30.0, 1.0);
-        t.texture = Some(BrushTexture { kind: TextureKind::Grain, scale: 2.0, depth: 1.0, mode: TextureMode::Multiply, seed: 1, invert: false });
+        t.texture = Some(BrushTexture { kind: TextureKind::Grain, scale: 2.0, depth: 1.0, mode: TextureMode::Multiply, seed: 1, invert: false, image: None, image_mask: None });
         let mut img2 = Image::new(200, 100);
         paint_stroke(&mut img2, &t, &line(30), [0.0, 0.0, 0.0, 1.0], 1).unwrap();
         let vals: Vec<f32> = (40..80).map(|x| img2.get(x, 50)[3]).collect();

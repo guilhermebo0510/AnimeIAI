@@ -407,7 +407,10 @@ pub(crate) fn start_live(env: &mut Env, ctx: &egui::Context, g: &StrokeGesture, 
         _ => return,
     };
     let erase = g.tool == ToolId::Eraser;
-    let preset = match aiai_tools::paint::load_tip_mask(&env.core.blobs, &stroke_preset(env, erase)) {
+    let sp = stroke_preset(env, erase);
+    // pincel do usuário com ponta/textura de imagem: as imagens entram no projeto antes de pintar
+    env.ed.brushes.ensure_blobs(&mut env.core.blobs, &sp);
+    let preset = match aiai_tools::paint::load_tip_mask(&env.core.blobs, &sp) {
         Ok(p) => p,
         Err(_) => return,
     };
@@ -461,6 +464,7 @@ fn commit_brush(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Insta
     }
     let pts = brush_points(&g.samples);
     let preset = stroke_preset(env, erase);
+    env.ed.brushes.ensure_blobs(&mut env.core.blobs, &preset);
     let color = if erase { ColorRef::Direct { rgba: Rgba::BLACK } } else { env.ed.color.clone() };
     let size = preset.size;
     let opacity = preset.opacity;

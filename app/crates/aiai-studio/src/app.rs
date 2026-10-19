@@ -609,6 +609,10 @@ impl StudioApp {
                                 None => tr(tool.title_key()).to_owned(),
                             };
                             if resp.on_hover_text(tip).clicked() {
+                                // clicar na ferramenta (mesmo a que já está em uso) mostra o painel dela
+                                if !matches!(tool, ToolId::Move | ToolId::Hand | ToolId::Zoom | ToolId::Eyedropper) {
+                                    self.ed.want_panel = Some(PanelKind::Brushes);
+                                }
                                 self.tool = tool;
                             }
                         }

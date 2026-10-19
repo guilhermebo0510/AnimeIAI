@@ -6,6 +6,7 @@
 pub mod adjust;
 pub mod blend;
 pub mod brush;
+pub mod brush_import;
 pub mod curve;
 pub mod fill;
 pub mod image;
