@@ -636,3 +636,107 @@ fn seeds_on_the_line_can_be_skipped_instead_of_painting_the_neighbour() {
     let outside = fill_command(&s.project, &mut s.blobs, &reserve(10.0)).unwrap();
     assert!(matches!(&outside, Command::ReplaceFills { fills, .. } if fills.len() == 2), "região sem tinta recebe a reserva");
 }
+
+/// Máscara binária (cobertura ≥ 0,5) num canvas `w`×`h` a partir de uma cobertura recortada.
+fn mask_of(x0: i32, y0: i32, cw: u32, cov: &[f32], w: u32, h: u32) -> Vec<bool> {
+    let mut m = vec![false; (w * h) as usize];
+    for (i, c) in cov.iter().enumerate() {
+        let (x, y) = (x0 + (i as u32 % cw) as i32, y0 + (i as u32 / cw) as i32);
+        if *c >= 0.5 && x >= 0 && y >= 0 && (x as u32) < w && (y as u32) < h {
+            m[(y as u32 * w + x as u32) as usize] = true;
+        }
+    }
+    m
+}
+
+#[test]
+fn svg_outline_matches_what_the_engine_paints() {
+    use aiai_paint::poly::fill_polygons;
+    use aiai_paint::stroke_raster::rasterize_stroke;
+    use aiai_tools::export::stroke_outline;
+    let (w, h) = (400u32, 300u32);
+    let ink = ColorRef::Direct { rgba: Rgba::BLACK };
+    let mk = |pts: &[[f32; 3]], width: f32, tip: &str, geometry: &str, closed: bool| -> Stroke {
+        serde_json::from_value(json!({
+            "id": "s", "points": pts.iter().map(|p| json!({"x": p[0], "y": p[1], "pressure": p[2]})).collect::<Vec<_>>(),
+            "geometry": geometry, "tip": tip, "width": width, "color": ink, "closed": closed
+        })).unwrap()
+    };
+    let cases = [
+        ("g-pen em ziguezague (cantos fechados)", mk(&[[30.0, 250.0, 0.4], [90.0, 40.0, 1.0], [150.0, 250.0, 0.8], [210.0, 40.0, 1.0], [270.0, 250.0, 0.3]], 14.0, "g_pen", "polyline", false)),
+        ("spline grossa com curva apertada", mk(&[[40.0, 150.0, 1.0], [200.0, 60.0, 1.0], [230.0, 120.0, 1.0], [180.0, 140.0, 1.0], [360.0, 240.0, 1.0]], 22.0, "marker", "spline", false)),
+        ("polígono fechado", mk(&[[100.0, 60.0, 1.0], [300.0, 80.0, 1.0], [280.0, 240.0, 1.0], [120.0, 220.0, 1.0]], 10.0, "marker", "polyline", true)),
+    ];
+    for (name, s) in cases {
+        let smp = aiai_paint::sample_stroke(&s);
+        let eng = rasterize_stroke(&smp, false, w, h).unwrap();
+        let a = mask_of(eng.x0, eng.y0, eng.width, &eng.cov, w, h);
+        let poly = fill_polygons(&stroke_outline(&smp, s.closed), false, w, h).unwrap();
+        let b = mask_of(poly.x0, poly.y0, poly.width, &poly.cov, w, h);
+        let inter = a.iter().zip(&b).filter(|(x, y)| **x && **y).count() as f32;
+        let uni = a.iter().zip(&b).filter(|(x, y)| **x || **y).count() as f32;
+        assert!(inter / uni > 0.97, "{name}: IoU {}", inter / uni);
+    }
+}
+
+#[test]
+fn svg_and_otio_exports() {
+    use aiai_tools::edit::{EditClip, EditDoc, SubtitleEntry, Transition, TransitionKind, edit_command};
+    use aiai_tools::export::{ExportOtioRequest, ExportSvgRequest, export_otio, export_svg};
+    let dir = std::env::temp_dir().join(format!("aiai-export2-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = CoreSession::for_tests("export2");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 200, "height": 100}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let c1 = create(&mut s, Some(&sc), "C001", NodeKind::Cut(CutData::new(24)));
+    let c2 = create(&mut s, Some(&sc), "C002", NodeKind::Cut(CutData::new(12)));
+    let line = create(&mut s, Some(&c1), "線画 & <linha>", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+    let paint = create(&mut s, Some(&c1), "pintura", NodeKind::Layer(LayerData::new(LayerType::Raster)));
+    create(&mut s, Some(&line), "1", NodeKind::Cel(CelData::new(1)));
+    create(&mut s, Some(&paint), "1", NodeKind::Cel(CelData::new(1)));
+    let ink = ColorRef::Direct { rgba: Rgba::from_hex("#c02020").unwrap() };
+    s.apply(draw_command(&s.project, &DrawRequest { cut: c1.clone(), frame: 0, layer: line.clone(), curves: vec![
+        curve(&[[20.0, 20.0, 1.0], [80.0, 60.0, 1.0]], 6.0, &ink, false), curve(&[[120.0, 20.0, 1.0], [180.0, 80.0, 1.0]], 4.0, &ink, false),
+    ], mirror_x: None }).unwrap()).unwrap();
+    s.apply(Command::SetProps { id: line.clone(), name: None, data: json!({"opacity": 0.5, "offset": [10.0, 5.0]}) }).unwrap();
+    // ---- SVG
+    let svg = dir.join("c001.svg");
+    let r = export_svg(&s.project, &s.blobs, &ExportSvgRequest { cut: c1.clone(), frame: 0, out: svg.display().to_string() }).unwrap();
+    assert_eq!((r["paths"].as_u64(), r["images"].as_u64()), (Some(2), Some(0)), "dois traços como caminho; raster vazio fica de fora: {r}");
+    let t = std::fs::read_to_string(&svg).unwrap();
+    assert!(t.starts_with("<?xml") && t.contains("viewBox=\"0 0 200 100\""));
+    assert!(t.contains("inkscape:label=\"線画 &amp; &lt;linha&gt;\"") && t.contains("opacity=\"0.500\""), "nome escapado e opacidade da camada");
+    assert!(t.contains("matrix(1 0 0 1 10 5)"), "deslocamento da camada vira transform: {}", &t[..t.len().min(900)]);
+    assert!(t.contains("fill=\"#c02020\""));
+    // ---- OTIO
+    let doc = EditDoc {
+        clips: vec![
+            EditClip { cut: c1.clone(), in_frame: 2, out_frame: Some(22), transition_in: Some(Transition { kind: TransitionKind::FadeBlack, frames: 6 }) },
+            EditClip { cut: c2.clone(), in_frame: 0, out_frame: None, transition_in: Some(Transition { kind: TransitionKind::Dissolve, frames: 6 }) },
+        ],
+        subtitles: vec![SubtitleEntry { start_frame: 3, end_frame: 15, text: "Olá".into() }],
+        credits: vec!["Direção: Claude".into()],
+        credits_seconds: 1.0,
+        fade_out_end: 0,
+    };
+    let cmd = edit_command(&s.project, &mut s.ids, "Edição", &doc, None).unwrap();
+    let edit = s.apply(cmd).unwrap().created[0].clone();
+    let out = dir.join("ed.otio");
+    let r = export_otio(&s.project, &s.blobs, &ExportOtioRequest { edit, out: out.display().to_string(), media_dir: None, render_video: false }).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+    assert_eq!(v["OTIO_SCHEMA"], "Timeline.1");
+    let kids = v["tracks"]["children"][0]["children"].as_array().unwrap();
+    let schemas: Vec<&str> = kids.iter().map(|k| k["OTIO_SCHEMA"].as_str().unwrap()).collect();
+    assert_eq!(schemas, ["Clip.2", "Transition.1", "Clip.2", "Clip.2"], "corte, dissolve, corte, créditos");
+    // 20 + 12 − 6 de sobreposição = 26 quadros de edição; mais 24 de créditos (1 s a 24 fps)
+    let dur = |k: &serde_json::Value| k["source_range"]["duration"]["value"].as_f64().unwrap();
+    assert_eq!(dur(&kids[0]) + dur(&kids[2]), 26.0, "a soma dos clipes é a duração da edição");
+    assert_eq!((kids[1]["in_offset"]["value"].as_f64(), kids[1]["out_offset"]["value"].as_f64()), (Some(3.0), Some(3.0)), "ponto de corte no meio da sobreposição");
+    assert_eq!(kids[0]["source_range"]["start_time"]["value"].as_f64(), Some(2.0), "entrada do primeiro clipe");
+    assert_eq!(kids[2]["source_range"]["start_time"]["value"].as_f64(), Some(3.0), "o segundo começa depois da metade do dissolve");
+    assert_eq!(kids[3]["media_references"]["DEFAULT_MEDIA"]["OTIO_SCHEMA"], "GeneratorReference.1");
+    assert_eq!(v["tracks"]["children"][0]["markers"][0]["name"], "Olá");
+    assert_eq!(r["frames"].as_u64(), Some(26 + 24));
+    let _ = std::fs::remove_dir_all(&dir);
+}

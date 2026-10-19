@@ -6,6 +6,8 @@
 //! - dispersão, jitter de tamanho/ângulo/cor (RNG com semente → determinístico), ângulo seguindo a direção;
 //! - textura de pincel em espaço de tela (multiplicar/subtrair, escala, profundidade) e pincel duplo;
 //! - mistura com a cor da camada (borrar/misturar) e bordas molhadas (aquarela);
+//! - duas cores no mesmo carimbo (cenário: luz + sombra da rosa, topo claro e base na sombra da nuvem, lado de
+//!   sombra da folha), com a segunda cor derivada da cor do pincel ou escolhida;
 //! - acumulação dentro do traço com fluxo, limitada pela opacidade do traço (como o Photoshop).
 //!
 //! O traço é acumulado num buffer RGBA pré-multiplicado e depois composto na camada com o modo do pincel.
@@ -56,6 +58,23 @@ pub fn shape_coverage(shape: TipShape, u: f32, v: f32, aa: f32) -> f32 {
 }
 
 fn shape_alpha(shape: TipShape, u: f32, v: f32, aa: f32) -> f32 {
+    shape_alpha_tone(shape, u, v, aa, false)
+}
+
+/// Raio e fase da espiral de pétalas da rosa (um vinco a cada π).
+fn rose_phase(u: f32, v: f32) -> (f32, f32) {
+    let r = (u * u + v * v).sqrt();
+    let th = v.atan2(u);
+    (r, th + 5.5 * r.max(0.05).ln())
+}
+
+/// Contorno com 5 lóbulos (as pétalas de fora) da rosa de duas cores.
+fn rose_rim(u: f32, v: f32) -> f32 {
+    0.86 + 0.07 * (5.0 * v.atan2(u) + 0.6).cos()
+}
+
+/// Cobertura da forma; com `two_tone` a rosa é o botão inteiro (os vincos viram sombra em vez de buraco).
+fn shape_alpha_tone(shape: TipShape, u: f32, v: f32, aa: f32, two_tone: bool) -> f32 {
     let edge = |d: f32| (0.5 - d / aa.max(1e-4)).clamp(0.0, 1.0); // d = distância com sinal (aprox.) em unidades locais
     match shape {
         TipShape::Leaf => {
@@ -77,9 +96,10 @@ fn shape_alpha(shape: TipShape, u: f32, v: f32, aa: f32) -> f32 {
             edge((u - bend).abs() - half)
         }
         TipShape::CloudPuff => {
-            let c = |cx: f32, cy: f32, r: f32| ((u - cx).powi(2) + (v - cy).powi(2)).sqrt() - r;
-            let d = c(0.0, -0.1, 0.55).min(c(-0.45, 0.2, 0.42)).min(c(0.45, 0.2, 0.45)).min(c(0.0, 0.35, 0.5));
-            edge(d)
+            // cúmulo: borda de cima definida, base que se desfaz (a borda alarga para baixo)
+            let d = cloud_sdf(u, v);
+            let soft = 0.5 * (v - 0.05).max(0.0);
+            (0.5 - d / (aa.max(1e-4) + soft)).clamp(0.0, 1.0)
         }
         TipShape::Star => {
             let r = (u * u + v * v).sqrt();
@@ -89,6 +109,11 @@ fn shape_alpha(shape: TipShape, u: f32, v: f32, aa: f32) -> f32 {
             edge(r - rad)
         }
         TipShape::Square => edge(u.abs().max(v.abs()) - 0.9),
+        TipShape::Rose if two_tone => {
+            let (r, _) = rose_phase(u, v);
+            if r > 1.0 { return 0.0 }
+            edge(r - rose_rim(u, v))
+        }
         TipShape::Rose => {
             let r = (u * u + v * v).sqrt();
             if r > 1.0 { return 0.0 }
@@ -99,6 +124,69 @@ fn shape_alpha(shape: TipShape, u: f32, v: f32, aa: f32) -> f32 {
             let outer = edge(r - 0.92);
             let inner = ((gap - 0.12) / 0.1).clamp(0.0, 1.0);
             outer * if r < 0.12 { 1.0 } else { inner.max(0.15) }
+        }
+    }
+}
+
+fn cloud_sdf(u: f32, v: f32) -> f32 {
+    let c = |cx: f32, cy: f32, r: f32| ((u - cx).powi(2) + (v - cy).powi(2)).sqrt() - r;
+    c(0.0, -0.1, 0.55).min(c(-0.45, 0.2, 0.42)).min(c(0.45, 0.2, 0.45)).min(c(0.0, 0.35, 0.5))
+}
+
+fn smoothstep(a: f32, b: f32, x: f32) -> f32 {
+    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Quanto da segunda cor (sombra) vai no ponto da forma: 0 = cor do pincel, 1 = segunda cor. `aa` = 1 px em
+/// unidades locais: carimbo pequeno perde o detalhe fino (senão a espiral vira pontilhado).
+fn shape_tone(shape: TipShape, u: f32, v: f32, aa: f32) -> f32 {
+    match shape {
+        TipShape::Rose => {
+            let (r, phase) = rose_phase(u, v);
+            // a pétala de cima faz sombra na de baixo logo depois de cada vinco (meia-lua); a beirada da pétala pega
+            // um fio de luz; o miolo fechado é o mais escuro e as pétalas de fora, as mais claras
+            let p = (phase / std::f32::consts::PI).rem_euclid(1.0);
+            let crescent = (1.0 - p / 0.55).clamp(0.0, 1.0).powf(1.3) * smoothstep(0.0, 0.08, p) * 0.85;
+            let core = (1.0 - r / 0.38).clamp(0.0, 1.0);
+            let detail = smoothstep(0.17, 0.06, aa);
+            let simple = (1.0 - r / 0.8).clamp(0.0, 1.0) * 0.8;
+            let rim = smoothstep(0.62, 0.86, r) * 0.6;
+            (simple + (crescent.max(core) - simple) * detail - rim).clamp(0.0, 1.0)
+        }
+        // topo iluminado, base dos lóbulos na sombra
+        TipShape::CloudPuff => smoothstep(-0.2, 0.62, v),
+        // metade da folha do lado da sombra, nervura no meio
+        TipShape::Leaf | TipShape::Petal => smoothstep(-0.04, 0.08, u) * 0.85,
+        // base da lâmina escura, ponta clara
+        TipShape::GrassBlade => smoothstep(-0.3, 0.95, v),
+        TipShape::Star | TipShape::Square => 0.0,
+    }
+}
+
+/// Duas cores no mesmo carimbo (pincéis de cenário). A segunda cor é `color`, ou a cor do pincel multiplicada por
+/// `tint` na proporção `amount` (vale para qualquer cor: rosa vermelha → vinho, nuvem branca → cinza-azulado).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct TwoTone {
+    #[serde(default = "d_tint")]
+    pub tint: [f32; 3],
+    /// 0..1
+    #[serde(default = "d_one")]
+    pub amount: f32,
+    /// Segunda cor fixa (sRGB); `None` = derivada da cor do pincel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<[f32; 3]>,
+}
+
+fn d_tint() -> [f32; 3] {
+    [0.55, 0.55, 0.7]
+}
+
+impl TwoTone {
+    pub fn second(&self, rgb: [f32; 3]) -> [f32; 3] {
+        match self.color {
+            Some(c) => c,
+            None => [0, 1, 2].map(|i| rgb[i] * (1.0 - self.amount + self.amount * self.tint[i])),
         }
     }
 }
@@ -215,6 +303,9 @@ pub struct BrushPreset {
     /// Sem antisserrilhado (lápis de pixel / linha de cel raster).
     #[serde(default)]
     pub aliased: bool,
+    /// Duas cores no carimbo (só pontas de forma: rosa, nuvem, folha, pétala, grama).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub two_tone: Option<TwoTone>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema, Default)]
@@ -270,6 +361,7 @@ impl BrushPreset {
             wet_edges: 0.0,
             mode: BrushMode::Normal,
             aliased: false,
+            two_tone: None,
         }
     }
 
@@ -289,6 +381,12 @@ impl BrushPreset {
         unit(self.mix, "mix")?;
         unit(self.smudge_carry, "smudge_carry")?;
         unit(self.wet_edges, "wet_edges")?;
+        if let Some(t) = &self.two_tone {
+            unit(t.amount, "two_tone.amount")?;
+            if t.tint.iter().chain(t.color.iter().flatten()).any(|c| !(0.0..=1.0).contains(c)) {
+                return Err("two_tone: cores fora de 0..1".into());
+            }
+        }
         if self.count == 0 || self.count > 64 {
             return Err("count deve estar entre 1 e 64".into());
         }
@@ -351,6 +449,7 @@ impl BrushPreset {
         foliage.value_jitter = 0.12;
         foliage.hue_jitter = 0.04;
         foliage.size_pressure_min = 0.6;
+        foliage.two_tone = Some(TwoTone { tint: [0.45, 0.6, 0.62], amount: 0.7, color: None });
         v.push(foliage);
         let mut grass = BrushPreset::round("Grama", 30.0, 1.0);
         grass.tip = BrushTip::Shape { shape: TipShape::GrassBlade, aspect: 1.0 };
@@ -360,6 +459,7 @@ impl BrushPreset {
         grass.size_jitter = 0.35;
         grass.angle_jitter = 12.0;
         grass.value_jitter = 0.15;
+        grass.two_tone = Some(TwoTone { tint: [0.4, 0.58, 0.5], amount: 0.65, color: None });
         v.push(grass);
         let mut rose = BrushPreset::round("Rosas", 18.0, 1.0);
         rose.tip = BrushTip::Shape { shape: TipShape::Rose, aspect: 1.0 };
@@ -369,6 +469,8 @@ impl BrushPreset {
         rose.size_jitter = 0.35;
         rose.angle_jitter = 180.0;
         rose.value_jitter = 0.1;
+        // luz nas pétalas de fora, sombra vinho nos vincos e no miolo
+        rose.two_tone = Some(TwoTone { tint: [0.42, 0.16, 0.3], amount: 0.85, color: None });
         v.push(rose);
         let mut petals = BrushPreset::round("Flores/pétalas", 14.0, 1.0);
         petals.tip = BrushTip::Shape { shape: TipShape::Petal, aspect: 0.8 };
@@ -385,7 +487,11 @@ impl BrushPreset {
         cloud.spacing = 0.25;
         cloud.scatter = 0.25;
         cloud.size_jitter = 0.3;
-        cloud.flow = 0.6;
+        // fluxo cheio: carimbos semitransparentes empilhados faziam escamas dentro da nuvem; a transparência fica
+        // na opacidade do traço, e o volume vem da base de cada lóbulo na sombra
+        cloud.flow = 1.0;
+        cloud.opacity = 0.95;
+        cloud.two_tone = Some(TwoTone { tint: [0.66, 0.72, 0.88], amount: 1.0, color: None });
         v.push(cloud);
         let mut sparkle = BrushPreset::round("Brilhos", 18.0, 1.0);
         sparkle.tip = BrushTip::Shape { shape: TipShape::Star, aspect: 1.0 };
@@ -429,7 +535,20 @@ fn texture_value(t: &BrushTexture, x: f32, y: f32) -> f32 {
     if t.invert { 1.0 - r } else { r }
 }
 
+/// Coordenadas locais (u, v) da ponta de forma, ou `None` se a ponta não é de forma.
+fn shape_uv(tip: &BrushTip, dx: f32, dy: f32, radius: f32, extra_angle: f32) -> Option<(TipShape, f32, f32)> {
+    let BrushTip::Shape { shape, aspect } = tip else { return None };
+    let (sn, cs) = extra_angle.to_radians().sin_cos();
+    let (lx, ly) = (dx * cs + dy * sn, -dx * sn + dy * cs);
+    let r = radius.max(0.25);
+    Some((*shape, lx / (r * aspect.clamp(0.1, 4.0)), ly / r))
+}
+
 fn tip_alpha(tip: &BrushTip, dx: f32, dy: f32, radius: f32, extra_angle: f32, aliased: bool) -> f32 {
+    tip_alpha_tone(tip, dx, dy, radius, extra_angle, aliased, false)
+}
+
+fn tip_alpha_tone(tip: &BrushTip, dx: f32, dy: f32, radius: f32, extra_angle: f32, aliased: bool, two_tone: bool) -> f32 {
     match tip {
         BrushTip::Round { hardness, roundness, angle } => {
             let a = (angle + extra_angle).to_radians();
@@ -446,14 +565,9 @@ fn tip_alpha(tip: &BrushTip, dx: f32, dy: f32, radius: f32, extra_angle: f32, al
             let inner = if d <= h { 1.0 } else { let t = ((d - h) / (1.0 - h).max(1e-4)).clamp(0.0, 1.0); 0.5 + 0.5 * (t * std::f32::consts::PI).cos() };
             inner * edge
         }
-        BrushTip::Shape { shape, aspect } => {
-            let a = extra_angle.to_radians();
-            let (sn, cs) = a.sin_cos();
-            let lx = dx * cs + dy * sn;
-            let ly = -dx * sn + dy * cs;
-            let r = radius.max(0.25);
-            let (u, v) = (lx / (r * aspect.clamp(0.1, 4.0)), ly / r);
-            let val = shape_alpha(*shape, u, v, 1.0 / r);
+        BrushTip::Shape { .. } => {
+            let (shape, u, v) = shape_uv(tip, dx, dy, radius, extra_angle).expect("ponta de forma");
+            let val = shape_alpha_tone(shape, u, v, 1.0 / radius.max(0.25), two_tone);
             if aliased { if val >= 0.5 { 1.0 } else { 0.0 } } else { val }
         }
         BrushTip::Image { mask, .. } => {
@@ -619,6 +733,7 @@ pub fn paint_stroke_at(layer: &mut Image, origin: [i32; 2], preset: &BrushPreset
                 hsv[2] = (hsv[2] + preset.value_jitter * rng.signed()).clamp(0.0, 1.0);
                 rgb = hsv_to_rgb(hsv);
             }
+            let two = preset.two_tone.as_ref().filter(|_| matches!(preset.tip, BrushTip::Shape { .. })).map(|t| t.second(rgb));
             if preset.mix > 0.0 {
                 // amostra a pegada sob o dab (camada com o traço em andamento por cima) e mistura com a que vem
                 // carregada: puxa a estrutura dos pixels (listras, bordas), não uma cor média
@@ -655,7 +770,7 @@ pub fn paint_stroke_at(layer: &mut Image, origin: [i32; 2], preset: &BrushPreset
             for y in by0..by1 {
                 for x in bx0..bx1 {
                     let (dx, dy) = (x as f32 + 0.5 - px, y as f32 + 0.5 - py);
-                    let mut a = tip_alpha(&preset.tip, dx, dy, r, angle, preset.aliased);
+                    let mut a = tip_alpha_tone(&preset.tip, dx, dy, r, angle, preset.aliased, two.is_some());
                     if a <= 0.0 {
                         continue;
                     }
@@ -673,6 +788,12 @@ pub fn paint_stroke_at(layer: &mut Image, origin: [i32; 2], preset: &BrushPreset
                     let i = (y - y0) as usize * bw + (x - x0) as usize;
                     // cor do carimbo (pré-multiplicada): a do pincel, misturada com a pegada carregada
                     let mut src = [rgb[0], rgb[1], rgb[2], 1.0];
+                    if let (Some(c2), Some((shape, u, v))) = (two, shape_uv(&preset.tip, dx, dy, r, angle)) {
+                        let k = shape_tone(shape, u, v, 1.0 / r.max(0.25));
+                        for c in 0..3 {
+                            src[c] += (c2[c] - src[c]) * k;
+                        }
+                    }
                     if let Some((cr, cp)) = &carry {
                         let side = (2 * cr + 1) as usize;
                         let (ci, cj) = (x - (px.round() as i32 - cr), y - (py.round() as i32 - cr));

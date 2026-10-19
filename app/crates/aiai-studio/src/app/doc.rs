@@ -32,6 +32,8 @@ pub(crate) enum DialogKind {
     ExportFrame,
     /// Arquivo > Exportar PSD em camadas (quadro atual).
     ExportPsd,
+    ExportSvg,
+    ExportOtio,
     /// Arquivo > Exportar timesheet XDTS (corte ativo).
     ExportXdts,
 }
@@ -265,11 +267,15 @@ impl StudioApp {
             DialogKind::ImportImage => tr("menu.file.import_image"),
             DialogKind::ExportFrame => tr("menu.file.export_frame"),
             DialogKind::ExportPsd => tr("menu.file.export_psd"),
+            DialogKind::ExportSvg => tr("menu.file.export_svg"),
+            DialogKind::ExportOtio => tr("menu.file.export_otio"),
             DialogKind::ExportXdts => tr("menu.file.export_xdts"),
         }
         .to_owned();
         let cut_name = self.ed.cut.as_ref().and_then(|c| self.core.project.node(c)).map(|n| n.name.clone()).unwrap_or_else(|| "corte".into());
         let (psd_name, xdts_name) = (format!("{cut_name}_q{:03}.psd", self.ed.frame + 1), format!("{cut_name}.xdts"));
+        let svg_name = format!("{cut_name}_q{:03}.svg", self.ed.frame + 1);
+        let otio_name = format!("{}.otio", self.active_edit().and_then(|e| self.core.project.node(&e)).map(|n| n.name.clone()).unwrap_or_else(|| "edicao".into()));
         let frame_name = format!("{}_q{:03}.png", self.ed.cut.as_ref().and_then(|c| self.core.project.node(c)).map(|n| n.name.clone()).unwrap_or_else(|| "quadro".into()), self.ed.frame + 1);
         let prefs_dir = self.prefs.projects_dir.clone().filter(|d| d.is_dir());
         let start = match kind {
@@ -288,6 +294,8 @@ impl StudioApp {
                 DialogKind::ImportImage => d.add_filter("Imagem", &IMAGE_EXTS).pick_file(),
                 DialogKind::ExportFrame => d.add_filter("PNG", &["png"]).set_file_name(frame_name).save_file(),
                 DialogKind::ExportPsd => d.add_filter("PSD", &["psd"]).set_file_name(psd_name).save_file(),
+                DialogKind::ExportSvg => d.add_filter("SVG", &["svg"]).set_file_name(svg_name).save_file(),
+                DialogKind::ExportOtio => d.add_filter("OpenTimelineIO", &["otio"]).set_file_name(otio_name).save_file(),
                 DialogKind::ExportXdts => d.add_filter("XDTS", &["xdts"]).set_file_name(xdts_name).save_file(),
             };
             let _ = tx.send(picked);
@@ -322,6 +330,8 @@ impl StudioApp {
                         DialogKind::ImportImage => self.import_file(&path),
                         DialogKind::ExportFrame => self.export_frame(&path),
                         DialogKind::ExportPsd => self.export_with("EXPORT_PSD", &path),
+                        DialogKind::ExportSvg => self.export_with("EXPORT_SVG", &path),
+                        DialogKind::ExportOtio => self.export_otio(&path),
                         DialogKind::ExportXdts => self.export_with("EXPORT_XDTS", &path),
                     }
                 }
@@ -394,6 +404,27 @@ impl StudioApp {
         match r {
             Ok(_) => self.notice(format!("{}: {}", tr("msg.exported"), path.display())),
             Err(e) => self.doc_error("exportar", e),
+        }
+    }
+
+    /// Edição aberta no painel de edição, ou a primeira do projeto.
+    pub(crate) fn active_edit(&self) -> Option<super::commands::NodeId> {
+        let docs = super::actions::docs_of(&self.core.project, super::actions::DocKind::Edit);
+        self.ed.edit.sel_edit.clone().filter(|e| docs.iter().any(|(i, _)| i == e)).or_else(|| docs.first().map(|(i, _)| i.clone()))
+    }
+
+    /// OTIO da edição com os WAV numa pasta "<nome>_midia" ao lado (vídeo sem render: o MCP tem `render_video`).
+    fn export_otio(&mut self, path: &Path) {
+        let Some(edit) = self.active_edit() else {
+            self.notice(tr("editing.no_edit").to_owned());
+            return;
+        };
+        let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "edicao".into());
+        let media = path.with_file_name(format!("{stem}_midia"));
+        let r = super::actions::run(&mut self.core, "EXPORT_OTIO", json!({ "edit": edit, "out": path.display().to_string(), "media_dir": media.display().to_string() }));
+        match r {
+            Ok(_) => self.notice(format!("{}: {}", tr("msg.exported"), path.display())),
+            Err(e) => self.doc_error("exportar OTIO", e),
         }
     }
 

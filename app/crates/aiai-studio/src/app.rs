@@ -345,6 +345,15 @@ impl StudioApp {
                 self.request_export(doc::DialogKind::ExportXdts);
                 ui.close();
             }
+            if self.menu_item(ui, "file.export_svg", "menu.file.export_svg", "", self.ed.cut.is_some()) {
+                self.request_export(doc::DialogKind::ExportSvg);
+                ui.close();
+            }
+            let has_edit = self.active_edit().is_some();
+            if self.menu_item(ui, "file.export_otio", "menu.file.export_otio", "", has_edit) {
+                self.request_export(doc::DialogKind::ExportOtio);
+                ui.close();
+            }
             ui.separator();
             if self.menu_item(ui, "file.quit", "menu.file.quit", "", true) {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);

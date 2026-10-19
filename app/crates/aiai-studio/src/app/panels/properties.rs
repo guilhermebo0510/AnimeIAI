@@ -109,6 +109,21 @@ fn brush_settings(ui: &mut Ui, o: &mut super::super::editor::ToolOptions) {
             ui.label(tr("brush.follow"));
             ui.checkbox(&mut p.follow_direction, "");
             ui.end_row();
+            // duas cores no carimbo (pontas de forma): sombra derivada da cor do pincel por um tom e uma quantidade
+            if matches!(p.tip, aiai_paint::brush::BrushTip::Shape { .. }) {
+                ui.label(tr("brush.two_tone"));
+                let mut on = p.two_tone.is_some();
+                if ui.checkbox(&mut on, "").changed() {
+                    p.two_tone = on.then(|| base.as_ref().and_then(|b| b.two_tone.clone()).unwrap_or(aiai_paint::brush::TwoTone { tint: [0.55, 0.55, 0.7], amount: 0.8, color: None }));
+                }
+                ui.end_row();
+                if let Some(tt) = &mut p.two_tone {
+                    slider(ui, "brush.two_tone_amount", &mut tt.amount, 0.0, 1.0);
+                    ui.label(tr("brush.two_tone_tint"));
+                    ui.color_edit_button_rgb(&mut tt.tint);
+                    ui.end_row();
+                }
+            }
         });
         if ui.add_enabled(o.brush_custom.is_some(), egui::Button::new(tr("brush.reset"))).clicked() {
             o.brush_custom = None;

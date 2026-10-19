@@ -250,6 +250,7 @@ dependencies = [
  "aiai-metrics",
  "aiai-paint",
  "aiai-render",
+ "base64",
  "glam",
  "image",
  "rayon",

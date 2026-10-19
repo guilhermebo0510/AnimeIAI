@@ -61,7 +61,8 @@ impl Ctx {
     fn sanitize(&self, action: &str, params: &mut Value) -> Result<(), ToolError> {
         let write_keys: &[&str] = match action {
             "NEW_PROJECT" | "OPEN_PROJECT" | "SAVE_PROJECT" => &["path"],
-            "RENDER" | "SCREENSHOT" | "MIX_CUT" | "EXPORT_VIDEO" | "ANIMATIC" | "STORYBOARD" | "SCRIPT" | "PRODUCTION" | "RETAKE" | "RENDER_SHEET" | "EDIT_PREVIEW" | "EDIT_MIX" | "EXPORT_PSD" | "EXPORT_XDTS" => &["out"],
+            "RENDER" | "SCREENSHOT" | "MIX_CUT" | "EXPORT_VIDEO" | "ANIMATIC" | "STORYBOARD" | "SCRIPT" | "PRODUCTION" | "RETAKE" | "RENDER_SHEET" | "EDIT_PREVIEW" | "EDIT_MIX" | "EXPORT_PSD" | "EXPORT_XDTS" | "EXPORT_SVG" => &["out"],
+            "EXPORT_OTIO" => &["out", "media_dir"],
             "COMPARE" => &["out_dir", "out_diff"],
             _ => &[],
         };
