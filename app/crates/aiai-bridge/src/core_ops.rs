@@ -8,6 +8,7 @@
 //! `NEW_PROJECT {name, settings?, path?, overwrite?}` com `path` já salva a pasta e recusa sobrescrever projeto existente.
 //! Ações de UI (SCREENSHOT, INPUT, GET_UI_STATE, UI_ACTION, RENDER, COMPARE, GET_STATUS) devolvem `None`: são do app.
 
+use crate::params_check::check_keys;
 use crate::protocol::{BridgeError, code};
 use aiai_core::{Command, CoreError, CoreSession, Project, Query, persist};
 use serde_json::{Map, Value, json};
@@ -106,7 +107,7 @@ fn dispatch(session: &mut CoreSession, action: &str, params: &Value) -> Option<R
         return Some(r);
     }
     Some(match action {
-        "PING" => Ok(json!({ "pong": true, "name": session.project.name, "revision": session.project.revision })),
+        "PING" => check_keys(params, action, &[]).map(|_| json!({ "pong": true, "name": session.project.name, "revision": session.project.revision })),
         "APPLY_COMMAND" => apply_command(session, params),
         "QUERY" => query(session, params),
         "UNDO" => undo_redo(session, params, true),
@@ -121,6 +122,7 @@ fn dispatch(session: &mut CoreSession, action: &str, params: &Value) -> Option<R
 
 fn apply_command(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
     let p = obj(params)?;
+    check_keys(params, "APPLY_COMMAND", &["command", "if_revision", "author"])?;
     let cmd = parse_command(p.get("command").unwrap_or(&Value::Null))?;
     let if_revision = opt_u64(&p, "if_revision")?;
     let author = opt_str(&p, "author")?.unwrap_or(DEFAULT_AUTHOR).to_string();
@@ -130,6 +132,7 @@ fn apply_command(session: &mut CoreSession, params: &Value) -> Result<Value, Bri
 
 fn undo_redo(session: &mut CoreSession, params: &Value, undo: bool) -> Result<Value, BridgeError> {
     let p = obj(params)?;
+    check_keys(params, if undo { "UNDO" } else { "REDO" }, &["author"])?;
     let author = opt_str(&p, "author")?.unwrap_or(DEFAULT_AUTHOR).to_string();
     // `undo`/`redo` registram o autor da sessão: troca só durante a chamada (o autor humano do app não pode mudar).
     let previous = std::mem::replace(&mut session.author, author);
@@ -141,6 +144,7 @@ fn undo_redo(session: &mut CoreSession, params: &Value, undo: bool) -> Result<Va
 
 fn query(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
     let p = obj(params)?;
+    check_keys(params, "QUERY", &["query"])?;
     let q = p.get("query").ok_or_else(|| BridgeError::invalid_params("'query' é obrigatório: objeto {\"kind\": ...}; veja aiai_schema {\"which\":\"queries\"}"))?;
     if !q.get("kind").map(Value::is_string).unwrap_or(false) {
         return Err(BridgeError::invalid_params("'query.kind' é obrigatório (texto)"));
@@ -151,6 +155,7 @@ fn query(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError
 
 fn get_log(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
     let p = obj(params)?;
+    check_keys(params, "GET_LOG", &["from", "limit", "include_commands"])?;
     let from = opt_u64(&p, "from")?.unwrap_or(0);
     let limit = opt_u64(&p, "limit")?.unwrap_or(100);
     let include_commands = opt_bool(&p, "include_commands")?.unwrap_or(false);
@@ -163,6 +168,7 @@ fn path_param(p: &Map<String, Value>) -> Result<Option<PathBuf>, BridgeError> {
 
 fn new_project(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
     let p = obj(params)?;
+    check_keys(params, "NEW_PROJECT", &["name", "settings", "path", "overwrite"])?;
     let name = opt_str(&p, "name")?.ok_or_else(|| BridgeError::invalid_params("'name' é obrigatório"))?;
     let mut project = Project::new(name);
     if let Some(settings) = p.get("settings").filter(|v| !v.is_null()) {
@@ -202,6 +208,7 @@ fn new_project(session: &mut CoreSession, params: &Value) -> Result<Value, Bridg
 
 fn open_project(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
     let p = obj(params)?;
+    check_keys(params, "OPEN_PROJECT", &["path"])?;
     let dir = path_param(&p)?.ok_or_else(|| BridgeError::invalid_params("'path' (pasta .aiai) é obrigatório"))?;
     let (opened, report) = persist::open(&dir).map_err(core_error)?;
     session.detach_wal();
@@ -216,6 +223,7 @@ fn open_project(session: &mut CoreSession, params: &Value) -> Result<Value, Brid
 
 fn save_project(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
     let p = obj(params)?;
+    check_keys(params, "SAVE_PROJECT", &["path"])?;
     let dir = match path_param(&p)? {
         Some(d) => d,
         None => session.path.clone().ok_or_else(|| BridgeError::invalid_params("o projeto ainda não tem pasta: informe 'path' (pasta .aiai)"))?,

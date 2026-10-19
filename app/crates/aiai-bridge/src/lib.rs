@@ -14,6 +14,7 @@
 //! * [`satsuei_tools`] — satsuei, câmera e cor tipados (S13/S15): EFFECTS, GRADE, CAMERA, LAYER_MOTION;
 //! * [`review_tools`] — produção e revisão (S19): PRODUCTION, CORRECTION, RETAKE;
 //! * [`production_tools`] — SKY, PATTERN_FILL, TEXT, LINES, GAG_BG, PARTICLES, GUIDE3D, PERSPECTIVE, MODEL_SHEET, CONSISTENCY, INBETWEEN, PROPAGATE_FILLS, áudio (TTS, LIPSYNC, SFX, BGM, MIX_CUT, LOUDNESS), COMPARE, PROBE_COLOR, MEASURE_LINE, EXPORT_VIDEO;
+//! * [`params_check`] — chave desconhecida nos parâmetros de uma ação é erro (nomeia a chave e lista as válidas);
 //! * [`discovery`] — arquivo `bridge.json` (porta + token) com permissão restrita.
 //!
 //! Uso no app: `BridgeServer::start(BridgeConfig::from_env()...)`, guardar o `BridgeServer` e, no início de cada quadro,
@@ -25,6 +26,7 @@ pub mod core_tools;
 pub mod discovery;
 pub mod host;
 pub mod http;
+pub mod params_check;
 pub mod preprod_tools;
 pub mod preview_tools;
 pub mod production_tools;

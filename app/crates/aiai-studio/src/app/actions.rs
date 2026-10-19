@@ -14,9 +14,10 @@ use aiai_tools::preprod::{self, ScriptDoc, ScriptOp, StoryboardDoc};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-/// Executa uma ação da bridge no documento do app, com o autor do usuário. Erro vira texto para o aviso da interface.
+/// Executa uma ação da bridge no documento do app, com o autor do usuário (só nas ações que mudam o documento: nas outras
+/// `author` é chave desconhecida). Erro vira texto para o aviso da interface.
 pub(crate) fn run(core: &mut CoreSession, action: &str, mut params: Value) -> Result<Value, String> {
-    if let Some(o) = params.as_object_mut() {
+    if let Some(o) = params.as_object_mut().filter(|_| aiai_bridge::core_ops::is_mutating(action)) {
         o.entry("author").or_insert_with(|| json!(AUTHOR));
     }
     match handle_core_action(core, action, &params) {

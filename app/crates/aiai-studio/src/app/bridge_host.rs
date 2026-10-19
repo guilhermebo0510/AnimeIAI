@@ -110,6 +110,15 @@ impl StudioApp {
         if r.is_cancelled() {
             return;
         }
+        let keys: Option<&[&str]> = match r.action.as_str() {
+            "SCREENSHOT" => Some(&["panel", "region", "max_width", "out", "inline"]),
+            "INPUT" => Some(&["events", "wait"]),
+            "GET_STATUS" | "GET_UI_STATE" => Some(&[]),
+            _ => None,
+        };
+        if let Some(Err(e)) = keys.map(|k| aiai_bridge::params_check::check_keys(&r.params, &r.action, k)) {
+            return r.respond(Err(e));
+        }
         match r.action.as_str() {
             "SCREENSHOT" => self.bridge_screenshot(ctx, r),
             "INPUT" => self.bridge_input(ctx, r),

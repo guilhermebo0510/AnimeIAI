@@ -1382,3 +1382,44 @@ fn preview_sheet_edit_frames_mix_and_sidecar_srt() {
         assert!(srt.contains("Olá, mundo") && srt.contains("-->"), "{srt}");
     }
 }
+
+// ------------------------------------------------------------------------------------------------ chaves desconhecidas
+
+#[test]
+fn unknown_param_keys_are_errors_naming_the_key() {
+    use aiai_bridge::{core_tools, preprod_tools, preview_tools, production_tools, review_tools, satsuei_tools};
+    let (mut s, cut, line, fill, _bg) = tool_doc();
+
+    // o caso que escondeu uma comparação errada: `only_layers` (a chave é `layers`) renderizava tudo sem aviso
+    let e = act_err(&mut s, "RENDER", json!({"cut": cut, "only_layers": [line]}));
+    assert_eq!(e.code, code::INVALID_PARAMS);
+    assert!(e.message.contains("'only_layers'") && e.message.contains("→ 'layers'?") && e.message.contains("válidos: backend, background, camera, cut, "), "{}", e.message);
+    act(&mut s, "RENDER", json!({"cut": cut, "layers": [line]}));
+
+    // struct de requisição: chaves do schema + author/if_revision (lidas por `apply`) nas ações que mudam o documento
+    let seed = json!([{"x": 10, "y": 10, "color": {"type": "direct", "rgba": [1.0, 0.0, 0.0, 1.0]}}]);
+    let e = act_err(&mut s, "FILL", json!({"cut": cut, "layer": fill, "frame": 0, "seeds": seed, "gapp": 3}));
+    assert!(e.message.starts_with("FILL: parâmetro desconhecido 'gapp' (quis dizer 'gapp' → 'gap'?)"), "{}", e.message);
+    let rev = act(&mut s, "PING", json!({}))["revision"].clone();
+    act(&mut s, "FILL", json!({"cut": cut, "layer": fill, "frame": 0, "seeds": seed, "author": "agent:teste", "if_revision": rev}));
+    // ação que não muda o documento não aceita `author`
+    assert!(act_err(&mut s, "LINT", json!({"cut": cut, "layer": fill, "author": "x"})).message.contains("'author'"));
+    // PAINT lê `preset_overrides` por fora da struct
+    act(&mut s, "BRUSH_PRESETS", json!({}));
+    assert!(act_err(&mut s, "BRUSH_PRESETS", json!({"name": "x"})).message.contains("não recebe parâmetros"));
+
+    // enum com `op`: só as chaves da variante pedida
+    act(&mut s, "SCRIPT", json!({"op": "create", "name": "Roteiro"}));
+    let e = act_err(&mut s, "SCRIPT", json!({"op": "create", "name": "Roteiro", "doc": "x"}));
+    assert!(e.message.contains("'doc'") && !e.message.contains("válidos: doc"), "{}", e.message);
+    // `op` inexistente: o erro é o do serde sobre o valor, não sobre as chaves
+    let e = act_err(&mut s, "SCRIPT", json!({"op": "criar", "name": "Roteiro"}));
+    assert!(e.message.contains("criar") && !e.message.contains("desconhecido '"), "{}", e.message);
+
+    // TODA ação do núcleo recusa uma chave inventada (ação nova sem a verificação quebra aqui)
+    let all = [core_ops::CORE_ACTIONS, core_tools::TOOL_ACTIONS, production_tools::PRODUCTION_ACTIONS, preprod_tools::PREPROD_ACTIONS, review_tools::REVIEW_ACTIONS, satsuei_tools::SATSUEI_ACTIONS, preview_tools::PREVIEW_ACTIONS];
+    for action in all.concat() {
+        let e = act_err(&mut s, action, json!({"zz_inventada": 1}));
+        assert!(e.code == code::INVALID_PARAMS && e.message.contains("'zz_inventada'"), "{action} não recusou a chave: {e}");
+    }
+}

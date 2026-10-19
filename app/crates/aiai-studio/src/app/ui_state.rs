@@ -278,6 +278,27 @@ impl StudioApp {
     pub(crate) fn bridge_ui_action(&mut self, ctx: &egui::Context, params: &Value) -> BridgeResult {
         let m = as_obj(params)?;
         let action = text(&m, &["action"]).ok_or_else(|| BridgeError::invalid_params("UI_ACTION exige 'action'"))?.to_string();
+        // chaves de cada sub-ação (com os apelidos que `text` aceita); sub-ação desconhecida dá o erro do `match` abaixo
+        let keys: Option<&[&str]> = match action.as_str() {
+            "set_workspace" => Some(&["workspace", "value"]),
+            "select_tool" | "set_tool" => Some(&["tool", "value"]),
+            "select_layer" => Some(&["layer", "id", "value"]),
+            "select_cut" => Some(&["cut", "id", "value"]),
+            "set_frame" => Some(&["frame"]),
+            "set_color" => Some(&["color", "value"]),
+            "fit_view" => Some(&[]),
+            "toggle_panel" | "open_panel" => Some(&["panel", "value", "visible"]),
+            "set_theme" => Some(&["theme", "value"]),
+            "set_window_size" => Some(&["width", "height", "maximized"]),
+            "set_language" => Some(&["language", "lang", "value"]),
+            "open_dialog" | "close_dialog" => Some(&["dialog", "value", "tab"]),
+            _ => None,
+        };
+        if let Some(keys) = keys {
+            let mut keys = keys.to_vec();
+            keys.push("action");
+            aiai_bridge::params_check::check_keys(params, &format!("UI_ACTION {action}"), &keys)?;
+        }
         let result = match action.as_str() {
             "set_workspace" => {
                 let key = text(&m, &["workspace", "value"]).ok_or_else(|| BridgeError::invalid_params("set_workspace exige 'workspace'"))?;

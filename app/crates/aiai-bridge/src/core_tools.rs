@@ -11,6 +11,7 @@
 //! mesclado por cima em qualquer caso.
 
 use crate::core_ops::{DEFAULT_AUTHOR, core_error, obj, opt_bool, opt_str, opt_u64, outcome_json};
+use crate::params_check::check_keys;
 use crate::protocol::{BridgeError, code};
 use aiai_core::{Command, CoreSession, Id, Rgba};
 use aiai_paint::brush::BrushPreset;
@@ -55,7 +56,7 @@ pub fn tool_error(e: ToolError) -> BridgeError {
 pub fn handle_tool_action(session: &mut CoreSession, action: &str, params: &Value) -> Option<Result<Value, BridgeError>> {
     Some(match action {
         "RENDER" => render(session, params),
-        "BRUSH_PRESETS" => Ok(brush_presets()),
+        "BRUSH_PRESETS" => check_keys(params, action, &[]).map(|_| brush_presets()),
         a if crate::production_tools::PRODUCTION_ACTIONS.contains(&a) => crate::production_tools::handle(session, a, params),
         a if crate::preprod_tools::PREPROD_ACTIONS.contains(&a) => crate::preprod_tools::handle(session, a, params),
         a if crate::review_tools::REVIEW_ACTIONS.contains(&a) => crate::review_tools::handle(session, a, params),
@@ -91,11 +92,13 @@ pub fn handle_tool_action(session: &mut CoreSession, action: &str, params: &Valu
     })
 }
 
-/// Decodifica os parâmetros no tipo de requisição da ferramenta (campos extras como `author` são ignorados).
-pub(crate) fn request<T: DeserializeOwned>(params: &Value, action: &str) -> Result<T, BridgeError> {
+/// Decodifica os parâmetros no tipo de requisição da ferramenta. Chave fora do schema do tipo (e das lidas à mão,
+/// [`crate::params_check::extra_keys`], como `author`) é erro.
+pub(crate) fn request<T: DeserializeOwned + schemars::JsonSchema>(params: &Value, action: &str) -> Result<T, BridgeError> {
     if !params.is_object() {
         return Err(BridgeError::invalid_params(format!("{action}: params deve ser um objeto JSON")));
     }
+    crate::params_check::check_schema_keys::<T>(params, action)?;
     serde_json::from_value::<T>(params.clone()).map_err(|e| BridgeError::invalid_params(format!("{action}: parâmetros inválidos: {e}")))
 }
 
@@ -178,6 +181,7 @@ pub fn resolve_preset(p: &Map<String, Value>) -> Result<BrushPreset, BridgeError
 
 fn paint(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
     let p = obj(params)?;
+    crate::params_check::check_schema_keys::<PaintRequest>(params, "PAINT")?;
     let preset = resolve_preset(&p)?;
     let mut with_preset = p.clone();
     with_preset.insert("preset".into(), serde_json::to_value(&preset).map_err(|e| BridgeError::failed(e.to_string()))?);
@@ -190,6 +194,7 @@ fn paint(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError
 
 fn lint_action(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
     let p = obj(params)?;
+    check_keys(params, "LINT", &["cut", "layer", "frame", "gap", "min_area", "include_border"])?;
     let id = |key: &str| -> Result<Id, BridgeError> { opt_str(&p, key)?.map(Id::from).ok_or_else(|| BridgeError::invalid_params(format!("LINT exige '{key}'"))) };
     let (cut, layer) = (id("cut")?, id("layer")?);
     let frame = opt_u64(&p, "frame")?.unwrap_or(0) as u32;
@@ -212,6 +217,9 @@ fn parse_background(s: &str) -> Result<[f32; 3], BridgeError> {
 
 fn render(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
     let p = obj(params)?;
+    // `range` e `backend` são aceitos só para dar o erro explicativo abaixo
+    let keys = ["cut", "frame", "layers", "background", "include_guides", "include_reference", "camera", "layer_motion", "size", "out", "inline", "range", "backend"];
+    check_keys(params, "RENDER", &keys)?;
     let cut = opt_str(&p, "cut")?.map(Id::from).ok_or_else(|| BridgeError::invalid_params("RENDER exige 'cut' (id do corte)"))?;
     let frame = opt_u64(&p, "frame")?.unwrap_or(0) as u32;
     if p.get("range").is_some_and(|v| !v.is_null()) {

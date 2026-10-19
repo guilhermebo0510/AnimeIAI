@@ -478,6 +478,7 @@ fn mix_cut(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeErr
 
 fn loudness(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
     let p = obj(params)?;
+    crate::params_check::check_keys(params, "LOUDNESS", &["asset", "cut", "path", "series"])?;
     let series = p.get("series").and_then(Value::as_bool).unwrap_or(false);
     let buf: AudioBuf = match (opt_str(&p, "asset")?, opt_str(&p, "cut")?, opt_str(&p, "path")?) {
         (Some(a), None, None) => audio::asset_audio(&session.project, &session.blobs, &Id::from(a)).map_err(tool_error)?,

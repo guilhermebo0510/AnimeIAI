@@ -11,7 +11,6 @@ ids = json.load(open(idsf))
 d = Drive(proj)
 cel = ids["cor_c1"]
 rep = d.call("LINT", {"cut": ids["cut"], "frame": frame, "layer": ids["cor"], "gap": gap, "min_area": 20, "include_border": True})
-before = d.call("QUERY", {"what": "node", "id": cel}) if False else None
 random.seed(1)
 seeds = [{"x": r["point"][0], "y": r["point"][1], "color": {"type": "direct", "rgba": [random.random(), random.random(), random.random(), 1.0]}}
          for r in rep["unpainted"]]
