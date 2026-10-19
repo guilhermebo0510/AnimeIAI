@@ -137,6 +137,11 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
         if b.on_hover_text(tr("board.animatic.tip")).clicked() {
             make_animatic(env, &sb);
         }
+        let b = ui.add_enabled(!doc.panels.is_empty(), egui::Button::new(tr("board.sheet")));
+        env.note("board:sheet", b.rect);
+        if b.on_hover_text(tr("board.sheet.tip")).clicked() {
+            make_sheet(env, &sb);
+        }
         let b = ui.add_enabled(!doc.panels.is_empty(), egui::Button::new(tr("board.cuts")));
         env.note("board:cuts", b.rect);
         if b.on_hover_text(tr("board.cuts.tip")).clicked() {
@@ -237,6 +242,20 @@ fn make_animatic(env: &mut Env, sb: &NodeId) {
     if let Some(v) = actions::notify_err(env.ed, r) {
         let secs = v.get("seconds").and_then(|s| s.as_f64()).unwrap_or(0.0);
         env.ed.notify(format!("{}: {} ({secs:.1} s)", tr("board.animatic_done"), out.display()));
+    }
+}
+
+/// Folha de e-conte (PNG: painéis, ações, falas, SE, segundos) em `<pasta do projeto>/saida/econte.png`.
+fn make_sheet(env: &mut Env, sb: &NodeId) {
+    let Some(path) = env.core.path.clone() else {
+        env.ed.notify(tr("board.save_first"));
+        return;
+    };
+    let dir = path.parent().map(|d| d.to_path_buf()).unwrap_or(path);
+    let out = dir.join("saida").join("econte.png");
+    let r = actions::run(env.core, "STORYBOARD", json!({ "op": "sheet", "storyboard": sb, "out": out.display().to_string() }));
+    if actions::notify_err(env.ed, r).is_some() {
+        env.ed.notify(format!("{}: {}", tr("board.sheet_done"), out.display()));
     }
 }
 
