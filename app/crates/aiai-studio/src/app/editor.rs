@@ -257,6 +257,18 @@ pub(crate) enum SelMode {
     Rect,
     Lasso,
     Ellipse,
+    /// Varinha mágica: região contígua de cor parecida (pixels da camada ativa).
+    Wand,
+}
+
+/// Máscara da varinha (calculada pelo motor no clique) e a caixa dela.
+#[derive(Debug)]
+pub(crate) struct WandMask {
+    pub w: u32,
+    pub h: u32,
+    pub cov: Vec<f32>,
+    pub bbox: [f32; 4],
+    pub tolerance: f32,
 }
 
 /// Seleção atual (em pixels do desenho) e o deslocamento ainda não aplicado (Enter aplica, Esc cancela).
@@ -268,10 +280,41 @@ pub(crate) struct Selection {
     pub offset: Vec2,
     /// Sem seleção de verdade: o Mover leva o conteúdo inteiro da camada.
     pub whole: bool,
+    /// Alças do Mover: escala e rotação (graus, horário) em volta do centro original, ainda não aplicadas.
+    pub scale: f32,
+    pub rotate: f32,
+    /// Varinha: máscara da região.
+    pub mask: Option<std::sync::Arc<WandMask>>,
 }
 
 impl Selection {
+    pub(crate) fn new(mode: SelMode, pts: Vec<Vec2>, whole: bool) -> Self {
+        Selection { mode, pts, offset: Vec2::ZERO, whole, scale: 1.0, rotate: 0.0, mask: None }
+    }
+
+    /// Centro da caixa da seleção (pivô da escala e da rotação), antes do deslocamento.
+    pub(crate) fn center(&self) -> Vec2 {
+        self.rect_of().map(|r| Vec2::new(r[0] + r[2] / 2.0, r[1] + r[3] / 2.0)).unwrap_or(Vec2::ZERO)
+    }
+
+    /// Transformação pendente (escala e rotação em volta do centro, depois o deslocamento).
+    pub(crate) fn affine(&self) -> aiai_paint::Affine {
+        let c = self.center();
+        aiai_paint::Affine::from_trs(self.offset.x, self.offset.y, self.scale, self.rotate, [c.x, c.y])
+    }
+
+    pub(crate) fn map(&self, p: Vec2) -> Vec2 {
+        let (x, y) = self.affine().apply(p.x, p.y);
+        Vec2::new(x, y)
+    }
+
+    pub(crate) fn is_identity(&self) -> bool {
+        self.offset == Vec2::ZERO && (self.scale - 1.0).abs() < 1e-4 && self.rotate.abs() < 1e-3
+    }
     pub(crate) fn rect_of(&self) -> Option<[f32; 4]> {
+        if let Some(m) = &self.mask {
+            return (m.bbox[2] > 0.0 && m.bbox[3] > 0.0).then_some(m.bbox);
+        }
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for p in &self.pts {
             x0 = x0.min(p.x);
@@ -288,6 +331,7 @@ impl Selection {
             SelMode::Rect => self.rect_of().map(|rect| SelectShape::Rect { rect }),
             SelMode::Ellipse => self.rect_of().map(|rect| SelectShape::Ellipse { rect }),
             SelMode::Lasso => (self.pts.len() >= 3).then(|| SelectShape::Lasso { points: self.pts.iter().map(|p| [p.x, p.y]).collect() }),
+            SelMode::Wand => self.pts.first().zip(self.mask.as_ref()).map(|(p, m)| SelectShape::Wand { seed: [p.x, p.y], tolerance: m.tolerance, gap: 0.0 }),
         }
     }
 
@@ -300,15 +344,39 @@ impl Selection {
                 dx * dx + dy * dy <= 1.0
             }),
             SelMode::Lasso => point_in_polygon(p, &self.pts),
+            SelMode::Wand => self.mask.as_ref().is_some_and(|m| {
+                let (x, y) = (p.x.floor() as i64, p.y.floor() as i64);
+                x >= 0 && y >= 0 && (x as u32) < m.w && (y as u32) < m.h && m.cov[(y as u32 * m.w + x as u32) as usize] >= 0.5
+            }),
         }
     }
 
-    /// Aplica o deslocamento às coordenadas (depois de um Enter).
+    /// Aplica a transformação pendente às coordenadas (depois de um Enter). Com escala/rotação, retângulo, elipse e
+    /// varinha viram laço (o contorno transformado).
     pub(crate) fn bake_offset(&mut self) {
-        for p in &mut self.pts {
-            *p += self.offset;
+        if (self.scale - 1.0).abs() < 1e-4 && self.rotate.abs() < 1e-3 && self.mask.is_none() {
+            for p in &mut self.pts {
+                *p += self.offset;
+            }
+        } else {
+            let outline: Vec<Vec2> = match (self.mode, self.rect_of()) {
+                (SelMode::Lasso, _) => self.pts.clone(),
+                (SelMode::Ellipse, Some(r)) => (0..48)
+                    .map(|i| {
+                        let a = i as f32 / 48.0 * std::f32::consts::TAU;
+                        Vec2::new(r[0] + r[2] / 2.0 * (1.0 + a.cos()), r[1] + r[3] / 2.0 * (1.0 + a.sin()))
+                    })
+                    .collect(),
+                (_, Some(r)) => vec![Vec2::new(r[0], r[1]), Vec2::new(r[0] + r[2], r[1]), Vec2::new(r[0] + r[2], r[1] + r[3]), Vec2::new(r[0], r[1] + r[3])],
+                _ => self.pts.clone(),
+            };
+            self.pts = outline.into_iter().map(|p| self.map(p)).collect();
+            self.mode = SelMode::Lasso;
+            self.mask = None;
         }
         self.offset = Vec2::ZERO;
+        self.scale = 1.0;
+        self.rotate = 0.0;
     }
 }
 
@@ -353,6 +421,8 @@ pub(crate) struct ToolOptions {
     /// Balde fecha as frestas em volta (regiões sem tinta de até `LEFTOVER_PX`) com a cor que as cerca.
     pub fill_close_leftovers: bool,
     pub select_mode: SelMode,
+    /// Tolerância de cor da varinha (0..1).
+    pub wand_tolerance: f32,
 }
 
 impl Default for ToolOptions {
@@ -375,6 +445,7 @@ impl Default for ToolOptions {
             fill_expand: 2,
             fill_close_leftovers: false,
             select_mode: SelMode::Rect,
+            wand_tolerance: 0.12,
         }
     }
 }
@@ -423,6 +494,10 @@ pub(crate) enum Gesture {
     Stroke(Box<StrokeGesture>),
     Select { start: Vec2, pts: Vec<Vec2>, mode: SelMode },
     MoveSel { last: Vec2 },
+    /// Alça de canto do Mover: escala em volta do centro.
+    ScaleSel { start_dist: f32, start_scale: f32 },
+    /// Alça de rotação do Mover.
+    RotateSel { start_angle: f32, start_rot: f32 },
     /// Conta-gotas: amostra ao apertar e enquanto arrasta.
     Eyedrop,
     /// Balde: o clique age ao soltar.
@@ -850,17 +925,17 @@ mod tests {
 
     #[test]
     fn selection_contains_and_shapes() {
-        let mut sel = Selection { mode: SelMode::Rect, pts: vec![Vec2::new(10.0, 10.0), Vec2::new(50.0, 40.0)], offset: Vec2::ZERO, whole: false };
+        let mut sel = Selection::new(SelMode::Rect, vec![Vec2::new(10.0, 10.0), Vec2::new(50.0, 40.0)], false);
         assert!(sel.contains(Vec2::new(30.0, 20.0)) && !sel.contains(Vec2::new(60.0, 20.0)));
         assert!(matches!(sel.shape(), Some(aiai_paint::select::SelectShape::Rect { .. })));
         sel.offset = Vec2::new(5.0, 0.0);
         sel.bake_offset();
         assert!(sel.contains(Vec2::new(54.0, 20.0)) && sel.offset == Vec2::ZERO);
-        let tri = Selection { mode: SelMode::Lasso, pts: vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0), Vec2::new(50.0, 100.0)], offset: Vec2::ZERO, whole: false };
+        let tri = Selection::new(SelMode::Lasso, vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 0.0), Vec2::new(50.0, 100.0)], false);
         assert!(tri.contains(Vec2::new(50.0, 30.0)) && !tri.contains(Vec2::new(5.0, 90.0)));
-        let el = Selection { mode: SelMode::Ellipse, pts: vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 50.0)], offset: Vec2::ZERO, whole: false };
+        let el = Selection::new(SelMode::Ellipse, vec![Vec2::new(0.0, 0.0), Vec2::new(100.0, 50.0)], false);
         assert!(el.contains(Vec2::new(50.0, 25.0)) && !el.contains(Vec2::new(2.0, 2.0)));
-        let degenerate = Selection { mode: SelMode::Lasso, pts: vec![Vec2::ZERO, Vec2::new(1.0, 1.0)], offset: Vec2::ZERO, whole: false };
+        let degenerate = Selection::new(SelMode::Lasso, vec![Vec2::ZERO, Vec2::new(1.0, 1.0)], false);
         assert!(degenerate.shape().is_none());
     }
 

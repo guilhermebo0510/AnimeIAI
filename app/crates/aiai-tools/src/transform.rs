@@ -133,6 +133,21 @@ pub fn stroke_in_selection(s: &Stroke, inside: impl Fn(f32, f32) -> bool) -> boo
     n * 2 >= s.points.len()
 }
 
+/// Imagem que a varinha mágica e a faixa de cor leem: os pixels do cel raster, ou a camada vetorial renderizada
+/// (o cel vetorial não tem tiles).
+pub fn selection_reference(p: &Project, blobs: &BlobStore, cut_id: &Id, layer_id: &Id, frame: u32) -> ToolResult<Image> {
+    let cut = cut_data(p, cut_id)?;
+    let layer = layer_data(p, layer_id)?;
+    let (w, h) = canvas_size(p, cut);
+    if layer.kind == LayerType::Vector {
+        let opts = aiai_render::RenderOptions { only_layers: Some(vec![layer_id.clone()]), camera: false, layer_motion: false, ..Default::default() };
+        return Ok(aiai_render::render_frame(p, blobs, cut_id, frame, &opts).map_err(|e| ToolError::Render(e.to_string()))?.image);
+    }
+    let node = exposed_cel(p, cut, layer_id, frame).ok_or_else(|| ToolError::Invalid(format!("a camada não expõe cel no quadro {frame}")))?;
+    let NodeKind::Cel(cel) = &node.data else { unreachable!() };
+    cel_raster(blobs, cel, w, h)
+}
+
 pub fn transform_command(p: &Project, blobs: &mut BlobStore, req: &TransformRequest) -> ToolResult<Command> {
     let cut = cut_data(p, &req.cut)?;
     let layer = layer_data(p, &req.layer)?;
@@ -144,7 +159,7 @@ pub fn transform_command(p: &Project, blobs: &mut BlobStore, req: &TransformRequ
     let (w, h) = canvas_size(p, cut);
     let sel = match &req.selection {
         Some(shape) => {
-            let reference = if matches!(shape, SelectShape::Wand { .. } | SelectShape::ColorRange { .. }) { Some(cel_raster(blobs, cel, w, h)?) } else { None };
+            let reference = if matches!(shape, SelectShape::Wand { .. } | SelectShape::ColorRange { .. }) { Some(selection_reference(p, blobs, &req.cut, &req.layer, req.frame)?) } else { None };
             Some(Selection::from_shape(shape, w, h, reference.as_ref()).map_err(ToolError::Invalid)?)
         }
         None => None,

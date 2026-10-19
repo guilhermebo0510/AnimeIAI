@@ -486,7 +486,7 @@ fn vector_eraser_whole_segment_and_up_to_intersection() {
         let vl = create(&mut s, Some(&cut), "V", NodeKind::Layer(LayerData::new(LayerType::Vector)));
         let cel = create(&mut s, Some(&vl), "1", NodeKind::Cel(CelData::new(1)));
         let ink = ColorRef::Direct { rgba: Rgba::BLACK };
-        let mut line = |pts: &[[f32; 3]]| {
+        let line = |pts: &[[f32; 3]]| {
             let mut c = curve(pts, 3.0, &ink, false);
             c.geometry = serde_json::from_value(json!("polyline")).unwrap();
             c

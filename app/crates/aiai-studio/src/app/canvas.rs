@@ -423,9 +423,27 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
                         tools::do_eyedrop(env, c);
                         env.ed.gesture = Gesture::Eyedrop;
                     }
+                    ToolId::Lasso if env.ed.opts.select_mode == SelMode::Wand => {
+                        tools::wand_select(env, c);
+                    }
                     ToolId::Lasso => env.ed.gesture = Gesture::Select { start: c, pts: vec![c], mode: env.ed.opts.select_mode },
                     ToolId::Move => {
-                        if tools::begin_move(env) {
+                        // alças da seleção: cantos escalam, a de cima gira; fora delas, mover
+                        let hit = env.ed.selection.as_ref().filter(|s| !s.whole).and_then(|s| {
+                            let (corners, knob, center) = handles(s);
+                            let near = |q: Vec2| (xf.to_screen(q) - pos).length() <= 9.0;
+                            if near(knob) {
+                                let d = c - center;
+                                Some(Gesture::RotateSel { start_angle: d.y.atan2(d.x).to_degrees(), start_rot: s.rotate })
+                            } else if corners.iter().any(|q| near(*q)) {
+                                Some(Gesture::ScaleSel { start_dist: (c - center).length().max(1.0), start_scale: s.scale })
+                            } else {
+                                None
+                            }
+                        });
+                        if let Some(g) = hit {
+                            env.ed.gesture = g;
+                        } else if tools::begin_move(env) {
                             env.ed.gesture = Gesture::MoveSel { last: c };
                         }
                     }
@@ -482,6 +500,18 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
                 s.offset += d;
             }
         }
+        Gesture::ScaleSel { start_dist, start_scale } => {
+            if let Some(s) = env.ed.selection.as_mut() {
+                let center = s.center() + s.offset;
+                s.scale = (*start_scale * (c - center).length() / *start_dist).clamp(0.05, 20.0);
+            }
+        }
+        Gesture::RotateSel { start_angle, start_rot } => {
+            if let Some(s) = env.ed.selection.as_mut() {
+                let d = c - (s.center() + s.offset);
+                s.rotate = *start_rot + d.y.atan2(d.x).to_degrees() - *start_angle;
+            }
+        }
         Gesture::Eyedrop => tools::do_eyedrop(env, c),
         Gesture::FillClick => {}
     }
@@ -512,7 +542,7 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
             }
             tools::finish_select(env, mode, start, pts);
         }
-        Gesture::MoveSel { .. } => {}
+        Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } => {}
         Gesture::Eyedrop => tools::do_eyedrop(env, c),
         Gesture::FillClick => tools::do_fill(env, c, at),
     }
@@ -693,8 +723,23 @@ fn two_tone(painter: &egui::Painter, pts: Vec<Pos2>, closed: bool) {
     painter.extend(Shape::dashed_line(&pts, Stroke::new(1.2, Color32::WHITE), 5.0, 4.0));
 }
 
+/// Cantos (transformados), alça de rotação e centro (transformado) da seleção, em coordenadas do canvas.
+fn handles(s: &Selection) -> ([Vec2; 4], Vec2, Vec2) {
+    let r = s.rect_of().unwrap_or([0.0, 0.0, 0.0, 0.0]);
+    let corners = [Vec2::new(r[0], r[1]), Vec2::new(r[0] + r[2], r[1]), Vec2::new(r[0] + r[2], r[1] + r[3]), Vec2::new(r[0], r[1] + r[3])].map(|q| s.map(q));
+    let top = s.map(Vec2::new(r[0] + r[2] / 2.0, r[1]));
+    let center = s.map(Vec2::new(r[0] + r[2] / 2.0, r[1] + r[3] / 2.0));
+    let up = (top - center).normalized();
+    let knob = top + up * (r[3].max(r[2]) * 0.08).max(18.0);
+    (corners, knob, center)
+}
+
 fn selection_outline(sel_mode: SelMode, pts: &[Vec2], off: Vec2, xf: &Xf) -> Vec<Pos2> {
-    let to = |p: Vec2| xf.to_screen(p + off);
+    selection_outline_map(sel_mode, pts, |p| p + off, xf)
+}
+
+fn selection_outline_map(sel_mode: SelMode, pts: &[Vec2], map: impl Fn(Vec2) -> Vec2, xf: &Xf) -> Vec<Pos2> {
+    let to = |p: Vec2| xf.to_screen(map(p));
     match sel_mode {
         SelMode::Lasso => pts.iter().map(|p| to(*p)).collect(),
         _ => {
@@ -705,7 +750,7 @@ fn selection_outline(sel_mode: SelMode, pts: &[Vec2], off: Vec2, xf: &Xf) -> Vec
                 x1 = x1.max(p.x);
                 y1 = y1.max(p.y);
             }
-            if sel_mode == SelMode::Rect {
+            if sel_mode == SelMode::Rect || sel_mode == SelMode::Wand {
                 vec![to(Vec2::new(x0, y0)), to(Vec2::new(x1, y0)), to(Vec2::new(x1, y1)), to(Vec2::new(x0, y1))]
             } else {
                 let (cx, cy, rx, ry) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0, (x1 - x0) / 2.0, (y1 - y0) / 2.0);
@@ -720,9 +765,26 @@ fn selection_outline(sel_mode: SelMode, pts: &[Vec2], off: Vec2, xf: &Xf) -> Vec
 
 fn paint_selection(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId) {
     let Some(sel) = env.ed.selection.clone() else { return };
-    two_tone(painter, selection_outline(sel.mode, &sel.pts, sel.offset, xf), true);
-    // prévia do movimento: os traços que vão junto, deslocados (camada raster mostra só o contorno)
-    if sel.offset != Vec2::ZERO {
+    // varinha: o contorno é a caixa da região
+    let outline_pts: Vec<Vec2> = match (sel.mode, sel.rect_of()) {
+        (SelMode::Wand, Some(r)) => vec![Vec2::new(r[0], r[1]), Vec2::new(r[0] + r[2], r[1] + r[3])],
+        _ => sel.pts.clone(),
+    };
+    two_tone(painter, selection_outline_map(sel.mode, &outline_pts, |p| sel.map(p), xf), true);
+    // alças do Mover (cantos: escala; círculo de cima: rotação)
+    if *env.tool == ToolId::Move && !sel.whole {
+        let (corners, knob, _) = handles(&sel);
+        for q in corners {
+            let p = xf.to_screen(q);
+            painter.rect(Rect::from_center_size(p, egui::vec2(9.0, 9.0)), 1.0, Color32::WHITE, Stroke::new(1.5, env.t.accent), egui::StrokeKind::Inside);
+        }
+        let top_mid = xf.to_screen((corners[0] + corners[1]) / 2.0);
+        let kp = xf.to_screen(knob);
+        painter.line_segment([top_mid, kp], Stroke::new(1.0, env.t.accent));
+        painter.circle(kp, 5.5, Color32::WHITE, Stroke::new(1.5, env.t.accent));
+    }
+    // prévia do movimento: os traços que vão junto, transformados (camada raster mostra só o contorno)
+    if !sel.is_identity() {
         let Some(layer) = env.ed.layer.clone() else { return };
         if cmds::layer_data(&env.core.project, &layer).is_none_or(|l| l.kind != LayerType::Vector) {
             return;
@@ -734,9 +796,9 @@ fn paint_selection(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId
             if !sel.whole && !aiai_tools::transform::stroke_in_selection(s, |x, y| sel.contains(Vec2::new(x, y))) {
                 continue;
             }
-            let pts: Vec<Pos2> = s.points.iter().map(|p| xf.to_screen(Vec2::new(p.x, p.y) + sel.offset)).collect();
+            let pts: Vec<Pos2> = s.points.iter().map(|p| xf.to_screen(sel.map(Vec2::new(p.x, p.y)))).collect();
             if pts.len() >= 2 {
-                painter.add(Shape::line(pts, Stroke::new((s.width * xf.scale).max(1.0), accent.gamma_multiply(0.7))));
+                painter.add(Shape::line(pts, Stroke::new((s.width * sel.scale * xf.scale).max(1.0), accent.gamma_multiply(0.7))));
             }
         }
     }

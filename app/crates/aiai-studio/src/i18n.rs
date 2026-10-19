@@ -133,6 +133,8 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("menu.file.save", "Salvar", "Save"),
     ("menu.file.save_as", "Salvar como", "Save as"),
     ("menu.file.export", "Exportar", "Export"),
+    ("sel.wand", "Varinha mágica", "Magic wand"),
+    ("opt.wand_tolerance", "Tolerância", "Tolerance"),
     ("opt.eraser_mode", "Vetor", "Vector"),
     ("opt.eraser_mode.tip", "Como a borracha apaga em camada vetorial", "How the eraser works on a vector layer"),
     ("opt.erase_segment", "Trecho tocado", "Touched part"),

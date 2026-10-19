@@ -453,7 +453,7 @@ pub(crate) fn finish_select(env: &mut Env, mode: SelMode, start: Vec2, pts: Vec<
             vec![start, end]
         }
     };
-    let sel = Selection { mode, pts, offset: Vec2::ZERO, whole: false };
+    let sel = Selection::new(mode, pts, false);
     // um clique sem arrastar limpa a seleção
     env.ed.selection = sel.shape().filter(|_| sel.rect_of().is_some_and(|r| r[2] >= 2.0 && r[3] >= 2.0)).map(|_| sel);
 }
@@ -463,35 +463,77 @@ pub(crate) fn begin_move(env: &mut Env) -> bool {
     let Some(t) = target(env, &[LayerType::Vector, LayerType::Raster], "err.move_layer") else { return false };
     if env.ed.selection.is_none() {
         let (w, h) = cmds::canvas_size(&env.core.project, &t.cut);
-        env.ed.selection = Some(Selection { mode: SelMode::Rect, pts: vec![Vec2::ZERO, Vec2::new(w as f32, h as f32)], offset: Vec2::ZERO, whole: true });
+        env.ed.selection = Some(Selection::new(SelMode::Rect, vec![Vec2::ZERO, Vec2::new(w as f32, h as f32)], true));
     }
     true
 }
 
 pub(crate) fn has_pending_move(ed: &Editor) -> bool {
-    ed.selection.as_ref().is_some_and(|s| s.offset != Vec2::ZERO)
+    ed.selection.as_ref().is_some_and(|s| !s.is_identity())
+}
+
+/// Varinha mágica: a região contígua de cor parecida em volta do clique, nos pixels da camada ativa.
+pub(crate) fn wand_select(env: &mut Env, p: Vec2) {
+    let Some(t) = target(env, &[LayerType::Vector, LayerType::Raster], "err.move_layer") else { return };
+    let (w, h) = cmds::canvas_size(&env.core.project, &t.cut);
+    let tolerance = env.ed.opts.wand_tolerance.clamp(0.0, 1.0);
+    let shape = aiai_paint::select::SelectShape::Wand { seed: [p.x, p.y], tolerance, gap: 0.0 };
+    let reference = match ttransform::selection_reference(&env.core.project, &env.core.blobs, &t.cut, &t.layer, t.frame) {
+        Ok(r) => r,
+        Err(e) => {
+            env.ed.notify(e.to_string());
+            return;
+        }
+    };
+    let sel = match aiai_paint::select::Selection::from_shape(&shape, w, h, Some(&reference)) {
+        Ok(s) => s,
+        Err(e) => {
+            env.ed.notify(e);
+            return;
+        }
+    };
+    let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0u32, 0u32);
+    for y in 0..h {
+        for x in 0..w {
+            if sel.cov[(y * w + x) as usize] >= 0.5 {
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x + 1);
+                y1 = y1.max(y + 1);
+            }
+        }
+    }
+    if x0 >= x1 {
+        env.ed.selection = None;
+        return;
+    }
+    let mut s = Selection::new(SelMode::Wand, vec![p], false);
+    s.mask = Some(std::sync::Arc::new(WandMask { w, h, cov: sel.cov, bbox: [x0 as f32, y0 as f32, (x1 - x0) as f32, (y1 - y0) as f32], tolerance }));
+    env.ed.selection = Some(s);
 }
 
 pub(crate) fn commit_move(env: &mut Env) {
     let released_at = Instant::now();
     let Some(sel) = env.ed.selection.clone() else { return };
-    if sel.offset == Vec2::ZERO {
+    if sel.is_identity() {
         return;
     }
+    let plain = (sel.scale - 1.0).abs() < 1e-4 && sel.rotate.abs() < 1e-3;
     let Some(t) = target(env, &[LayerType::Vector, LayerType::Raster], "err.move_layer") else { return };
     let mut off = sel.offset;
-    if t.kind == LayerType::Raster {
+    if t.kind == LayerType::Raster && plain {
         off = Vec2::new(off.x.round(), off.y.round());
         if off == Vec2::ZERO {
             env.ed.selection.as_mut().map(|s| s.offset = Vec2::ZERO);
             return;
         }
     }
+    let c = sel.center();
     let req = ttransform::TransformRequest {
         cut: t.cut.clone(),
         frame: t.frame,
         layer: t.layer.clone(),
-        deform: ttransform::Deform::Affine { translate: [off.x, off.y], scale: [1.0, 1.0], rotate: 0.0, shear: [0.0, 0.0], pivot: [0.0, 0.0] },
+        deform: ttransform::Deform::Affine { translate: [off.x, off.y], scale: [sel.scale, sel.scale], rotate: sel.rotate, shear: [0.0, 0.0], pivot: [c.x, c.y] },
         selection: if sel.whole { None } else { sel.shape() },
         scale_width: true,
         strokes: Vec::new(),
@@ -513,8 +555,10 @@ pub(crate) fn commit_move(env: &mut Env) {
 
 pub(crate) fn cancel_move(ed: &mut Editor) {
     if let Some(s) = ed.selection.as_mut() {
-        if s.offset != Vec2::ZERO {
+        if !s.is_identity() {
             s.offset = Vec2::ZERO;
+            s.scale = 1.0;
+            s.rotate = 0.0;
             if s.whole {
                 ed.selection = None;
             }

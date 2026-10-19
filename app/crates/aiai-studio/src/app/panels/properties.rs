@@ -314,13 +314,18 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
                     SelMode::Rect => "sel.rect",
                     SelMode::Lasso => "sel.lasso",
                     SelMode::Ellipse => "sel.ellipse",
+                    SelMode::Wand => "sel.wand",
                 };
                 egui::ComboBox::from_id_salt(("sel_mode", compact)).width(110.0).selected_text(tr(label(o.select_mode))).show_ui(ui, |ui| {
-                    for m in [SelMode::Rect, SelMode::Lasso, SelMode::Ellipse] {
+                    for m in [SelMode::Rect, SelMode::Lasso, SelMode::Ellipse, SelMode::Wand] {
                         ui.selectable_value(&mut o.select_mode, m, tr(label(m)));
                     }
                 });
-            });
+            });            if o.select_mode == SelMode::Wand {
+                row(ui, &t, compact, "opt.wand_tolerance", |ui| {
+                    ui.add(egui::Slider::new(&mut o.wand_tolerance, 0.0..=0.6).max_decimals(2)).on_hover_text(tr("opt.wand_tolerance"));
+                });
+            }
         }
         ToolId::Move => {
             let pending = tools::has_pending_move(env.ed);
