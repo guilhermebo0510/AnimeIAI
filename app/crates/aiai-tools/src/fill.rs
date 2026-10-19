@@ -53,6 +53,8 @@ pub struct LineRegions {
     pub regions: Regions,
     pub width: u32,
     pub height: u32,
+    /// Pixels de linha (antes da expansão por baixo da linha).
+    pub boundary: Vec<bool>,
 }
 
 pub fn compute_regions(
@@ -71,7 +73,7 @@ pub fn compute_regions(
     let (w, h) = (out.image.width, out.image.height);
     let boundary = boundary_from_alpha(&out.image, params.line_threshold);
     let regions = label_regions(&boundary, w as usize, h as usize, params);
-    Ok(LineRegions { regions, width: w, height: h })
+    Ok(LineRegions { regions, width: w, height: h, boundary })
 }
 
 /// Gera o comando que pinta as regiões das sementes. Regiões já pintadas que contêm a semente são substituídas.
@@ -128,26 +130,32 @@ fn leftover_fills(blobs: &mut BlobStore, lr: &LineRegions, fills: &[FillRegion],
             }
         }
     }
-    let areas = lr.regions.areas();
     let border = lr.regions.touches_border();
     let n = lr.regions.count as usize + 1;
     let mut covered = vec![0usize; n];
     let mut pixels: Vec<Vec<usize>> = vec![Vec::new(); n];
+    // tamanho e cobertura contam só o miolo (sem a faixa que a expansão pôs por baixo da linha), como o lint
+    let mut inner = vec![0usize; n];
+    for (i, &l) in labels.iter().enumerate() {
+        if l != 0 && !lr.boundary[i] {
+            inner[l as usize] += 1;
+        }
+    }
     for (i, &l) in labels.iter().enumerate() {
         let l = l as usize;
-        if l == 0 {
+        if l == 0 || lr.boundary[i] {
             continue;
         }
         if owner[i] >= 0 {
             covered[l] += 1;
         }
-        if areas[l] <= max_area && !border[l] {
+        if inner[l] <= max_area && !border[l] {
             pixels[l].push(i);
         }
     }
     let mut out = Vec::new();
     for l in 1..n {
-        if pixels[l].is_empty() || covered[l] * 2 >= areas[l] {
+        if pixels[l].is_empty() || covered[l] * 2 >= inner[l] {
             continue;
         }
         // dilatação em anéis a partir da fresta; conta os donos achados fora dela
