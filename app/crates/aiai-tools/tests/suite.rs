@@ -393,3 +393,39 @@ fn close_leftovers_fills_only_small_gaps_with_the_surrounding_color() {
     assert!(after.unpainted.iter().all(|r| r.area > 600), "só a grande sobra no lint: {:?}", after.unpainted);
     assert_eq!(after.unpainted.len(), 1);
 }
+
+#[test]
+fn local_tile_painting_matches_full_canvas_painting() {
+    use aiai_paint::brush::{BrushPoint, BrushPreset, paint_stroke};
+    use aiai_tools::paint::{PaintRequest, PaintStrokeSpec, cel_raster, paint_command};
+    let mut s = CoreSession::for_tests("local-paint");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 900, "height": 500}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = create(&mut s, Some(&sc), "C", NodeKind::Cut(CutData::new(4)));
+    let rl = create(&mut s, Some(&cut), "R", NodeKind::Layer(LayerData::new(LayerType::Raster)));
+    let cel = create(&mut s, Some(&rl), "1", NodeKind::Cel(CelData::new(1)));
+    let red = ColorRef::Direct { rgba: Rgba::from_hex("#c02020").unwrap() };
+    let base = PaintRequest { cut: cut.clone(), frame: 0, layer: rl.clone(), preset: BrushPreset::round("b", 80.0, 0.9), color: red,
+        strokes: vec![PaintStrokeSpec { points: vec![vec![20.0, 250.0], vec![880.0, 260.0]], smooth: false }], seed: 3 };
+    let c = paint_command(&s.project, &mut s.blobs, &base).unwrap();
+    s.apply(c).unwrap();
+    for name in ["Aquarela", "Borrador", "Guache seco", "Folhagem"] {
+        let preset = BrushPreset::defaults().into_iter().find(|p| p.name == name).unwrap();
+        let pts = vec![vec![300.0, 200.0, 0.8], vec![360.0, 260.0, 1.0], vec![420.0, 300.0, 0.6]];
+        // esperado: o motor no canvas inteiro
+        let cd = match &s.project.node(&cel).unwrap().data { NodeKind::Cel(c) => c.clone(), _ => unreachable!() };
+        let mut expect = cel_raster(&s.blobs, &cd, 900, 500).unwrap();
+        let path: Vec<BrushPoint> = pts.iter().map(|q| BrushPoint { x: q[0], y: q[1], pressure: q[2] }).collect();
+        paint_stroke(&mut expect, &preset, &path, [0.1, 0.4, 0.2, 1.0], 11);
+        // pelo comando (recorte nos tiles tocados)
+        let req = PaintRequest { cut: cut.clone(), frame: 0, layer: rl.clone(), preset, color: ColorRef::Direct { rgba: Rgba([0.1, 0.4, 0.2, 1.0]) },
+            strokes: vec![PaintStrokeSpec { points: pts, smooth: false }], seed: 11 };
+        let c = paint_command(&s.project, &mut s.blobs, &req).unwrap();
+        s.apply(c).unwrap();
+        let cd = match &s.project.node(&cel).unwrap().data { NodeKind::Cel(c) => c.clone(), _ => unreachable!() };
+        let got = cel_raster(&s.blobs, &cd, 900, 500).unwrap();
+        let max = got.data.iter().zip(&expect.data).map(|(a, b)| (0..4).map(|k| (a[k] - b[k]).abs()).fold(0.0f32, f32::max)).fold(0.0f32, f32::max);
+        assert!(max < 2e-3, "{name}: recorte local = canvas inteiro (diferença máx {max})");
+    }
+}

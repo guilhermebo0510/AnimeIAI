@@ -50,27 +50,28 @@ pub fn boundary_from_color(img: &Image, seed: (u32, u32), tolerance: f32) -> Vec
 
 /// Distância euclidiana de cada pixel até o pixel de fronteira mais próximo (0 na fronteira; INF se não há fronteira).
 pub fn distance_to_boundary(boundary: &[bool], w: usize, h: usize) -> Vec<f32> {
+    use rayon::prelude::*;
     const INF: f32 = 1e20;
-    let mut f: Vec<f32> = boundary.iter().map(|&b| if b { 0.0 } else { INF }).collect();
-    let mut tmp_in = vec![0.0f32; w.max(h)];
-    let mut tmp_out = vec![0.0f32; w.max(h)];
-    // colunas
-    for x in 0..w {
-        for y in 0..h {
-            tmp_in[y] = f[y * w + x];
+    let f: Vec<f32> = boundary.iter().map(|&b| if b { 0.0 } else { INF }).collect();
+    // colunas (em paralelo, cada coluna numa lista contígua), depois linhas (em paralelo)
+    let cols: Vec<Vec<f32>> = (0..w)
+        .into_par_iter()
+        .map(|x| {
+            let tmp_in: Vec<f32> = (0..h).map(|y| f[y * w + x]).collect();
+            let mut out = vec![0.0f32; h];
+            edt_1d(&tmp_in, &mut out);
+            out
+        })
+        .collect();
+    let mut g = vec![0.0f32; w * h];
+    g.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
+        let tmp_in: Vec<f32> = (0..w).map(|x| cols[x][y]).collect();
+        edt_1d(&tmp_in, row);
+        for v in row.iter_mut() {
+            *v = if *v >= INF * 0.5 { f32::INFINITY } else { v.sqrt() };
         }
-        edt_1d(&tmp_in[..h], &mut tmp_out[..h]);
-        for y in 0..h {
-            f[y * w + x] = tmp_out[y];
-        }
-    }
-    // linhas
-    for y in 0..h {
-        tmp_in[..w].copy_from_slice(&f[y * w..(y + 1) * w]);
-        edt_1d(&tmp_in[..w], &mut tmp_out[..w]);
-        f[y * w..(y + 1) * w].copy_from_slice(&tmp_out[..w]);
-    }
-    f.into_iter().map(|v| if v >= INF * 0.5 { f32::INFINITY } else { v.sqrt() }).collect()
+    });
+    g
 }
 
 /// Transformada de distância quadrática 1D (envelope inferior de parábolas; Felzenszwalb & Huttenlocher 2012), em f64

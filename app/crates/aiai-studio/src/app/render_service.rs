@@ -5,7 +5,7 @@
 
 use super::commands::NodeId;
 use aiai_core::{BlobStore, Project};
-use aiai_render::{RenderOptions, render_frame};
+use aiai_render::{FrameCache, RenderOptions, render_frame_cached};
 use egui::{Color32, ColorImage};
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
@@ -209,6 +209,8 @@ impl Drop for RenderService {
 }
 
 fn worker(shared: Arc<Shared>, tx: crossbeam_channel::Sender<Done>, ctx: egui::Context) {
+    // foto do composto abaixo da camada em edição: as camadas de baixo não são recompostas a cada traço
+    let mut cache = FrameCache::default();
     loop {
         let job = {
             let mut q = shared.q.lock().expect("fila");
@@ -225,11 +227,14 @@ fn worker(shared: Arc<Shared>, tx: crossbeam_channel::Sender<Done>, ctx: egui::C
         };
         let t0 = Instant::now();
         let key = job.key.clone();
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| render_job(&job, t0)));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| render_job(&job, t0, &mut cache)));
         let done: Done = match result {
             Ok(Ok(r)) => Ok(r),
             Ok(Err(e)) => Err((key, e)),
-            Err(_) => Err((key, "o render do canvas entrou em pânico".to_owned())),
+            Err(_) => {
+                cache = FrameCache::default(); // a foto pode ter ficado pela metade
+                Err((key, "o render do canvas entrou em pânico".to_owned()))
+            }
         };
         if let Ok(mut q) = shared.q.lock() {
             q.running = None;
@@ -241,10 +246,10 @@ fn worker(shared: Arc<Shared>, tx: crossbeam_channel::Sender<Done>, ctx: egui::C
     }
 }
 
-fn render_job(job: &Job, t0: Instant) -> Result<Rendered, String> {
+fn render_job(job: &Job, t0: Instant, cache: &mut FrameCache) -> Result<Rendered, String> {
     let k = &job.key;
     let opts = RenderOptions { include_guides: k.guides, include_reference: k.reference, only_layers: None, background: None, camera: false, layer_motion: true };
-    let out = render_frame(&job.snap.project, &job.snap.blobs, &k.cut, k.frame, &opts).map_err(|e| e.to_string())?;
+    let out = render_frame_cached(&job.snap.project, &job.snap.blobs, &k.cut, k.frame, &opts, cache).map_err(|e| e.to_string())?;
     let (w, h) = (out.image.width as usize, out.image.height as usize);
     let r = k.reduce.max(1) as usize;
     let (nw, nh) = (w.div_ceil(r), h.div_ceil(r));

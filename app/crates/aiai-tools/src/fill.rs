@@ -57,6 +57,37 @@ pub struct LineRegions {
     pub boundary: Vec<bool>,
 }
 
+/// Assinatura do que as regiões dependem: projeto, corte (timesheet), quadro, parâmetros e o conteúdo das camadas de
+/// linha (maior revisão na subárvore + número de traços/tiles e ids dos traços do cel exposto).
+fn regions_key(p: &Project, cut_id: &Id, frame: u32, line_layers: &[Id], params: &FillParams) -> String {
+    use std::fmt::Write;
+    let cut_rev = p.node(cut_id).map(|n| n.provenance.revision).unwrap_or(0);
+    let mut k = format!("{}|{}|{}|{}|{:?}|{}|{}|{}", p.name, cut_id, cut_rev, frame, (p.settings.width, p.settings.height), params.gap, params.expand, params.line_threshold);
+    for l in line_layers {
+        let mut rev = p.node(l).map(|n| n.provenance.revision).unwrap_or(0);
+        let (mut strokes, mut tiles, mut ids) = (0usize, 0usize, 0u64);
+        for d in p.subtree(l) {
+            if let Some(n) = p.node(&d) {
+                rev = rev.max(n.provenance.revision);
+                if let NodeKind::Cel(c) = &n.data {
+                    strokes += c.strokes.len();
+                    tiles += c.tiles.len();
+                    for s in &c.strokes {
+                        ids = ids.rotate_left(5) ^ s.id.0.bytes().fold(0u64, |a, b| a.wrapping_mul(131).wrapping_add(b as u64));
+                    }
+                }
+            }
+        }
+        let _ = write!(k, "|{l}:{rev}:{strokes}:{tiles}:{ids:x}");
+    }
+    k
+}
+
+type RegionsCache = std::sync::Mutex<Vec<(String, std::sync::Arc<LineRegions>)>>;
+static REGIONS_CACHE: std::sync::OnceLock<RegionsCache> = std::sync::OnceLock::new();
+
+/// Regiões delimitadas pelas linhas no quadro. As duas últimas ficam guardadas (balde e lint usam parâmetros
+/// diferentes): clicar várias vezes com o balde sem mexer na linha não refaz o render das linhas nem a distância.
 pub fn compute_regions(
     p: &Project,
     blobs: &BlobStore,
@@ -64,10 +95,32 @@ pub fn compute_regions(
     frame: u32,
     line_layers: &[Id],
     params: &FillParams,
-) -> ToolResult<LineRegions> {
+) -> ToolResult<std::sync::Arc<LineRegions>> {
     if line_layers.is_empty() {
         return Err(ToolError::Invalid("nenhuma camada de linha para delimitar o balde (defina line_refs ou line_layers)".into()));
     }
+    let key = regions_key(p, cut_id, frame, line_layers, params);
+    let cache = REGIONS_CACHE.get_or_init(Default::default);
+    if let Some(hit) = cache.lock().ok().and_then(|c| c.iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone())) {
+        return Ok(hit);
+    }
+    let lr = std::sync::Arc::new(compute_regions_uncached(p, blobs, cut_id, frame, line_layers, params)?);
+    if let Ok(mut c) = cache.lock() {
+        c.retain(|(k, _)| *k != key);
+        c.insert(0, (key, lr.clone()));
+        c.truncate(2);
+    }
+    Ok(lr)
+}
+
+fn compute_regions_uncached(
+    p: &Project,
+    blobs: &BlobStore,
+    cut_id: &Id,
+    frame: u32,
+    line_layers: &[Id],
+    params: &FillParams,
+) -> ToolResult<LineRegions> {
     let opts = RenderOptions { only_layers: Some(line_layers.to_vec()), include_guides: false, include_reference: false, background: None, camera: false, layer_motion: false };
     let out = render_frame(p, blobs, cut_id, frame, &opts).map_err(|e| ToolError::Render(e.to_string()))?;
     let (w, h) = (out.image.width, out.image.height);

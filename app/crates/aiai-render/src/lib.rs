@@ -4,4 +4,4 @@
 pub mod compose;
 pub use aiai_paint::blend;
 
-pub use compose::{RenderError, RenderOptions, RenderOutput, Renderer, cut_canvas, render_frame};
+pub use compose::{FrameCache, RenderError, RenderOptions, RenderOutput, Renderer, cut_canvas, render_frame, render_frame_cached};

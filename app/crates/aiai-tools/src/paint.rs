@@ -3,7 +3,7 @@
 use crate::context::*;
 use aiai_core::command::TileEdit;
 use aiai_core::*;
-use aiai_paint::brush::{BrushPoint, BrushPreset, BrushTip, GradientKind, gradient_fill, paint_stroke};
+use aiai_paint::brush::{BrushPoint, BrushPreset, BrushTip, GradientKind, gradient_fill, paint_stroke_at};
 use aiai_paint::{Image, Mask, tile};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -75,8 +75,31 @@ pub fn cel_raster(blobs: &BlobStore, cel: &CelData, w: u32, h: u32) -> ToolResul
     Ok(img)
 }
 
+/// Recorte do cel na caixa [x0, y0, x1, y1) do canvas (alinhada aos tiles): só os tiles que tocam a caixa são
+/// decodificados. Num 4K com o cel cheio, decodificar tudo para um retoque de 60 px custava ~130 MB e dezenas de ms.
+pub fn cel_raster_region(blobs: &BlobStore, cel: &CelData, bounds: [i32; 4]) -> ToolResult<Image> {
+    let ts = TILE_SIZE as i32;
+    let (w, h) = ((bounds[2] - bounds[0]).max(0) as u32, (bounds[3] - bounds[1]).max(0) as u32);
+    let mut img = Image::new(w, h);
+    for t in &cel.tiles {
+        let (tx0, ty0) = (t.x * ts, t.y * ts);
+        if tx0 >= bounds[2] || ty0 >= bounds[3] || tx0 + ts <= bounds[0] || ty0 + ts <= bounds[1] {
+            continue;
+        }
+        let b = blobs.get(&t.blob).ok_or_else(|| ToolError::NotFound(format!("blob do tile {} {}", t.x, t.y)))?;
+        let px = tile::decode_tile(&b).map_err(ToolError::Invalid)?;
+        tile::blit_tile(&mut img, &px, t.x, t.y, [bounds[0], bounds[1]]);
+    }
+    Ok(img)
+}
+
 /// Edições de tile para a região `bounds` [x0, y0, x1, y1) da imagem nova.
 pub fn tiles_for_region(blobs: &mut BlobStore, img: &Image, bounds: [i32; 4]) -> Vec<TileEdit> {
+    tiles_for_region_at(blobs, img, [0, 0], bounds)
+}
+
+/// Como [`tiles_for_region`], com `img` sendo um recorte do canvas que começa em `origin`.
+pub fn tiles_for_region_at(blobs: &mut BlobStore, img: &Image, origin: [i32; 2], bounds: [i32; 4]) -> Vec<TileEdit> {
     let ts = TILE_SIZE as i32;
     let mut edits = Vec::new();
     for ty in bounds[1].div_euclid(ts)..=((bounds[3] - 1).div_euclid(ts)) {
@@ -85,15 +108,15 @@ pub fn tiles_for_region(blobs: &mut BlobStore, img: &Image, bounds: [i32; 4]) ->
             let mut any = false;
             for row in 0..ts {
                 let y = ty * ts + row;
-                if y < 0 || y >= img.height as i32 {
+                if y < origin[1] || y >= origin[1] + img.height as i32 {
                     continue;
                 }
                 for col in 0..ts {
                     let x = tx * ts + col;
-                    if x < 0 || x >= img.width as i32 {
+                    if x < origin[0] || x >= origin[0] + img.width as i32 {
                         continue;
                     }
-                    let p = img.get(x as u32, y as u32);
+                    let p = img.get((x - origin[0]) as u32, (y - origin[1]) as u32);
                     if p[3] > 0.0 {
                         any = true;
                     }
@@ -182,15 +205,14 @@ mod spline_tests {
 pub fn paint_command(p: &Project, blobs: &mut BlobStore, req: &PaintRequest) -> ToolResult<Command> {
     req.preset.validate().map_err(ToolError::Invalid)?;
     let (node, cel, w, h) = raster_cel(p, &req.cut, &req.layer, req.frame)?;
-    let mut img = cel_raster(blobs, cel, w, h)?;
     let color = resolve_color(p, &req.color)?;
     let mut preset = req.preset.clone();
     if let BrushTip::Image { blob, mask } = &mut preset.tip {
         let b = blobs.get(blob).ok_or_else(|| ToolError::NotFound(format!("máscara da ponta {blob}")))?;
         *mask = Some(Mask::decode(&b).map_err(ToolError::Invalid)?);
     }
-    let mut bounds = [i32::MAX, i32::MAX, i32::MIN, i32::MIN];
-    for (k, s) in req.strokes.iter().enumerate() {
+    let mut paths = Vec::new();
+    for s in &req.strokes {
         let pts: Vec<BrushPoint> = s
             .points
             .iter()
@@ -200,15 +222,38 @@ pub fn paint_command(p: &Project, blobs: &mut BlobStore, req: &PaintRequest) -> 
                 _ => Err(ToolError::Invalid("cada ponto é [x, y] ou [x, y, pressão]".into())),
             })
             .collect::<ToolResult<_>>()?;
-        let path = if s.smooth { spline_path(&pts) } else { pts };
-        if let Some(r) = paint_stroke(&mut img, &preset, &path, color, req.seed.wrapping_add(k as u64 * 7919)) {
-            bounds = [bounds[0].min(r.bounds[0]), bounds[1].min(r.bounds[1]), bounds[2].max(r.bounds[2]), bounds[3].max(r.bounds[3])];
+        paths.push(if s.smooth { spline_path(&pts) } else { pts });
+    }
+    // caixa de tudo que os carimbos podem tocar (mesma margem do motor), alinhada aos tiles e presa no canvas
+    let max_r = preset.size * 0.5 * (1.0 + preset.size_jitter) + preset.scatter * preset.size + preset.dual.as_ref().map_or(0.0, |d| d.size * (0.5 + d.scatter)) + 2.0;
+    let mut bb = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+    for q in paths.iter().flatten() {
+        bb = [bb[0].min(q.x - max_r), bb[1].min(q.y - max_r), bb[2].max(q.x + max_r), bb[3].max(q.y + max_r)];
+    }
+    let ts = TILE_SIZE as i32;
+    let area = [
+        ((bb[0].floor() as i32).div_euclid(ts) * ts).max(0),
+        ((bb[1].floor() as i32).div_euclid(ts) * ts).max(0),
+        (((bb[2].ceil() as i32 + 1).div_euclid(ts) + 1) * ts).min(w as i32),
+        (((bb[3].ceil() as i32 + 1).div_euclid(ts) + 1) * ts).min(h as i32),
+    ];
+    if area[0] >= area[2] || area[1] >= area[3] {
+        return Err(ToolError::Invalid("o traço ficou fora do canvas".into()));
+    }
+    let origin = [area[0], area[1]];
+    let mut img = cel_raster_region(blobs, cel, area)?;
+    let mut bounds = [i32::MAX, i32::MAX, i32::MIN, i32::MIN];
+    for (k, path) in paths.iter().enumerate() {
+        let local: Vec<BrushPoint> = path.iter().map(|q| BrushPoint { x: q.x - origin[0] as f32, y: q.y - origin[1] as f32, pressure: q.pressure }).collect();
+        if let Some(r) = paint_stroke_at(&mut img, origin, &preset, &local, color, req.seed.wrapping_add(k as u64 * 7919)) {
+            let rb = [r.bounds[0] + origin[0], r.bounds[1] + origin[1], r.bounds[2] + origin[0], r.bounds[3] + origin[1]];
+            bounds = [bounds[0].min(rb[0]), bounds[1].min(rb[1]), bounds[2].max(rb[2]), bounds[3].max(rb[3])];
         }
     }
     if bounds[0] >= bounds[2] {
         return Err(ToolError::Invalid("o traço ficou fora do canvas".into()));
     }
-    Ok(Command::SetTiles { cel: node.id.clone(), tiles: tiles_for_region(blobs, &img, bounds) })
+    Ok(Command::SetTiles { cel: node.id.clone(), tiles: tiles_for_region_at(blobs, &img, origin, bounds) })
 }
 
 pub fn gradient_command(p: &Project, blobs: &mut BlobStore, req: &GradientRequest) -> ToolResult<Command> {

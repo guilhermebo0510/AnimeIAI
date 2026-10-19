@@ -512,6 +512,12 @@ pub struct PaintResult {
 
 /// Pinta um traço na `layer` (pré-multiplicada, tamanho do canvas). `color` = sRGB não pré-multiplicado com alfa.
 pub fn paint_stroke(layer: &mut Image, preset: &BrushPreset, path: &[BrushPoint], color: [f32; 4], seed: u64) -> Option<PaintResult> {
+    paint_stroke_at(layer, [0, 0], preset, path, color, seed)
+}
+
+/// Como [`paint_stroke`], com `layer` sendo um recorte do canvas que começa em `origin` (os pontos do caminho já vêm
+/// em coordenadas do recorte); só a textura do papel usa a posição absoluta, para o grão não andar com o recorte.
+pub fn paint_stroke_at(layer: &mut Image, origin: [i32; 2], preset: &BrushPreset, path: &[BrushPoint], color: [f32; 4], seed: u64) -> Option<PaintResult> {
     if path.is_empty() {
         return None;
     }
@@ -654,7 +660,7 @@ pub fn paint_stroke(layer: &mut Image, preset: &BrushPreset, path: &[BrushPoint]
                         continue;
                     }
                     if let Some(t) = &preset.texture {
-                        let tv = texture_value(t, x as f32, y as f32);
+                        let tv = texture_value(t, (x + origin[0]) as f32, (y + origin[1]) as f32);
                         a = match t.mode {
                             TextureMode::Multiply => a * (1.0 - t.depth + t.depth * tv),
                             TextureMode::Subtract => (a - (1.0 - tv) * t.depth).max(0.0),

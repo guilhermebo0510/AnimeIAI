@@ -142,7 +142,52 @@ pub fn cut_canvas(project: &Project, cut: &CutData) -> (u32, u32) {
     }
 }
 
+/// Cache de quadro do canvas: uma foto do composto ABAIXO da primeira camada (de topo) que mudou no último render.
+/// Enquanto o artista mexe numa camada, as de baixo não são recompostas. A assinatura de cada camada é a maior
+/// revisão de nó na subárvore dela (o núcleo carimba a revisão em todo nó afetado por um comando) mais a da camada
+/// de máscara; a chave global cobre corte (timesheet/câmera), quadro, opções, tamanho e paletas.
+#[derive(Default)]
+pub struct FrameCache {
+    key: Option<String>,
+    sigs: Vec<(Id, u64)>,
+    snap: Option<FrameSnap>,
+    /// Quantas camadas de topo o último render pulou por causa da foto (para medir/testar).
+    pub last_skipped: usize,
+}
+
+struct FrameSnap {
+    /// Índice da camada de topo ANTES da qual a foto foi tirada.
+    index: usize,
+    buf: Image,
+    clip_base: Option<Vec<f32>>,
+    warnings: Vec<String>,
+}
+
+fn subtree_revision(project: &Project, id: &Id) -> u64 {
+    let mut r = project.node(id).map(|n| n.provenance.revision).unwrap_or(0);
+    for d in project.subtree(id) {
+        if let Some(n) = project.node(&d) {
+            r = r.max(n.provenance.revision);
+            if let NodeKind::Layer(l) = &n.data {
+                if let Some(m) = &l.mask {
+                    r = r.max(subtree_revision(project, m));
+                }
+            }
+        }
+    }
+    r
+}
+
 pub fn render_frame(project: &Project, blobs: &BlobStore, cut_id: &Id, frame: u32, opts: &RenderOptions) -> Result<RenderOutput, RenderError> {
+    render_frame_impl(project, blobs, cut_id, frame, opts, None)
+}
+
+/// Como [`render_frame`], reaproveitando a foto do composto de baixo guardada em `cache` (mesmo resultado, pixel a pixel).
+pub fn render_frame_cached(project: &Project, blobs: &BlobStore, cut_id: &Id, frame: u32, opts: &RenderOptions, cache: &mut FrameCache) -> Result<RenderOutput, RenderError> {
+    render_frame_impl(project, blobs, cut_id, frame, opts, Some(cache))
+}
+
+fn render_frame_impl(project: &Project, blobs: &BlobStore, cut_id: &Id, frame: u32, opts: &RenderOptions, cache: Option<&mut FrameCache>) -> Result<RenderOutput, RenderError> {
     let cut_node = project.node(cut_id).ok_or_else(|| RenderError::NoCut(cut_id.clone()))?;
     let cut = match &cut_node.data {
         NodeKind::Cut(c) => c,
@@ -168,7 +213,42 @@ pub fn render_frame(project: &Project, blobs: &BlobStore, cut_id: &Id, frame: u3
         set
     });
     let mut buf = Image::new(out_w, out_h);
-    r.composite_children(&mut buf, &cut_node.children, cut, frame, opts, allowed.as_ref());
+    match cache.filter(|_| allowed.is_none()) {
+        None => r.composite_children(&mut buf, &cut_node.children, cut, frame, opts, allowed.as_ref()),
+        Some(cache) => {
+            let palettes: u64 = project.nodes.values().filter(|n| matches!(n.data, NodeKind::Palette(_))).map(|n| n.provenance.revision).max().unwrap_or(0);
+            let key = format!(
+                "{}|{}|{}|{}{}{}{}|{}x{}>{}x{}|{}|{:?}",
+                cut_id, cut_node.provenance.revision, frame, opts.include_guides as u8, opts.include_reference as u8, opts.camera as u8,
+                opts.layer_motion as u8, w, h, out_w, out_h, palettes, project.settings
+            );
+            let sigs: Vec<(Id, u64)> = cut_node.children.iter().map(|c| (c.clone(), subtree_revision(project, c))).collect();
+            let same_key = cache.key.as_deref() == Some(key.as_str());
+            let first_changed = if same_key { sigs.iter().zip(&cache.sigs).position(|(a, b)| a != b).unwrap_or(sigs.len().min(cache.sigs.len())) } else { 0 };
+            let first_changed = if same_key && sigs.len() == cache.sigs.len() { first_changed } else if same_key { first_changed.min(sigs.len().min(cache.sigs.len())) } else { 0 };
+            // começa da foto se ela foi tirada antes de qualquer mudança
+            let mut start = 0;
+            let mut clip_base = None;
+            if let Some(sn) = cache.snap.as_ref().filter(|sn| same_key && sn.index <= first_changed && sn.index <= sigs.len()) {
+                buf = sn.buf.clone();
+                clip_base = sn.clip_base.clone();
+                r.warnings = sn.warnings.clone();
+                start = sn.index;
+            }
+            // nova foto antes da primeira camada que mudou (é nela que o artista está mexendo)
+            let snap_at = if first_changed > 0 && first_changed < sigs.len() { Some(first_changed) } else { cache.snap.as_ref().filter(|_| same_key).map(|sn| sn.index) };
+            let mut taken = None;
+            r.composite_range(&mut buf, &cut_node.children, cut, frame, opts, start, clip_base, snap_at, &mut taken);
+            cache.last_skipped = start;
+            if let Some(t) = taken {
+                cache.snap = Some(t);
+            } else if !same_key || snap_at.is_none() {
+                cache.snap = None;
+            }
+            cache.key = Some(key);
+            cache.sigs = sigs;
+        }
+    }
     if let Some(bg) = opts.background {
         buf.data.par_iter_mut().for_each(|p| {
             let k = 1.0 - p[3];
@@ -188,10 +268,47 @@ impl<'a> Renderer<'a> {
         opts: &RenderOptions,
         allowed: Option<&std::collections::BTreeSet<Id>>,
     ) {
+        self.composite_inner(buf, children, cut, frame, opts, allowed, 0, None, None, &mut None);
+    }
+
+    /// Topo do corte com cache: começa em `start` (com o `clip_base` da foto) e tira uma foto antes de `snap_at`.
+    #[allow(clippy::too_many_arguments)]
+    fn composite_range(
+        &mut self,
+        buf: &mut Image,
+        children: &[Id],
+        cut: &CutData,
+        frame: u32,
+        opts: &RenderOptions,
+        start: usize,
+        clip_base: Option<Vec<f32>>,
+        snap_at: Option<usize>,
+        taken: &mut Option<FrameSnap>,
+    ) {
+        self.composite_inner(buf, children, cut, frame, opts, None, start, clip_base, snap_at, taken);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn composite_inner(
+        &mut self,
+        buf: &mut Image,
+        children: &[Id],
+        cut: &CutData,
+        frame: u32,
+        opts: &RenderOptions,
+        allowed: Option<&std::collections::BTreeSet<Id>>,
+        start: usize,
+        clip_base0: Option<Vec<f32>>,
+        snap_at: Option<usize>,
+        taken: &mut Option<FrameSnap>,
+    ) {
         // Alfa da última camada "base" (não recortada), para máscaras de recorte.
-        let mut clip_base: Option<Vec<f32>> = None;
+        let mut clip_base: Option<Vec<f32>> = clip_base0;
         let project = self.project;
-        for id in children {
+        for (index, id) in children.iter().enumerate().skip(start) {
+            if snap_at == Some(index) {
+                *taken = Some(FrameSnap { index, buf: buf.clone(), clip_base: clip_base.clone(), warnings: self.warnings.clone() });
+            }
             let Some(node) = project.node(id) else { continue };
             let NodeKind::Layer(layer) = &node.data else { continue };
             if allowed.is_some_and(|a| !a.contains(id)) {

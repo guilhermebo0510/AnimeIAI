@@ -308,3 +308,47 @@ fn vector_lines_stay_sharp_under_camera_zoom() {
     assert!(solid >= 6, "a linha ampliada 4× tem ~8 px cheios: {solid}");
     assert!(partial <= 2, "borda nítida (no máximo 1 px de transição de cada lado): {partial} px parciais em {row:?}");
 }
+
+#[test]
+fn frame_cache_reuses_the_composite_below_the_edited_layer_and_matches_a_full_render() {
+    use aiai_render::{FrameCache, render_frame_cached};
+    let mut s = CoreSession::for_tests("cache");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 160, "height": 90}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = create(&mut s, Some(&sc), "C", NodeKind::Cut(CutData::new(4)));
+    let mut cels = Vec::new();
+    for (i, hex) in ["#c03030", "#30c030", "#3030c0"].iter().enumerate() {
+        let (_l, c) = layer(&mut s, &cut, &format!("L{i}"), LayerType::Vector, json!({}));
+        let st = gpen(&[(20.0 + i as f32 * 30.0, 20.0, 1.0), (60.0 + i as f32 * 30.0, 70.0, 1.0)], 12.0, ColorRef::Direct { rgba: Rgba::from_hex(hex).unwrap() });
+        s.apply(Command::InsertStrokes { cel: c.clone(), items: vec![IndexedStroke { index: 0, stroke: st }] }).unwrap();
+        cels.push(c);
+    }
+    let opts = RenderOptions { camera: false, ..Default::default() };
+    let mut cache = FrameCache::default();
+    let full = |s: &CoreSession| render_frame(&s.project, &s.blobs, &cut, 0, &opts).unwrap().image;
+    let a = render_frame_cached(&s.project, &s.blobs, &cut, 0, &opts, &mut cache).unwrap().image;
+    assert_eq!(a.content_hash(), full(&s).content_hash());
+    // mexe na camada de cima duas vezes: a segunda já parte da foto das duas de baixo
+    for k in 0..2 {
+        let st = gpen(&[(100.0, 10.0 + k as f32 * 20.0, 1.0), (150.0, 30.0 + k as f32 * 20.0, 1.0)], 6.0, ColorRef::Direct { rgba: Rgba::BLACK });
+        s.apply(Command::InsertStrokes { cel: cels[2].clone(), items: vec![IndexedStroke { index: 0, stroke: st }] }).unwrap();
+        let b = render_frame_cached(&s.project, &s.blobs, &cut, 0, &opts, &mut cache).unwrap().image;
+        assert_eq!(b.content_hash(), full(&s).content_hash(), "cache = render completo (passo {k})");
+    }
+    assert_eq!(cache.last_skipped, 2, "as duas camadas de baixo vieram da foto");
+    // mexer na de baixo invalida: recompõe do zero e continua igual
+    let st = gpen(&[(5.0, 80.0, 1.0), (40.0, 85.0, 1.0)], 6.0, ColorRef::Direct { rgba: Rgba::BLACK });
+    s.apply(Command::InsertStrokes { cel: cels[0].clone(), items: vec![IndexedStroke { index: 0, stroke: st }] }).unwrap();
+    let c = render_frame_cached(&s.project, &s.blobs, &cut, 0, &opts, &mut cache).unwrap().image;
+    assert_eq!(cache.last_skipped, 0);
+    assert_eq!(c.content_hash(), full(&s).content_hash());
+    // outro quadro: chave diferente, sem foto
+    let d = render_frame_cached(&s.project, &s.blobs, &cut, 1, &opts, &mut cache).unwrap().image;
+    assert_eq!(cache.last_skipped, 0);
+    assert_eq!(d.content_hash(), render_frame(&s.project, &s.blobs, &cut, 1, &opts).unwrap().image.content_hash());
+    // desfazer também muda a revisão (o inverso carimba): continua batendo
+    s.undo().unwrap();
+    let e = render_frame_cached(&s.project, &s.blobs, &cut, 0, &opts, &mut cache).unwrap().image;
+    assert_eq!(e.content_hash(), full(&s).content_hash());
+}
