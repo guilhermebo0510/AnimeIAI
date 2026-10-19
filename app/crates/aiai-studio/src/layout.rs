@@ -26,10 +26,12 @@ pub enum PanelKind {
     Tasks,
     Episodes,
     Project,
+    /// Sub View: imagens de referência do disco com conta-gotas.
+    SubView,
 }
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 20] = [
+    pub const ALL: [PanelKind; 21] = [
         PanelKind::Canvas,
         PanelKind::Layers,
         PanelKind::Properties,
@@ -50,6 +52,7 @@ impl PanelKind {
         PanelKind::Tasks,
         PanelKind::Episodes,
         PanelKind::Project,
+        PanelKind::SubView,
     ];
 
     /// Identificador estável (bridge/UI_ACTION): `canvas`, `layers`, `timeline`...
@@ -84,6 +87,7 @@ impl PanelKind {
             PanelKind::Tasks => "panel.tasks.title",
             PanelKind::Episodes => "panel.episodes.title",
             PanelKind::Project => "panel.project.title",
+            PanelKind::SubView => "panel.subview.title",
         }
     }
 
@@ -110,6 +114,7 @@ impl PanelKind {
             PanelKind::Tasks => "panel.tasks.empty",
             PanelKind::Episodes => "panel.episodes.empty",
             PanelKind::Project => "panel.project.empty",
+            PanelKind::SubView => "panel.subview.empty",
         }
     }
 }
@@ -141,7 +146,7 @@ fn default_node(ws: WorkspaceId) -> Node {
             (0.28, Pane(P::Timeline)),
         ]),
         WorkspaceId::Layout => Row(vec![
-            (0.18, Col(vec![(0.62, Pane(P::Project)), (0.38, Pane(P::Navigator))])),
+            (0.18, Col(vec![(0.56, Pane(P::Project)), (0.44, TabsOf(&[P::Navigator, P::SubView]))])),
             (0.54, Pane(P::Canvas)),
             (0.28, Col(vec![(0.36, Pane(P::Palette)), (0.64, TabsOf(&[P::Layers, P::Properties]))])),
         ]),
@@ -154,12 +159,12 @@ fn default_node(ws: WorkspaceId) -> Node {
             (0.34, Pane(P::Timeline)),
         ]),
         WorkspaceId::Pintura => Row(vec![
-            (0.17, Col(vec![(0.62, Pane(P::Project)), (0.38, Pane(P::Navigator))])),
+            (0.17, Col(vec![(0.56, Pane(P::Project)), (0.44, TabsOf(&[P::Navigator, P::SubView]))])),
             (0.55, Pane(P::Canvas)),
             (0.28, Col(vec![(0.36, Pane(P::Palette)), (0.64, TabsOf(&[P::Layers, P::Properties]))])),
         ]),
         WorkspaceId::Cenario => Row(vec![
-            (0.17, Col(vec![(0.62, Pane(P::Project)), (0.38, Pane(P::Navigator))])),
+            (0.17, Col(vec![(0.56, Pane(P::Project)), (0.44, TabsOf(&[P::Navigator, P::SubView]))])),
             (0.55, Pane(P::Canvas)),
             (0.28, Col(vec![(0.36, Pane(P::Palette)), (0.64, TabsOf(&[P::Layers, P::Properties]))])),
         ]),

@@ -599,6 +599,8 @@ pub(crate) struct Shown {
 pub(crate) struct Editor {
     /// Shift seguro neste quadro (formas da caneta: ângulo de 15°, quadrado, círculo).
     pub shift: bool,
+    /// Sub View (imagens de referência do disco, fora do projeto).
+    pub subview: super::panels::subview::SubViewState,
     /// Traço escolhido para editar pontos (Mover em "Editar pontos").
     pub node_stroke: Option<aiai_core::Id>,
     /// Miniatura de traço de cada preset de pincel (feita pelo próprio motor, uma vez).
@@ -691,6 +693,7 @@ pub(crate) struct Editor {
 impl Default for Editor {
     fn default() -> Self {
         Editor {
+            subview: Default::default(),
             node_stroke: None,
             shift: false,
             brush_thumbs: Vec::new(),

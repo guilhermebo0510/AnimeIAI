@@ -818,6 +818,7 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::Mixer => panels::audio::mixer(&mut self.env, ui, body),
             PanelKind::Navigator if self.env.ws == WorkspaceId::Cor => panels::audio::monitor(&mut self.env, ui, body),
             PanelKind::Navigator => panels::navigator::show(&mut self.env, ui, body),
+            PanelKind::SubView => panels::subview::show(&mut self.env, ui, body),
             PanelKind::Characters => panels::characters::list(&mut self.env, ui, body),
             PanelKind::Sheet => panels::characters::sheet(&mut self.env, ui, body),
             PanelKind::Media => panels::edit::media(&mut self.env, ui, body),
