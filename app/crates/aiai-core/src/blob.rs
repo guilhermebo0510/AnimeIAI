@@ -33,7 +33,15 @@ pub struct BlobStore {
     blobs: HashMap<BlobHash, Arc<Vec<u8>>>,
     /// Blobs ainda não gravados em disco (para salvar incremental).
     dirty: std::collections::HashSet<BlobHash>,
+    /// Relógio de comandos (a sessão avança a cada comando aplicado) e quando cada blob entrou: a coleta só leva
+    /// órfãos com pelo menos [`GC_MIN_AGE`] comandos de idade (um comando planejado e ainda não aplicado já pôs os
+    /// tiles aqui; a coleta automática no meio de uma sequência não pode levá-los).
+    now: u64,
+    born: HashMap<BlobHash, u64>,
 }
+
+/// Idade mínima (em comandos aplicados) de um blob órfão para a coleta levar.
+pub const GC_MIN_AGE: u64 = 32;
 
 impl BlobStore {
     pub fn put(&mut self, bytes: Vec<u8>) -> BlobHash {
@@ -41,6 +49,7 @@ impl BlobStore {
         if !self.blobs.contains_key(&h) {
             self.blobs.insert(h.clone(), Arc::new(bytes));
             self.dirty.insert(h.clone());
+            self.born.insert(h.clone(), self.now);
         }
         h
     }
@@ -82,11 +91,20 @@ impl BlobStore {
         self.dirty.insert(h);
     }
 
-    /// Remove o que não está em `keep`.
+    /// Avança o relógio de comandos (chamado pela sessão a cada comando aplicado).
+    pub fn tick(&mut self) {
+        self.now += 1;
+    }
+
+    /// Remove o que não está em `keep`, menos os blobs mais novos que [`GC_MIN_AGE`] comandos.
     pub fn retain(&mut self, keep: &std::collections::BTreeSet<BlobHash>) -> usize {
         let before = self.blobs.len();
-        self.blobs.retain(|h, _| keep.contains(h));
-        self.dirty.retain(|h| keep.contains(h));
+        let now = self.now;
+        let young = |born: &HashMap<BlobHash, u64>, h: &BlobHash| born.get(h).is_some_and(|&b| now.saturating_sub(b) < GC_MIN_AGE);
+        let born = std::mem::take(&mut self.born);
+        self.blobs.retain(|h, _| keep.contains(h) || young(&born, h));
+        self.dirty.retain(|h| keep.contains(h) || young(&born, h));
+        self.born = born.into_iter().filter(|(h, _)| self.blobs.contains_key(h)).collect();
         before - self.blobs.len()
     }
 }

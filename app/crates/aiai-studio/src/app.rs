@@ -8,6 +8,7 @@
 //! Cores, Linha do tempo, Propriedades).
 
 mod actions;
+mod autosave;
 mod bridge_host;
 mod canvas;
 mod commands;
@@ -84,6 +85,12 @@ pub struct StudioApp {
     mem_sampled: Option<Instant>,
     gpu_logged: bool,
     screenshot_requested: bool,
+    /// Cópia periódica do projeto ainda sem pasta (ver `autosave`).
+    autosave: autosave::Autosave,
+    /// Cópias de execuções que caíram (oferecidas na tela inicial).
+    recoveries: Vec<PathBuf>,
+    /// O documento veio de uma cópia de recuperação: some depois de salvo numa pasta de verdade.
+    recovered_from: Option<PathBuf>,
 }
 
 impl StudioApp {
@@ -112,6 +119,7 @@ impl StudioApp {
         let mut core = CoreSession::new(aiai_core::Project::new(tr("doc.untitled")));
         core.author = doc::AUTHOR.into();
         let bridge = bridge_host::BridgeHost::start(&cli, ctx);
+        let cli_no_autosave = cli.no_session || cli.screenshot.is_some();
         let mut app = StudioApp {
             ws: prefs.workspace,
             cli,
@@ -139,6 +147,9 @@ impl StudioApp {
             quit_confirmed: false,
             ctx_close: false,
             gpu_name: None,
+            autosave: autosave::Autosave::new(!cli_no_autosave),
+            recoveries: Vec::new(),
+            recovered_from: None,
             frame_count: 0,
             last_frame: None,
             frame_ms: 16.7,
@@ -154,6 +165,15 @@ impl StudioApp {
         } else {
             // sem projeto na linha de comando: tela inicial (nunca nas execuções de teste/captura)
             app.start.open = app.prefs.show_start && !app.cli.no_session && app.cli.screenshot.is_none();
+        }
+        if !cli_no_autosave {
+            if let Some(root) = autosave::recovery_root() {
+                app.recoveries = autosave::leftovers(&root, app.autosave.dir.as_deref());
+                // trabalho de uma execução que caiu: a tela inicial abre para oferecer a recuperação
+                if !app.recoveries.is_empty() && app.cli.project.is_none() {
+                    app.start.open = true;
+                }
+            }
         }
         app
     }
@@ -654,6 +674,7 @@ impl StudioApp {
         let ctx = ui.ctx().clone();
         self.sample_frame(&ctx);
         self.bridge_tick(&ctx);
+        self.autosave_tick();
         panels::timeline::tick(&self.core, &mut self.ed, &ctx);
         self.editor_shortcuts(&ctx);
         self.poll_dialog(&ctx);
@@ -713,6 +734,8 @@ impl eframe::App for StudioApp {
 
     fn on_exit(&mut self) {
         self.persist();
+        // saída normal (o usuário já decidiu sobre as alterações): a cópia de recuperação desta execução sai
+        self.autosave.discard();
     }
 }
 

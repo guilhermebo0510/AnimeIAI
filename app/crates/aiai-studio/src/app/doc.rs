@@ -115,10 +115,25 @@ impl StudioApp {
 
     pub(crate) fn doc_open_path(&mut self, path: &Path) {
         match handle_core_action(&mut self.core, "OPEN_PROJECT", &json!({ "path": path.display().to_string() })) {
-            Some(Ok(_)) => {
+            Some(Ok(v)) => {
                 self.mark_saved();
                 self.note_recent();
-                self.notice(format!("{}: {}", tr("msg.opened"), self.core.project.name));
+                let replayed = v["wal_replayed"].as_u64().unwrap_or(0);
+                if super::autosave::is_recovery(path) {
+                    // cópia de recuperação: o documento volta sem pasta (Salvar pergunta onde) e conta como não salvo
+                    self.core.detach_wal();
+                    self.core.path = None;
+                    self.saved_log_len = usize::MAX;
+                    self.recovered_from = Some(path.to_path_buf());
+                    self.recoveries.retain(|p| p != path);
+                    self.notice(tr("msg.recovered_copy").to_owned());
+                } else if replayed > 0 {
+                    // recuperado do diário: o disco ainda não tem esses comandos no project.json, então não está salvo
+                    self.saved_log_len = usize::MAX;
+                    self.notice(format!("{}: {} ({replayed} {})", tr("msg.opened"), self.core.project.name, tr("msg.recovered")));
+                } else {
+                    self.notice(format!("{}: {}", tr("msg.opened"), self.core.project.name));
+                }
             }
             Some(Err(e)) => self.doc_error("abrir projeto", e),
             None => {}
@@ -135,6 +150,10 @@ impl StudioApp {
                 self.mark_saved();
                 self.note_recent();
                 self.notice(tr("msg.saved").to_owned());
+                if let Some(r) = self.recovered_from.take() {
+                    let _ = std::fs::remove_dir_all(r);
+                }
+                self.autosave.discard();
                 true
             }
             Some(Err(e)) => {
@@ -185,6 +204,17 @@ impl StudioApp {
             self.confirm = Some(Pending::OpenPath);
         } else {
             self.run_pending(Pending::OpenPath);
+        }
+    }
+
+    /// Autosave do projeto sem pasta (a cada quadro; a cópia roda noutra thread).
+    pub(crate) fn autosave_tick(&mut self) {
+        let needed = self.core.path.is_none() && self.doc_dirty();
+        if self.core.path.is_some() && self.autosave.wrote {
+            self.autosave.discard();
+        }
+        if let Some(e) = self.autosave.tick(needed, &self.core.project, &self.core.blobs) {
+            self.doc_error("autosave", e);
         }
     }
 

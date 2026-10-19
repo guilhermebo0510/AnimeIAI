@@ -54,11 +54,19 @@ pub(crate) fn retry_io<T>(mut op: impl FnMut() -> std::io::Result<T>) -> std::io
 }
 
 fn write_atomic(path: &Path, bytes: &[u8]) -> CoreResult<()> {
+    write_atomic_with(path, bytes, true)
+}
+
+/// `durable` = `sync_all` antes da troca (sobrevive a queda de energia). Sem ele o arquivo continua atômico e
+/// sobrevive ao app travar (o sistema já tem os dados), só não a desligar o PC no meio.
+fn write_atomic_with(path: &Path, bytes: &[u8], durable: bool) -> CoreResult<()> {
     let tmp = path.with_extension("tmp-write");
     {
         let mut f = retry_io(|| std::fs::File::create(&tmp))?;
         f.write_all(bytes)?;
-        f.sync_all()?;
+        if durable {
+            f.sync_all()?;
+        }
     }
     // Confere que o temporário ficou inteiro antes de substituir o original.
     let written = std::fs::metadata(&tmp)?.len();
@@ -105,13 +113,40 @@ fn ensure_space(dir: &Path, extra: u64) -> CoreResult<()> {
     Ok(())
 }
 
-fn write_blob(dir: &Path, h: &BlobHash, bytes: &[u8]) -> CoreResult<()> {
+fn write_blob(dir: &Path, h: &BlobHash, bytes: &[u8], durable: bool) -> CoreResult<()> {
     let path = blob_path(dir, h);
     if path.exists() {
         return Ok(());
     }
     std::fs::create_dir_all(path.parent().expect("tem pai"))?;
-    write_atomic(&path, bytes)
+    write_atomic_with(&path, bytes, durable)
+}
+
+/// Grava vários blobs duráveis em paralelo: o custo do salvamento é o `sync_all` de cada arquivo (dezenas de ms no
+/// Windows com antivírus), e em série ~200 tiles deixavam a interface parada por segundos.
+fn write_blobs_parallel(dir: &Path, items: &[(BlobHash, std::sync::Arc<Vec<u8>>)]) -> CoreResult<()> {
+    if items.is_empty() {
+        return Ok(());
+    }
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).clamp(2, 16);
+    let chunk = items.len().div_ceil(threads);
+    std::thread::scope(|sc| {
+        let handles: Vec<_> = items
+            .chunks(chunk)
+            .map(|part| {
+                sc.spawn(move || -> CoreResult<()> {
+                    for (h, b) in part {
+                        write_blob(dir, h, b, true)?;
+                    }
+                    Ok(())
+                })
+            })
+            .collect();
+        for hd in handles {
+            hd.join().map_err(|_| CoreError::Io("gravação de blob entrou em pânico".into()))??;
+        }
+        Ok(())
+    })
 }
 
 /// Salva o projeto da sessão em `dir` (cria se preciso) e zera o WAL.
@@ -122,19 +157,38 @@ pub fn save(session: &mut CoreSession, dir: &Path) -> CoreResult<()> {
     let blob_bytes: u64 = referenced.iter().filter_map(|h| session.blobs.get(h)).map(|b| b.len() as u64).sum();
     ensure_space(dir, json.len() as u64 + blob_bytes)?;
     let required = session.project.required_blobs();
+    let mut pending = Vec::new();
     for h in &referenced {
         match session.blobs.get(h) {
-            Some(b) => write_blob(dir, h, &b)?,
+            Some(b) => pending.push((h.clone(), b)),
             None if required.contains(h) => return Err(CoreError::MissingBlob(h.0.clone())),
             None => {} // string com cara de hash em JSON livre que não é blob
         }
     }
+    write_blobs_parallel(dir, &pending)?;
     write_atomic(&dir.join(PROJECT_FILE), json.as_bytes())?;
     // WAL recomeça a partir desta revisão.
     let wal = Wal::create(dir, session.project.revision)?;
     session.attach_wal(wal);
     session.blobs.take_dirty();
     session.path = Some(dir.to_path_buf());
+    // o que nem o documento nem o histórico usam sai da memória (traços desfeitos e descartados, tiles antigos)
+    session.collect_garbage();
+    Ok(())
+}
+
+/// Cópia de segurança do documento numa pasta `.aiai` (autosave de projeto ainda sem pasta). Não mexe na sessão:
+/// sem WAL, sem trocar `path`; roda em outra thread com um clone (os blobs são `Arc`, o clone é barato).
+pub fn snapshot(project: &Project, blobs: &BlobStore, dir: &Path) -> CoreResult<()> {
+    std::fs::create_dir_all(dir)?;
+    let json = to_canonical_json(project)?;
+    let referenced = project.referenced_blobs();
+    let blob_bytes: u64 = referenced.iter().filter_map(|h| blobs.get(h)).map(|b| b.len() as u64).sum();
+    ensure_space(dir, json.len() as u64 + blob_bytes)?;
+    let pending: Vec<_> = referenced.iter().filter_map(|h| blobs.get(h).map(|b| (h.clone(), b))).collect();
+    write_blobs_parallel(dir, &pending)?;
+    write_atomic(&dir.join(PROJECT_FILE), json.as_bytes())?;
+    let _ = std::fs::remove_file(dir.join(WAL_FILE));
     Ok(())
 }
 
@@ -261,7 +315,8 @@ impl Wal {
     pub fn append(&mut self, entry: &LogEntry, blobs: &mut BlobStore) -> CoreResult<()> {
         for h in blobs.take_dirty() {
             if let Some(b) = blobs.get(&h) {
-                write_blob(&self.dir, &h, &b)?;
+                // sem sync por tile (custava ~1/3 s por pincelada): a linha do WAL abaixo é que vai sincronizada
+                write_blob(&self.dir, &h, &b, false)?;
                 writeln!(self.file, "{}", serde_json::to_string(&WalLine::Blob { hash: h.0.clone() })?)?;
             }
         }

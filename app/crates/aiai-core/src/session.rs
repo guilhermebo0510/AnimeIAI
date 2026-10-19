@@ -59,7 +59,14 @@ pub struct CoreSession {
     pub change_counter: u64,
     /// Pasta `.aiai` do projeto (definida por abrir/salvar).
     pub path: Option<std::path::PathBuf>,
+    /// Ações que saíram do histórico (limite do undo, redo descartado) desde a última coleta de blobs.
+    dropped_since_gc: usize,
 }
+
+/// Coleta os blobs órfãos depois de tantas ações saírem do histórico (sem isso a memória só crescia).
+const GC_AFTER_DROPPED: usize = 64;
+/// O log guarda o comando inteiro só das últimas entradas (as antigas ficam com a descrição, o autor e a hora).
+const LOG_KEEP_COMMANDS: usize = 5000;
 
 impl CoreSession {
     pub fn new(project: Project) -> Self {
@@ -77,6 +84,7 @@ impl CoreSession {
             wal: None,
             change_counter: 0,
             path: None,
+            dropped_since_gc: 0,
         }
     }
 
@@ -133,10 +141,16 @@ impl CoreSession {
         let outcome = Outcome { revision, description: description.clone(), created: applied.created.clone(), affected: applied.affected.clone() };
         self.record("apply", &description, author, Some(applied.command.clone()))?;
         self.undo.push(applied);
+        self.blobs.tick();
         if self.undo.len() > self.undo_limit {
             self.undo.remove(0);
+            self.dropped_since_gc += 1;
         }
+        self.dropped_since_gc += self.redo.len();
         self.redo.clear();
+        if self.dropped_since_gc >= GC_AFTER_DROPPED {
+            self.collect_garbage();
+        }
         Ok(outcome)
     }
 
@@ -200,6 +214,10 @@ impl CoreSession {
             wal.append(&entry, &mut self.blobs)?;
         }
         self.log.push(entry);
+        if self.log.len() > LOG_KEEP_COMMANDS {
+            let old = self.log.len() - LOG_KEEP_COMMANDS - 1;
+            self.log[old].command = None;
+        }
         Ok(())
     }
 
@@ -236,8 +254,23 @@ impl CoreSession {
         self.change_counter += 1;
     }
 
+    /// Assume o documento de outra sessão (abrir projeto) com o histórico dela: depois de uma recuperação pelo WAL
+    /// os comandos reaplicados continuam desfazíveis. Autor, relógio, ids e limites desta sessão ficam.
+    pub fn adopt_document(&mut self, mut other: CoreSession) {
+        self.wal = other.wal.take();
+        self.path = other.path.take();
+        self.project = other.project;
+        self.blobs = other.blobs;
+        self.undo = other.undo;
+        self.redo = other.redo;
+        self.log = other.log;
+        self.dropped_since_gc = 0;
+        self.change_counter += 1;
+    }
+
     /// Remove blobs que nem o documento nem o histórico referenciam.
     pub fn collect_garbage(&mut self) -> usize {
+        self.dropped_since_gc = 0;
         let mut keep = self.project.referenced_blobs();
         for a in self.undo.iter().chain(self.redo.iter()) {
             collect_command_blobs(&a.command, &mut keep);

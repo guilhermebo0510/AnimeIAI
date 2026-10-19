@@ -203,14 +203,10 @@ fn new_project(session: &mut CoreSession, params: &Value) -> Result<Value, Bridg
 fn open_project(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
     let p = obj(params)?;
     let dir = path_param(&p)?.ok_or_else(|| BridgeError::invalid_params("'path' (pasta .aiai) é obrigatório"))?;
-    let (mut opened, report) = persist::open(&dir).map_err(core_error)?;
-    let wal = opened.detach_wal();
-    let blobs = std::mem::take(&mut opened.blobs);
+    let (opened, report) = persist::open(&dir).map_err(core_error)?;
     session.detach_wal();
-    session.replace_project(opened.project, blobs);
-    if let Some(w) = wal {
-        session.attach_wal(w);
-    }
+    // mantém o histórico da recuperação (os comandos reaplicados do WAL continuam no undo)
+    session.adopt_document(opened);
     session.path = Some(dir.clone());
     Ok(json!({
         "name": session.project.name, "revision": session.project.revision, "path": dir.display().to_string(),

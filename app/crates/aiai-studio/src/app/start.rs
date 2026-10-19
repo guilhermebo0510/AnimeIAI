@@ -53,6 +53,8 @@ enum Act {
     Create,
     Open,
     Recent(PathBuf),
+    Recover(PathBuf),
+    DiscardRecovery(PathBuf),
 }
 
 /// Um recente vale se a pasta ainda tem `project.json`.
@@ -137,8 +139,28 @@ impl StudioApp {
                         }
                     });
 
-                    // ---- recentes
+                    // ---- recentes (antes: cópias de recuperação de uma execução que caiu)
                     let ui = &mut cols[1];
+                    if !self.recoveries.is_empty() {
+                        ui.label(RichText::new(tr("start.recover")).strong().color(t.st_retake));
+                        ui.label(RichText::new(tr("start.recover_tip")).size(11.0).color(t.text_dim));
+                        for (i, p) in self.recoveries.iter().enumerate() {
+                            let mins = std::fs::metadata(p.join("project.json")).and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).map(|d| d.as_secs() / 60).unwrap_or(0);
+                            ui.horizontal(|ui| {
+                                let r = ui.button(format!("{} ({mins} min)", tr("start.recover_open"))).on_hover_text(p.display().to_string());
+                                self.rects.note(format!("start:recover:{i}"), r.rect);
+                                if r.clicked() {
+                                    act = Some(Act::Recover(p.clone()));
+                                }
+                                let d = ui.small_button(tr("start.recover_discard"));
+                                self.rects.note(format!("start:recover_discard:{i}"), d.rect);
+                                if d.clicked() {
+                                    act = Some(Act::DiscardRecovery(p.clone()));
+                                }
+                            });
+                        }
+                        ui.add_space(8.0);
+                    }
                     ui.label(RichText::new(tr("start.recent")).strong());
                     ui.add_space(4.0);
                     if self.prefs.recent.is_empty() {
@@ -189,6 +211,16 @@ impl StudioApp {
             Some(Act::Recent(p)) => {
                 self.start.open = false;
                 self.request_open_path(p);
+            }
+            Some(Act::Recover(p)) => {
+                self.start.open = false;
+                self.request_open_path(p);
+            }
+            Some(Act::DiscardRecovery(p)) => {
+                if super::autosave::is_recovery(&p) {
+                    let _ = std::fs::remove_dir_all(&p);
+                }
+                self.recoveries.retain(|q| q != &p);
             }
             None => {}
         }

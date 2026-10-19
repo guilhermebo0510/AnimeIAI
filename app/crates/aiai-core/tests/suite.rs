@@ -311,3 +311,28 @@ fn project_with_timesheet_reopens_and_accepts_set_props() {
     assert_eq!(snapshot(&s2), snapshot(&s));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn blobs_dropped_from_history_are_collected_but_planned_ones_survive() {
+    let mut s = CoreSession::for_tests("gc");
+    s.undo_limit = 4;
+    let (_ep, _cut, _layer, cel) = build_basic(&mut s);
+    // 80 pinceladas que trocam o mesmo tile: só o último + os 4 do undo continuam vivos
+    for i in 0..80u32 {
+        let b = s.blobs.put(vec![(i % 251) as u8; 300 + i as usize]);
+        s.apply(Command::SetTiles { cel: cel.clone(), tiles: vec![TileEdit { x: 0, y: 0, blob: Some(b) }] }).unwrap();
+    }
+    assert!(s.blobs.len() < 80, "a coleta automática rodou: {} blobs", s.blobs.len());
+    // tiles planejados antes de uma sequência de comandos não somem no meio dela
+    let pending = s.blobs.put(vec![1; 999]);
+    s.collect_garbage();
+    assert!(s.blobs.contains(&pending), "planejado e ainda não aplicado sobrevive à coleta");
+    s.apply(Command::SetTiles { cel: cel.clone(), tiles: vec![TileEdit { x: 1, y: 0, blob: Some(pending.clone()) }] }).unwrap();
+    // depois de bastante trabalho, só sobra o que o documento e o undo usam
+    for i in 0..40u32 {
+        s.apply(Command::SetProps { id: cel.clone(), name: Some(format!("c{i}")), data: json!({}) }).unwrap();
+    }
+    s.collect_garbage();
+    assert!(s.blobs.contains(&pending), "referenciado pelo documento fica");
+    assert_eq!(s.blobs.len(), 2, "só os dois tiles do documento");
+}
