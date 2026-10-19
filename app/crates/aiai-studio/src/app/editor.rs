@@ -312,11 +312,16 @@ pub(crate) struct Selection {
     pub rotate: f32,
     /// Varinha: máscara da região.
     pub mask: Option<std::sync::Arc<WandMask>>,
+    /// Seleção de objetos (camada vetorial): os traços escolhidos com o Mover; `pts` = caixa deles. O Mover leva só
+    /// esses traços (inteiros), não o que estiver dentro da caixa.
+    pub strokes: Vec<aiai_core::Id>,
+    /// Camada dos traços escolhidos (trocar de camada desfaz a escolha).
+    pub strokes_layer: Option<aiai_core::Id>,
 }
 
 impl Selection {
     pub(crate) fn new(mode: SelMode, pts: Vec<Vec2>, whole: bool) -> Self {
-        Selection { mode, pts, offset: Vec2::ZERO, whole, scale: 1.0, rotate: 0.0, mask: None }
+        Selection { mode, pts, offset: Vec2::ZERO, whole, scale: 1.0, rotate: 0.0, mask: None, strokes: Vec::new(), strokes_layer: None }
     }
 
     /// Centro da caixa da seleção (pivô da escala e da rotação), antes do deslocamento.
@@ -455,6 +460,8 @@ pub(crate) struct ToolOptions {
     pub fill_close_leftovers: bool,
     pub select_mode: SelMode,
     pub points_mode: PointsMode,
+    /// Mover em camada vetorial: clicar num traço escolhe só ele (Shift soma); sem nada escolhido, leva a camada.
+    pub move_pick: bool,
     /// Tolerância de cor da varinha (0..1).
     pub wand_tolerance: f32,
 }
@@ -483,6 +490,7 @@ impl Default for ToolOptions {
             fill_close_leftovers: false,
             select_mode: SelMode::Rect,
             points_mode: PointsMode::Move,
+            move_pick: true,
             wand_tolerance: 0.12,
         }
     }

@@ -500,6 +500,10 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
                                 None
                             }
                         });
+                        if hit.is_none() {
+                            // camada vetorial: clicar num traço escolhe só ele (Shift soma); fora = a camada inteira
+                            tools::move_pick(env, c, 6.0 / xf.scale.max(1e-3), mods.shift);
+                        }
                         if let Some(g) = hit {
                             env.ed.gesture = g;
                         } else if tools::begin_move(env) {
@@ -991,7 +995,13 @@ fn selection_outline_map(sel_mode: SelMode, pts: &[Vec2], map: impl Fn(Vec2) -> 
 }
 
 fn paint_selection(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId) {
+    // traços escolhidos de outra camada (trocou a camada ativa): a escolha não vale mais
+    let active = env.ed.active_layer(env.core);
+    if env.ed.selection.as_ref().is_some_and(|s| !s.strokes.is_empty() && s.strokes_layer != active) {
+        env.ed.selection = None;
+    }
     let Some(sel) = env.ed.selection.clone() else { return };
+    paint_picked_strokes(env, painter, xf, cut, &sel);
     // varinha: o contorno é a caixa da região
     let outline_pts: Vec<Vec2> = match (sel.mode, sel.rect_of()) {
         (SelMode::Wand, Some(r)) => vec![Vec2::new(r[0], r[1]), Vec2::new(r[0] + r[2], r[1] + r[3])],
@@ -1229,5 +1239,33 @@ mod tests {
         let before = [touch(egui::TouchPhase::End, 0.9), touch(egui::TouchPhase::Start, 0.35), Event::PointerMoved(Pos2::ZERO), press];
         assert_eq!(touch_start_pressure(&before, 3), Some(0.35));
         assert_eq!(touch_start_pressure(&[Event::PointerMoved(Pos2::ZERO)], 0), None);
+    }
+}
+
+/// Traços escolhidos com o Mover: contorno fino na cor de destaque, acompanhando o arrasto.
+fn paint_picked_strokes(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId, sel: &Selection) {
+    if sel.strokes.is_empty() {
+        return;
+    }
+    let Some(layer) = sel.strokes_layer.clone() else { return };
+    let Some(cel) = cmds::exposed_cel(&env.core.project, cut, &layer, env.ed.frame) else { return };
+    let fwd = cmds::layer_placement(&env.core.project, cut, &layer, env.ed.frame);
+    let Some(data) = cmds::cel_data(&env.core.project, &cel) else { return };
+    let accent = env.t.accent;
+    for s in data.strokes.iter().filter(|s| sel.strokes.contains(&s.id)) {
+        let pts: Vec<Pos2> = aiai_paint::sample_stroke(s)
+            .iter()
+            .step_by(2)
+            .map(|q| {
+                let (x, y) = match &fwd {
+                    Some(a) => a.apply(q.x, q.y),
+                    None => (q.x, q.y),
+                };
+                xf.to_screen(sel.map(Vec2::new(x, y)))
+            })
+            .collect();
+        if pts.len() >= 2 {
+            painter.add(egui::Shape::line(pts, Stroke::new(1.5, accent)));
+        }
     }
 }

@@ -259,7 +259,7 @@ impl StudioApp {
             "latency": ed.latency.as_ref().map(lat),
             "latency_log": ed.latency_log.iter().map(lat).collect::<Vec<_>>(),
             "live": { "ms": ed.live_stroke.last_ms, "updates": ed.live_stroke.updates, "overlay": ed.live_stroke.overlay.is_some() },
-            "selection": ed.selection.as_ref().map(|s| json!({ "whole": s.whole, "offset": [round(s.offset.x), round(s.offset.y)], "rect": s.rect_of() })),
+            "selection": ed.selection.as_ref().map(|s| json!({ "strokes": s.strokes.iter().map(|i| i.0.clone()).collect::<Vec<_>>(), "whole": s.whole, "offset": [round(s.offset.x), round(s.offset.y)], "rect": s.rect_of() })),
             "gesture_active": !matches!(ed.gesture, super::editor::Gesture::None),
             "cursor_logical": ed.cursor.map(|c| json!([round(c.x), round(c.y)])),
             "ghosts": ed.ghosts.len(),

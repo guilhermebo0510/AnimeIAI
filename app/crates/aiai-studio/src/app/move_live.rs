@@ -51,6 +51,8 @@ pub(crate) struct Request {
     pub blobs: BlobStore,
     /// `None` = a camada inteira.
     pub selection: Option<aiai_paint::select::SelectShape>,
+    /// Traços escolhidos (camada vetorial): andam só eles (vale mais que `selection`).
+    pub strokes: Vec<Id>,
 }
 
 impl MoveLive {
@@ -138,6 +140,21 @@ fn build(req: &Request) -> Result<Images, String> {
     let above_img = render(p, above)?;
     let kind = all[pos].1.kind;
     let (moving, stay) = match &req.selection {
+        _ if !req.strokes.is_empty() && kind == LayerType::Vector => {
+            let cut = match p.node(&k.cut).map(|n| &n.data) {
+                Some(NodeKind::Cut(c)) => c,
+                _ => return Err("corte".into()),
+            };
+            let cel_id = aiai_tools::context::exposed_cel(p, cut, &k.layer, k.frame).map(|n| n.id.clone()).ok_or("sem cel no quadro")?;
+            let split = |want: bool| -> Result<aiai_paint::Image, String> {
+                let mut q = p.clone();
+                if let Some(NodeKind::Cel(c)) = q.node_mut(&cel_id).map(|n| &mut n.data) {
+                    c.strokes.retain(|s| req.strokes.contains(&s.id) == want);
+                }
+                render(&q, solo.clone())
+            };
+            (split(true)?, Some(split(false)?))
+        }
         None => (render(p, solo)?, None),
         Some(shape) => {
             let cut = match p.node(&k.cut).map(|n| &n.data) {

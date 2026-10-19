@@ -490,6 +490,13 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
         ToolId::Move => {
 
             // arrastar move e aplica ao soltar (Ctrl+Z desfaz): sem Aplicar/Enter
+            let r = ui.checkbox(&mut env.ed.opts.move_pick, tr("opt.move_pick"));
+            env.note("opt:move_pick", r.rect);
+            r.on_hover_text(tr("opt.move_pick.tip"));
+            let n = env.ed.selection.as_ref().map(|s| s.strokes.len()).unwrap_or(0);
+            if n > 0 && !compact {
+                dim_label(ui, &t, &format!("{} {n}", tr("opt.move_picked")));
+            }
             if env.ed.selection.as_ref().is_some_and(|s| !s.whole) {
                 let b = ui.button(tr("opt.move_deselect"));
                 env.note("opt:move_deselect", b.rect);
