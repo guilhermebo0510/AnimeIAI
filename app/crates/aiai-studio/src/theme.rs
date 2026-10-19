@@ -72,6 +72,8 @@ pub struct Tokens {
     pub st_review: Color32,
     pub st_ok: Color32,
     pub st_retake: Color32,
+    /// Erro e "vai apagar" (traços que a borracha pega, falha do render no canvas): como texto e como traço.
+    pub danger: Color32,
 }
 
 const fn rgb(r: u8, g: u8, b: u8) -> Color32 {
@@ -88,7 +90,7 @@ impl Tokens {
             bg_hover: rgb(0x39, 0x3b, 0x42),
             border: rgb(0x3a, 0x3c, 0x43),
             text: rgb(0xdd, 0xde, 0xe2),
-            text_dim: rgb(0x9b, 0x9d, 0xa6),
+            text_dim: rgb(0xa6, 0xa8, 0xb1),
             accent: rgb(0xf0, 0x98, 0x3c),
             accent_dim: rgb(0x6e, 0x45, 0x1d),
             canvas_bg: rgb(0x2a, 0x2b, 0x30),
@@ -98,6 +100,7 @@ impl Tokens {
             st_review: rgb(0x65, 0x4e, 0x14),
             st_ok: rgb(0x2a, 0x58, 0x37),
             st_retake: rgb(0x77, 0x2a, 0x2a),
+            danger: rgb(0xf0, 0x7a, 0x66),
         }
     }
 
@@ -110,8 +113,8 @@ impl Tokens {
             bg_hover: rgb(0xcc, 0xce, 0xd4),
             border: rgb(0xb0, 0xb2, 0xb9),
             text: rgb(0x1f, 0x20, 0x24),
-            text_dim: rgb(0x5a, 0x5d, 0x66),
-            accent: rgb(0xc2, 0x5f, 0x0c),
+            text_dim: rgb(0x45, 0x48, 0x50),
+            accent: rgb(0x91, 0x47, 0x09),
             accent_dim: rgb(0xf6, 0xcf, 0xa6),
             canvas_bg: rgb(0xa9, 0xab, 0xb1),
             canvas_frame_fill: rgb(0xb6, 0xb8, 0xbe),
@@ -120,6 +123,7 @@ impl Tokens {
             st_review: rgb(0xf0, 0xdc, 0x9a),
             st_ok: rgb(0xc2, 0xe4, 0xca),
             st_retake: rgb(0xf2, 0xc2, 0xc2),
+            danger: rgb(0x7a, 0x16, 0x0e),
         }
     }
 }
@@ -245,8 +249,20 @@ mod tests {
             for (name, bg) in [("panel", t.bg_panel), ("header", t.bg_header), ("widget", t.bg_widget), ("hover", t.bg_hover), ("accent_dim", t.accent_dim)] {
                 assert!(contrast(t.text, bg) >= 4.5, "{k:?}: texto sobre {name} = {:.2}", contrast(t.text, bg));
             }
-            assert!(contrast(t.text_dim, t.bg_panel) >= 4.5, "{k:?}: texto atenuado = {:.2}", contrast(t.text_dim, t.bg_panel));
-            assert!(contrast(t.accent, t.bg_panel) >= 3.0, "{k:?}: acento = {:.2}", contrast(t.accent, t.bg_panel));
+            // AA (4,5:1) em todo par texto × fundo que a UI desenha: atenuado nas abas de workspace (moldura), em hover e
+            // nos widgets; acento como TEXTO (barra de status, rótulos ativos) e texto sobre as etiquetas de etapa
+            for (name, bg) in [("panel", t.bg_panel), ("header", t.bg_header), ("widget", t.bg_widget), ("hover", t.bg_hover), ("frame", t.bg_frame)] {
+                assert!(contrast(t.text_dim, bg) >= 4.5, "{k:?}: texto atenuado sobre {name} = {:.2}", contrast(t.text_dim, bg));
+            }
+            for (name, bg) in [("panel", t.bg_panel), ("header", t.bg_header), ("widget", t.bg_widget)] {
+                assert!(contrast(t.accent, bg) >= 4.5, "{k:?}: acento sobre {name} = {:.2}", contrast(t.accent, bg));
+            }
+            for (name, bg) in [("panel", t.bg_panel), ("header", t.bg_header), ("canvas", t.canvas_bg)] {
+                assert!(contrast(t.danger, bg) >= 4.5, "{k:?}: erro sobre {name} = {:.2}", contrast(t.danger, bg));
+            }
+            for (name, bg) in [("andamento", t.st_progress), ("revisão", t.st_review), ("aprovado", t.st_ok), ("retake", t.st_retake)] {
+                assert!(contrast(t.text, bg) >= 4.5, "{k:?}: texto sobre etapa {name} = {:.2}", contrast(t.text, bg));
+            }
             assert!(contrast(t.canvas_frame_stroke, t.canvas_bg) >= 3.0, "{k:?}: contorno do quadro = {:.2}", contrast(t.canvas_frame_stroke, t.canvas_bg));
             // hierarquia de profundidade: o canvas/moldura se distinguem do painel
             assert_ne!(t.bg_frame, t.bg_panel);

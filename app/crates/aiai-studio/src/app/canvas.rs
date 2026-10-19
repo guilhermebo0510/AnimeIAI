@@ -745,7 +745,7 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
                     if let Some(cel) = cmds::exposed_cel(&env.core.project, cut, &g.layer, env.ed.frame).and_then(|c| cmds::cel_data(&env.core.project, &c)) {
                         for s in cel.strokes.iter().filter(|s| g.hits.contains(&s.id)) {
                             let sp: Vec<Vec2> = aiai_paint::sample_stroke(s).iter().map(|q| Vec2::new(q.x, q.y)).collect();
-                            polyline(painter, &sp, s.width.max(2.0), Color32::from_rgba_unmultiplied(235, 70, 60, 200), xf);
+                            polyline(painter, &sp, s.width.max(2.0), env.t.danger.gamma_multiply(0.8), xf);
                         }
                     }
                 }
@@ -779,7 +779,7 @@ fn readout(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, c: Vec2)
     if let Some(svc) = &env.ed.render {
         if let Some((k, msg)) = &svc.last_error {
             if env.ed.cut.as_ref() == Some(&k.cut) && k.counter == env.core.change_counter {
-                painter.text(rect.center_top() + egui::vec2(0.0, 10.0), egui::Align2::CENTER_TOP, msg, egui::FontId::proportional(12.0), Color32::from_rgb(235, 110, 90));
+                painter.text(rect.center_top() + egui::vec2(0.0, 10.0), egui::Align2::CENTER_TOP, msg, egui::FontId::proportional(12.0), env.t.danger);
             }
         }
     }

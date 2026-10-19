@@ -593,7 +593,7 @@ mod tests {
         let corners = [(80.0f32, 40.0f32), (240.0, 40.0), (240.0, 140.0), (80.0, 140.0), (80.0, 40.0)];
         let mut stab = Stabilizer::new(StabMode::Average, 4, 0.0);
         let mut pts: Vec<StrokePoint> = Vec::new();
-        let mut push = |p: Vec2, pr: f32, pts: &mut Vec<StrokePoint>| pts.push(StrokePoint { x: p.x, y: p.y, pressure: pr, tilt: None, t: None });
+        let push = |p: Vec2, pr: f32, pts: &mut Vec<StrokePoint>| pts.push(StrokePoint { x: p.x, y: p.y, pressure: pr, tilt: None, t: None });
         let mut raw = vec![];
         for w in corners.windows(2) {
             let (a, b) = (Vec2::new(w[0].0, w[0].1), Vec2::new(w[1].0, w[1].1));

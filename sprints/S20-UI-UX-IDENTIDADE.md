@@ -13,7 +13,7 @@ Blender 4/5, DaVinci Resolve, Clip Studio, Toon Boom Harmony (organização de w
 - [ ] Barra de ferramentas contextual por ferramenta ativa; painel de propriedades da ferramenta; dicas (tooltip) com atalho.
 - [x] Atalhos padrão (inspirados em CSP/Photoshop: B pincel, E borracha, G balde, V mover, espaço pan, Ctrl+Z…), editor de atalhos, detecção de conflito. (P6h)
 - [x] Varredura automática de estouro de layout (PT e EN, larguras mínimas) como no ANIGO; zero estouros.
-- [ ] Tema: contraste AA nos textos, estados de foco/hover/ativo, sem cor solta fora dos tokens.
+- [x] Tema: contraste AA nos textos, estados de foco/hover/ativo, sem cor solta fora dos tokens. (2026-10-19: teste AA cobre texto/atenuado/acento/erro × painel/cabeçalho/widget/hover/moldura/canvas e texto × etiquetas de etapa nos dois temas; ajustados acento claro #914709, atenuado claro #454850, atenuado escuro #a6a8b1; token `danger` novo; 4 cores soltas trocadas por tokens; as que sobram são tinta de imagem e papel das miniaturas. evidencias/S20/contraste/)
 - [x] Tela inicial: novo projeto (presets de resolução/fps), recentes, abrir. (P6g)
 - [x] Preferências: idioma, tema, desempenho (GPU), pastas. (P6h; cache e motor de voz adiados: nada no app os usa ainda — opção sem efeito seria maquiagem)
 

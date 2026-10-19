@@ -382,7 +382,7 @@ fn cut_row(env: &mut Env, ui: &mut Ui, i: usize, r: &CutRow, tex: Option<egui::T
             painter.image(id, thumb, Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
         }
         None => {
-            painter.text(thumb.center(), egui::Align2::CENTER_CENTER, "…", FontId::proportional(16.0), Color32::from_gray(170));
+            painter.text(thumb.center(), egui::Align2::CENTER_CENTER, "…", FontId::proportional(16.0), env.t.text_dim);
         }
     }
     painter.rect_stroke(thumb, 2.0, Stroke::new(1.0, t.border), StrokeKind::Inside);

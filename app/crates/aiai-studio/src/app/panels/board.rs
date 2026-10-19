@@ -197,7 +197,7 @@ fn cell(env: &mut Env, ui: &mut Ui, i: usize, p: &Panel, tex: Option<egui::Textu
             painter.image(id, thumb, Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
         }
         None => {
-            painter.text(thumb.center(), egui::Align2::CENTER_CENTER, if p.drawing_cut.is_some() { "…" } else { "—" }, FontId::proportional(18.0), Color32::from_gray(170));
+            painter.text(thumb.center(), egui::Align2::CENTER_CENTER, if p.drawing_cut.is_some() { "…" } else { "—" }, FontId::proportional(18.0), env.t.text_dim);
         }
     }
     if selected {
