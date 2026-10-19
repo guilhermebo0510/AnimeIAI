@@ -272,7 +272,7 @@ fn commit_brush(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Insta
     let preset = if erase {
         eraser_preset(o.eraser_size)
     } else {
-        let mut p = presets().get(o.brush_preset).or_else(|| presets().first()).cloned().unwrap_or_else(|| BrushPreset::round("Pincel", 24.0, 0.9));
+        let mut p = o.brush_custom.clone().or_else(|| presets().get(o.brush_preset).cloned()).or_else(|| presets().first().cloned()).unwrap_or_else(|| BrushPreset::round("Pincel", 24.0, 0.9));
         p.size = o.brush_size.max(0.5);
         p.opacity = o.brush_opacity.clamp(0.0, 1.0);
         p

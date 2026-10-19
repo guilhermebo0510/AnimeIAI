@@ -343,6 +343,8 @@ pub(crate) struct ToolOptions {
     pub brush_preset: usize,
     pub brush_size: f32,
     pub brush_opacity: f32,
+    /// Ajustes finos do pincel (cópia editada do preset escolhido); escolher outro preset descarta.
+    pub brush_custom: Option<aiai_paint::brush::BrushPreset>,
     pub eraser_size: f32,
     pub fill_gap: f32,
     pub fill_expand: u32,
@@ -364,6 +366,7 @@ impl Default for ToolOptions {
             brush_preset: 1,
             brush_size: 24.0,
             brush_opacity: 1.0,
+            brush_custom: None,
             eraser_size: 20.0,
             fill_gap: 3.0,
             fill_expand: 2,
@@ -494,6 +497,8 @@ pub(crate) struct Shown {
 }
 
 pub(crate) struct Editor {
+    /// Miniatura de traço de cada preset de pincel (feita pelo próprio motor, uma vez).
+    pub brush_thumbs: Vec<egui::TextureHandle>,
     /// Som ao vivo (reprodução e scrub da mixagem do corte).
     pub live: super::audio_out::AudioOut,
     pub cut: Option<NodeId>,
@@ -582,6 +587,7 @@ pub(crate) struct Editor {
 impl Default for Editor {
     fn default() -> Self {
         Editor {
+            brush_thumbs: Vec::new(),
             live: super::audio_out::AudioOut::new(false),
             keys: crate::keymap::Keymap::default(),
             cut: None,

@@ -102,9 +102,10 @@ fn empty_state(env: &mut Env, ui: &mut Ui, rect: Rect) {
             env.note("canvas:quick_start", b.rect);
             if b.clicked() {
                 let (d, size) = (env.ed.form_duration, env.ed.form_custom_size.then_some(env.ed.form_size));
-                match cmds::quick_start(env.core, d, size) {
-                    Ok(cut) => {
+                match cmds::quick_start_with_layers(env.core, d, size) {
+                    Ok((cut, line)) => {
                         env.ed.set_cut(cut);
+                        env.ed.layer = Some(line);
                     }
                     Err(e) => env.ed.notify(e),
                 }

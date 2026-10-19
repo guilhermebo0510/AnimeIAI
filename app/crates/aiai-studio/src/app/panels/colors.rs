@@ -16,14 +16,34 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
         current_color(env, ui);
         ui.add_space(2.0);
         palette_picker(env, ui);
-        let Some(pal) = env.ed.palette.clone() else {
-            ui.add_space(4.0);
-            ui.label(egui::RichText::new(tr("panel.palette.empty")).color(t.text_dim));
-            return;
-        };
-        swatches(env, ui, &pal);
-        edit_selected(env, ui, &pal);
+        match env.ed.palette.clone() {
+            None => {
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new(tr("panel.palette.empty")).color(t.text_dim));
+            }
+            Some(pal) => {
+                swatches(env, ui, &pal);
+                edit_selected(env, ui, &pal);
+            }
+        }
+        ui.add_space(4.0);
+        color_wheel(env, ui);
     });
+}
+
+/// Seletor fixo (quadrado saturação × valor + faixa de matiz) para a cor direta, sempre à mão como nos programas de
+/// pintura; recolhível.
+fn color_wheel(env: &mut Env, ui: &mut Ui) {
+    let rgba = cmds::resolve_color(&env.core.project, &env.ed.color);
+    let mut c32 = rgba_to_color32(Rgba([rgba.0[0], rgba.0[1], rgba.0[2], 1.0]));
+    let r = egui::CollapsingHeader::new(tr("colors.wheel")).id_salt("colors_wheel").default_open(true).show(ui, |ui| {
+        ui.spacing_mut().slider_width = (ui.available_width() - 40.0).clamp(120.0, 260.0);
+        let changed = egui::color_picker::color_picker_color32(ui, &mut c32, egui::color_picker::Alpha::Opaque);
+        if changed {
+            env.ed.set_color_direct(color32_to_rgba(c32));
+        }
+    });
+    env.note("colors:wheel", r.header_response.rect);
 }
 
 fn current_color(env: &mut Env, ui: &mut Ui) {

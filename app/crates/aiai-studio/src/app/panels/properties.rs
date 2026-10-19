@@ -45,6 +45,80 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: egui::Rect) {
     });
 }
 
+/// Miniatura 140×28 de cada preset: uma pincelada senoidal com pressão crescente desenhada pelo `paint_stroke`.
+fn brush_thumbnails(ctx: &egui::Context, presets: &[aiai_paint::brush::BrushPreset], bg: egui::Color32, ink: egui::Color32) -> Vec<egui::TextureHandle> {
+    use aiai_paint::brush::{BrushPoint, paint_stroke};
+    let (w, h) = (280u32, 56u32); // 2× para ficar nítida
+    let bgc = [bg.r() as f32 / 255.0, bg.g() as f32 / 255.0, bg.b() as f32 / 255.0, 1.0];
+    let inkc = [ink.r() as f32 / 255.0, ink.g() as f32 / 255.0, ink.b() as f32 / 255.0, 1.0];
+    presets
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let mut img = aiai_paint::Image::filled(w, h, bgc);
+            let mut q = p.clone();
+            q.size = q.size.clamp(4.0, 30.0);
+            let path: Vec<BrushPoint> = (0..60)
+                .map(|k| {
+                    let t = k as f32 / 59.0;
+                    BrushPoint { x: 16.0 + t * (w as f32 - 32.0), y: h as f32 / 2.0 + 10.0 * (t * std::f32::consts::TAU).sin(), pressure: 0.25 + 0.75 * (t * std::f32::consts::PI).sin() }
+                })
+                .collect();
+            paint_stroke(&mut img, &q, &path, inkc, 7);
+            let rgba = img.to_rgba8();
+            let ci = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
+            ctx.load_texture(format!("brush_thumb_{i}"), ci, egui::TextureOptions::LINEAR)
+        })
+        .collect()
+}
+
+/// Ajustes finos do pincel ativo: os parâmetros do motor, numa cópia do preset (o preset de fábrica não muda).
+fn brush_settings(ui: &mut Ui, o: &mut super::super::editor::ToolOptions) {
+    let base = tools::presets().get(o.brush_preset).cloned();
+    let Some(mut p) = o.brush_custom.clone().or(base.clone()) else { return };
+    let before = p.clone();
+    egui::CollapsingHeader::new(tr("brush.settings")).id_salt("brush_settings").default_open(false).show(ui, |ui| {
+        egui::Grid::new("brush_settings_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+            let slider = |ui: &mut Ui, key: &str, v: &mut f32, lo: f32, hi: f32| {
+                ui.label(tr(key));
+                ui.add(egui::Slider::new(v, lo..=hi).max_decimals(2));
+                ui.end_row();
+            };
+            slider(ui, "brush.flow", &mut p.flow, 0.02, 1.0);
+            slider(ui, "brush.spacing", &mut p.spacing, 0.02, 2.0);
+            if let aiai_paint::brush::BrushTip::Round { hardness, roundness, angle } = &mut p.tip {
+                slider(ui, "brush.hardness", hardness, 0.0, 1.0);
+                slider(ui, "brush.roundness", roundness, 0.1, 1.0);
+                slider(ui, "brush.angle", angle, -90.0, 90.0);
+            }
+            slider(ui, "brush.size_pressure", &mut p.size_pressure_min, 0.0, 1.0);
+            slider(ui, "brush.opacity_pressure", &mut p.opacity_pressure_min, 0.0, 1.0);
+            slider(ui, "brush.flow_pressure", &mut p.flow_pressure_min, 0.0, 1.0);
+            slider(ui, "brush.scatter", &mut p.scatter, 0.0, 2.0);
+            slider(ui, "brush.size_jitter", &mut p.size_jitter, 0.0, 1.0);
+            slider(ui, "brush.angle_jitter", &mut p.angle_jitter, 0.0, 180.0);
+            slider(ui, "brush.value_jitter", &mut p.value_jitter, 0.0, 1.0);
+            slider(ui, "brush.hue_jitter", &mut p.hue_jitter, 0.0, 1.0);
+            slider(ui, "brush.wet_edges", &mut p.wet_edges, 0.0, 1.0);
+            slider(ui, "brush.mix", &mut p.mix, 0.0, 1.0);
+            slider(ui, "brush.smudge", &mut p.smudge_carry, 0.0, 1.0);
+            if let Some(tx) = &mut p.texture {
+                slider(ui, "brush.texture_depth", &mut tx.depth, 0.0, 1.0);
+                slider(ui, "brush.texture_scale", &mut tx.scale, 0.5, 30.0);
+            }
+            ui.label(tr("brush.follow"));
+            ui.checkbox(&mut p.follow_direction, "");
+            ui.end_row();
+        });
+        if ui.add_enabled(o.brush_custom.is_some(), egui::Button::new(tr("brush.reset"))).clicked() {
+            o.brush_custom = None;
+        }
+    });
+    if p != before && p.validate().is_ok() {
+        o.brush_custom = Some(p);
+    }
+}
+
 fn row(ui: &mut Ui, t: &crate::theme::Tokens, compact: bool, key: &str, add: impl FnOnce(&mut Ui)) {
     if compact {
         // Na barra do canvas (linha que quebra) combo e slider são blocos aninhados que o egui não leva para a linha de baixo
@@ -143,20 +217,37 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
         }
         ToolId::Brush => {
             let presets = tools::presets();
+            if env.ed.brush_thumbs.len() != presets.len() {
+                env.ed.brush_thumbs = brush_thumbnails(ui.ctx(), presets, t.bg_widget, t.text);
+            }
+            let thumbs = env.ed.brush_thumbs.clone();
             let o = &mut env.ed.opts;
             row(ui, &t, compact, "opt.preset", |ui| {
                 let name = presets.get(o.brush_preset).map(|p| p.name.as_str()).unwrap_or("-");
-                egui::ComboBox::from_id_salt(("brush_preset", compact)).width(130.0).selected_text(name).show_ui(ui, |ui| {
-                    for (i, p) in presets.iter().enumerate() {
-                        if ui.selectable_label(o.brush_preset == i, &p.name).clicked() {
-                            o.brush_preset = i;
-                            o.brush_size = p.size;
-                            o.brush_opacity = p.opacity;
+                let custom = if o.brush_custom.is_some() { " *" } else { "" };
+                egui::ComboBox::from_id_salt(("brush_preset", compact))
+                    .width(130.0)
+                    .height(560.0)
+                    .selected_text(format!("{name}{custom}"))
+                    .show_ui(ui, |ui| {
+                        // lista com a miniatura do traço de cada preset (o motor de verdade desenha a miniatura)
+                        for (i, p) in presets.iter().enumerate() {
+                            let r = ui.horizontal(|ui| {
+                                if let Some(tex) = thumbs.get(i) {
+                                    ui.add(egui::Image::new(tex).fit_to_exact_size(egui::vec2(140.0, 28.0)));
+                                }
+                                ui.selectable_label(o.brush_preset == i, &p.name)
+                            });
+                            if r.inner.clicked() || r.response.clicked() {
+                                o.brush_preset = i;
+                                o.brush_size = p.size;
+                                o.brush_opacity = p.opacity;
+                                o.brush_custom = None;
+                            }
                         }
-                    }
-                })
-                .response
-                .on_hover_text(tr("opt.preset"));
+                    })
+                    .response
+                    .on_hover_text(tr("opt.preset"));
             });
             row(ui, &t, compact, "opt.size", |ui| {
                 ui.add(egui::DragValue::new(&mut o.brush_size).range(1.0..=600.0).speed(0.5).max_decimals(0).suffix(" px"));
@@ -166,6 +257,9 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
                 ui.add(egui::Slider::new(&mut o.brush_opacity, 0.05..=1.0).show_value(!compact).custom_formatter(|v, _| format!("{:.0}%", v * 100.0)).trailing_fill(true)).on_hover_text(tr("opt.opacity"));
             });
             stabilizer_row(ui, &t, compact, o);
+            if !compact {
+                brush_settings(ui, o);
+            }
         }
         ToolId::Eraser => {
             let o = &mut env.ed.opts;

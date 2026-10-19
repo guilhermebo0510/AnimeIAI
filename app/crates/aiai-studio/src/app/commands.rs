@@ -296,6 +296,12 @@ pub(crate) fn add_cut(core: &mut CoreSession, scene: &NodeId, duration: u32, can
 
 /// Episódio + cena + corte de uma vez (projeto vazio): um passo de undo.
 pub(crate) fn quick_start(core: &mut CoreSession, duration: u32, canvas: Option<[u32; 2]>) -> Result<NodeId, String> {
+    let (cut, cmds) = quick_start_commands(core, duration, canvas);
+    run(core, Command::Batch { commands: cmds, label: Some(tr("cmd.quick_start").to_owned()) })?;
+    Ok(cut)
+}
+
+fn quick_start_commands(core: &mut CoreSession, duration: u32, canvas: Option<[u32; 2]>) -> (NodeId, Vec<Command>) {
     let (ep, sc, cut) = (core.ids.next(), core.ids.next(), core.ids.next());
     let mut cd = CutData::new(duration.max(1));
     cd.number = 1;
@@ -305,8 +311,28 @@ pub(crate) fn quick_start(core: &mut CoreSession, duration: u32, canvas: Option<
         create(sc.clone(), Some(ep), None, format!("{} 1", tr("tree.scene")), NodeKind::Scene(SceneData { number: 1, description: String::new() })),
         create(cut.clone(), Some(sc), None, format!("{} 1", tr("tree.cut")), NodeKind::Cut(cd)),
     ];
+    (cut, cmds)
+}
+
+/// Começo rápido da interface: o corte já vem com as três camadas de trabalho (Fundo raster, Cor ligada à Linha,
+/// Linha vetorial), cada uma com o cel 1. Devolve (corte, camada de linha).
+pub(crate) fn quick_start_with_layers(core: &mut CoreSession, duration: u32, canvas: Option<[u32; 2]>) -> Result<(NodeId, NodeId), String> {
+    // um passo só de desfazer: corte + camadas
+    let (cut, mut cmds) = quick_start_commands(core, duration, canvas);
+    let (bg, fill, line) = (core.ids.next(), core.ids.next(), core.ids.next());
+    let mut fd = LayerData::new(LayerType::Fill);
+    fd.line_refs.push(line.clone());
+    for (id, name, data) in [
+        (bg.clone(), tr("layer.default_bg"), LayerData::new(LayerType::Raster)),
+        (fill.clone(), tr("layer.default_color"), fd),
+        (line.clone(), tr("layer.default_line"), LayerData::new(LayerType::Vector)),
+    ] {
+        cmds.push(create(id.clone(), Some(cut.clone()), None, name, NodeKind::Layer(data)));
+        let cel = core.ids.next();
+        cmds.push(create(cel, Some(id), None, "1", NodeKind::Cel(CelData::new(1))));
+    }
     run(core, Command::Batch { commands: cmds, label: Some(tr("cmd.quick_start").to_owned()) })?;
-    Ok(cut)
+    Ok((cut, line))
 }
 
 pub(crate) fn rename_node(core: &mut CoreSession, id: &NodeId, name: &str) -> Result<(), String> {
