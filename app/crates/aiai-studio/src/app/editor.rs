@@ -261,6 +261,17 @@ pub(crate) enum SelMode {
     Wand,
 }
 
+/// Forma da caneta: à mão livre, ou formas de régua (linha, curva por cliques, retângulo, elipse).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum PenShape {
+    #[default]
+    Freehand,
+    Line,
+    Curve,
+    Rect,
+    Ellipse,
+}
+
 /// Máscara da varinha (calculada pelo motor no clique) e a caixa dela.
 #[derive(Debug)]
 pub(crate) struct WandMask {
@@ -404,6 +415,9 @@ pub(crate) struct ToolOptions {
     pub pen_aliased: bool,
     /// Terminar perto do começo fecha o traço (sem pontas afinadas abrindo vão para o balde).
     pub pen_autoclose: bool,
+    pub pen_shape: PenShape,
+    /// Mover em camada vetorial edita os pontos dos traços em vez de mover a seleção.
+    pub move_points: bool,
     pub stab_mode: StabMode,
     pub stab_window: u32,
     /// Raio da corda do lazy brush em PONTOS da tela (vira pixels do desenho dividindo pela escala da visão).
@@ -432,6 +446,8 @@ impl Default for ToolOptions {
             pen_tip: VectorTip::GPen,
             pen_aliased: false,
             pen_autoclose: true,
+            pen_shape: PenShape::Freehand,
+            move_points: false,
             stab_mode: StabMode::Average,
             stab_window: 4,
             stab_radius: 10.0,
@@ -494,6 +510,12 @@ pub(crate) enum Gesture {
     Stroke(Box<StrokeGesture>),
     Select { start: Vec2, pts: Vec<Vec2>, mode: SelMode },
     MoveSel { last: Vec2 },
+    /// Mover em "Editar pontos": arrasto de um ponto de controle (posições no espaço do cel; `width` = muda a pressão).
+    DragNode { idx: usize, start: Vec2, cur: Vec2, width: bool },
+    /// Caneta em forma de régua (linha, retângulo, elipse): do ponto de partida até o cursor.
+    Shape { start: Vec2, cur: Vec2 },
+    /// Caneta em curva por cliques: cada clique põe um ponto; Enter, duplo clique ou botão direito termina.
+    PolyCurve { pts: Vec<Vec2>, last_click: std::time::Instant },
     /// Alça de canto do Mover: escala em volta do centro.
     ScaleSel { start_dist: f32, start_scale: f32 },
     /// Alça de rotação do Mover.
@@ -575,6 +597,10 @@ pub(crate) struct Shown {
 }
 
 pub(crate) struct Editor {
+    /// Shift seguro neste quadro (formas da caneta: ângulo de 15°, quadrado, círculo).
+    pub shift: bool,
+    /// Traço escolhido para editar pontos (Mover em "Editar pontos").
+    pub node_stroke: Option<aiai_core::Id>,
     /// Miniatura de traço de cada preset de pincel (feita pelo próprio motor, uma vez).
     pub brush_thumbs: Vec<egui::TextureHandle>,
     /// Som ao vivo (reprodução e scrub da mixagem do corte).
@@ -665,6 +691,8 @@ pub(crate) struct Editor {
 impl Default for Editor {
     fn default() -> Self {
         Editor {
+            node_stroke: None,
+            shift: false,
             brush_thumbs: Vec::new(),
             live: super::audio_out::AudioOut::new(false),
             keys: crate::keymap::Keymap::default(),

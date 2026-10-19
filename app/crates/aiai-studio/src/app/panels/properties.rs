@@ -171,6 +171,22 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
     match tool {
         ToolId::Pen => {
             let o = &mut env.ed.opts;
+            row(ui, &t, compact, "opt.pen_shape", |ui| {
+                let key = |m: PenShape| match m {
+                    PenShape::Freehand => "pen.freehand",
+                    PenShape::Line => "pen.line",
+                    PenShape::Curve => "pen.curve",
+                    PenShape::Rect => "pen.rect",
+                    PenShape::Ellipse => "pen.ellipse",
+                };
+                egui::ComboBox::from_id_salt(("pen_shape", compact)).selected_text(tr(key(o.pen_shape))).show_ui(ui, |ui| {
+                    for m in [PenShape::Freehand, PenShape::Line, PenShape::Curve, PenShape::Rect, PenShape::Ellipse] {
+                        ui.selectable_value(&mut o.pen_shape, m, tr(key(m)));
+                    }
+                })
+                .response
+                .on_hover_text(tr("opt.pen_shape.tip"));
+            });
             row(ui, &t, compact, "opt.width", |ui| {
                 ui.add(egui::DragValue::new(&mut o.pen_width).range(0.5..=200.0).speed(0.1).max_decimals(1).suffix(" px"));
             });
@@ -328,6 +344,16 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
             }
         }
         ToolId::Move => {
+            let mp = ui.checkbox(&mut env.ed.opts.move_points, tr("opt.move_points")).on_hover_text(tr("opt.move_points.tip"));
+            env.note("opt:move_points", mp.rect);
+            if env.ed.opts.move_points {
+                let b = ui.add_enabled(env.ed.node_stroke.is_some(), egui::Button::new(tr("opt.simplify")));
+                env.note("opt:simplify", b.rect);
+                if b.on_hover_text(tr("opt.simplify.tip")).clicked() {
+                    super::super::nodes::simplify(env, 1.5);
+                }
+                return;
+            }
             let pending = tools::has_pending_move(env.ed);
             let apply = ui.add_enabled(pending, egui::Button::new(tr("opt.move_apply")));
             env.note("opt:move_apply", apply.rect);

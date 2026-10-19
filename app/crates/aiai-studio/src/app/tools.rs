@@ -197,6 +197,84 @@ fn commit_pen(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant
     commit(env, planned, released_at, "pen", Some((ghost_pts, ghost_radii, width, color)));
 }
 
+/// Pontos (canvas) da forma da caneta de `a` até `b`; com `shift`, linha a cada 15°, quadrado, círculo.
+pub(crate) fn shape_points(shape: PenShape, a: Vec2, b: Vec2, shift: bool) -> (Vec<Vec2>, StrokeGeometry, bool) {
+    let mut b = b;
+    match shape {
+        PenShape::Line => {
+            if shift {
+                let d = b - a;
+                let ang = (d.y.atan2(d.x) / (std::f32::consts::PI / 12.0)).round() * (std::f32::consts::PI / 12.0);
+                b = a + Vec2::new(ang.cos(), ang.sin()) * d.length();
+            }
+            (vec![a, b], StrokeGeometry::Polyline, false)
+        }
+        PenShape::Rect | PenShape::Ellipse => {
+            if shift {
+                let d = b - a;
+                let m = d.x.abs().max(d.y.abs());
+                b = a + Vec2::new(m * d.x.signum(), m * d.y.signum());
+            }
+            if shape == PenShape::Rect {
+                (vec![a, Vec2::new(b.x, a.y), b, Vec2::new(a.x, b.y)], StrokeGeometry::Polyline, true)
+            } else {
+                let (c, r) = ((a + b) / 2.0, (b - a).abs() / 2.0);
+                ((0..16).map(|i| {
+                    let t = i as f32 / 16.0 * std::f32::consts::TAU;
+                    c + Vec2::new(r.x * t.cos(), r.y * t.sin())
+                }).collect(), StrokeGeometry::Spline, true)
+            }
+        }
+        _ => (vec![a, b], StrokeGeometry::Spline, false),
+    }
+}
+
+/// Grava um traço de forma (pontos no canvas) na camada vetorial ativa com a ponta/largura/cor da caneta; os pontos
+/// vão para o espaço do cel (camada com movimento) como os da mão livre.
+pub(crate) fn commit_vector_shape(env: &mut Env, pts: Vec<Vec2>, geometry: StrokeGeometry, closed: bool) {
+    let released_at = Instant::now();
+    if pts.len() < 2 || pts.windows(2).all(|w| (w[1] - w[0]).length() < 0.5) {
+        return;
+    }
+    let Some(t) = target(env, &[LayerType::Vector], "err.need_vector") else { return };
+    let inv = cmds::layer_placement(&env.core.project, &t.cut, &t.layer, t.frame).and_then(|a| a.inverse());
+    let local = |p: Vec2| match &inv {
+        Some(a) => {
+            let (x, y) = a.apply(p.x, p.y);
+            Vec2::new(x, y)
+        }
+        None => p,
+    };
+    let o = &env.ed.opts;
+    let stroke = Stroke {
+        id: Id(String::new()),
+        points: pts.iter().map(|p| {
+            let q = local(*p);
+            StrokePoint { x: q.x, y: q.y, pressure: 1.0, tilt: None, t: None }
+        }).collect(),
+        geometry,
+        tension: 0.0,
+        tip: o.pen_tip,
+        width: o.pen_width.max(0.1),
+        profile: WidthProfile::default(),
+        color: env.ed.color.clone(),
+        opacity: 1.0,
+        closed,
+        aliased: o.pen_aliased,
+        color_trace: false,
+    };
+    let (cut, layer, frame, pref) = (t.cut.clone(), t.layer.clone(), t.frame, env.ed.cel_number);
+    let width = stroke.width;
+    let ghost: Vec<Vec2> = if closed { pts.iter().copied().chain(pts.first().copied()).collect() } else { pts.clone() };
+    let planned = cmds::plan_with_prep(env.core, &cut, &layer, frame, pref, vec![], |p, _| {
+        let cel = cmds::exposed_cel(p, &cut, &layer, frame).ok_or_else(|| tr("err.no_cel").to_owned())?;
+        let index = cmds::cel_data(p, &cel).map(|c| c.strokes.len()).unwrap_or(0);
+        Ok(Command::InsertStrokes { cel, items: vec![IndexedStroke { index, stroke }] })
+    });
+    let color = ghost_color(env, 1.0);
+    commit(env, planned, released_at, "pen_shape", Some((ghost, Vec::new(), width, color)));
+}
+
 /// Amostras (posição, raio) de um traço vetorial como o motor desenha.
 pub(crate) fn sampled(stroke: &Stroke) -> (Vec<Vec2>, Vec<f32>) {
     aiai_paint::sample_stroke(stroke).iter().map(|q| (Vec2::new(q.x, q.y), q.r)).unzip()
@@ -625,7 +703,11 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
         }
     }
     if enter {
-        commit_move(env);
+        if let Gesture::PolyCurve { pts, .. } = std::mem::replace(&mut env.ed.gesture, Gesture::None) {
+            commit_vector_shape(env, pts, StrokeGeometry::Spline, false);
+        } else {
+            commit_move(env);
+        }
     }
     if esc {
         if !matches!(env.ed.gesture, Gesture::None) {
@@ -794,5 +876,18 @@ mod tests {
         assert!(none.is_empty());
         let both = eraser_hits(&core, &cut, &line, 0, &[Vec2::new(30.0, 0.0), Vec2::new(30.0, 35.0)], 3.0);
         assert_eq!(both.len(), 2, "o caminho vertical cruza os dois");
+    }
+
+    #[test]
+    fn pen_shapes_snap_with_shift() {
+        let (a, b) = (Vec2::new(0.0, 0.0), Vec2::new(100.0, 8.0));
+        let (pts, geo, closed) = shape_points(PenShape::Line, a, b, true);
+        assert_eq!((geo, closed), (StrokeGeometry::Polyline, false));
+        assert!(pts[1].y.abs() < 1e-3 && (pts[1].x - 100.3).abs() < 0.5, "linha presa no horizontal: {:?}", pts[1]);
+        let (sq, _, closed) = shape_points(PenShape::Rect, a, Vec2::new(50.0, 20.0), true);
+        assert!(closed && sq.len() == 4 && (sq[2].x - 50.0).abs() < 1e-3 && (sq[2].y - 50.0).abs() < 1e-3, "quadrado: {sq:?}");
+        let (el, geo, closed) = shape_points(PenShape::Ellipse, a, Vec2::new(40.0, 20.0), false);
+        assert_eq!((geo, closed, el.len()), (StrokeGeometry::Spline, true, 16));
+        assert!((el[0].x - 40.0).abs() < 1e-3 && (el[0].y - 10.0).abs() < 1e-3);
     }
 }

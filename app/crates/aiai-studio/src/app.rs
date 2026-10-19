@@ -18,6 +18,7 @@ mod prefs_ui;
 mod start;
 mod editor;
 mod input_queue;
+mod nodes;
 mod panels;
 mod render_service;
 mod tools;

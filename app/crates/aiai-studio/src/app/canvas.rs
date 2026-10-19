@@ -311,6 +311,7 @@ fn over_canvas(ui: &Ui, rect: Rect, pos: Pos2) -> bool {
 fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: f32) {
     let events: Vec<Event> = ui.input(|i| i.events.clone());
     let (space, r_held, any_down) = ui.input(|i| (i.key_down(egui::Key::Space), i.key_down(egui::Key::R), i.pointer.any_down()));
+    env.ed.shift = ui.input(|i| i.modifiers.shift);
     if let Some(p) = ui.input(|i| i.pointer.hover_pos()) {
         env.ed.cursor = Some(p);
     }
@@ -336,6 +337,25 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
                     _ => None,
                 });
                 on_move(env, rect, ppp, *pos, pressure.unwrap_or(env.ed.pressure));
+            }
+            Event::PointerButton { pos, button, pressed: true, modifiers } if matches!(env.ed.gesture, Gesture::PolyCurve { .. }) && over_canvas(ui, rect, *pos) => {
+                // curva por cliques: clique põe ponto; duplo clique ou botão direito termina
+                let _ = modifiers;
+                let c = env.ed.view.xf(rect, ppp).to_canvas(*pos);
+                let mut finish = *button == egui::PointerButton::Secondary;
+                if let Gesture::PolyCurve { pts, last_click } = &mut env.ed.gesture {
+                    let double = last_click.elapsed().as_millis() < 350 && pts.last().is_some_and(|l| (*l - c).length() * env.ed.view.xf(rect, ppp).scale < 6.0);
+                    if *button == egui::PointerButton::Primary && !double {
+                        pts.push(c);
+                    }
+                    *last_click = Instant::now();
+                    finish |= double;
+                }
+                if finish {
+                    if let Gesture::PolyCurve { pts, .. } = std::mem::replace(&mut env.ed.gesture, Gesture::None) {
+                        tools::commit_vector_shape(env, pts, aiai_core::StrokeGeometry::Spline, false);
+                    }
+                }
             }
             Event::PointerButton { pos, button, pressed: true, modifiers } => {
                 if matches!(env.ed.gesture, Gesture::None) && over_canvas(ui, rect, *pos) {
@@ -400,6 +420,11 @@ fn touch_start_pressure(events: &[Event], idx: usize) -> Option<f32> {
 fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::PointerButton, mods: egui::Modifiers, space: bool, r_held: bool) {
     let xf = env.ed.view.xf(rect, ppp);
     let tool = *env.tool;
+    if tool == ToolId::Move && env.ed.opts.move_points && !space && matches!(button, egui::PointerButton::Primary | egui::PointerButton::Secondary) {
+        // editar pontos: o tamanho de 1 px de tela em px do canvas dá a tolerância do clique
+        super::nodes::press(env, xf.to_canvas(pos), 1.0 / xf.scale.max(1e-3), button, mods);
+        return;
+    }
     match button {
         egui::PointerButton::Middle => env.ed.gesture = Gesture::Pan { last: pos, button },
         egui::PointerButton::Primary => {
@@ -414,6 +439,12 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
                 env.ed.gesture = Gesture::Eyedrop;
             } else {
                 match tool {
+                    ToolId::Pen if env.ed.opts.pen_shape == PenShape::Curve => {
+                        env.ed.gesture = Gesture::PolyCurve { pts: vec![c], last_click: Instant::now() };
+                    }
+                    ToolId::Pen if env.ed.opts.pen_shape != PenShape::Freehand => {
+                        env.ed.gesture = Gesture::Shape { start: c, cur: c };
+                    }
                     ToolId::Pen | ToolId::Brush | ToolId::Eraser => {
                         let pressure = env.ed.pressure;
                         env.ed.gesture = tools::begin_stroke(env, tool, c, pressure, xf.scale);
@@ -500,6 +531,9 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
                 s.offset += d;
             }
         }
+        Gesture::Shape { cur, .. } => *cur = c,
+        Gesture::DragNode { .. } => super::nodes::drag(env, c),
+        Gesture::PolyCurve { .. } => {}
         Gesture::ScaleSel { start_dist, start_scale } => {
             if let Some(s) = env.ed.selection.as_mut() {
                 let center = s.center() + s.offset;
@@ -543,6 +577,12 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
             tools::finish_select(env, mode, start, pts);
         }
         Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } => {}
+        g @ Gesture::DragNode { .. } => super::nodes::release(env, g),
+        Gesture::Shape { start, .. } => {
+            let (pts, geo, closed) = tools::shape_points(env.ed.opts.pen_shape, start, c, env.ed.shift);
+            tools::commit_vector_shape(env, pts, geo, closed);
+        }
+        g @ Gesture::PolyCurve { .. } => env.ed.gesture = g, // a curva continua até Enter/duplo clique
         Gesture::Eyedrop => tools::do_eyedrop(env, c),
         Gesture::FillClick => tools::do_fill(env, c, at),
     }
@@ -772,6 +812,9 @@ fn paint_selection(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId
     };
     two_tone(painter, selection_outline_map(sel.mode, &outline_pts, |p| sel.map(p), xf), true);
     // alças do Mover (cantos: escala; círculo de cima: rotação)
+    if *env.tool == ToolId::Move && env.ed.opts.move_points {
+        return;
+    }
     if *env.tool == ToolId::Move && !sel.whole {
         let (corners, knob, _) = handles(&sel);
         for q in corners {
@@ -852,6 +895,9 @@ fn variable_line(painter: &egui::Painter, pts: &[Vec2], radii: &[f32], color: Co
 }
 
 fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId) {
+    if *env.tool == ToolId::Move && env.ed.opts.move_points {
+        super::nodes::paint(env, painter, |p| xf.to_screen(p), env.t.accent);
+    }
     // o que o gesto anterior acabou de fazer, até o render novo chegar
     env.ed.ghosts.retain(|g| g.born.elapsed().as_secs_f32() < 5.0);
     for g in &env.ed.ghosts {
@@ -897,6 +943,29 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
                         }
                     }
                 }
+            }
+        }
+        Gesture::Shape { start, cur } => {
+            let (pts, _, closed) = tools::shape_points(env.ed.opts.pen_shape, *start, *cur, env.ed.shift);
+            let c = cmds::resolve_color(&env.core.project, &env.ed.color);
+            let color = super::ui_kit::rgba_to_color32(Rgba([c.0[0], c.0[1], c.0[2], 1.0]));
+            let path: Vec<Vec2> = if closed { pts.iter().copied().chain(pts.first().copied()).collect() } else { pts };
+            polyline(painter, &path, env.ed.opts.pen_width, color, xf);
+        }
+        Gesture::PolyCurve { pts, .. } => {
+            let c = cmds::resolve_color(&env.core.project, &env.ed.color);
+            let color = super::ui_kit::rgba_to_color32(Rgba([c.0[0], c.0[1], c.0[2], 1.0]));
+            let mut path = pts.clone();
+            if let Some(cur) = env.ed.cursor {
+                path.push(xf.to_canvas(cur));
+            }
+            // prévia pela spline do motor (a mesma do traço gravado)
+            let st = aiai_core::Stroke { id: aiai_core::Id(String::new()), points: path.iter().map(|p| aiai_core::StrokePoint { x: p.x, y: p.y, pressure: 1.0, tilt: None, t: None }).collect(), geometry: aiai_core::StrokeGeometry::Spline, tension: 0.0,
+                tip: aiai_core::VectorTip::Marker, width: env.ed.opts.pen_width.max(0.1), profile: Default::default(), color: env.ed.color.clone(), opacity: 1.0, closed: false, aliased: false, color_trace: false };
+            let (sp, sr) = super::tools::sampled(&st);
+            variable_line(painter, &sp, &sr, color, xf);
+            for p in pts {
+                painter.circle(xf.to_screen(*p), 3.5, Color32::WHITE, Stroke::new(1.2, env.t.accent));
             }
         }
         Gesture::Select { pts, mode, start } => {

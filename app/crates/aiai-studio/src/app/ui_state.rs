@@ -262,6 +262,7 @@ impl StudioApp {
             "gesture_active": !matches!(ed.gesture, super::editor::Gesture::None),
             "cursor_logical": ed.cursor.map(|c| json!([round(c.x), round(c.y)])),
             "ghosts": ed.ghosts.len(),
+            "node_stroke": ed.node_stroke.as_ref().map(|i| i.0.clone()),
             "audio": json!({ "live": ed.live.enabled(), "starts": ed.live.starts, "scrubs": ed.live.scrubs, "error": ed.live.last_error }),
             "tool_options": json!({ "pen_width": o.pen_width, "brush_size": o.brush_size, "brush_opacity": o.brush_opacity, "eraser_size": o.eraser_size, "fill_gap": o.fill_gap, "fill_expand": o.fill_expand, "fill_close_leftovers": o.fill_close_leftovers }),
             "timeline": { "cell_w": ed.tl_cell_w, "scroll": [round(ed.tl_scroll.x), round(ed.tl_scroll.y)], "header_w": super::panels::timeline::HEADER_W, "ruler_h": super::panels::timeline::RULER_H, "row_h": super::panels::timeline::ROW_H },
