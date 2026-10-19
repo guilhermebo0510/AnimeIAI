@@ -97,6 +97,7 @@ def arm(who, wrist, side, ang, s):
         st.append(curve([(-60, -52), (-300, -60), (-560, -66), (-700, -70), (-700, 70), (-560, 66), (-300, 60), (-60, 52)], 1.0, closed=True))
         st.append(curve([(-300, -60), (-260, -20), (-330, 20)], 0.5, widths=[0.2, 1.0, 0.2]))  # dobra do tecido
         sd += [seed(-30, 0, "blusa"), seed(-400, 0, "blusa"), seed(-200, 30, "blusa")]
+        sd += [seed(-53, -3, "blusa_sombra")]  # avesso da manga entre o punho e a barra (a barra curva fecha uma meia-lua)
     else:
         # antebraço nu e manga azul dobrada
         st.append(curve([(0, -36), (-120, -44), (-260, -50)], 1.0))
@@ -106,6 +107,7 @@ def arm(who, wrist, side, ang, s):
         st.append(curve([(-260, -50), (-250, -64)], 1.0, geometry="polyline"))
         st.append(curve([(-260, 50), (-250, 64)], 1.0, geometry="polyline"))
         sd += [seed(-130, 0, "pele"), seed(-290, 0, "camisa"), seed(-380, 0, "camisa")]
+        sd += [seed(-321, -7, "camisa_sombra")]  # avesso da manga dobrada (meia-lua entre a dobra e a manga)
     # sombra de cel: faixa de baixo do braço e da mão
     sh_name = "pele_sombra"
     shapes = [(sh_name, [P(10, 26), P(70, 34), P(110, 40), P(70, 46), P(20, 42), P(0, 36)])]

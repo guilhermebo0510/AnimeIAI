@@ -239,6 +239,9 @@ def hair_hana(h, ink):
     clip = [(-0.35, 0.22), (-0.21, 0.17), (-0.195, 0.215), (-0.335, 0.265)]
     out.append(h.curve(clip, 0.9, ink, closed=True, geometry="polyline", tip="marker"))
     seeds += [h.seed(-0.27, 0.218, "presilha"), h.seed(0.02, 0.10, "cabelo", rot=False), h.seed(-0.47, 0.72, "cabelo", rot=False), h.seed(0.48, 0.72, "cabelo", rot=False)]
+    # pele entre duas mechas da franja (embaixo de cada vale): a sobrancelha pode fechar esse triângulo
+    # (centroide do triângulo ponta anterior, vale, ponta seguinte: fica dentro mesmo quando as mechas são estreitas)
+    seeds += [h.seed((tips[i][0] + valleys[i + 1][0] + tips[i + 1][0]) / 3, (tips[i][1] + valleys[i + 1][1] + tips[i + 1][1]) / 3, "pele") for i in range(len(tips) - 1)]
     return out, seeds
 
 
@@ -308,9 +311,15 @@ def hair_ren(h, ink):
     # mechas internas no topo
     for a, b in [((-0.30, 0.02), (-0.26, 0.15)), ((-0.06, -0.10), (-0.04, 0.12)), ((0.20, -0.08), (0.16, 0.13)), ((0.40, 0.02), (0.34, 0.15))]:
         out.append(h.curve([a, b], 0.6, ink, widths=[0.2, 1.0, 0.2], rot=False))
-    seeds += [h.seed(0.0, 0.04, "cabelo", rot=False), h.seed(-0.48, 0.45, "cabelo", rot=False), h.seed(0.49, 0.45, "cabelo", rot=False),
+    # as mechas internas fecham o topo em três regiões (esquerda, meio, direita): uma semente em cada
+    seeds += [h.seed(0.0, 0.04, "cabelo", rot=False), h.seed(-0.39, 0.09, "cabelo", rot=False), h.seed(0.33, 0.06, "cabelo", rot=False), h.seed(0.47, 0.16, "cabelo", rot=False),
+              h.seed(-0.48, 0.45, "cabelo", rot=False), h.seed(0.49, 0.45, "cabelo", rot=False),
               h.seed(0.0, 0.25, "bandana"), h.seed(-0.30, 0.26, "bandana"), h.seed(0.30, 0.26, "bandana")]
-    seeds += [h.seed(lerp(valleys[i][0], valleys[i + 1][0], 0.5), (valleys[i][1] + t[1] * 2) / 3 - 0.02, "cabelo") for i, t in enumerate(tips)]
+    # cada mecha é um triângulo (vale, vale, ponta): a semente vai no centroide, que sempre fica dentro
+    seeds += [h.seed((valleys[i][0] + valleys[i + 1][0] + t[0]) / 3, (valleys[i][1] + valleys[i + 1][1] + t[1]) / 3, "cabelo") for i, t in enumerate(tips)]
+    # pele entre duas mechas (embaixo de cada vale): a sobrancelha pode fechar esse triângulo, então semente própria
+    # (centroide do triângulo ponta anterior, vale, ponta seguinte: fica dentro mesmo quando as mechas são estreitas)
+    seeds += [h.seed((tips[i][0] + valleys[i + 1][0] + tips[i + 1][0]) / 3, (tips[i][1] + valleys[i + 1][1] + tips[i + 1][1]) / 3, "pele") for i in range(len(tips) - 1)]
     # realce azulado do cabelo preto (faixa curva no alto) e sombra sob a bandana
     hl = [(-0.36, 0.06), (-0.18, 0.02), (0.0, 0.0), (0.18, 0.02), (0.36, 0.06), (0.34, 0.10), (0.18, 0.065), (0.0, 0.05), (-0.18, 0.065), (-0.34, 0.10)]
     h.shadow_shapes = [("cabelo_realce", [h.p(x, y, None, False) for x, y in hl])]
@@ -339,6 +348,8 @@ def face_ren(h, mood="neutral", open_=1.0, mouth_shape="closed"):
     strokes += hs
     seeds += hsd
     seeds += [h.seed(0.22, 0.75, "pele"), h.seed(-0.22, 0.75, "pele"), h.seed(0.0, 1.06, "pele", rot=False)]
+    # testa entre a primeira/última mecha e a lateral do cabelo: a sobrancelha fecha esse triângulo (é pele)
+    seeds += [h.seed(-0.345, 0.40, "pele"), h.seed(0.31, 0.40, "pele")]
     shapes += getattr(h, "shadow_shapes", [])
     xs = [h.p(x, 1.0, None, False)[0] for x in (-0.11, -0.055, 0.0, 0.055, 0.11)]
     top = [[X, h.top + (jaw_y(h, X) + 0.012) * h.H] for X in xs]
@@ -388,9 +399,15 @@ def body_bust(h, who, bottom=2.45, turn=0.0):
         seeds += [h.seed(ox, 1.80, "avental", False), h.seed(ox, 2.30, "avental", False), h.seed(ox + 0.06, 2.06, "avental", False), h.seed(ox - 0.06, 2.06, "avental", False),
                   h.seed(X(-1, 0.20), 1.45, "blusa", False), h.seed(X(1, 0.20), 1.45, "blusa", False), h.seed(X(-1, 0.42), 1.9, "blusa", False), h.seed(X(1, 0.42), 1.9, "blusa", False),
                   h.seed(X(-1, sh + 0.02), 2.0, "blusa", False), h.seed(X(1, sh + 0.02), 2.0, "blusa", False), h.seed(X(-1, 0.18), 1.19, "blusa", False), h.seed(X(1, 0.18), 1.19, "blusa", False),
-                  h.seed(X(-1, 0.32), 1.48, "avental", False), h.seed(X(1, 0.32), 1.48, "avental", False),
+                  h.seed(X(-1, 0.299), 1.48, "avental", False), h.seed(X(1, 0.299), 1.48, "avental", False),  # meio da alça
+                  # fresta entre a borda de cima da aba da gola e a linha do ombro (a aba cruza o ombro)
+                  h.seed(X(-1, 0.23), 1.156, "blusa", False), h.seed(X(1, 0.23), 1.156, "blusa", False),
                   h.seed(X(-1, 0.46), 1.42, "blusa", False), h.seed(X(1, 0.46), 1.42, "blusa", False)]  # ombros fora das alças
         for sg in (-1, 1):
+            # alça do avental como forma entre as duas linhas: no 3/4 a do lado distante fica mais estreita que o
+            # fechamento do balde e se juntava com a blusa
+            strap = [(X(sg, 0.22), 1.62), (X(sg, 0.30), 1.40), (X(sg, 0.40), 1.215), (X(sg, 0.47), 1.235), (X(sg, 0.35), 1.42), (X(sg, 0.27), 1.62)]
+            shapes.append(("avental", [h.p(x, y, None, False) for x, y in strap]))
             shapes.append(("blusa_sombra", [h.p(x, y, None, False) for x, y in [(X(sg, sh - 0.07), 1.52), (X(sg, sh - 0.10), 1.75), (X(sg, wa + 0.02), 2.1), (X(sg, wa), bottom), (X(sg, wa - 0.07), bottom), (X(sg, wa - 0.05), 2.05), (X(sg, sh - 0.16), 1.6)]]))
     else:
         # camisa azul com gola em V, avental creme com alça no pescoço, manga dobrada

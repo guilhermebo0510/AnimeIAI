@@ -1,5 +1,12 @@
-"""Ensaio do rig: desenha um rosto grande num corte de teste e renderiza. uso: python ensaio.py hana [mood] [mouth] [yaw]"""
+"""Ensaio do rig: desenha um rosto grande num corte de teste e renderiza. uso: python ensaio.py hana [mood] [mouth] [yaw]
+Roda num projeto à parte (calibracao/tmp/ensaio-rig.aiai), nunca no arquivo de produção do curta."""
 import os, sys
+os.environ.setdefault("AIAI_CURTA_PROJ", "C:/AnimeIAI/calibracao/tmp/ensaio-rig.aiai")
+os.environ.setdefault("AIAI_CURTA_IDS", "C:/AnimeIAI/calibracao/tmp/ensaio-rig.ids.json")
+if not os.path.exists(os.environ["AIAI_CURTA_PROJ"] + "/project.json"):
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "calib"))
+    from drive import Drive
+    Drive(os.environ["AIAI_CURTA_PROJ"]).call("NEW_PROJECT", {"name": "Ensaio do rig", "path": os.environ["AIAI_CURTA_PROJ"]})
 from curta import d, ids, node, save_ids, OUT
 import rig
 

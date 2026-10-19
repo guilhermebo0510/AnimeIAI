@@ -37,7 +37,8 @@ gerada por IA, nenhum material do episódio de referência, nenhuma imagem exter
 | Edição | `c17_edicao.py` | fade do preto, flash no gag, dissolve, 4 legendas, créditos |
 | Export | `c18_export.py` | 796/796 quadros conferidos pelo ffprobe |
 | Cor | `c19_grade.py` | grade por corte (entardecer quente; gag com mais contraste) |
-| Revisão | `c20_revisao.py`, `c21_sobras.py` | proporções ≤ 1,5%; ΔE 0 nas cores do balde; lint 0 nos 7 cortes |
+| Revisão | `c20_revisao.py` | proporções medidas no render; ΔE nas sementes; lint de cada corte (ver correção S23 abaixo) |
+| Repintura honesta (S23) | `c22_repintura.py` | sem o remendo das sobras; sementes explícitas no rig; frestas só por `close_leftovers` |
 
 ## Dificuldades e o que foi corrigido no programa
 
@@ -60,3 +61,19 @@ gerada por IA, nenhum material do episódio de referência, nenhuma imagem exter
   a virada de cabeça do C006 e o deslize dos braços do C002.
 - O C001 não tem personagens (como no storyboard); as mãos do C002 são um desenho único que desliza.
 - Não houve teste de escuta humano do áudio; os números de loudness vêm do medidor BS.1770 do app.
+
+## Correção (S23, 2026-10-19, depois da auditoria externa)
+
+A revisão anterior dizia "lint 0 nos 7 cortes" e "proporções ≤ 1,5%". Os dois números não valiam:
+
+- **Lint 0** vinha de um remendo: `curta.paint()` pegava toda sobra < 4000 px e pintava de cabelo ou roupa conforme a
+  altura na tela, e `c21_sobras.py` pintava cada fresta com a cor do pixel mais próximo. Isso zerava o lint e errava
+  a cor (alça do avental creme no 3/4 da Hana, triângulos pretos acima das sobrancelhas do Ren, dedos azuis).
+- **Proporções** eram comparadas com os próprios parâmetros do rig (0,60 contra 0,60), não com o desenho.
+
+O que mudou: o balde do app foi corrigido (regiões estreitas fechadas tinham rótulo 0 e a semente pulava a linha);
+o remendo saiu; cada região que sobrou ganhou semente explícita no rig com a cor certa (mechas e pele entre
+mechas, alças como forma, aba da gola, avesso das mangas); frestas de até 300 px são fechadas pela ferramenta
+`close_leftovers` do balde (cor que mais aparece em volta, opção visível no MCP e na interface); `c20_revisao.py`
+mede topo, olhos e queixo no render. O C999 de ensaio saiu do projeto. Números novos em `repintura.json` e
+`revisao.json`.

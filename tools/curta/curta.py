@@ -4,9 +4,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from drive import Drive
 
 ROOT = "C:/AnimeIAI/producoes/micro-anime"
-PROJ = ROOT + "/ultima-rosa.aiai"
+# AIAI_CURTA_PROJ aponta para outro projeto (ensaios do rig ficam fora do arquivo de produção)
+PROJ = os.environ.get("AIAI_CURTA_PROJ", ROOT + "/ultima-rosa.aiai")
 OUT = ROOT + "/saida"
-IDS_F = ROOT + "/ids.json"
+IDS_F = os.environ.get("AIAI_CURTA_IDS", ROOT + "/ids.json")
 d = Drive(PROJ)
 ids = json.load(open(IDS_F, encoding="utf-8")) if os.path.exists(IDS_F) else {}
 
@@ -56,17 +57,26 @@ def ensure_layers(prefix, cut, existing=None):
     return L
 
 
+# frestas (cantos de olho, entre dedos, junções) que o balde fecha com a cor em volta (FILL close_leftovers);
+# regiões maiores sem tinta ficam no lint e pedem semente explícita no rig
+LEFTOVER_PX = 300
+
+
 def paint(cut, frame, L, drawings, gap=4):
     """Desenha [(quem, traços, sementes, formas, topo_y, H)] nas camadas L (um DRAW_CURVES, um FILL por personagem,
-    formas pintadas, sobras pequenas preenchidas pela cor vizinha). Devolve o lint final."""
+    formas pintadas). Frestas de até LEFTOVER_PX px recebem a cor em volta pelo próprio balde; o resto que sobrar
+    sem tinta volta no lint (nada de adivinhar a cor por posição). Devolve o lint final."""
     import rig
     allc = [c for _, st, _, _, _, _ in drawings for c in st]
     d.call("DRAW_CURVES", {"cut": cut, "frame": frame, "layer": L["linha"], "curves": allc})
-    for who, _, seeds, _, _, _ in drawings:
+    for k, (who, _, seeds, _, _, _) in enumerate(drawings):
         pal = PALETTE[who]
         fs = [{"x": s["x"], "y": s["y"], "color": {"type": "direct", "rgba": rig.hexrgba(pal[s["name"]])}} for s in seeds
               if s["name"] in pal and 0 <= s["x"] < 1920 and 0 <= s["y"] < 1080]  # partes cortadas pelo quadro ficam de fora
-        d.call("FILL", {"cut": cut, "frame": frame, "layer": L["cor"], "seeds": fs, "gap": gap})
+        req = {"cut": cut, "frame": frame, "layer": L["cor"], "seeds": fs, "gap": gap}
+        if k == len(drawings) - 1:
+            req["close_leftovers"] = LEFTOVER_PX  # depois de todas as sementes
+        d.call("FILL", req)
     for who, _, _, shapes, _, _ in drawings:
         pal = PALETTE[who]
         groups = {}
@@ -76,16 +86,4 @@ def paint(cut, frame, L, drawings, gap=4):
                 groups.setdefault((layer, name), []).append({"points": pts})
         for (layer, name), shp in groups.items():
             d.call("FILL_SHAPE", {"cut": cut, "frame": frame, "layer": layer, "shapes": shp, "color": {"type": "direct", "rgba": rig.hexrgba(pal[name])}})
-    lint = d.call("LINT", {"cut": cut, "frame": frame, "layer": L["cor"], "gap": gap, "min_area": 30})
-    small = [u for u in lint["unpainted"] if u["area"] < 4000]
-    if small:
-        seeds = []
-        for u in small:
-            x, y = u["point"]
-            # personagem mais perto (pelo topo da cabeça) decide; acima do queixo = cabelo, abaixo = roupa
-            who, _, _, _, top, H = min(drawings, key=lambda dr: abs(dr[4] + dr[5] * 0.5 - y) + abs(x - dr[2][0]["x"] if dr[2] else 0) * 0.1)
-            name = "cabelo" if y < top + H else ("blusa" if who == "hana" else "camisa")
-            seeds.append({"x": x, "y": y, "color": {"type": "direct", "rgba": rig.hexrgba(PALETTE[who][name])}})
-        d.call("FILL", {"cut": cut, "frame": frame, "layer": L["cor"], "seeds": seeds, "gap": gap})
-        lint = d.call("LINT", {"cut": cut, "frame": frame, "layer": L["cor"], "gap": gap, "min_area": 30})
-    return lint
+    return d.call("LINT", {"cut": cut, "frame": frame, "layer": L["cor"], "gap": gap, "min_area": 30})

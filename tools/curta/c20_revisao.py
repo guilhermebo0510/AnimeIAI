@@ -12,12 +12,64 @@ for who in ("hana", "ren"):
     m = dict(ch.get("measurements", {}))
     m["landmarks"] = {"olhos": 0.60}
     d.apply({"kind": "set_props", "id": ids["char_" + who], "data": {"measurements": m}})
-# ---------- proporções: medidas dos desenhos (y em px) ----------
-DRAWN = [("C003", "hana", 120, 640), ("C004", "ren", 150, 600), ("C005", "hana", 190, 360), ("C005", "ren", 160, 367.2),
-         ("C006", "hana", 300, 170), ("C006", "ren", 215, 170)]
-for cut, who, top, H in DRAWN:
-    r = d.call("CONSISTENCY", {"character": ids["char_" + who], "head_top": top, "chin": top + H, "eyes": top + 0.60 * H, "shoulders": top + 1.33 * H})
-    rep["consistencia"].append({"corte": cut, "quem": who, **{k: r.get(k) for k in ("errors_pct", "max_error_pct", "ok")}})
+# ---------- proporções MEDIDAS no desenho renderizado (não nos parâmetros do rig) ----------
+# topo da cabeça = primeiro pixel de linha na faixa do personagem; olhos = centro vertical da camada de olhos;
+# queixo = a linha mais baixa na coluna do centro do rosto que tem pele em cima e embaixo (a gola tem roupa embaixo).
+def layer_png(cut, frame, layer, name):
+    path = f"{OUT}/medida_{name}.png"
+    d.call("RENDER", {"cut": cut, "frame": frame, "camera": False, "layers": [layer], "out": path})
+    return Image.open(path).convert("RGBA")
+
+
+def measure(cut, frame, layers, cx, H_hint, skin_hex, name):
+    """(topo do cabelo, linha dos olhos, queixo) em px, medidos no render das camadas linha/cor/olhos."""
+    ln, co, ol = (layer_png(cut, frame, layers[k], f"{name}_{k}") for k in ("linha", "cor", "olhos"))
+    W, Hh = ln.size
+    band = range(max(0, int(cx - 0.6 * H_hint)), min(W, int(cx + 0.6 * H_hint)))
+    top = next((y for y in range(Hh) if any(ln.getpixel((x, y))[3] > 128 for x in band[::2])), None)
+    skin = tuple(int(skin_hex[i:i + 2], 16) for i in (1, 3, 5))
+    is_skin = lambda px: px[3] > 200 and sum(abs(a - b) for a, b in zip(px[:3], skin)) < 40
+    chin, x, y = None, int(cx), int(top or 0)
+    while y < min(Hh - 2, int((top or 0) + 1.3 * H_hint)):
+        if ln.getpixel((x, y))[3] > 128:
+            y0 = y
+            while y < Hh - 1 and ln.getpixel((x, y))[3] > 128:
+                y += 1
+            if is_skin(co.getpixel((x, max(0, y0 - 3)))) and is_skin(co.getpixel((x, min(Hh - 1, y + 2)))):
+                chin = (y0 + y) / 2
+        y += 1
+    # olhos: só o que está na camada de olhos acima do queixo (alças e outros detalhes ficam de fora)
+    eye_ys = [yy for yy in range(top or 0, int(chin or Hh)) for xx in band[::3] if ol.getpixel((xx, yy))[3] > 128]
+    eyes = sum(eye_ys) / len(eye_ys) if eye_ys else None
+    return top, eyes, chin
+
+
+def ratios(m):
+    top, eyes, chin = m
+    return None if None in m else {"olhos": (eyes - top) / (chin - top)}
+
+
+# referência = o próprio model sheet (vista de frente), medido do mesmo jeito; o corte tem de bater com ele
+REF = {}
+for who in ("hana", "ren"):
+    ch = d.query({"kind": "node", "id": ids["char_" + who]})["data"]["measurements"]
+    lay = {"linha": ids[f"sheet_{who}_line"], "cor": ids[f"sheet_{who}_fill"], "olhos": ids[f"sh_{who}_olhos"]}
+    REF[who] = measure(ids["sheet_" + who], 0, lay, ch["slot_w"] * 0.5, ch["head_px"], PALETTE[who]["pele"], f"sheet_{who}")
+
+DRAWN = [("C003", 2, "c3_hana", "hana", 960, 640), ("C004", 3, "c4_ren", "ren", 960, 600)]
+for cut_name, ci, prefix, who, cx, H_hint in DRAWN:
+    lay = {k: ids[f"{prefix}_{k}"] for k in ("linha", "cor", "olhos")}
+    m = measure(ids["cuts"][ci], 0, lay, cx, H_hint, PALETTE[who]["pele"], prefix)
+    rc, rr = ratios(m), ratios(REF[who])
+    item = {"corte": cut_name, "quem": who, "medido_px": {"topo": m[0], "olhos": m[1] and round(m[1], 1), "queixo": m[2]},
+            "model_sheet_px": {"topo": REF[who][0], "olhos": REF[who][1] and round(REF[who][1], 1), "queixo": REF[who][2]}}
+    if rc is None or rr is None:
+        item.update({"ok": False, "erro": "medida não encontrada no render"})
+    else:
+        errs = {k: round(abs(rc[k] - rr[k]) / rr[k] * 100, 2) for k in rc}
+        item.update({"razoes_corte": {k: round(v, 4) for k, v in rc.items()}, "razoes_sheet": {k: round(v, 4) for k, v in rr.items()},
+                     "errors_pct": errs, "max_error_pct": max(errs.values()), "ok": max(errs.values()) <= 5.0})
+    rep["consistencia"].append(item)
 
 
 # ---------- ΔE: cor do balde × settei ----------
@@ -65,7 +117,7 @@ for i, c in enumerate(ids["cuts"]):
     rep["lint"].append({"corte": f"C00{i + 1}", "resultado": r})
 json.dump(rep, open(f"{ROOT}/revisao.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 for x in rep["consistencia"]:
-    print(x["corte"], x["quem"], "erro máx %", x["max_error_pct"], "ok" if x["ok"] else "FALHA")
+    print(x["corte"], x["quem"], x["medido_px"], "erro máx %", x.get("max_error_pct"), "ok" if x["ok"] else "FALHA")
 print("ΔE > 2:", [x for x in rep["delta_e"] if x["delta_e"] > 2])
 for x in rep["lint"]:
     r = x["resultado"]

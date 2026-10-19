@@ -1,0 +1,56 @@
+{
+ "tempos_s": {
+  "c14_c006": 196.8
+ },
+ "lint": [
+  {
+   "corte": "C001",
+   "sem_tinta": 0,
+   "area": 0,
+   "borda_sem_tinta": 0,
+   "limpo": true
+  },
+  {
+   "corte": "C002",
+   "sem_tinta": 0,
+   "area": 0,
+   "borda_sem_tinta": 0,
+   "limpo": true
+  },
+  {
+   "corte": "C003",
+   "sem_tinta": 0,
+   "area": 0,
+   "borda_sem_tinta": 0,
+   "limpo": true
+  },
+  {
+   "corte": "C004",
+   "sem_tinta": 0,
+   "area": 0,
+   "borda_sem_tinta": 0,
+   "limpo": true
+  },
+  {
+   "corte": "C005",
+   "sem_tinta": 0,
+   "area": 0,
+   "borda_sem_tinta": 0,
+   "limpo": true
+  },
+  {
+   "corte": "C006",
+   "sem_tinta": 0,
+   "area": 0,
+   "borda_sem_tinta": 0,
+   "limpo": true
+  },
+  {
+   "corte": "C007",
+   "sem_tinta": 0,
+   "area": 0,
+   "borda_sem_tinta": 0,
+   "limpo": true
+  }
+ ]
+}

@@ -2,7 +2,7 @@
 aiai_propagate_fills; olhos, sombras e brilhos interpolados ponto a ponto nos mesmos tempos), sorri e diz
 「じゃあ、一緒に渡そう。」 (lip-sync f6 sobre bocas felizes). Ren olha para ela, pisca e sorri no fim."""
 import math, os
-from curta import d, ids, node, OUT, ensure_layers, paint, PALETTE, rgba
+from curta import d, ids, node, OUT, ensure_layers, paint, PALETTE, rgba, LEFTOVER_PX
 import corte, rig
 
 cut = ids["cuts"][5]
@@ -79,13 +79,8 @@ if DRAW:
     for j, t in enumerate(T):
         fs = [{"x": a["x"] + (b["x"] - a["x"]) * t, "y": a["y"] + (b["y"] - a["y"]) * t, "color": {"type": "direct", "rgba": rig.hexrgba(PALETTE["hana"][a["name"]])}}
               for a, b in zip(seeds_A, seeds_B) if a["name"] in PALETTE["hana"] and 0 <= a["y"] < 1080 and 0 <= b["y"] < 1080]
-        d.call("FILL", {"cut": cut, "frame": 14 + 2 * j, "layer": Lh["cor"], "seeds": fs, "gap": 4})
+        d.call("FILL", {"cut": cut, "frame": 14 + 2 * j, "layer": Lh["cor"], "seeds": fs, "gap": 4, "close_leftovers": LEFTOVER_PX})
         lint = d.call("LINT", {"cut": cut, "frame": 14 + 2 * j, "layer": Lh["cor"], "gap": 4, "min_area": 30})
-        small = [u for u in lint["unpainted"] if u["area"] < 4000]  # mesma regra de sobras das chaves (curta.paint)
-        if small:
-            d.call("FILL", {"cut": cut, "frame": 14 + 2 * j, "layer": Lh["cor"], "gap": 4, "seeds": [{"x": u["point"][0], "y": u["point"][1],
-                    "color": {"type": "direct", "rgba": rig.hexrgba(PALETTE["hana"]["cabelo" if u["point"][1] < HANA[1] + H else "blusa"])}} for u in small]})
-            lint = d.call("LINT", {"cut": cut, "frame": 14 + 2 * j, "layer": Lh["cor"], "gap": 4, "min_area": 30})
         print(f"  intercalação {j + 2}: sem cor {len(lint['unpainted'])}", [u["point"] for u in lint["unpainted"]][:5])
     # alças do avental: na escala do plano as pontas mal cruzam a linha do ombro e, nas intercalações, a região da alça se
     # junta ao ombro; as alças entram como forma (entre as duas linhas da alça) na camada de detalhes, abaixo da linha
