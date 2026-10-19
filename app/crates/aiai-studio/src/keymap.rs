@@ -102,6 +102,7 @@ pub enum Action {
     ToolMove,
     ToolBrush,
     ToolPen,
+    ToolPoints,
     ToolEraser,
     ToolFill,
     ToolLasso,
@@ -125,10 +126,11 @@ pub enum Action {
 }
 
 /// (ação, id guardado nas preferências, chave i18n do nome, atalho padrão), na ordem do editor de atalhos.
-pub const ACTIONS: [(Action, &str, &str, Chord); 23] = [
+pub const ACTIONS: [(Action, &str, &str, Chord); 24] = [
     (Action::ToolMove, "tool.move", "tool.move", Chord::plain(Key::V)),
     (Action::ToolBrush, "tool.brush", "tool.brush", Chord::plain(Key::B)),
     (Action::ToolPen, "tool.pen", "tool.pen", Chord::plain(Key::P)),
+    (Action::ToolPoints, "tool.points", "tool.points", Chord::plain(Key::A)),
     (Action::ToolEraser, "tool.eraser", "tool.eraser", Chord::plain(Key::E)),
     (Action::ToolFill, "tool.fill", "tool.fill", Chord::plain(Key::G)),
     (Action::ToolLasso, "tool.lasso", "tool.lasso", Chord::plain(Key::L)),
@@ -172,6 +174,7 @@ impl Action {
             T::Move => Action::ToolMove,
             T::Brush => Action::ToolBrush,
             T::Pen => Action::ToolPen,
+            T::Points => Action::ToolPoints,
             T::Eraser => Action::ToolEraser,
             T::Fill => Action::ToolFill,
             T::Lasso => Action::ToolLasso,

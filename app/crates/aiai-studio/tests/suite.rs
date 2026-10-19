@@ -382,18 +382,16 @@ fn editor_script(c: &Client) {
     assert_eq!(c.strokes(&vcel).len(), 1, "Ctrl+Z devolve o traço apagado");
     assert_eq!(c.strokes(&vcel)[0]["id"], original);
 
-    // selecionar (retângulo) + mover (Enter aplica): o traço anda 30 px para a direita
+    // selecionar (retângulo) + mover: aplicado ao soltar (sem Enter), o traço anda 30 px para a direita
     c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "lasso"}));
     c.drag_canvas(&[(60.0, 20.0), (260.0, 160.0)], false);
     assert!(c.state()["editor"]["selection"].is_object(), "seleção criada");
     c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "move"}));
     c.drag_canvas(&[(100.0, 60.0), (115.0, 60.0), (130.0, 60.0)], false);
-    let sel = c.state()["editor"]["selection"].clone();
-    assert!((sel["offset"][0].as_f64().unwrap() - 30.0).abs() < 1.5, "deslocamento pendente ~30: {sel}");
-    assert!((c.node(&vcel)["strokes"][0]["points"][0]["x"].as_f64().unwrap() - 80.0).abs() < 1.0, "nada muda antes do Enter");
-    c.input(json!([{"kind": "key", "key": "Enter"}, {"kind": "wait", "frames": 3}]));
     let moved = c.node(&vcel)["strokes"][0]["points"][0]["x"].as_f64().unwrap();
-    assert!((moved - 110.0).abs() < 1.5, "Enter aplicou o movimento: x = {moved}");
+    assert!((moved - 110.0).abs() < 1.5, "soltar aplicou o movimento: x = {moved}");
+    let sel = c.state()["editor"]["selection"].clone();
+    assert!(sel.is_object() && sel["offset"][0].as_f64().unwrap().abs() < 1e-3, "a seleção fica no lugar novo, sem nada pendente: {sel}");
     c.input(json!([{"kind": "key", "key": "Z", "modifiers": ["ctrl"]}, {"kind": "wait", "frames": 2}]));
     assert!((c.node(&vcel)["strokes"][0]["points"][0]["x"].as_f64().unwrap() - 80.0).abs() < 1.0, "um Ctrl+Z desfaz o mover");
     c.input(json!([{"kind": "key", "key": "Escape"}, {"kind": "wait", "frames": 2}]));

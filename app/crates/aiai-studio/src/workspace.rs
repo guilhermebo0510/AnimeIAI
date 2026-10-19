@@ -113,6 +113,8 @@ pub enum ToolId {
     #[default]
     Brush,
     Pen,
+    /// Editar pontos de traço vetorial (mover ponto, largura, inserir, apagar, simplificar).
+    Points,
     Eraser,
     Fill,
     Lasso,
@@ -122,10 +124,11 @@ pub enum ToolId {
 }
 
 impl ToolId {
-    pub const ALL: [ToolId; 9] = [
+    pub const ALL: [ToolId; 10] = [
         ToolId::Move,
         ToolId::Brush,
         ToolId::Pen,
+        ToolId::Points,
         ToolId::Eraser,
         ToolId::Fill,
         ToolId::Lasso,
@@ -148,6 +151,7 @@ impl ToolId {
             ToolId::Move => "tool.move",
             ToolId::Brush => "tool.brush",
             ToolId::Pen => "tool.pen",
+            ToolId::Points => "tool.points",
             ToolId::Eraser => "tool.eraser",
             ToolId::Fill => "tool.fill",
             ToolId::Lasso => "tool.lasso",
@@ -162,6 +166,7 @@ impl ToolId {
             ToolId::Move => IconId::ToolMove,
             ToolId::Brush => IconId::ToolBrush,
             ToolId::Pen => IconId::ToolPen,
+            ToolId::Points => IconId::ToolPoints,
             ToolId::Eraser => IconId::ToolEraser,
             ToolId::Fill => IconId::ToolFill,
             ToolId::Lasso => IconId::ToolLasso,

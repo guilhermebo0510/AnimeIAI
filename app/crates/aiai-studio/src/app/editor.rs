@@ -417,7 +417,6 @@ pub(crate) struct ToolOptions {
     pub pen_autoclose: bool,
     pub pen_shape: PenShape,
     /// Mover em camada vetorial edita os pontos dos traços em vez de mover a seleção.
-    pub move_points: bool,
     pub stab_mode: StabMode,
     pub stab_window: u32,
     /// Raio da corda do lazy brush em PONTOS da tela (vira pixels do desenho dividindo pela escala da visão).
@@ -428,6 +427,10 @@ pub(crate) struct ToolOptions {
     /// Ajustes finos do pincel (cópia editada do preset escolhido); escolher outro preset descarta.
     pub brush_custom: Option<aiai_paint::brush::BrushPreset>,
     pub eraser_size: f32,
+    /// Dureza da borracha raster (dura 0,9; macia 0).
+    pub eraser_hardness: f32,
+    /// Propriedades do pincel: todas (em vez de só as que o pincel usa).
+    pub brush_show_all: bool,
     /// Borracha em camada vetorial: traço inteiro, trecho coberto ou até a interseção.
     pub eraser_mode: aiai_tools::erase::EraseMode,
     pub fill_gap: f32,
@@ -447,7 +450,6 @@ impl Default for ToolOptions {
             pen_aliased: false,
             pen_autoclose: true,
             pen_shape: PenShape::Freehand,
-            move_points: false,
             stab_mode: StabMode::Average,
             stab_window: 4,
             stab_radius: 10.0,
@@ -456,6 +458,8 @@ impl Default for ToolOptions {
             brush_opacity: 1.0,
             brush_custom: None,
             eraser_size: 20.0,
+            eraser_hardness: 0.9,
+            brush_show_all: false,
             eraser_mode: aiai_tools::erase::EraseMode::Segment,
             fill_gap: 3.0,
             fill_expand: 2,
@@ -621,6 +625,8 @@ pub(crate) struct Editor {
     pub color: ColorRef,
     /// Prévia ao vivo do pincel/borracha (o resultado real do motor durante o arrasto).
     pub live_stroke: super::live::Live,
+    /// Mover ao vivo: a camada separada do quadro, pronta para o arrasto.
+    pub move_live: super::move_live::MoveLive,
     /// Último valor real da cor do pincel (para não perder a cor quando a paleta some).
     pub color_seen: Rgba,
     pub palette: Option<NodeId>,
@@ -707,6 +713,7 @@ impl Default for Editor {
         Editor {
             back_to_board: None,
             live_stroke: Default::default(),
+            move_live: Default::default(),
             color_seen: Rgba::BLACK,
             subview: Default::default(),
             node_stroke: None,

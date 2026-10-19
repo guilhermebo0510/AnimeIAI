@@ -69,18 +69,6 @@ impl BrushLibrary {
         self.items.get(i).map(|b| &b.preset)
     }
 
-    /// Categorias na ordem: as de fábrica, depois as que só os pincéis do usuário usam.
-    pub(crate) fn categories(&self) -> Vec<String> {
-        let mut out: Vec<String> = CATEGORIES.iter().map(|(k, _)| (*k).to_owned()).collect();
-        for b in &self.items {
-            let c = cat_of(&b.preset);
-            if !out.iter().any(|o| *o == c) {
-                out.push(c);
-            }
-        }
-        out
-    }
-
     /// Guarda uma cópia como pincel novo do usuário; devolve o índice.
     pub(crate) fn add_user(&mut self, mut preset: BrushPreset, name: &str, category: &str) -> Result<usize, String> {
         preset.name = name.trim().to_owned();

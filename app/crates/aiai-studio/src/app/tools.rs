@@ -22,13 +22,16 @@ pub(crate) fn presets() -> &'static [BrushPreset] {
     P.get_or_init(BrushPreset::defaults)
 }
 
-fn eraser_preset(size: f32) -> BrushPreset {
+fn eraser_preset(size: f32, hardness: f32) -> BrushPreset {
     let mut p = presets().iter().find(|p| p.mode == BrushMode::Erase).or_else(|| presets().iter().find(|p| p.name == "Borracha")).cloned().unwrap_or_else(|| {
         let mut e = BrushPreset::round("Borracha", size, 0.9);
         e.mode = BrushMode::Erase;
         e
     });
     p.size = size;
+    if let aiai_paint::brush::BrushTip::Round { hardness: h, .. } = &mut p.tip {
+        *h = hardness.clamp(0.0, 1.0);
+    }
     p
 }
 
@@ -378,7 +381,7 @@ fn brush_points(samples: &[Sample]) -> Vec<Vec<f32>> {
 pub(crate) fn stroke_preset(env: &Env, erase: bool) -> BrushPreset {
     let o = &env.ed.opts;
     if erase {
-        eraser_preset(o.eraser_size)
+        eraser_preset(o.eraser_size, o.eraser_hardness)
     } else {
         let mut p = o.brush_custom.clone().or_else(|| env.ed.brushes.get(o.brush_preset).cloned()).or_else(|| presets().first().cloned()).unwrap_or_else(|| BrushPreset::round("Pincel", 24.0, 0.9));
         p.size = o.brush_size.max(0.5);
@@ -649,8 +652,30 @@ pub(crate) fn begin_move(env: &mut Env) -> bool {
     true
 }
 
-pub(crate) fn has_pending_move(ed: &Editor) -> bool {
-    ed.selection.as_ref().is_some_and(|s| !s.is_identity())
+/// Chave das imagens do Mover ao vivo para o estado atual (camada ativa movível), ou `None`.
+pub(crate) fn move_key(env: &mut Env) -> Option<super::move_live::MoveKey> {
+    let cut = env.ed.active_cut(env.core)?;
+    let layer = env.ed.active_layer(env.core)?;
+    let l = cmds::layer_data(&env.core.project, &layer)?;
+    if !matches!(l.kind, LayerType::Vector | LayerType::Raster) || l.locked || !l.visible {
+        return None;
+    }
+    let sel = match env.ed.selection.as_ref().filter(|s| !s.whole) {
+        Some(s) => format!("{:?}", s.shape()),
+        None => "whole".to_owned(),
+    };
+    Some(super::move_live::MoveKey { counter: env.core.change_counter, cut, frame: env.ed.frame, layer, sel, guides: env.ed.show_guides, reference: env.ed.show_reference })
+}
+
+/// Com o Mover ativo e parado, prepara as imagens do arrasto em segundo plano (o arrasto começa sem esperar).
+pub(crate) fn move_prefetch(env: &mut Env, ctx: &egui::Context) {
+    if !matches!(env.ed.gesture, Gesture::None) {
+        return;
+    }
+    let Some(key) = move_key(env) else { return };
+    let selection = env.ed.selection.as_ref().filter(|s| !s.whole).and_then(|s| s.shape());
+    let (project, blobs) = (&env.core.project, &env.core.blobs);
+    env.ed.move_live.want(ctx, || super::move_live::Request { key: key.clone(), project: project.clone(), blobs: blobs.clone(), selection }, &key);
 }
 
 /// Varinha mágica: a região contígua de cor parecida em volta do clique, nos pixels da camada ativa.

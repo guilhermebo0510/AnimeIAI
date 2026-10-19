@@ -26,6 +26,7 @@ pub enum IconId {
     ToolMove,
     ToolBrush,
     ToolPen,
+    ToolPoints,
     ToolEraser,
     ToolFill,
     ToolLasso,
@@ -80,7 +81,7 @@ pub enum IconId {
 }
 
 impl IconId {
-    pub const ALL: [IconId; 64] = [
+    pub const ALL: [IconId; 65] = [
         IconId::WsRoteiro,
         IconId::WsPersonagens,
         IconId::WsStoryboard,
@@ -97,6 +98,7 @@ impl IconId {
         IconId::ToolMove,
         IconId::ToolBrush,
         IconId::ToolPen,
+        IconId::ToolPoints,
         IconId::ToolEraser,
         IconId::ToolFill,
         IconId::ToolLasso,
@@ -170,6 +172,7 @@ impl IconId {
             IconId::ToolMove => include_str!("../assets/icons/tool-move.svg"),
             IconId::ToolBrush => include_str!("../assets/icons/tool-brush.svg"),
             IconId::ToolPen => include_str!("../assets/icons/tool-pen.svg"),
+            IconId::ToolPoints => include_str!("../assets/icons/tool-points.svg"),
             IconId::ToolEraser => include_str!("../assets/icons/tool-eraser.svg"),
             IconId::ToolFill => include_str!("../assets/icons/tool-fill.svg"),
             IconId::ToolLasso => include_str!("../assets/icons/tool-lasso.svg"),

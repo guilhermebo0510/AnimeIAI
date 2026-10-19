@@ -285,7 +285,7 @@ fn leaves_except(p: &Project, parent: &NodeId, skip: &NodeId, out: &mut Vec<Node
 }
 
 /// Camadas desenháveis do corte de baixo para cima (pastas abertas), com os dados.
-fn ordered_leaves(p: &Project, parent: &NodeId, out: &mut Vec<(NodeId, LayerData)>) {
+pub(crate) fn ordered_leaves(p: &Project, parent: &NodeId, out: &mut Vec<(NodeId, LayerData)>) {
     let Some(n) = p.node(parent) else { return };
     for c in &n.children {
         match p.node(c).map(|x| &x.data) {

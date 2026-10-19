@@ -82,6 +82,10 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
     }
     let shown_counter = env.ed.shown.as_ref().map(|s| s.rendered.key.counter);
     env.ed.live_stroke.poll(&ctx, shown_counter);
+    if *env.tool == ToolId::Move {
+        tools::move_prefetch(env, &ctx);
+    }
+    env.ed.move_live.poll(&ctx, shown_counter);
 
     let painter = ui.painter().with_clip_rect(rect);
     paint_canvas(env, &painter, rect, &xf, &cut, canvas, ppp);
@@ -438,7 +442,7 @@ fn touch_start_pressure(events: &[Event], idx: usize) -> Option<f32> {
 fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::PointerButton, mods: egui::Modifiers, space: bool, r_held: bool) {
     let xf = env.ed.view.xf(rect, ppp);
     let tool = *env.tool;
-    if tool == ToolId::Move && env.ed.opts.move_points && !space && matches!(button, egui::PointerButton::Primary | egui::PointerButton::Secondary) {
+    if tool == ToolId::Points && !space && matches!(button, egui::PointerButton::Primary | egui::PointerButton::Secondary) {
         // editar pontos: o tamanho de 1 px de tela em px do canvas dá a tolerância do clique
         super::nodes::press(env, xf.to_canvas(pos), 1.0 / xf.scale.max(1e-3), button, mods);
         return;
@@ -500,7 +504,7 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
                         let f = if mods.shift { 0.5 } else { 2.0 };
                         env.ed.view.zoom_at(rect, ppp, pos, f);
                     }
-                    ToolId::Hand => {}
+                    ToolId::Hand | ToolId::Points => {}
                 }
             }
         }
@@ -597,7 +601,18 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
             }
             tools::finish_select(env, mode, start, pts);
         }
-        Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } => {}
+        Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } => {
+            let key = tools::move_key(env);
+            let ready = key.as_ref().is_some_and(|k| env.ed.move_live.ready_for(k));
+            let aff = env.ed.selection.as_ref().filter(|s| !s.is_identity()).map(|s| s.affine());
+            if let Some(aff) = aff {
+                let before = env.core.change_counter;
+                tools::commit_move(env);
+                if ready && env.core.change_counter != before {
+                    env.ed.move_live.hold = Some((env.core.change_counter, aff, Instant::now()));
+                }
+            }
+        }
         g @ Gesture::DragNode { .. } => super::nodes::release(env, g),
         Gesture::Shape { start, .. } => {
             let (pts, geo, closed) = tools::shape_points(env.ed.opts.pen_shape, start, c, env.ed.shift);
@@ -743,7 +758,29 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
         let uv: [Pos2; 4] = std::array::from_fn(|i| Pos2::new(cs[i].x * k, cs[i].y * k));
         painter.add(quad(chk.id(), sp, uv));
     }
-    if let Some(shown) = &env.ed.shown {
+    // Mover ao vivo: o que fica abaixo, a parte que fica, a que anda (transformada) e o que fica acima
+    let moving = matches!(env.ed.gesture, Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. });
+    let live_aff = if moving {
+        tools::move_key(env).filter(|k| env.ed.move_live.ready_for(k)).and_then(|_| env.ed.selection.as_ref().map(|s| s.affine()))
+    } else {
+        env.ed.move_live.hold.as_ref().filter(|_| env.ed.move_live.key.as_ref().is_some_and(|k| k.cut == *cut)).map(|h| h.1)
+    };
+    if let (Some(aff), Some(mt)) = (live_aff, env.ed.move_live.tex.as_ref()) {
+        let full = [Pos2::new(0.0, 0.0), Pos2::new(1.0, 0.0), Pos2::new(1.0, 1.0), Pos2::new(0.0, 1.0)];
+        let (mw, mh) = (mt.size[0] as f32, mt.size[1] as f32);
+        let plain: [Pos2; 4] = std::array::from_fn(|i| xf.to_screen(corners(mw, mh)[i]));
+        painter.add(quad(mt.below.id(), plain, full));
+        if let Some(st) = &mt.stay {
+            painter.add(quad(st.id(), plain, full));
+        }
+        let moved: [Pos2; 4] = std::array::from_fn(|i| {
+            let c = corners(mw, mh)[i];
+            let (x, y) = aff.apply(c.x, c.y);
+            xf.to_screen(Vec2::new(x, y))
+        });
+        painter.add(quad(mt.moving.id(), moved, full));
+        painter.add(quad(mt.above.id(), plain, full));
+    } else if let Some(shown) = &env.ed.shown {
         if shown.rendered.key.cut == *cut {
             let uvm = shown.rendered.uv_max;
             let uv = [Pos2::new(0.0, 0.0), Pos2::new(uvm[0], 0.0), Pos2::new(uvm[0], uvm[1]), Pos2::new(0.0, uvm[1])];
@@ -952,7 +989,7 @@ fn paint_selection(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId
     };
     two_tone(painter, selection_outline_map(sel.mode, &outline_pts, |p| sel.map(p), xf), true);
     // alças do Mover (cantos: escala; círculo de cima: rotação)
-    if *env.tool == ToolId::Move && env.ed.opts.move_points {
+    if *env.tool == ToolId::Points {
         return;
     }
     if *env.tool == ToolId::Move && !sel.whole {
@@ -966,8 +1003,10 @@ fn paint_selection(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId
         painter.line_segment([top_mid, kp], Stroke::new(1.0, env.t.accent));
         painter.circle(kp, 5.5, Color32::WHITE, Stroke::new(1.5, env.t.accent));
     }
-    // prévia do movimento: os traços que vão junto, transformados (camada raster mostra só o contorno)
-    if !sel.is_identity() {
+    // prévia do movimento: os traços que vão junto, transformados — só enquanto as imagens do Mover ao vivo não
+    // ficaram prontas (com elas, o conteúdo de verdade já está andando na tela)
+    let live_ready = tools::move_key(env).is_some_and(|k| env.ed.move_live.ready_for(&k));
+    if !sel.is_identity() && !live_ready {
         let Some(layer) = env.ed.layer.clone() else { return };
         if cmds::layer_data(&env.core.project, &layer).is_none_or(|l| l.kind != LayerType::Vector) {
             return;
@@ -1035,7 +1074,7 @@ fn variable_line(painter: &egui::Painter, pts: &[Vec2], radii: &[f32], color: Co
 }
 
 fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId) {
-    if *env.tool == ToolId::Move && env.ed.opts.move_points {
+    if *env.tool == ToolId::Points {
         super::nodes::paint(env, painter, |p| xf.to_screen(p), env.t.accent);
     }
     // o que o gesto anterior acabou de fazer, até o render novo chegar

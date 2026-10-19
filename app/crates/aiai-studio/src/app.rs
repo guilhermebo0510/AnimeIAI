@@ -20,6 +20,7 @@ mod start;
 mod editor;
 mod input_queue;
 mod live;
+mod move_live;
 mod nodes;
 mod panels;
 mod render_service;
@@ -388,6 +389,33 @@ impl StudioApp {
 
     fn menu_view(&mut self, ui: &mut egui::Ui) {
         let r = ui.menu_button(tr("menu.view"), |ui| {
+            // painéis do workspace atual: marcar mostra (e traz a aba para a frente), desmarcar esconde
+            ui.menu_button(tr("menu.view.panels"), |ui| {
+                let ws = self.ws;
+                let tree = self.trees.entry(ws).or_insert_with(|| layout::default_tree(ws));
+                let mut panes: Vec<(TileId, PanelKind)> = tree.tiles.iter().filter_map(|(id, t)| match t {
+                    egui_tiles::Tile::Pane(k) if *k != PanelKind::Canvas => Some((*id, *k)),
+                    _ => None,
+                }).collect();
+                panes.sort_by_key(|(_, k)| tr(k.title_key()).to_owned());
+                for (id, k) in panes {
+                    let mut on = tree.tiles.is_visible(id);
+                    let r = ui.checkbox(&mut on, tr(k.title_key()));
+                    self.rects.note(format!("menu_item:view.panel.{}", k.key()), r.rect);
+                    if r.changed() {
+                        tree.tiles.set_visible(id, on);
+                        if on {
+                            tree.make_active(|tid, _| tid == id);
+                        }
+                    }
+                }
+                ui.separator();
+                if ui.button(tr("menu.window.reset")).clicked() {
+                    self.reset_layout(self.ws);
+                    ui.close();
+                }
+            });
+            ui.separator();
             ui.menu_button(tr("menu.view.theme"), |ui| {
                 for (k, key) in [(ThemeKind::Light, "menu.view.theme.light"), (ThemeKind::Dark, "menu.view.theme.dark")] {
                     if ui.radio(self.prefs.theme == k, tr(key)).clicked() {
@@ -603,10 +631,13 @@ impl StudioApp {
         }
         let mut notes: Vec<(String, Rect)> = Vec::new();
         let env = ui_kit::Env { t, core: &mut self.core, ed: &mut self.ed, icons: &mut self.icons, notes: &mut notes, tool: &mut self.tool, ws };
-        let mut behavior = DockBehavior { t, in_tabs: layout::panes_in_tabs(tree), env };
+        let mut behavior = DockBehavior { t, in_tabs: layout::panes_in_tabs(tree), env, close_req: None };
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.bg_frame).inner_margin(egui::Margin::same(CARD_GAP as i8))).show(ui, |ui| {
             tree.ui(&mut behavior, ui);
         });
+        if let Some(id) = behavior.close_req.take() {
+            tree.tiles.set_visible(id, false);
+        }
         for (name, rect) in notes {
             self.rects.note(name, rect);
         }
@@ -793,6 +824,8 @@ impl eframe::App for StudioApp {
 // -------------------------------------------------------------------------------------------------------- dock
 
 struct DockBehavior<'a> {
+    /// Painel solto fechado pelo X do cabeçalho neste quadro (escondido depois do desenho da árvore).
+    close_req: Option<TileId>,
     t: Tokens,
     in_tabs: HashSet<TileId>,
     /// Documento, estado do editor, ícones e os retângulos desenhados neste quadro (vão para o `GET_UI_STATE`).
@@ -808,6 +841,20 @@ impl DockBehavior<'_> {
         ui.painter().hline(hdr.x_range(), hdr.bottom(), Stroke::new(1.0, self.t.border));
         let resp = ui.interact(hdr, ui.id().with(("dock_hdr", tile_id)), Sense::click_and_drag()).on_hover_cursor(egui::CursorIcon::Grab);
         ui.painter().text(egui::pos2(hdr.left() + 10.0, hdr.center().y), Align2::LEFT_CENTER, tr(kind.title_key()), FontId::proportional(12.0), self.t.text_dim);
+        // fechar (Exibir > Painéis traz de volta); o canvas não fecha
+        if kind != PanelKind::Canvas {
+            let x = Rect::from_center_size(egui::pos2(hdr.right() - 12.0, hdr.center().y), egui::vec2(16.0, 16.0));
+            let xr = ui.interact(x, ui.id().with(("dock_close", tile_id)), Sense::click());
+            let col = if xr.hovered() { self.t.text } else { self.t.text_dim };
+            let c = x.center();
+            for (a, b) in [(egui::vec2(-4.0, -4.0), egui::vec2(4.0, 4.0)), (egui::vec2(-4.0, 4.0), egui::vec2(4.0, -4.0))] {
+                ui.painter().line_segment([c + a, c + b], Stroke::new(1.3, col));
+            }
+            self.env.note(format!("panel_close:{}", kind.key()), x);
+            if xr.on_hover_text(tr("panel.close")).clicked() {
+                self.close_req = Some(tile_id);
+            }
+        }
         if resp.drag_started() {
             UiResponse::DragStarted
         } else {
@@ -864,7 +911,13 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
         tr(pane.title_key()).into()
     }
 
-    fn is_tab_closable(&self, _tiles: &Tiles<PanelKind>, _tile_id: TileId) -> bool {
+    fn is_tab_closable(&self, tiles: &Tiles<PanelKind>, tile_id: TileId) -> bool {
+        !matches!(tiles.get(tile_id), Some(egui_tiles::Tile::Pane(PanelKind::Canvas)))
+    }
+
+    /// Fechar uma aba só esconde o painel (Exibir > Painéis traz de volta, no mesmo lugar).
+    fn on_tab_close(&mut self, tiles: &mut Tiles<PanelKind>, tile_id: TileId) -> bool {
+        tiles.set_visible(tile_id, false);
         false
     }
 

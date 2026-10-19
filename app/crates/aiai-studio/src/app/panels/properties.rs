@@ -77,6 +77,9 @@ pub(crate) fn brush_thumbnails(ctx: &egui::Context, presets: &[aiai_paint::brush
 fn brush_settings(ui: &mut Ui, o: &mut super::super::editor::ToolOptions, base: Option<aiai_paint::brush::BrushPreset>) {
     let Some(mut p) = o.brush_custom.clone().or(base.clone()) else { return };
     let before = p.clone();
+    let mut all = o.brush_show_all;
+    // o que aparece: o que este pincel usa (valor ligado ou próprio da ponta); o resto com "Mostrar todos"
+    let shape_tip = matches!(p.tip, aiai_paint::brush::BrushTip::Shape { .. });
     egui::CollapsingHeader::new(tr("brush.settings")).id_salt("brush_settings").default_open(true).show(ui, |ui| {
         egui::Grid::new("brush_settings_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
             let slider = |ui: &mut Ui, key: &str, v: &mut f32, lo: f32, hi: f32| {
@@ -131,22 +134,39 @@ fn brush_settings(ui: &mut Ui, o: &mut super::super::editor::ToolOptions, base: 
             slider(ui, "brush.spacing", &mut p.spacing, 0.02, 2.0);
             slider(ui, "brush.size_pressure", &mut p.size_pressure_min, 0.0, 1.0);
             slider(ui, "brush.opacity_pressure", &mut p.opacity_pressure_min, 0.0, 1.0);
-            slider(ui, "brush.flow_pressure", &mut p.flow_pressure_min, 0.0, 1.0);
-            slider(ui, "brush.scatter", &mut p.scatter, 0.0, 2.0);
-            slider(ui, "brush.size_jitter", &mut p.size_jitter, 0.0, 1.0);
-            slider(ui, "brush.angle_jitter", &mut p.angle_jitter, 0.0, 180.0);
-            slider(ui, "brush.value_jitter", &mut p.value_jitter, 0.0, 1.0);
-            slider(ui, "brush.hue_jitter", &mut p.hue_jitter, 0.0, 1.0);
-            slider(ui, "brush.wet_edges", &mut p.wet_edges, 0.0, 1.0);
-            slider(ui, "brush.mix", &mut p.mix, 0.0, 1.0);
-            slider(ui, "brush.smudge", &mut p.smudge_carry, 0.0, 1.0);
+            if all || p.flow_pressure_min < 1.0 {
+                slider(ui, "brush.flow_pressure", &mut p.flow_pressure_min, 0.0, 1.0);
+            }
+            if all || p.scatter > 0.0 || shape_tip {
+                slider(ui, "brush.scatter", &mut p.scatter, 0.0, 2.0);
+            }
+            if all || p.size_jitter > 0.0 || shape_tip {
+                slider(ui, "brush.size_jitter", &mut p.size_jitter, 0.0, 1.0);
+            }
+            if all || p.angle_jitter > 0.0 || shape_tip {
+                slider(ui, "brush.angle_jitter", &mut p.angle_jitter, 0.0, 180.0);
+            }
+            if all || p.value_jitter > 0.0 || p.hue_jitter > 0.0 {
+                slider(ui, "brush.value_jitter", &mut p.value_jitter, 0.0, 1.0);
+                slider(ui, "brush.hue_jitter", &mut p.hue_jitter, 0.0, 1.0);
+            }
+            if all || p.wet_edges > 0.0 {
+                slider(ui, "brush.wet_edges", &mut p.wet_edges, 0.0, 1.0);
+            }
+            if all || p.mix > 0.0 {
+                slider(ui, "brush.mix", &mut p.mix, 0.0, 1.0);
+                slider(ui, "brush.smudge", &mut p.smudge_carry, 0.0, 1.0);
+            }
             if let Some(tx) = &mut p.texture {
                 slider(ui, "brush.texture_depth", &mut tx.depth, 0.0, 1.0);
                 slider(ui, "brush.texture_scale", &mut tx.scale, 0.5, 30.0);
             }
-            ui.label(tr("brush.follow"));
-            ui.checkbox(&mut p.follow_direction, "");
-            ui.end_row();
+            let elliptic = matches!(p.tip, aiai_paint::brush::BrushTip::Round { roundness, .. } if roundness < 0.98);
+            if all || p.follow_direction || shape_tip || elliptic {
+                ui.label(tr("brush.follow"));
+                ui.checkbox(&mut p.follow_direction, "");
+                ui.end_row();
+            }
             // modo de mistura do traço e antisserrilhado
             {
                 use aiai_paint::brush::BrushMode as M;
@@ -166,9 +186,11 @@ fn brush_settings(ui: &mut Ui, o: &mut super::super::editor::ToolOptions, base: 
                     }
                 });
                 ui.end_row();
-                ui.label(tr("brush.aliased"));
-                ui.checkbox(&mut p.aliased, "").on_hover_text(tr("brush.aliased.tip"));
-                ui.end_row();
+                if all || p.aliased {
+                    ui.label(tr("brush.aliased"));
+                    ui.checkbox(&mut p.aliased, "").on_hover_text(tr("brush.aliased.tip"));
+                    ui.end_row();
+                }
             }
             // duas cores no carimbo (pontas de forma): sombra derivada da cor do pincel por um tom e uma quantidade
             if matches!(p.tip, aiai_paint::brush::BrushTip::Shape { .. }) {
@@ -186,10 +208,12 @@ fn brush_settings(ui: &mut Ui, o: &mut super::super::editor::ToolOptions, base: 
                 }
             }
         });
+        ui.checkbox(&mut all, tr("brush.show_all")).on_hover_text(tr("brush.show_all.tip"));
         if ui.add_enabled(o.brush_custom.is_some(), egui::Button::new(tr("brush.reset"))).clicked() {
             o.brush_custom = None;
         }
     });
+    o.brush_show_all = all;
     if p != before && p.validate().is_ok() {
         o.brush_custom = Some(p);
     }
@@ -229,6 +253,16 @@ fn row(ui: &mut Ui, t: &crate::theme::Tokens, compact: bool, key: &str, add: imp
 
 /// Opções da ferramenta ativa. `compact` = em linha (barra do canvas).
 pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
+    tool_options_in(env, ui, compact, false);
+}
+
+/// Opções no painel Ferramenta: os seletores que viraram itens da lista (pincel, pena, forma, modo da borracha, modo
+/// da seleção) ficam de fora; sobram as propriedades do item escolhido.
+pub(crate) fn tool_options_panel(env: &mut Env, ui: &mut Ui) {
+    tool_options_in(env, ui, false, true);
+}
+
+fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
     let t = env.t;
     let tool = *env.tool;
     // cor atual (vale para caneta, pincel e balde)
@@ -247,6 +281,7 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
     match tool {
         ToolId::Pen => {
             let o = &mut env.ed.opts;
+            if !panel {
             row(ui, &t, compact, "opt.pen_shape", |ui| {
                 let key = |m: PenShape| match m {
                     PenShape::Freehand => "pen.freehand",
@@ -263,9 +298,11 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
                 .response
                 .on_hover_text(tr("opt.pen_shape.tip"));
             });
+            }
             row(ui, &t, compact, "opt.width", |ui| {
                 ui.add(egui::DragValue::new(&mut o.pen_width).range(0.5..=200.0).speed(0.1).max_decimals(1).suffix(" px"));
             });
+            if !panel {
             row(ui, &t, compact, "opt.tip", |ui| {
                 let label = |t: VectorTip| match t {
                     VectorTip::GPen => "tip.g_pen",
@@ -281,6 +318,7 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
                 .response
                 .on_hover_text(tr("opt.tip"));
             });
+            }
             row(ui, &t, compact, "opt.stabilizer", |ui| {
                 let label = |m: StabMode| match m {
                     StabMode::Off => "stab.off",
@@ -313,10 +351,14 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
             let name = base.as_ref().map(|p| p.name.clone()).unwrap_or_else(|| "-".into());
             let custom = if env.ed.opts.brush_custom.is_some() { " *" } else { "" };
             let mut open_panel = false;
-            row(ui, &t, compact, "opt.preset", |ui| {
-                let b = ui.button(format!("{name}{custom}  ›"));
-                open_panel = b.on_hover_text(tr("opt.preset.tip")).clicked();
-            });
+            if !panel {
+                row(ui, &t, compact, "opt.preset", |ui| {
+                    let b = ui.button(format!("{name}{custom}  ›"));
+                    open_panel = b.on_hover_text(tr("opt.preset.tip")).clicked();
+                });
+            } else {
+                ui.label(egui::RichText::new(format!("{name}{custom}")).strong());
+            }
             if open_panel {
                 env.ed.want_panel = Some(crate::layout::PanelKind::Brushes);
             }
@@ -343,6 +385,7 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
             row(ui, &t, compact, "opt.size", |ui| {
                 ui.add(egui::DragValue::new(&mut o.eraser_size).range(1.0..=600.0).speed(0.5).max_decimals(0).suffix(" px"));
             });
+            if !panel {
             row(ui, &t, compact, "opt.eraser_mode", |ui| {
                 use aiai_tools::erase::EraseMode;
                 let key = |m: EraseMode| match m {
@@ -358,6 +401,7 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
                 .response
                 .on_hover_text(tr("opt.eraser_mode.tip"));
             });
+            }
             if !compact {
                 dim_label(ui, &t, tr("opt.eraser_hint"));
             }
@@ -386,6 +430,7 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
         }
         ToolId::Lasso => {
             let o = &mut env.ed.opts;
+            if !panel {
             row(ui, &t, compact, "opt.select_mode", |ui| {
                 let label = |m: SelMode| match m {
                     SelMode::Rect => "sel.rect",
@@ -398,33 +443,32 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
                         ui.selectable_value(&mut o.select_mode, m, tr(label(m)));
                     }
                 });
-            });            if o.select_mode == SelMode::Wand {
+            });
+            }            if o.select_mode == SelMode::Wand {
                 row(ui, &t, compact, "opt.wand_tolerance", |ui| {
                     ui.add(egui::Slider::new(&mut o.wand_tolerance, 0.0..=0.6).max_decimals(2)).on_hover_text(tr("opt.wand_tolerance"));
                 });
             }
         }
         ToolId::Move => {
-            let mp = ui.checkbox(&mut env.ed.opts.move_points, tr("opt.move_points")).on_hover_text(tr("opt.move_points.tip"));
-            env.note("opt:move_points", mp.rect);
-            if env.ed.opts.move_points {
-                let b = ui.add_enabled(env.ed.node_stroke.is_some(), egui::Button::new(tr("opt.simplify")));
-                env.note("opt:simplify", b.rect);
-                if b.on_hover_text(tr("opt.simplify.tip")).clicked() {
-                    super::super::nodes::simplify(env, 1.5);
+
+            // arrastar move e aplica ao soltar (Ctrl+Z desfaz): sem Aplicar/Enter
+            if env.ed.selection.as_ref().is_some_and(|s| !s.whole) {
+                let b = ui.button(tr("opt.move_deselect"));
+                env.note("opt:move_deselect", b.rect);
+                if b.on_hover_text(tr("opt.move_deselect.tip")).clicked() {
+                    env.ed.selection = None;
                 }
-                return;
             }
-            let pending = tools::has_pending_move(env.ed);
-            let apply = ui.add_enabled(pending, egui::Button::new(tr("opt.move_apply")));
-            env.note("opt:move_apply", apply.rect);
-            if apply.on_hover_text(tr("opt.move_apply.tip")).clicked() {
-                tools::commit_move(env);
+        }
+        ToolId::Points => {
+            let b = ui.add_enabled(env.ed.node_stroke.is_some(), egui::Button::new(tr("opt.simplify")));
+            env.note("opt:simplify", b.rect);
+            if b.on_hover_text(tr("opt.simplify.tip")).clicked() {
+                super::super::nodes::simplify(env, 1.5);
             }
-            let cancel = ui.add_enabled(env.ed.selection.is_some(), egui::Button::new(tr("opt.move_cancel")));
-            env.note("opt:move_cancel", cancel.rect);
-            if cancel.on_hover_text(tr("opt.move_cancel.tip")).clicked() {
-                tools::cancel_move(env.ed);
+            if !compact {
+                dim_label(ui, &t, tr("opt.move_points.tip"));
             }
         }
         ToolId::Eyedropper | ToolId::Hand | ToolId::Zoom => {
