@@ -30,8 +30,10 @@ Desempenho em 4K (cache por camada, tiles locais, cache do balde), mesa digitali
 
 | Item | Status |
 |---|---|
-| Remendo em `curta.py`/`c21_sobras.py` que pintava sobras com a cor vizinha para zerar o lint | pendente: tirar e repintar com sementes explícitas |
-| Teste de consistência que comparava 0,60 com 0,60 (`c20_revisao.py`) | pendente: medir no desenho |
-| Model sheet: manequim em 90° com desenho de costas | pendente: vistas [0, 45, 90, 180] |
-| Corte de ensaio C999 dentro do projeto de produção | pendente: remover |
-| Cabelo do Ren em 3/4, tronco que não gira | pendente (rig) |
+| Remendo em `curta.py`/`c21_sobras.py` que pintava sobras com a cor vizinha para zerar o lint | **feito**: removido. Sementes explícitas no rig para cada região que sobrou (mechas do topo do Ren, pele entre mechas da franja dos dois, aba da gola, avesso das mangas), alças do avental como forma (no 3/4 a alça distante é mais estreita que o fechamento do balde), frestas ≤ 300 px pela ferramenta `close_leftovers`. Os 7 cortes repintados (`c22_repintura.py`): lint 0 com a régua nova (cobertura por pixel, regiões estreitas, borda). Um erro meu no caminho: a semente de pele embaixo do vale da franja caiu na linha e pintou o cabelo da Hana de pele no C003; o lint não pega cor errada, o ΔE do `c20` pega; corrigido com o centroide do triângulo. |
+| Teste de consistência que comparava 0,60 com 0,60 (`c20_revisao.py`) | **feito**: mede topo, olhos e queixo no render do corte e do model sheet (vista de frente) do mesmo jeito; C003 0,54%, C004 0,92%. |
+| Model sheet: manequim em 90° com desenho de costas | **feito**: manequim nas vistas desenhadas [0, 30, 180]. Perfil (90°) desenhado: pendente (o rig não tem vista de perfil). |
+| Corte de ensaio C999 dentro do projeto de produção | **feito**: removido; `ensaio.py` usa um projeto à parte. |
+| Cabelo do Ren em 3/4 | avaliado: a silhueta parada é a do crânio (esfera), o lado distante mostra mais cabeça como no 3/4 real; a bochecha do lado próximo passa à frente do cabelo lateral. Melhorar com mais um estágio de giro do cabelo lateral: pendente. |
+| Tronco que não gira em 3/4 | pendente (rig) |
+| Rim light, para, blush nos personagens | pendente (satsuei por corte) |
