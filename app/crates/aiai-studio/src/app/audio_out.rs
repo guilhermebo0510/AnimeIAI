@@ -104,6 +104,15 @@ impl AudioOut {
     }
 }
 
+/// WAV de um estéreo intercalado (como o `mix_edit` devolve) a partir da amostra-quadro `from`.
+pub(crate) fn wav_from_interleaved(stereo: &[f32], rate: u32, from: usize) -> Vec<u8> {
+    let n = stereo.len() / 2;
+    let from = from.min(n);
+    let mix = aiai_audio::AudioBuf { rate, ch: vec![stereo[from * 2..].iter().step_by(2).copied().collect(), stereo[from * 2 + 1..].iter().step_by(2).copied().collect()] };
+    let len = mix.ch[0].len().min(mix.ch[1].len());
+    wav_bytes(&mix, 0, len)
+}
+
 /// WAV PCM 16 bits estéreo do trecho [s0, s1) da mixagem.
 pub(crate) fn wav_bytes(mix: &aiai_audio::AudioBuf, s0: usize, s1: usize) -> Vec<u8> {
     let frames = s1 - s0;
@@ -132,7 +141,7 @@ pub(crate) fn wav_bytes(mix: &aiai_audio::AudioBuf, s0: usize, s1: usize) -> Vec
 }
 
 #[cfg(windows)]
-fn play_wav(wav: Option<&[u8]>) {
+pub(crate) fn play_wav(wav: Option<&[u8]>) {
     use windows_sys::Win32::Media::Audio::{PlaySoundW, SND_ASYNC, SND_MEMORY, SND_NODEFAULT};
     // SAFETY: com SND_MEMORY o primeiro argumento aponta para o WAV, que o chamador mantém vivo enquanto toca;
     // NULL para tudo.
@@ -149,7 +158,7 @@ fn play_wav(wav: Option<&[u8]>) {
 }
 
 #[cfg(not(windows))]
-fn play_wav(_wav: Option<&[u8]>) {}
+pub(crate) fn play_wav(_wav: Option<&[u8]>) {}
 
 #[cfg(test)]
 mod tests {

@@ -7,6 +7,7 @@
 //! é validada pelo motor antes de gravar (trecho vazio, corte inexistente): o erro volta como aviso, o documento não muda.
 
 use super::commit_on_release;
+use std::time::Instant;
 use super::production::{CutThumbs, THUMB_BUDGET};
 use crate::app::actions::{self, DocKind};
 use crate::app::commands::NodeId;
@@ -113,9 +114,20 @@ impl EditPreview {
     }
 }
 
+/// Reprodução da edição no monitor: o relógio só começa quando o som está pronto (mixagem em segundo plano); o
+/// monitor mostra o quadro que o render de prévia devolve (rascunho: pula quadros se o render não acompanhar).
+pub(crate) struct EditPlay {
+    start_frame: u32,
+    started: Option<Instant>,
+    mix: Option<crossbeam_channel::Receiver<Result<Vec<f32>, String>>>,
+    /// WAV tocando (o winmm lê da memória até parar).
+    wav: Option<Vec<u8>>,
+}
+
 /// Estado do workspace Edição que não mora no documento.
 #[derive(Default)]
 pub(crate) struct EditState {
+    pub play: Option<EditPlay>,
     pub sel_edit: Option<NodeId>,
     /// Cabeçote (quadro global da edição).
     pub frame: u32,
@@ -302,8 +314,40 @@ pub(crate) fn preview(env: &mut Env, ui: &mut Ui, body: Rect) {
         }
     };
     let fps = env.core.project.settings.fps();
-    let frame = env.ed.edit.frame;
     let ctx = ui.ctx().clone();
+    // relógio da reprodução (o som define o começo)
+    let last_frame = layout.total.saturating_sub(1);
+    if let Some(p) = env.ed.edit.play.as_mut() {
+        if let Some(rx) = &p.mix {
+            match rx.try_recv() {
+                Ok(res) => {
+                    p.mix = None;
+                    if let Ok(stereo) = res {
+                        let sr = env.core.project.settings.audio_sample_rate.max(8000);
+                        let from = (p.start_frame as f64 / fps * sr as f64) as usize;
+                        let wav = crate::app::audio_out::wav_from_interleaved(&stereo, sr, from);
+                        crate::app::audio_out::play_wav(Some(&wav));
+                        p.wav = Some(wav);
+                    }
+                    p.started = Some(Instant::now());
+                }
+                Err(crossbeam_channel::TryRecvError::Empty) => {}
+                Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                    p.mix = None;
+                    p.started = Some(Instant::now());
+                }
+            }
+        }
+        if let Some(t0) = p.started {
+            let f = p.start_frame + (t0.elapsed().as_secs_f64() * fps) as u32;
+            env.ed.edit.frame = f.min(last_frame);
+            if f > last_frame {
+                stop_play(&mut env.ed.edit);
+            }
+        }
+        ctx.request_repaint();
+    }
+    let frame = env.ed.edit.frame;
     env.ed.edit.preview.update(&ctx, env.core, &o.id, &o.doc, frame);
 
     // área da imagem (proporção do projeto) e barra de transporte embaixo
@@ -329,6 +373,27 @@ pub(crate) fn preview(env: &mut Env, ui: &mut Ui, body: Rect) {
     let mut bui = ui.new_child(egui::UiBuilder::new().max_rect(bar).layout(egui::Layout::left_to_right(egui::Align::Center)));
     let last = layout.total.saturating_sub(1);
     let mut f = frame;
+    let playing = env.ed.edit.play.is_some();
+    let play = env.icon_button(&mut bui, if playing { crate::icons::IconId::Pause } else { crate::icons::IconId::Play }, if playing { "timeline.pause" } else { "timeline.play" }, playing, layout.total > 1, "edit:play");
+    if play.clicked() {
+        if playing {
+            stop_play(&mut env.ed.edit);
+        } else {
+            let start_frame = if f >= last { 0 } else { f };
+            // som da edição inteira em segundo plano (mix_edit); sem som ao vivo o relógio começa já
+            let mix = env.ed.live.enabled().then(|| {
+                let (project, blobs, doc) = (env.core.project.clone(), env.core.blobs.clone(), o.doc.clone());
+                let (tx, rx) = crossbeam_channel::bounded(1);
+                let _ = std::thread::Builder::new().name("aiai-edit-mix".into()).spawn(move || {
+                    let _ = tx.send(aiai_tools::edit::mix_edit(&project, &blobs, &doc).map_err(|e| e.to_string()));
+                });
+                rx
+            });
+            let started = if mix.is_none() { Some(Instant::now()) } else { None };
+            env.ed.edit.play = Some(EditPlay { start_frame, started, mix, wav: None });
+            f = start_frame;
+        }
+    }
     let prev = env.icon_button(&mut bui, crate::icons::IconId::StepBack, "editing.prev", false, f > 0, "edit:prev");
     let next = env.icon_button(&mut bui, crate::icons::IconId::StepForward, "editing.next", false, f < last, "edit:next");
     if prev.clicked() {
@@ -341,8 +406,17 @@ pub(crate) fn preview(env: &mut Env, ui: &mut Ui, body: Rect) {
     bui.spacing_mut().slider_width = slider_w;
     let r = bui.add(egui::Slider::new(&mut f, 0..=last.max(1)).show_value(false));
     env.note("edit:scrub", r.rect);
+    if (r.changed() || prev.clicked() || next.clicked()) && env.ed.edit.play.is_some() {
+        stop_play(&mut env.ed.edit); // mexer no cabeçote para a reprodução
+    }
     bui.label(egui::RichText::new(format!("{}  /  {}   ·   {} {}", fmt_time(f, fps), fmt_time(layout.total, fps), tr("editing.frame_short"), f + 1)).size(12.0).color(t.text_dim));
     env.ed.edit.frame = f.min(last);
+}
+
+fn stop_play(st: &mut EditState) {
+    if st.play.take().is_some_and(|p| p.wav.is_some()) {
+        crate::app::audio_out::play_wav(None);
+    }
 }
 
 // ------------------------------------------------------------------------------------------------ Linha do tempo

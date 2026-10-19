@@ -41,6 +41,8 @@ pub(crate) struct AudioState {
     pub monitor: super::edit::EditPreview,
     /// Duração (s) de cada asset de áudio, lida uma vez do WAV.
     durations: HashMap<String, Option<f32>>,
+    /// Forma de onda de cada asset: pico (0..1) a cada 10 ms, lida uma vez.
+    waves: HashMap<String, Option<Vec<f32>>>,
     /// Última medição: (corte, change_counter, relatório).
     pub loudness: Option<(NodeId, u64, Value)>,
     /// Mixagem da edição em andamento.
@@ -66,6 +68,19 @@ fn asset_name(p: &Project, id: &Id) -> String {
 }
 
 /// Duração usada do clipe em segundos (a explícita, ou a do WAV menos o corte do início).
+/// Picos a cada 10 ms (máximo absoluto entre os canais) do asset de áudio.
+fn wave_peaks<'a>(st: &'a mut AudioState, core: &CoreSession, asset: &Id) -> Option<&'a Vec<f32>> {
+    st.waves
+        .entry(asset.0.clone())
+        .or_insert_with(|| {
+            let b = aiai_tools::audio::asset_audio(&core.project, &core.blobs, asset).ok()?;
+            let step = (b.rate as usize / 100).max(1);
+            let n = b.ch.first().map(|c| c.len()).unwrap_or(0);
+            Some((0..n.div_ceil(step)).map(|k| b.ch.iter().flat_map(|c| c[k * step..((k + 1) * step).min(n)].iter()).fold(0.0f32, |m, v| m.max(v.abs())).min(1.0)).collect())
+        })
+        .as_ref()
+}
+
 fn clip_seconds(st: &mut AudioState, core: &CoreSession, a: &AudioPlacement) -> f32 {
     if let Some(d) = a.duration {
         return d;
@@ -199,6 +214,23 @@ fn mixer_body(env: &mut Env, ui: &mut Ui) {
             env.note(format!("audio:clip:{}", a.id.0), r);
             let sel = env.ed.audio.sel.as_ref() == Some(&a.id);
             painter.rect(r, 3.0, if sel { t.accent_dim } else { t.st_progress }, Stroke::new(1.0, if sel { t.accent } else { t.border }), StrokeKind::Inside);
+            // forma de onda do trecho tocado (respeita o corte do início do clipe)
+            if let Some(peaks) = wave_peaks(&mut env.ed.audio, env.core, &a.asset) {
+                let wave = painter.with_clip_rect(r.shrink(1.5));
+                let (mid, half) = (r.center().y, (r.height() * 0.5 - 2.0).max(1.0));
+                let col = t.text.gamma_multiply(0.45);
+                let mut x = r.left() + 1.0;
+                while x < r.right() - 1.0 {
+                    let k = ((a.trim_start + (x - r.left()) / pps) * 100.0) as usize;
+                    let k2 = (((a.trim_start + (x + 1.0 - r.left()) / pps) * 100.0) as usize).max(k + 1);
+                    let pk = peaks.get(k..k2.min(peaks.len())).map(|s| s.iter().cloned().fold(0.0f32, f32::max)).unwrap_or(0.0);
+                    if pk > 0.004 {
+                        let pk = pk.sqrt(); // escala de raiz: trecho baixo (BGM, ambiente) continua legível
+                        wave.vline(x, (mid - pk * half)..=(mid + pk * half), Stroke::new(1.0, col));
+                    }
+                    x += 1.0;
+                }
+            }
             painter.with_clip_rect(r.shrink(2.0)).text(r.left_center() + egui::vec2(4.0, 0.0), egui::Align2::LEFT_CENTER, asset_name(&env.core.project, &a.asset), FontId::proportional(10.5), t.text);
             if resp.on_hover_text(format!("{}  ·  {:.2} s  ·  {:+.1} dB", asset_name(&env.core.project, &a.asset), start, a.gain_db)).clicked() {
                 env.ed.audio.sel = Some(a.id.clone());
