@@ -316,4 +316,54 @@ fn cut_properties(env: &mut Env, ui: &mut Ui) {
         ui.label(format!("{} {}", cd.duration, tr("unit.frames")));
         ui.end_row();
     });
+    // tamanho do canvas do corte: predefinições (o quadro de saída continua o do projeto; maior = cenário para a câmera)
+    let (pw, ph) = (env.core.project.settings.width, env.core.project.settings.height);
+    let presets: [(&str, Option<[u32; 2]>); 6] = [
+        ("props.canvas_project", None),
+        ("props.canvas_1080", Some([1920, 1080])),
+        ("props.canvas_1440", Some([2560, 1440])),
+        ("props.canvas_4k", Some([3840, 2160])),
+        ("props.canvas_pan_h", Some([pw * 2, ph])),
+        ("props.canvas_pan_v", Some([pw, ph * 2])),
+    ];
+    let mut chosen: Option<Option<[u32; 2]>> = None;
+    ui.horizontal_wrapped(|ui| {
+        dim_label(ui, &t, tr("props.canvas_size"));
+        let current = cd.canvas;
+        let label = presets.iter().find(|(_, v)| *v == current).map(|(k, _)| tr(k).to_owned()).unwrap_or_else(|| format!("{cw} x {ch}"));
+        let r = egui::ComboBox::from_id_salt("cut_canvas_preset").selected_text(label).show_ui(ui, |ui| {
+            for (k, v) in presets {
+                let text = match v {
+                    Some([w, h]) => format!("{}  ({w} x {h})", tr(k)),
+                    None => format!("{}  ({pw} x {ph})", tr(k)),
+                };
+                if ui.selectable_label(current == v, text).clicked() {
+                    chosen = Some(v);
+                }
+            }
+        });
+        env.note("props:cut_canvas", r.response.rect);
+    });
+    ui.horizontal(|ui| {
+        let id = ui.id().with(("cut_canvas_custom", cut.0.clone()));
+        let mut wh: [u32; 2] = ui.data_mut(|d| *d.get_temp_mut_or(id, [cw, ch]));
+        ui.add(egui::DragValue::new(&mut wh[0]).range(16..=16384).speed(4.0).suffix(" px"));
+        ui.label("x");
+        ui.add(egui::DragValue::new(&mut wh[1]).range(16..=16384).speed(4.0).suffix(" px"));
+        ui.data_mut(|d| d.insert_temp(id, wh));
+        let b = ui.add_enabled(wh != [cw, ch], egui::Button::new(tr("props.apply")));
+        env.note("props:cut_canvas_apply", b.rect);
+        if b.clicked() {
+            chosen = Some(Some(wh));
+        }
+    });
+    if let Some(v) = chosen {
+        let data = match v {
+            Some([w, h]) => serde_json::json!({ "canvas": [w, h] }),
+            None => serde_json::json!({ "canvas": null }),
+        };
+        if let Err(e) = cmds::run(env.core, aiai_core::Command::SetProps { id: cut.clone(), name: None, data }) {
+            env.ed.notify(e);
+        }
+    }
 }

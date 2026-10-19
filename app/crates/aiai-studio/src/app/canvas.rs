@@ -101,7 +101,7 @@ fn empty_state(env: &mut Env, ui: &mut Ui, rect: Rect) {
             let b = ui.button(tr("project.quick_start"));
             env.note("canvas:quick_start", b.rect);
             if b.clicked() {
-                let (d, size) = (env.ed.form_duration, None);
+                let (d, size) = (env.ed.form_duration, env.ed.form_custom_size.then_some(env.ed.form_size));
                 match cmds::quick_start(env.core, d, size) {
                     Ok(cut) => {
                         env.ed.set_cut(cut);
