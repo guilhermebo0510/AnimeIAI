@@ -1,12 +1,14 @@
-//! Pontos de controle de um traço vetorial pelo endereço (id do traço, índice do ponto): ler e editar em lote.
+//! Pontos de controle de um traço vetorial: ler e editar em lote, pelo id estável do ponto (`StrokePoint.id`, ver
+//! `Stroke::point_id`) ou pelo índice.
 //!
-//! O ponto não tem id gravado (traço à mão livre tem centenas): o endereço é o índice, protegido pela guarda
-//! `stroke_rev` (impressão digital do traço) e/ou `point_count`. Edição com guarda que não bate é recusada
+//! O id continua apontando para o mesmo ponto quando outros entram ou saem; o índice não, por isso a edição que usa
+//! índice exige guarda: `stroke_rev` (impressão digital do traço) e/ou `point_count`. Guarda que não bate é recusada
 //! ([`ToolError::Stale`]), então um índice lido antes de outra mudança nunca edita o ponto errado.
 //!
-//! As operações do lote rodam em ordem e cada índice se refere ao traço como ficou depois das anteriores; o lote
+//! As operações do lote rodam em ordem (os índices se referem ao traço como ficou depois das anteriores); o lote
 //! inteiro vira um `ReplaceStrokes` (mesmo id, um passo de desfazer). O painel Editar pontos do app usa as mesmas
-//! funções ([`nearest_on_curve`], [`insert_on_curve`], [`delete_point`]).
+//! funções ([`nearest_on_curve`], [`insert_on_curve`], [`delete_point`]). Simplificar ([`simplify_plan`]) mede o
+//! desvio na linha desenhada pelo motor, não só nos pontos de controle.
 
 use crate::context::*;
 use aiai_core::*;
@@ -160,6 +162,109 @@ pub fn cel_placement(p: &Project, cut_id: &Id, layer_id: &Id, frame: u32) -> Too
     Ok(aiai_render::compose::layer_placement(layer, ct, frame, w, h))
 }
 
+// ------------------------------------------------------------------------------------------------ simplificar
+
+/// O que simplificar tira (ou tiraria, no ensaio).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SimplifyReport {
+    /// Tolerância usada, em px do cel.
+    pub tolerance: f32,
+    /// Ids dos pontos tirados.
+    pub removed: Vec<u32>,
+    /// Pontos que ficam.
+    pub kept: usize,
+    /// Maior distância (px do cel) entre a linha de antes e a de depois; sempre <= `tolerance`.
+    pub max_deviation: f32,
+}
+
+/// Distância do ponto até a polilinha.
+fn polyline_dist(x: f32, y: f32, line: &[(f32, f32, f32)]) -> f32 {
+    if line.len() == 1 {
+        return (line[0].0 - x).hypot(line[0].1 - y);
+    }
+    line.windows(2).map(|w| seg_dist(x, y, (w[0].0, w[0].1), (w[1].0, w[1].1)).0).fold(f32::MAX, f32::min)
+}
+
+/// Maior distância entre as duas linhas desenhadas (nos dois sentidos, pelas curvas achatadas do motor).
+pub fn curve_deviation(a: &Stroke, b: &Stroke) -> f32 {
+    let (fa, fb) = (aiai_paint::flatten_points(a), aiai_paint::flatten_points(b));
+    if fa.is_empty() || fb.is_empty() {
+        return 0.0;
+    }
+    let one_way = |from: &[(f32, f32, f32)], to: &[(f32, f32, f32)]| {
+        // no máximo ~1500 amostras de um lado (traços longos de mão livre)
+        let step = (from.len() / 1500).max(1);
+        from.iter().step_by(step).chain(from.last()).map(|q| polyline_dist(q.0, q.1, to)).fold(0.0f32, f32::max)
+    };
+    one_way(&fa, &fb).max(one_way(&fb, &fa))
+}
+
+/// Douglas-Peucker nos pontos de controle (x, y e meia largura): marca em `keep` os que seguram a forma.
+fn rdp(p: &[[f32; 3]], a: usize, b: usize, tol: f32, keep: &mut [bool]) {
+    if b <= a + 1 {
+        return;
+    }
+    let d3 = |q: [f32; 3], u: [f32; 3], v: [f32; 3]| {
+        let d = [v[0] - u[0], v[1] - u[1], v[2] - u[2]];
+        let l2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+        let t = if l2 > 0.0 { (((q[0] - u[0]) * d[0] + (q[1] - u[1]) * d[1] + (q[2] - u[2]) * d[2]) / l2).clamp(0.0, 1.0) } else { 0.0 };
+        let e = [q[0] - u[0] - d[0] * t, q[1] - u[1] - d[1] * t, q[2] - u[2] - d[2] * t];
+        (e[0] * e[0] + e[1] * e[1] + e[2] * e[2]).sqrt()
+    };
+    let (mut best, mut idx) = (0.0f32, a);
+    for i in a + 1..b {
+        let d = d3(p[i], p[a], p[b]);
+        if d > best {
+            (best, idx) = (d, i);
+        }
+    }
+    if best > tol {
+        keep[idx] = true;
+        rdp(p, a, idx, tol, keep);
+        rdp(p, idx, b, tol, keep);
+    }
+}
+
+/// Pontos que podem sair sem a linha desenhada se afastar mais que `tol` px (do cel) da de agora. Ficam sempre as
+/// pontas, os cantos e os pontos com alça explícita. Devolve quais ficam e o desvio real medido.
+pub fn simplify_plan(s: &Stroke, tol: f32) -> Result<(Vec<bool>, f32), String> {
+    if s.geometry == StrokeGeometry::Bezier {
+        return Err("simplificar não vale para Bézier (controles 3n+1); converta para spline antes".into());
+    }
+    let n = s.points.len();
+    let locked: Vec<bool> = s.points.iter().enumerate().map(|(i, q)| i == 0 || i + 1 == n || q.corner || q.handle.is_some()).collect();
+    let pts: Vec<[f32; 3]> = (0..n).map(|i| [s.points[i].x, s.points[i].y, aiai_paint::width_at_point(s, i) * 0.5]).collect();
+    let mut t = tol.max(0.0);
+    for _ in 0..12 {
+        let mut keep = locked.clone();
+        let anchors: Vec<usize> = (0..n).filter(|&i| locked[i]).collect();
+        for w in anchors.windows(2) {
+            rdp(&pts, w[0], w[1], t, &mut keep);
+        }
+        if keep.iter().all(|k| *k) {
+            return Ok((keep, 0.0));
+        }
+        let cand = keep_only(s, &keep);
+        let dev = curve_deviation(s, &cand);
+        if dev <= tol {
+            return Ok((keep, dev));
+        }
+        t *= 0.5;
+    }
+    Ok((vec![true; n], 0.0))
+}
+
+/// O traço só com os pontos marcados (ids gravados antes, para os que ficam manterem os seus).
+fn keep_only(s: &Stroke, keep: &[bool]) -> Stroke {
+    let mut ns = s.clone();
+    ns.materialize_point_ids();
+    ns.points = ns.points.iter().zip(keep).filter(|(_, k)| **k).map(|(q, _)| *q).collect();
+    if ns.geometry == StrokeGeometry::Freehand {
+        ns.geometry = StrokeGeometry::Spline;
+    }
+    ns
+}
+
 // ---------------------------------------------------------------------------------------------------- leitura
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -177,10 +282,15 @@ pub struct PointsRequest {
     /// Distância máxima (px do canvas) de `at` até a borda do traço. Padrão 12.
     #[serde(default)]
     pub tolerance: Option<f32>,
+    /// Prévia de simplificar com esta tolerância (px do cel): quais ids sairiam e o desvio. Não muda nada.
+    #[serde(default)]
+    pub simplify_preview: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PointInfo {
+    /// Id estável do ponto no traço: continua o mesmo quando outros pontos entram ou saem.
+    pub id: u32,
     pub index: usize,
     /// Posição no cel (as coordenadas gravadas no traço).
     pub x: f32,
@@ -194,6 +304,14 @@ pub struct PointInfo {
     pub width: f32,
     /// Largura em px neste ponto (largura × ponta pela pressão × multiplicador).
     pub width_px: f32,
+    /// Alça (tangente) efetiva em px do cel: a curva sai por +handle e chega por -handle. Só spline/mão livre.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<[f32; 2]>,
+    /// A mesma alça no canvas.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canvas_handle: Option<[f32; 2]>,
+    /// A alça foi dada (set_handle); falso = automática da spline.
+    pub handle_explicit: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -215,6 +333,11 @@ pub struct StrokePoints {
     pub hit_distance: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nearest_point: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nearest_point_id: Option<u32>,
+    /// Com `simplify_preview`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub simplify: Option<SimplifyReport>,
     pub points: Vec<PointInfo>,
 }
 
@@ -234,6 +357,12 @@ fn find_stroke<'a>(cel: &'a CelData, id: &Id) -> ToolResult<&'a Stroke> {
     cel.strokes.iter().find(|s| &s.id == id).ok_or_else(|| ToolError::NotFound(format!("traço {id} no cel exposto")))
 }
 
+/// Vetor (sem a translação) pela parte linear da transformação.
+fn apply_vec(a: &Affine, v: [f32; 2]) -> [f32; 2] {
+    let m = a.0;
+    [m[0] * v[0] + m[1] * v[1], m[3] * v[0] + m[4] * v[1]]
+}
+
 /// Pontos do traço como a leitura devolve (cel e canvas).
 pub fn describe(p: &Project, cel: &Id, s: &Stroke, place: &Affine) -> StrokePoints {
     let points = s
@@ -242,7 +371,22 @@ pub fn describe(p: &Project, cel: &Id, s: &Stroke, place: &Affine) -> StrokePoin
         .enumerate()
         .map(|(i, q)| {
             let (cx, cy) = place.apply(q.x, q.y);
-            PointInfo { index: i, x: q.x, y: q.y, canvas_x: cx, canvas_y: cy, pressure: q.pressure, corner: q.corner, width: q.width, width_px: aiai_paint::width_at_point(s, i) }
+            let handle = aiai_paint::point_handle(s, i);
+            PointInfo {
+                id: s.point_id(i),
+                index: i,
+                x: q.x,
+                y: q.y,
+                canvas_x: cx,
+                canvas_y: cy,
+                pressure: q.pressure,
+                corner: q.corner,
+                width: q.width,
+                width_px: aiai_paint::width_at_point(s, i),
+                handle,
+                canvas_handle: handle.map(|h| apply_vec(place, h)),
+                handle_explicit: q.handle.is_some(),
+            }
         })
         .collect();
     StrokePoints {
@@ -257,16 +401,31 @@ pub fn describe(p: &Project, cel: &Id, s: &Stroke, place: &Affine) -> StrokePoin
         width: s.width,
         hit_distance: None,
         nearest_point: None,
+        nearest_point_id: None,
+        simplify: None,
         points,
     }
+}
+
+/// Relatório de simplificar `s` com `tol` px do cel.
+pub fn simplify_report(s: &Stroke, tol: f32) -> Result<SimplifyReport, String> {
+    if !(tol.is_finite() && tol >= 0.0) {
+        return Err("a tolerância de simplificar deve ser um número >= 0".into());
+    }
+    let (keep, dev) = simplify_plan(s, tol)?;
+    let removed = (0..s.points.len()).filter(|&i| !keep[i]).map(|i| s.point_id(i)).collect();
+    Ok(SimplifyReport { tolerance: tol, removed, kept: keep.iter().filter(|k| **k).count(), max_deviation: dev })
 }
 
 /// Lê os pontos de um traço (pelo id ou pelo clique `at`).
 pub fn read_points(p: &Project, req: &PointsRequest) -> ToolResult<StrokePoints> {
     let (node, cel) = vector_cel(p, &req.cut, &req.layer, req.frame)?;
     let place = cel_placement(p, &req.cut, &req.layer, req.frame)?;
-    match (&req.stroke, req.at) {
-        (Some(id), None) => Ok(describe(p, &node.id, find_stroke(cel, id)?, &place)),
+    let (s, mut out) = match (&req.stroke, req.at) {
+        (Some(id), None) => {
+            let s = find_stroke(cel, id)?;
+            (s, describe(p, &node.id, s, &place))
+        }
         (stroke, Some([ax, ay])) => {
             let inv = place.inverse().ok_or_else(|| ToolError::Invalid("o movimento da camada neste quadro não tem inversa (escala 0)".into()))?;
             let (x, y) = inv.apply(ax, ay);
@@ -288,34 +447,49 @@ pub fn read_points(p: &Project, req: &PointsRequest) -> ToolResult<StrokePoints>
             let mut out = describe(p, &node.id, s, &place);
             out.hit_distance = Some(d);
             out.nearest_point = s.points.iter().enumerate().map(|(i, q)| (i, (q.x - x).hypot(q.y - y))).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(i, _)| i);
-            Ok(out)
+            out.nearest_point_id = out.nearest_point.map(|i| s.point_id(i));
+            (s, out)
         }
-        (None, None) => Err(ToolError::Invalid("informe 'stroke' (id do traço) ou 'at' ([x, y] em px do canvas)".into())),
+        (None, None) => return Err(ToolError::Invalid("informe 'stroke' (id do traço) ou 'at' ([x, y] em px do canvas)".into())),
+    };
+    if let Some(tol) = req.simplify_preview {
+        out.simplify = Some(simplify_report(s, tol).map_err(ToolError::Invalid)?);
     }
+    Ok(out)
 }
 
 // ----------------------------------------------------------------------------------------------------- edição
 
-/// Espaço das coordenadas x/y das operações.
+/// Espaço das coordenadas x/y (e das alças dx/dy) das operações.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PointSpace {
-    /// Coordenadas do cel (as `x`/`y` da leitura).
+    /// Coordenadas do cel (as `x`/`y`/`handle` da leitura).
     #[default]
     Cel,
-    /// Px do canvas do corte (as `canvas_x`/`canvas_y` da leitura; o movimento da camada é desfeito).
+    /// Px do canvas do corte (as `canvas_x`/`canvas_y`/`canvas_handle` da leitura; o movimento da camada é desfeito).
     Canvas,
 }
 
-/// Uma operação sobre os pontos. Os índices se referem ao traço como ficou depois das operações anteriores do lote.
+/// Uma operação sobre os pontos. O ponto é dado por `id` (estável; preferido) OU por `index` (posição no traço como
+/// ficou depois das operações anteriores do lote; exige guarda).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PointOp {
-    /// Move o ponto `index` para (x, y).
-    Move { index: usize, x: f32, y: f32 },
-    /// Com `after`: põe o ponto (x, y) logo depois do índice `after`. Sem `after`: põe um ponto EM CIMA da curva, no
-    /// lugar mais perto de (x, y), se ele estiver a até `tolerance` px (padrão 12) da curva.
+    /// Move o ponto para (x, y).
+    Move {
+        #[serde(default)]
+        id: Option<u32>,
+        #[serde(default)]
+        index: Option<usize>,
+        x: f32,
+        y: f32,
+    },
+    /// Com `after_id`/`after` (índice): põe o ponto (x, y) logo depois desse ponto. Sem eles: põe um ponto EM CIMA da
+    /// curva, no lugar mais perto de (x, y), se ele estiver a até `tolerance` px (padrão 12) da curva.
     Insert {
+        #[serde(default)]
+        after_id: Option<u32>,
         #[serde(default)]
         after: Option<usize>,
         x: f32,
@@ -324,11 +498,59 @@ pub enum PointOp {
         tolerance: Option<f32>,
     },
     /// Apaga o ponto (o traço fica com pelo menos 2).
-    Delete { index: usize },
+    Delete {
+        #[serde(default)]
+        id: Option<u32>,
+        #[serde(default)]
+        index: Option<usize>,
+    },
     /// Canto (a curva quebra no ponto) ou suave. Vale para spline e mão livre.
-    Corner { index: usize, on: bool },
+    Corner {
+        #[serde(default)]
+        id: Option<u32>,
+        #[serde(default)]
+        index: Option<usize>,
+        on: bool,
+    },
     /// Largura em px naquele ponto (vira o multiplicador do ponto, 0..20× a largura da ponta).
-    WidthPx { index: usize, px: f32 },
+    WidthPx {
+        #[serde(default)]
+        id: Option<u32>,
+        #[serde(default)]
+        index: Option<usize>,
+        px: f32,
+    },
+    /// Alça explícita (dx, dy): a curva sai do ponto na direção +(dx, dy) e chega por -(dx, dy); mais comprida = curva
+    /// mais aberta ali. Só spline/mão livre e ponto que não é canto.
+    SetHandle {
+        #[serde(default)]
+        id: Option<u32>,
+        #[serde(default)]
+        index: Option<usize>,
+        dx: f32,
+        dy: f32,
+    },
+    /// Volta a alça para a automática da spline.
+    ClearHandle {
+        #[serde(default)]
+        id: Option<u32>,
+        #[serde(default)]
+        index: Option<usize>,
+    },
+    /// Tira os pontos que não seguram a forma: a linha desenhada não se afasta mais que `tolerance` px da de antes.
+    /// Pontas, cantos e pontos com alça explícita ficam.
+    Simplify { tolerance: f32 },
+}
+
+impl PointOp {
+    /// A operação endereça um ponto por índice (e então a edição precisa de guarda)?
+    pub fn uses_index(&self) -> bool {
+        match self {
+            PointOp::Move { index, .. } | PointOp::Delete { index, .. } | PointOp::Corner { index, .. } | PointOp::WidthPx { index, .. } | PointOp::SetHandle { index, .. } | PointOp::ClearHandle { index, .. } => index.is_some(),
+            PointOp::Insert { after, .. } => after.is_some(),
+            PointOp::Simplify { .. } => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -343,19 +565,34 @@ pub struct PointsEditRequest {
     /// Guarda: a quantidade de pontos que você viu. Se não bater, nada é editado.
     #[serde(default)]
     pub point_count: Option<usize>,
-    /// Espaço de x/y em move/insert: cel (padrão) ou canvas.
+    /// Espaço de x/y, dx/dy e das tolerâncias: cel (padrão) ou canvas.
     #[serde(default)]
     pub space: PointSpace,
+    /// Ensaio: devolve o traço como ficaria (e o que simplify tiraria) sem mudar o documento.
+    #[serde(default)]
+    pub dry_run: bool,
     pub ops: Vec<PointOp>,
 }
 
-/// Resultado da edição: o comando a aplicar, o traço como fica e os índices dos pontos inseridos (no traço final).
+/// O que o lote fez, além do traço novo.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct EditReport {
+    /// Ids dos pontos inseridos (os que ainda existem no fim).
+    pub inserted: Vec<u32>,
+    /// Ids dos pontos tirados (delete e simplify).
+    pub removed: Vec<u32>,
+    /// O último simplify do lote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub simplify: Option<SimplifyReport>,
+}
+
+/// Resultado da edição: o comando a aplicar, o traço como fica e o relatório.
 #[derive(Debug, Clone)]
 pub struct PointsEdit {
     pub command: Command,
     pub stroke: Stroke,
     pub cel: Id,
-    pub inserted: Vec<usize>,
+    pub report: EditReport,
 }
 
 fn guard(s: &Stroke, req: &PointsEditRequest) -> ToolResult<()> {
@@ -373,66 +610,101 @@ fn guard(s: &Stroke, req: &PointsEditRequest) -> ToolResult<()> {
     Ok(())
 }
 
-/// Aplica o lote ao traço (sem guarda).
-pub fn apply_ops(s: &mut Stroke, ops: &[PointOp], to_cel: impl Fn(f32, f32) -> (f32, f32), canvas_scale: f32) -> Result<Vec<usize>, String> {
-    let mut inserted: Vec<usize> = Vec::new();
+/// Índice do ponto dado por `id` ou `index` (um dos dois).
+fn pick(s: &Stroke, k: usize, id: Option<u32>, index: Option<usize>) -> Result<usize, String> {
+    match (id, index) {
+        (Some(_), Some(_)) => Err(format!("ops[{k}]: dê 'id' OU 'index', não os dois")),
+        (None, None) => Err(format!("ops[{k}]: falta o ponto: 'id' (estável) ou 'index'")),
+        (Some(id), None) => s.point_index(id).ok_or_else(|| format!("ops[{k}]: não há ponto com id {id} no traço (ids: {:?})", (0..s.points.len()).map(|i| s.point_id(i)).collect::<Vec<_>>())),
+        (None, Some(i)) if i < s.points.len() => Ok(i),
+        (None, Some(i)) => Err(format!("ops[{k}]: índice {i} fora do traço (pontos 0..{})", s.points.len().saturating_sub(1))),
+    }
+}
+
+/// Aplica o lote ao traço (sem guarda). `inv` = canvas → cel quando as coordenadas vêm do canvas.
+pub fn apply_ops(s: &mut Stroke, ops: &[PointOp], inv: Option<&Affine>) -> Result<EditReport, String> {
+    let to_cel = |x: f32, y: f32| inv.map(|a| a.apply(x, y)).unwrap_or((x, y));
+    let to_cel_vec = |v: [f32; 2]| inv.map(|a| apply_vec(a, v)).unwrap_or(v);
+    // px do cel por px do request (para as tolerâncias)
+    let scale = inv.map(|a| { let v = apply_vec(a, [1.0, 0.0]); v[0].hypot(v[1]) }).unwrap_or(1.0);
+    let mut rep = EditReport::default();
     for (k, op) in ops.iter().enumerate() {
         let n = s.points.len();
-        let check = |i: usize| if i < n { Ok(i) } else { Err(format!("ops[{k}]: índice {i} fora do traço (pontos 0..{})", n.saturating_sub(1))) };
         let finite = |v: f32, name: &str| if v.is_finite() { Ok(v) } else { Err(format!("ops[{k}]: '{name}' deve ser um número finito")) };
         match *op {
-            PointOp::Move { index, x, y } => {
-                let i = check(index)?;
+            PointOp::Move { id, index, x, y } => {
+                let i = pick(s, k, id, index)?;
                 let (cx, cy) = to_cel(finite(x, "x")?, finite(y, "y")?);
                 s.points[i].x = cx;
                 s.points[i].y = cy;
             }
-            PointOp::Insert { after, x, y, tolerance } => {
+            PointOp::Insert { after_id, after, x, y, tolerance } => {
                 let (cx, cy) = to_cel(finite(x, "x")?, finite(y, "y")?);
-                let at = match after {
-                    Some(a) => insert_after(s, a, cx, cy).map_err(|e| format!("ops[{k}]: {e}"))?,
-                    None => {
-                        let tol = tolerance.unwrap_or(12.0) * canvas_scale;
+                let at = match (after_id, after) {
+                    (None, None) => {
+                        let tol = tolerance.unwrap_or(12.0) * scale;
                         insert_on_curve(s, cx, cy, tol).ok_or_else(|| {
-                            let d = nearest_on_curve(s, cx, cy).map(|h| format!("{:.1}", h.dist)).unwrap_or_else(|| "?".into());
-                            format!("ops[{k}]: ({x}, {y}) está a {d} px da curva, mais que a tolerância {}; aumente 'tolerance' ou use 'after'", tolerance.unwrap_or(12.0))
+                            let d = nearest_on_curve(s, cx, cy).map(|h| format!("{:.1}", h.dist / scale)).unwrap_or_else(|| "?".into());
+                            format!("ops[{k}]: ({x}, {y}) está a {d} px da curva, mais que a tolerância {}; aumente 'tolerance' ou use 'after_id'", tolerance.unwrap_or(12.0))
                         })?
                     }
-                };
-                for j in &mut inserted {
-                    if *j >= at {
-                        *j += 1;
+                    (id, index) => {
+                        let a = pick(s, k, id, index).map_err(|e| e.replace("'id'", "'after_id'").replace("'index'", "'after'"))?;
+                        insert_after(s, a, cx, cy).map_err(|e| format!("ops[{k}]: {e}"))?
                     }
-                }
-                inserted.push(at);
+                };
+                rep.inserted.push(s.point_id(at));
             }
-            PointOp::Delete { index } => {
-                let i = check(index)?;
+            PointOp::Delete { id, index } => {
+                let i = pick(s, k, id, index)?;
+                s.materialize_point_ids();
+                let gone = s.point_id(i);
                 if !delete_point(s, i) {
                     return Err(format!("ops[{k}]: o traço precisa de pelo menos 2 pontos (tem {n})"));
                 }
-                inserted.retain(|&j| j != i);
-                for j in &mut inserted {
-                    if *j > i {
-                        *j -= 1;
-                    }
-                }
+                rep.inserted.retain(|&j| j != gone);
+                rep.removed.push(gone);
             }
-            PointOp::Corner { index, on } => {
-                let i = check(index)?;
+            PointOp::Corner { id, index, on } => {
+                let i = pick(s, k, id, index)?;
                 s.points[i].corner = on;
             }
-            PointOp::WidthPx { index, px } => {
-                let i = check(index)?;
+            PointOp::WidthPx { id, index, px } => {
+                let i = pick(s, k, id, index)?;
                 let px = finite(px, "px")?;
                 if px < 0.0 {
                     return Err(format!("ops[{k}]: 'px' deve ser >= 0"));
                 }
-                s.points[i].width = aiai_paint::point_width_for(s, i, px);
+                s.points[i].width = aiai_paint::point_width_for(s, i, px * scale);
+            }
+            PointOp::SetHandle { id, index, dx, dy } => {
+                let i = pick(s, k, id, index)?;
+                if !matches!(s.geometry, StrokeGeometry::Spline | StrokeGeometry::Freehand) {
+                    return Err(format!("ops[{k}]: alça só vale em spline ou mão livre (o traço é {:?})", s.geometry));
+                }
+                if s.points[i].corner {
+                    return Err(format!("ops[{k}]: o ponto {} é canto e canto ignora a alça; tire o canto antes (corner on:false)", s.point_id(i)));
+                }
+                s.points[i].handle = Some(to_cel_vec([finite(dx, "dx")?, finite(dy, "dy")?]));
+            }
+            PointOp::ClearHandle { id, index } => {
+                let i = pick(s, k, id, index)?;
+                s.points[i].handle = None;
+            }
+            PointOp::Simplify { tolerance } => {
+                let tol = finite(tolerance, "tolerance")? * scale;
+                let r = simplify_report(s, tol).map_err(|e| format!("ops[{k}]: {e}"))?;
+                if !r.removed.is_empty() {
+                    let keep: Vec<bool> = (0..s.points.len()).map(|i| !r.removed.contains(&s.point_id(i))).collect();
+                    *s = keep_only(s, &keep);
+                }
+                rep.inserted.retain(|j| !r.removed.contains(j));
+                rep.removed.extend(r.removed.iter().copied());
+                rep.simplify = Some(r);
             }
         }
     }
-    Ok(inserted)
+    Ok(rep)
 }
 
 /// Edita os pontos de um traço em lote: um `ReplaceStrokes` (um passo de desfazer).
@@ -446,19 +718,14 @@ pub fn edit_points(p: &Project, req: &PointsEditRequest) -> ToolResult<PointsEdi
     if req.ops.is_empty() {
         return Err(ToolError::Invalid("'ops' vazio: nada a editar".into()));
     }
-    let (to_cel, scale): (Box<dyn Fn(f32, f32) -> (f32, f32)>, f32) = match req.space {
-        PointSpace::Cel => (Box::new(|x, y| (x, y)), 1.0),
-        PointSpace::Canvas => {
-            let inv = cel_placement(p, &req.cut, &req.layer, req.frame)?.inverse().ok_or_else(|| ToolError::Invalid("o movimento da camada neste quadro não tem inversa (escala 0)".into()))?;
-            let (x0, y0) = inv.apply(0.0, 0.0);
-            let (x1, y1) = inv.apply(1.0, 0.0);
-            (Box::new(move |x, y| inv.apply(x, y)), (x1 - x0).hypot(y1 - y0))
-        }
+    let inv = match req.space {
+        PointSpace::Cel => None,
+        PointSpace::Canvas => Some(cel_placement(p, &req.cut, &req.layer, req.frame)?.inverse().ok_or_else(|| ToolError::Invalid("o movimento da camada neste quadro não tem inversa (escala 0)".into()))?),
     };
     let mut ns = s.clone();
-    let inserted = apply_ops(&mut ns, &req.ops, to_cel, scale).map_err(ToolError::Invalid)?;
+    let report = apply_ops(&mut ns, &req.ops, inv.as_ref()).map_err(ToolError::Invalid)?;
     ns.validate().map_err(|e| ToolError::Invalid(format!("o traço editado ficaria inválido: {e}")))?;
-    Ok(PointsEdit { command: Command::ReplaceStrokes { cel: node.id.clone(), strokes: vec![ns.clone()] }, stroke: ns, cel: node.id.clone(), inserted })
+    Ok(PointsEdit { command: Command::ReplaceStrokes { cel: node.id.clone(), strokes: vec![ns.clone()] }, stroke: ns, cel: node.id.clone(), report })
 }
 
 #[cfg(test)]
@@ -521,27 +788,37 @@ mod tests {
         assert_eq!(stroke_rev(&s).len(), 16);
     }
 
+    fn ops(v: serde_json::Value) -> Vec<PointOp> {
+        serde_json::from_value(v).unwrap()
+    }
+
     #[test]
-    fn apply_ops_runs_in_order_and_tracks_inserted_indices() {
+    fn apply_ops_addresses_points_by_stable_id_or_index() {
         let mut s = line(StrokeGeometry::Spline);
-        let ops: Vec<PointOp> = serde_json::from_value(serde_json::json!([
-            {"op": "insert", "after": 0, "x": 50, "y": 10},
-            {"op": "move", "index": 3, "x": 210, "y": 20},
-            {"op": "corner", "index": 2, "on": true},
+        assert_eq!((0..3).map(|i| s.point_id(i)).collect::<Vec<_>>(), vec![1, 2, 3], "sem ids gravados: índice+1");
+        let rep = apply_ops(&mut s, &ops(serde_json::json!([
+            {"op": "insert", "after_id": 1, "x": 50, "y": 10},
+            {"op": "move", "id": 3, "x": 210, "y": 20},
+            {"op": "corner", "id": 2, "on": true},
             {"op": "width_px", "index": 0, "px": 8},
             {"op": "insert", "x": 100, "y": 3},
-            {"op": "delete", "index": 0}
-        ]))
+            {"op": "delete", "id": 1}
+        ])), None)
         .unwrap();
-        let inserted = apply_ops(&mut s, &ops, |x, y| (x, y), 1.0).unwrap();
-        // depois de apagar o 0, o primeiro inserido (1) vira 0
+        assert_eq!((rep.inserted.clone(), rep.removed.clone()), (vec![4, 5], vec![1]));
         assert_eq!(s.points.len(), 4);
-        assert_eq!(inserted.len(), 2);
-        assert_eq!((s.points[0].x, s.points[0].y), (50.0, 10.0));
-        assert!(s.points.iter().any(|q| q.corner && q.x == 100.0));
-        assert_eq!((s.points[3].x, s.points[3].y), (210.0, 20.0));
-        assert!(apply_ops(&mut s, &serde_json::from_value::<Vec<PointOp>>(serde_json::json!([{"op": "move", "index": 9, "x": 0, "y": 0}])).unwrap(), |x, y| (x, y), 1.0).unwrap_err().contains("fora do traço"));
+        let at = |id: u32| s.points[s.point_index(id).unwrap()];
+        assert_eq!((at(4).x, at(4).y, s.point_index(4)), (50.0, 10.0, Some(0)), "o inserido virou o primeiro e manteve o id");
+        assert!(at(2).corner && at(2).x == 100.0);
+        assert_eq!((at(3).x, at(3).y), (210.0, 20.0));
+        let err = |v: serde_json::Value| apply_ops(&mut s.clone(), &ops(v), None).unwrap_err();
+        assert!(err(serde_json::json!([{"op": "move", "id": 1, "x": 0, "y": 0}])).contains("não há ponto com id 1"), "id apagado não existe mais");
+        assert!(err(serde_json::json!([{"op": "move", "index": 9, "x": 0, "y": 0}])).contains("fora do traço"));
+        assert!(err(serde_json::json!([{"op": "corner", "id": 2, "index": 1, "on": true}])).contains("não os dois"));
+        assert!(err(serde_json::json!([{"op": "delete"}])).contains("falta o ponto"));
         assert!(serde_json::from_value::<PointOp>(serde_json::json!({"op": "move", "index": 0, "x": 0, "y": 0, "z": 1})).is_err(), "chave desconhecida na operação");
+        assert!(ops(serde_json::json!([{"op": "insert", "after": 0, "x": 1, "y": 1}]))[0].uses_index());
+        assert!(!ops(serde_json::json!([{"op": "insert", "after_id": 1, "x": 1, "y": 1}, {"op": "simplify", "tolerance": 1}])).iter().any(PointOp::uses_index));
     }
 
     #[test]
@@ -549,7 +826,56 @@ mod tests {
         let mut s = line(StrokeGeometry::Spline);
         s.tip = VectorTip::GPen;
         s.points[1].pressure = 0.5;
-        apply_ops(&mut s, &[PointOp::WidthPx { index: 1, px: 6.0 }], |x, y| (x, y), 1.0).unwrap();
+        apply_ops(&mut s, &[PointOp::WidthPx { id: Some(2), index: None, px: 6.0 }], None).unwrap();
         assert!((aiai_paint::width_at_point(&s, 1) - 6.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn handles_are_set_in_the_request_space_and_refused_on_corners() {
+        let mut s = line(StrokeGeometry::Spline);
+        s.points[1].y = 40.0;
+        let before = aiai_paint::point_handle(&s, 1).unwrap();
+        // canvas com o dobro do tamanho do cel: (20, 0) no canvas = (10, 0) no cel
+        let half = Affine([0.5, 0.0, 0.0, 0.0, 0.5, 0.0]);
+        apply_ops(&mut s, &ops(serde_json::json!([{"op": "set_handle", "id": 2, "dx": 20, "dy": 0}])), Some(&half)).unwrap();
+        assert_eq!(s.points[1].handle, Some([10.0, 0.0]));
+        assert_eq!(aiai_paint::point_handle(&s, 1), Some([10.0, 0.0]));
+        apply_ops(&mut s, &ops(serde_json::json!([{"op": "clear_handle", "index": 1}])), None).unwrap();
+        assert_eq!((s.points[1].handle, aiai_paint::point_handle(&s, 1)), (None, Some(before)), "volta à automática");
+        s.points[1].corner = true;
+        assert!(apply_ops(&mut s, &ops(serde_json::json!([{"op": "set_handle", "id": 2, "dx": 5, "dy": 0}])), None).unwrap_err().contains("canto"));
+        let mut poly = line(StrokeGeometry::Polyline);
+        assert!(apply_ops(&mut poly, &ops(serde_json::json!([{"op": "set_handle", "id": 2, "dx": 5, "dy": 0}])), None).unwrap_err().contains("spline"));
+    }
+
+    #[test]
+    fn simplify_keeps_ends_corners_and_handles_and_stays_within_tolerance() {
+        // reta com 11 pontos: só sobram as pontas, o canto (índice 5) e o da alça (índice 8)
+        let mut s = line(StrokeGeometry::Freehand);
+        s.points = (0..11).map(|i| pt(i as f32 * 20.0, 0.0)).collect();
+        s.points[5].corner = true;
+        s.points[8].handle = Some([6.0, 0.0]);
+        let r = simplify_report(&s, 0.5).unwrap();
+        assert_eq!(r.removed, vec![2, 3, 4, 5, 7, 8, 10], "{r:?}");
+        assert_eq!(r.kept, 4);
+        assert!(r.max_deviation <= 0.5);
+        let rep = apply_ops(&mut s, &ops(serde_json::json!([{"op": "simplify", "tolerance": 0.5}])), None).unwrap();
+        assert_eq!(rep.removed, r.removed);
+        assert_eq!((0..s.points.len()).map(|i| s.point_id(i)).collect::<Vec<_>>(), vec![1, 6, 9, 11], "os que ficam mantêm os ids");
+        assert_eq!(s.geometry, StrokeGeometry::Spline);
+
+        // onda: tira pontos, mas a linha desenhada não sai mais que a tolerância da original
+        let mut w = line(StrokeGeometry::Spline);
+        w.points = (0..41).map(|i| { let x = i as f32 * 10.0; pt(x, 30.0 * (x / 400.0 * std::f32::consts::TAU).sin()) }).collect();
+        for tol in [0.3f32, 1.0, 3.0] {
+            let r = simplify_report(&w, tol).unwrap();
+            assert!(!r.removed.is_empty() && r.max_deviation <= tol, "tol {tol}: {r:?}");
+            let mut t = w.clone();
+            apply_ops(&mut t, &[PointOp::Simplify { tolerance: tol }], None).unwrap();
+            assert!(curve_deviation(&w, &t) <= tol + 1e-3, "tol {tol}");
+        }
+        let mut b = line(StrokeGeometry::Bezier);
+        b.points.push(pt(300.0, 0.0));
+        assert!(simplify_report(&b, 1.0).unwrap_err().contains("Bézier"));
     }
 }

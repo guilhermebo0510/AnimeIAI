@@ -1468,20 +1468,22 @@ fn points_are_read_and_edited_by_stroke_and_index_behind_a_revision_guard() {
     assert_eq!(act_err(&mut s, "EDIT_POINTS", edit(json!({"ops": [{"op": "delete", "index": 7}], "stroke_rev": rev0}))).code, code::INVALID_PARAMS);
     assert_eq!(s.project.revision, rev_doc, "edição recusada não muda nada");
 
-    // inserir na curva (canvas), mover, canto, largura e apagar: um passo de desfazer
+    // inserir na curva (canvas), mover, canto, largura e apagar, por id: um passo de desfazer
     let o = act(&mut s, "EDIT_POINTS", edit(json!({"stroke_rev": rev0, "space": "canvas", "ops": [
         {"op": "insert", "x": 130.0, "y": 99.0},
-        {"op": "move", "index": 3, "x": 290.0, "y": 105.0},
-        {"op": "corner", "index": 2, "on": true},
-        {"op": "width_px", "index": 2, "px": 9.0},
+        {"op": "move", "id": 3, "x": 290.0, "y": 105.0},
+        {"op": "corner", "id": 2, "on": true},
+        {"op": "width_px", "id": 2, "px": 9.0},
         {"op": "delete", "index": 0}
     ]})));
     assert_eq!(o["description"], "Editar 1 traço(s)");
-    assert_eq!((o["point_count"].as_u64(), o["inserted"].clone()), (Some(3), json!([0])));
+    assert_eq!((o["point_count"].as_u64(), o["inserted"].clone(), o["removed"].clone()), (Some(3), json!([4]), json!([1])));
     let pts = o["points"].as_array().unwrap();
+    assert_eq!(pts.iter().map(|p| p["id"].as_u64().unwrap()).collect::<Vec<_>>(), vec![4, 2, 3], "ids estáveis: o novo é 4, o apagado (1) some");
     assert!((pts[0]["x"].as_f64().unwrap() - 110.0).abs() < 0.5 && (pts[0]["y"].as_f64().unwrap() - 90.0).abs() < 0.5, "ponto novo em cima da curva, no cel: {}", pts[0]);
     assert_eq!((pts[1]["x"].as_f64(), pts[1]["corner"].as_bool(), pts[1]["width_px"].as_f64()), (Some(160.0), Some(true), Some(9.0)));
     assert_eq!((pts[2]["x"].as_f64(), pts[2]["y"].as_f64(), pts[2]["canvas_x"].as_f64()), (Some(270.0), Some(100.0), Some(290.0)));
+    assert_eq!(pts[0]["handle_explicit"], false);
     let rev1 = o["stroke_rev"].as_str().unwrap().to_string();
     assert_ne!(rev1, rev0);
     let back = act(&mut s, "READ_POINTS", json!({"cut": cut, "frame": 0, "layer": line, "stroke": stroke}));
@@ -1494,9 +1496,38 @@ fn points_are_read_and_edited_by_stroke_and_index_behind_a_revision_guard() {
     // if_revision também serve de guarda (e é conferida pela sessão)
     let e = act_err(&mut s, "EDIT_POINTS", edit(json!({"if_revision": rev_doc, "ops": [{"op": "corner", "index": 0, "on": true}]})));
     assert_eq!(e.code, code::STALE_REVISION);
+    // id que não existe mais: erro claro
+    assert!(act_err(&mut s, "EDIT_POINTS", edit(json!({"ops": [{"op": "corner", "id": 1, "on": true}]}))).message.contains("não há ponto com id 1"));
 
-    // um desfazer volta os 3 pontos originais
+    // por id não precisa de guarda: alça explícita no canvas
+    let o = act(&mut s, "EDIT_POINTS", edit(json!({"space": "canvas", "ops": [{"op": "set_handle", "id": 4, "dx": 12.0, "dy": 0.0}]})));
+    assert_eq!((o["points"][0]["handle"].clone(), o["points"][0]["canvas_handle"].clone(), o["points"][0]["handle_explicit"].clone()), (json!([12.0, 0.0]), json!([12.0, 0.0]), json!(true)));
+    assert!(act_err(&mut s, "EDIT_POINTS", edit(json!({"ops": [{"op": "set_handle", "id": 2, "dx": 5.0, "dy": 0.0}]}))).message.contains("canto"));
+
+    // simplificar: prévia na leitura, ensaio (nada muda) e de verdade
+    act(&mut s, "DRAW_CURVES", json!({"cut": cut, "frame": 0, "layer": line, "curves": [
+        {"points": (0..9).map(|i| json!([20 + i * 30, 150])).collect::<Vec<_>>(), "width": 4, "tip": "marker", "geometry": "spline", "color": {"type": "direct", "rgba": [0, 0, 0, 1]}}]}));
+    let r2 = act(&mut s, "READ_POINTS", json!({"cut": cut, "frame": 0, "layer": line, "at": [80.0, 155.0], "simplify_preview": 0.5}));
+    let straight = r2["stroke"].as_str().unwrap().to_string();
+    assert_ne!(straight, stroke);
+    assert_eq!((r2["point_count"].as_u64(), r2["simplify"]["removed"].clone(), r2["simplify"]["kept"].as_u64()), (Some(9), json!([2, 3, 4, 5, 6, 7, 8]), Some(2)));
+    assert!(r2["simplify"]["max_deviation"].as_f64().unwrap() <= 0.5);
+    let simp = json!({"cut": cut, "frame": 0, "layer": line, "stroke": straight, "ops": [{"op": "simplify", "tolerance": 0.5}]});
+    let rev_before = s.project.revision;
+    let mut dry = simp.clone();
+    dry["dry_run"] = json!(true);
+    let d = act(&mut s, "EDIT_POINTS", dry);
+    assert_eq!((d["dry_run"].clone(), d["point_count"].as_u64(), d["removed"].clone()), (json!(true), Some(2), r2["simplify"]["removed"].clone()));
+    assert_eq!(s.project.revision, rev_before, "ensaio não muda o documento");
+    let o = act(&mut s, "EDIT_POINTS", simp);
+    assert_eq!((o["point_count"].as_u64(), o["points"][1]["id"].as_u64()), (Some(2), Some(9)));
+
+    // um desfazer por edição: simplificar volta os 9 pontos; depois (traço novo, alça, lote) volta aos 3 originais
     act(&mut s, "UNDO", json!({}));
+    assert_eq!(act(&mut s, "READ_POINTS", json!({"cut": cut, "frame": 0, "layer": line, "stroke": straight}))["point_count"], 9);
+    for _ in 0..3 {
+        act(&mut s, "UNDO", json!({}));
+    }
     let undone = act(&mut s, "READ_POINTS", json!({"cut": cut, "frame": 0, "layer": line, "stroke": stroke}));
     assert_eq!(undone["stroke_rev"], rev0.as_str());
     assert_eq!(undone["point_count"], 3);

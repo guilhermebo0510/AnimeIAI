@@ -10,10 +10,12 @@
 //! objeto parcial com `name` de um preset conhecido (os campos dados sobrescrevem o preset); `preset_overrides` (objeto) é
 //! mesclado por cima em qualquer caso.
 //!
-//! `READ_POINTS {cut, frame, layer, stroke? | at?: [x,y] do canvas, tolerance?}` devolve os pontos do traço (índice, x/y
-//! no cel e no canvas, pressão, canto, multiplicador e largura em px) com `stroke_rev` e `point_count`.
-//! `EDIT_POINTS {cut, frame, layer, stroke, stroke_rev?, point_count?, space?, ops}` edita em lote num passo de desfazer;
-//! exige ao menos uma guarda (`stroke_rev`, `point_count` ou `if_revision`) e recusa com `-32010` se ela não bater.
+//! `READ_POINTS {cut, frame, layer, stroke? | at?: [x,y] do canvas, tolerance?, simplify_preview?}` devolve os pontos do
+//! traço (id estável, índice, x/y no cel e no canvas, pressão, canto, multiplicador e largura em px, alça) com
+//! `stroke_rev` e `point_count`.
+//! `EDIT_POINTS {cut, frame, layer, stroke, stroke_rev?, point_count?, space?, dry_run?, ops}` edita em lote num passo de
+//! desfazer. Operação que endereça ponto por índice exige guarda (`stroke_rev`, `point_count` ou `if_revision`); por id
+//! não. Guarda que não bate é `-32010`. `dry_run` devolve o traço como ficaria sem mudar o documento.
 
 use crate::core_ops::{DEFAULT_AUTHOR, core_error, obj, opt_bool, opt_str, opt_u64, outcome_json};
 use crate::params_check::check_keys;
@@ -25,7 +27,7 @@ use aiai_tools::ToolError;
 use aiai_tools::draw::{DrawRequest, draw_command};
 use aiai_tools::fill::{FillRequest, fill_command, lint_with};
 use aiai_tools::paint::{GradientRequest, PaintRequest, gradient_command, paint_command};
-use aiai_tools::points::{PointsEditRequest, PointsRequest, cel_placement, describe, edit_points, read_points};
+use aiai_tools::points::{PointOp, PointsEditRequest, PointsRequest, cel_placement, describe, edit_points, read_points};
 use aiai_tools::transform::{RepeatRequest, TransformRequest, repeat_command, transform_command};
 use base64::Engine as _;
 use serde::de::DeserializeOwned;
@@ -125,23 +127,34 @@ pub(crate) fn apply(session: &mut CoreSession, params: &Value, cmd: Command) -> 
 
 // ------------------------------------------------------------------------------------------------------- pontos
 
-/// Edição de pontos: exige guarda (índices lidos antes de outra mudança nunca editam o ponto errado) e devolve o
-/// Outcome com o traço como ficou (`stroke_rev`, `point_count`, `points`) e os índices dos pontos inseridos.
+/// Edição de pontos: com índice exige guarda (índices lidos antes de outra mudança nunca editam o ponto errado). Devolve
+/// o Outcome (ou `dry_run: true` sem aplicar) com o traço como ficou (`stroke_rev`, `point_count`, `points`) e o
+/// relatório (`inserted`/`removed` por id, `simplify`).
 fn edit_points_action(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
     let r = request::<PointsEditRequest>(params, "EDIT_POINTS")?;
     let p = obj(params)?;
-    if r.stroke_rev.is_none() && r.point_count.is_none() && opt_u64(&p, "if_revision")?.is_none() {
-        return Err(BridgeError::invalid_params("EDIT_POINTS exige uma guarda: 'stroke_rev' (de READ_POINTS), 'point_count' ou 'if_revision'"));
+    let guarded = r.stroke_rev.is_some() || r.point_count.is_some() || opt_u64(&p, "if_revision")?.is_some();
+    if !r.dry_run && !guarded && r.ops.iter().any(PointOp::uses_index) {
+        return Err(BridgeError::invalid_params("EDIT_POINTS: operação por índice exige uma guarda: 'stroke_rev' (de READ_POINTS), 'point_count' ou 'if_revision'; ou use 'id' (estável)"));
     }
     let edit = edit_points(&session.project, &r).map_err(tool_error)?;
-    let mut out = apply(session, params, edit.command)?;
+    let mut out = if r.dry_run {
+        json!({ "dry_run": true, "revision": session.project.revision })
+    } else {
+        apply(session, params, edit.command)?
+    };
     let place = cel_placement(&session.project, &r.cut, &r.layer, r.frame).map_err(tool_error)?;
     let now = describe(&session.project, &edit.cel, &edit.stroke, &place);
     out["stroke"] = json!(now.stroke);
     out["stroke_rev"] = json!(now.stroke_rev);
     out["point_count"] = json!(now.point_count);
+    out["geometry"] = json!(now.geometry);
     out["points"] = serde_json::to_value(&now.points).map_err(|e| BridgeError::failed(e.to_string()))?;
-    out["inserted"] = json!(edit.inserted);
+    out["inserted"] = json!(edit.report.inserted);
+    out["removed"] = json!(edit.report.removed);
+    if let Some(sr) = &edit.report.simplify {
+        out["simplify"] = serde_json::to_value(sr).map_err(|e| BridgeError::failed(e.to_string()))?;
+    }
     Ok(out)
 }
 
