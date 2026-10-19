@@ -178,6 +178,35 @@ impl StudioApp {
                 self.mark_dirty();
             }
             ui.end_row();
+
+            // caneta: curva de pressão (Windows Ink / WM_POINTER chega pelo winit como toque com força)
+            ui.label(tr("prefs.pen"));
+            ui.vertical(|ui| {
+                let (mut min, mut gamma) = (self.prefs.pen_pressure_min, self.prefs.pen_pressure_gamma);
+                let a = ui.add(egui::Slider::new(&mut min, 0.0..=0.6).text(tr("prefs.pen_min")));
+                let b = ui.add(egui::Slider::new(&mut gamma, 0.3..=3.0).logarithmic(true).text(tr("prefs.pen_gamma")));
+                self.rects.note("prefs:pen_min", a.rect);
+                self.rects.note("prefs:pen_gamma", b.rect);
+                if a.changed() || b.changed() {
+                    self.prefs.pen_pressure_min = min;
+                    self.prefs.pen_pressure_gamma = gamma;
+                    self.mark_dirty();
+                }
+                // desenho da curva (força na horizontal, pressão do traço na vertical)
+                let (r, painter) = ui.allocate_painter(egui::vec2(140.0, 70.0), egui::Sense::hover());
+                let t = self.tokens();
+                painter.rect_stroke(r.rect, 2.0, egui::Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+                let pts: Vec<egui::Pos2> = (0..=32)
+                    .map(|i| {
+                        let f = i as f32 / 32.0;
+                        let p = crate::prefs::pressure_curve(f, min, gamma);
+                        egui::pos2(r.rect.left() + f * r.rect.width(), r.rect.bottom() - p * r.rect.height())
+                    })
+                    .collect();
+                painter.add(egui::Shape::line(pts, egui::Stroke::new(1.5, t.accent)));
+                ui.label(egui::RichText::new(tr(if self.ed.pen_seen { "prefs.pen_seen" } else { "prefs.pen_none" })).size(11.0).color(t.text_dim));
+            });
+            ui.end_row();
         });
     }
 

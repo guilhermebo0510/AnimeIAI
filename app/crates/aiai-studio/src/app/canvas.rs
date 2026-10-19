@@ -320,8 +320,9 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
                 // o fim do toque chega antes do botão solto: com traço aberto, os pontos de alcance do estabilizador
                 // ainda usam a última pressão; volta a 1,0 (mouse) depois de soltar
                 let ended = *phase == egui::TouchPhase::End || *phase == egui::TouchPhase::Cancel;
+                env.ed.pen_seen = true;
                 if !ended {
-                    env.ed.pressure = f.clamp(0.02, 1.0);
+                    env.ed.pressure = curve(env, *f);
                 } else if matches!(env.ed.gesture, Gesture::None) {
                     env.ed.pressure = 1.0;
                 }
@@ -330,7 +331,7 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
                 env.ed.cursor = Some(*pos);
                 // a pressão deste ponto vem do toque que chega logo depois (caneta: PointerMoved + Touch)
                 let pressure = events[idx + 1..events.len().min(idx + 3)].iter().find_map(|e| match e {
-                    Event::Touch { force: Some(f), phase, .. } if *phase != egui::TouchPhase::End => Some(f.clamp(0.02, 1.0)),
+                    Event::Touch { force: Some(f), phase, .. } if *phase != egui::TouchPhase::End => Some(curve(env, *f)),
                     _ => None,
                 });
                 on_move(env, rect, ppp, *pos, pressure.unwrap_or(env.ed.pressure));
@@ -340,7 +341,7 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
                     // o 1º ponto usa a pressão do toque que abriu o traço neste quadro, venha antes (egui-winit)
                     // ou depois (botão promovido do Windows, fila da bridge) do botão; sem toque, a última lida
                     if let Some(p) = touch_start_pressure(&events, idx) {
-                        env.ed.pressure = p;
+                        env.ed.pressure = curve(env, p);
                     }
                     on_press(env, rect, ppp, *pos, *button, *modifiers, space, r_held);
                 }
@@ -376,6 +377,12 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
 }
 
 /// Pressão do `Touch Start` mais próximo do evento `idx` no mesmo quadro.
+/// Pressão bruta da caneta → pressão do traço pela curva das Preferências.
+fn curve(env: &Env, force: f32) -> f32 {
+    let (min, gamma) = env.ed.pressure_curve;
+    crate::prefs::pressure_curve(force, min, gamma)
+}
+
 fn touch_start_pressure(events: &[Event], idx: usize) -> Option<f32> {
     events
         .iter()

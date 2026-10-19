@@ -28,6 +28,15 @@ pub struct Prefs {
     pub projects_dir: Option<PathBuf>,
     /// GPU usada pela interface e pelo viewport (vale ao abrir o programa de novo).
     pub gpu: GpuPref,
+    /// Curva de pressão da caneta: pressão mínima (o traço nunca some) e expoente (< 1 = mão leve, > 1 = mão pesada).
+    pub pen_pressure_min: f32,
+    pub pen_pressure_gamma: f32,
+}
+
+/// Pressão da caneta pela curva das preferências: `min + (1 − min) · f^gamma`, presa em [0,02; 1].
+pub fn pressure_curve(force: f32, min: f32, gamma: f32) -> f32 {
+    let f = force.clamp(0.0, 1.0);
+    (min + (1.0 - min) * f.powf(gamma)).clamp(0.02, 1.0)
 }
 
 /// Preferência de GPU do wgpu: a dedicada (padrão, GTX do notebook) ou a integrada (economiza bateria).
@@ -51,7 +60,7 @@ pub const MAX_RECENT: usize = 10;
 
 impl Default for Prefs {
     fn default() -> Self {
-        Prefs { theme: ThemeKind::Dark, lang: Lang::Pt, workspace: WorkspaceId::default(), ui_zoom: 1.0, recent: Vec::new(), show_start: true, shortcuts: BTreeMap::new(), projects_dir: None, gpu: GpuPref::Dedicated }
+        Prefs { theme: ThemeKind::Dark, lang: Lang::Pt, workspace: WorkspaceId::default(), ui_zoom: 1.0, recent: Vec::new(), show_start: true, shortcuts: BTreeMap::new(), projects_dir: None, gpu: GpuPref::Dedicated, pen_pressure_min: 0.0, pen_pressure_gamma: 1.0 }
     }
 }
 
@@ -60,6 +69,8 @@ impl Prefs {
     pub fn sanitized(mut self) -> Prefs {
         self.ui_zoom = if self.ui_zoom.is_finite() { self.ui_zoom.clamp(MIN_ZOOM, MAX_ZOOM) } else { 1.0 };
         self.recent.truncate(MAX_RECENT);
+        self.pen_pressure_min = if self.pen_pressure_min.is_finite() { self.pen_pressure_min.clamp(0.0, 0.6) } else { 0.0 };
+        self.pen_pressure_gamma = if self.pen_pressure_gamma.is_finite() { self.pen_pressure_gamma.clamp(0.3, 3.0) } else { 1.0 };
         self
     }
 
@@ -117,7 +128,7 @@ mod tests {
     #[test]
     fn round_trip() {
         let p = tmp("rt");
-        let prefs = Prefs { theme: ThemeKind::Light, lang: Lang::En, workspace: WorkspaceId::Animacao, ui_zoom: 1.25, recent: vec![PathBuf::from(r"C:\x\a.aiai")], show_start: false, shortcuts: [("tool.fill".to_owned(), "K".to_owned())].into(), projects_dir: Some(PathBuf::from(r"D:\anim")), gpu: GpuPref::Integrated };
+        let prefs = Prefs { theme: ThemeKind::Light, lang: Lang::En, workspace: WorkspaceId::Animacao, ui_zoom: 1.25, recent: vec![PathBuf::from(r"C:\x\a.aiai")], show_start: false, shortcuts: [("tool.fill".to_owned(), "K".to_owned())].into(), projects_dir: Some(PathBuf::from(r"D:\anim")), gpu: GpuPref::Integrated, pen_pressure_min: 0.1, pen_pressure_gamma: 1.5 };
         save(&p, &prefs).unwrap();
         assert_eq!(load(&p), prefs);
         let _ = std::fs::remove_dir_all(p.parent().unwrap());
@@ -154,5 +165,15 @@ mod tests {
         let l = load(&p);
         assert_eq!((l.lang, l.theme, l.ui_zoom), (Lang::En, ThemeKind::Dark, MAX_ZOOM));
         let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    #[test]
+    fn pressure_curve_keeps_a_floor_and_bends_with_gamma() {
+        assert!((pressure_curve(1.0, 0.2, 2.0) - 1.0).abs() < 1e-6);
+        assert!((pressure_curve(0.0, 0.2, 2.0) - 0.2).abs() < 1e-6, "mínimo vale com caneta encostando de leve");
+        assert!(pressure_curve(0.5, 0.0, 2.0) < 0.3 && pressure_curve(0.5, 0.0, 0.5) > 0.7, "gamma > 1 pede mais força");
+        assert_eq!(pressure_curve(0.5, 0.0, 1.0), 0.5);
+        let p = Prefs { pen_pressure_min: 9.0, pen_pressure_gamma: f32::NAN, ..Prefs::default() }.sanitized();
+        assert_eq!((p.pen_pressure_min, p.pen_pressure_gamma), (0.6, 1.0));
     }
 }

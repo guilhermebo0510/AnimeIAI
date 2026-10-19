@@ -674,6 +674,7 @@ impl StudioApp {
         let ctx = ui.ctx().clone();
         self.sample_frame(&ctx);
         self.bridge_tick(&ctx);
+        self.ed.pressure_curve = (self.prefs.pen_pressure_min, self.prefs.pen_pressure_gamma);
         self.autosave_tick();
         panels::timeline::tick(&self.core, &mut self.ed, &ctx);
         self.editor_shortcuts(&ctx);

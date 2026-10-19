@@ -525,6 +525,10 @@ pub(crate) struct Editor {
     pub canvas_rect: Option<Rect>,
     pub cursor: Option<Pos2>,
     pub pressure: f32,
+    /// Curva de pressão das preferências (mínimo, expoente), aplicada a toda pressão de caneta lida.
+    pub pressure_curve: (f32, f32),
+    /// Já chegou pressão de caneta nesta sessão (mostrado nas Preferências).
+    pub pen_seen: bool,
     pub toast: Option<String>,
     pub pending_latency: Option<PendingLatency>,
     pub latency: Option<Latency>,
@@ -604,6 +608,8 @@ impl Default for Editor {
             canvas_rect: None,
             cursor: None,
             pressure: 1.0,
+            pressure_curve: (0.0, 1.0),
+            pen_seen: false,
             toast: None,
             pending_latency: None,
             latency: None,
