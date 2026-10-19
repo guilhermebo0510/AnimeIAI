@@ -148,14 +148,15 @@ fn production_action(session: &mut CoreSession, params: &Value) -> Result<Value,
             let node = p.node(&cut).ok_or_else(|| BridgeError::invalid_params(format!("não encontrado: corte {cut}")))?;
             let fills: Vec<Id> = node.children.iter().filter(|c| matches!(p.node(c).map(|n| &n.data), Some(NodeKind::Layer(l)) if l.kind == LayerType::Fill)).cloned().collect();
             let mut layers = Vec::new();
-            let (mut regions, mut area) = (0usize, 0usize);
+            let (mut regions, mut area, mut border) = (0usize, 0usize, 0usize);
             for l in &fills {
                 let s = production::lint_fill_layer(p, &session.blobs, &cut, l).map_err(tool_error)?;
                 regions += s.unpainted_regions;
                 area += s.unpainted_area;
+                border += s.border_unpainted_regions;
                 layers.push(s);
             }
-            Ok(json!({ "cut": cut, "fill_layers": layers, "unpainted_regions": regions, "unpainted_area": area, "clean": regions == 0 }))
+            Ok(json!({ "cut": cut, "fill_layers": layers, "unpainted_regions": regions, "unpainted_area": area, "border_unpainted_regions": border, "clean": regions == 0 }))
         }
         ProductionRequest::Provenance { id, history } => {
             let info = production::provenance(p, &id).map_err(tool_error)?;

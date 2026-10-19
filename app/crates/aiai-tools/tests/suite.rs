@@ -241,6 +241,35 @@ fn transform_vector_raster_and_repeat() {
 }
 
 #[test]
+fn moving_partial_vector_selection_keeps_other_strokes() {
+    use aiai_paint::select::SelectShape;
+    use aiai_tools::transform::{Deform, TransformRequest, transform_command};
+    let mut s = CoreSession::for_tests("trsel");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 400, "height": 200}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = create(&mut s, Some(&sc), "C", NodeKind::Cut(CutData::new(24)));
+    let vl = create(&mut s, Some(&cut), "V", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+    let vcel = create(&mut s, Some(&vl), "V1", NodeKind::Cel(CelData::new(1)));
+    let black = ColorRef::Direct { rgba: Rgba::BLACK };
+    // traço pequeno (a "unha"), traço grande que passa pela seleção só numa ponta e um traço longe
+    let small = curve(&[[100.0, 100.0, 1.0], [110.0, 104.0, 1.0], [118.0, 100.0, 1.0]], 3.0, &black, false);
+    let big = curve(&[[60.0, 40.0, 1.0], [300.0, 40.0, 1.0], [300.0, 180.0, 1.0], [60.0, 180.0, 1.0], [105.0, 110.0, 1.0]], 3.0, &black, false);
+    let far = curve(&[[320.0, 20.0, 1.0], [380.0, 60.0, 1.0]], 3.0, &black, false);
+    let req = DrawRequest { cut: cut.clone(), frame: 0, layer: vl.clone(), curves: vec![small, big, far], mirror_x: None };
+    s.apply(draw_command(&s.project, &req).unwrap()).unwrap();
+    let before = match &s.project.node(&vcel).unwrap().data { NodeKind::Cel(c) => c.strokes.clone(), _ => unreachable!() };
+    let lasso = SelectShape::Lasso { points: vec![[90.0, 90.0], [130.0, 90.0], [130.0, 115.0], [90.0, 115.0]] };
+    let tr = TransformRequest { cut: cut.clone(), frame: 0, layer: vl.clone(), deform: Deform::Affine { translate: [0.0, 30.0], scale: [1.0, 1.0], rotate: 0.0, shear: [0.0, 0.0], pivot: [0.0, 0.0] }, selection: Some(lasso), scale_width: true, strokes: vec![] };
+    { let c = transform_command(&s.project, &mut s.blobs, &tr).unwrap(); s.apply(c).unwrap(); }
+    let after = match &s.project.node(&vcel).unwrap().data { NodeKind::Cel(c) => c.strokes.clone(), _ => unreachable!() };
+    assert_eq!(after.len(), 3, "nenhum traço some ao mover uma seleção parcial");
+    assert!((after[0].points[0].y - before[0].points[0].y - 30.0).abs() < 0.01, "o traço selecionado desceu 30 px");
+    assert_eq!(after[1].points, before[1].points, "o traço grande que só encosta na seleção fica");
+    assert_eq!(after[2].points, before[2].points, "o traço longe fica");
+}
+
+#[test]
 fn inbetween_with_timesheet_and_fill_propagation() {
     use aiai_tools::anim::{InbetweenRequest, PropagateFillsRequest, inbetween_command, propagate_fills};
     use aiai_tools::transform::{Deform, TransformRequest, transform_command};

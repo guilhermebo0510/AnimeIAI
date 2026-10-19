@@ -290,18 +290,22 @@ pub struct FillLintSummary {
     pub unpainted_regions: usize,
     pub unpainted_area: usize,
     pub painted_regions: usize,
+    /// Regiões cortadas pela borda do quadro sem tinta (fora a maior, que é o "fora"): aviso para conferir no olho.
+    #[serde(default)]
+    pub border_unpainted_regions: usize,
 }
 
 pub fn lint_fill_layer(p: &Project, blobs: &BlobStore, cut_id: &Id, layer: &Id) -> ToolResult<FillLintSummary> {
     let cut = cut_data(p, cut_id)?;
     let name = node(p, layer)?.name.clone();
-    let mut s = FillLintSummary { layer: layer.clone(), layer_name: name, frames_checked: 0, unpainted_regions: 0, unpainted_area: 0, painted_regions: 0 };
+    let mut s = FillLintSummary { layer: layer.clone(), layer_name: name, frames_checked: 0, unpainted_regions: 0, unpainted_area: 0, painted_regions: 0, border_unpainted_regions: 0 };
     for (frame, _) in exposed_cel_frames(p, cut, layer) {
         let rep = lint(p, blobs, cut_id, frame, layer, 3.0, 30)?;
         s.frames_checked += 1;
         s.unpainted_regions += rep.unpainted.len();
         s.unpainted_area += rep.unpainted.iter().map(|r| r.area).sum::<usize>();
         s.painted_regions += rep.painted;
+        s.border_unpainted_regions += rep.border_unpainted.len();
     }
     Ok(s)
 }
@@ -833,8 +837,9 @@ pub fn production_report(p: &Project, blobs: &BlobStore) -> ToolResult<String> {
             }
             match lint_fill_layer(p, blobs, &r.cut, &n.id) {
                 Ok(s) => lint_lines.push(format!(
-                    "- Corte {} / {}: {} região(ões) sem pintar ({} px²) em {} cel(s) exposto(s); {} pintada(s)",
-                    r.number, s.layer_name, s.unpainted_regions, s.unpainted_area, s.frames_checked, s.painted_regions
+                    "- Corte {} / {}: {} região(ões) sem pintar ({} px²) em {} cel(s) exposto(s); {} pintada(s){}",
+                    r.number, s.layer_name, s.unpainted_regions, s.unpainted_area, s.frames_checked, s.painted_regions,
+                    if s.border_unpainted_regions > 0 { format!("; {} na borda do quadro sem tinta (conferir no olho)", s.border_unpainted_regions) } else { String::new() }
                 )),
                 Err(e) => gaps.push(format!("Corte {}: lint falhou em \"{}\": {e}", r.number, n.name)),
             }

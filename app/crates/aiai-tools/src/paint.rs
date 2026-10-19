@@ -123,26 +123,60 @@ fn raster_cel<'a>(p: &'a Project, cut_id: &Id, layer: &Id, frame: u32) -> ToolRe
 }
 
 fn spline_path(pts: &[BrushPoint]) -> Vec<BrushPoint> {
-    // Catmull-Rom uniforme amostrada a cada ~1 px (o motor de dab cuida do espaçamento).
+    // Catmull-Rom centrípeta (α = 0,5) amostrada a cada ~1 px (o motor de dab cuida do espaçamento). A uniforme
+    // fazia barriga/laço quando um trecho longo vinha seguido de um curto e o traço mudava de forma ao soltar.
     if pts.len() < 3 {
         return pts.to_vec();
     }
     let n = pts.len();
     let get = |i: isize| pts[i.clamp(0, n as isize - 1) as usize];
+    let knot = |a: BrushPoint, b: BrushPoint| ((b.x - a.x).powi(2) + (b.y - a.y).powi(2)).sqrt().sqrt().max(1e-4);
     let mut out = Vec::new();
     for i in 0..n - 1 {
         let (p0, p1, p2, p3) = (get(i as isize - 1), get(i as isize), get(i as isize + 1), get(i as isize + 2));
+        let t0 = 0.0f32;
+        let t1 = t0 + knot(p0, p1);
+        let t2 = t1 + knot(p1, p2);
+        let t3 = t2 + knot(p2, p3);
         let len = ((p2.x - p1.x).powi(2) + (p2.y - p1.y).powi(2)).sqrt();
         let steps = len.ceil().max(1.0) as usize;
+        let lerp = |a: (f32, f32), b: (f32, f32), ta: f32, tb: f32, t: f32| {
+            let f = if (tb - ta).abs() < 1e-6 { 0.0 } else { (t - ta) / (tb - ta) };
+            (a.0 + (b.0 - a.0) * f, a.1 + (b.1 - a.1) * f)
+        };
         for k in 0..steps {
-            let t = k as f32 / steps as f32;
-            let (t2, t3) = (t * t, t * t * t);
-            let f = |a: f32, b: f32, c: f32, d: f32| 0.5 * (2.0 * b + (-a + c) * t + (2.0 * a - 5.0 * b + 4.0 * c - d) * t2 + (-a + 3.0 * b - 3.0 * c + d) * t3);
-            out.push(BrushPoint { x: f(p0.x, p1.x, p2.x, p3.x), y: f(p0.y, p1.y, p2.y, p3.y), pressure: p1.pressure + (p2.pressure - p1.pressure) * t });
+            let t = t1 + (t2 - t1) * k as f32 / steps as f32;
+            let (q0, q1, q2, q3) = ((p0.x, p0.y), (p1.x, p1.y), (p2.x, p2.y), (p3.x, p3.y));
+            let a1 = lerp(q0, q1, t0, t1, t);
+            let a2 = lerp(q1, q2, t1, t2, t);
+            let a3 = lerp(q2, q3, t2, t3, t);
+            let b1 = lerp(a1, a2, t0, t2, t);
+            let b2 = lerp(a2, a3, t1, t3, t);
+            let c = lerp(b1, b2, t1, t2, t);
+            let f = k as f32 / steps as f32;
+            out.push(BrushPoint { x: c.0, y: c.1, pressure: p1.pressure + (p2.pressure - p1.pressure) * f });
         }
     }
     out.push(pts[n - 1]);
     out
+}
+
+#[cfg(test)]
+mod spline_tests {
+    use super::*;
+
+    #[test]
+    fn centripetal_spline_does_not_overshoot_a_sharp_turn() {
+        // trecho longo seguido de um curto com quina: a curva quase não sai da caixa dos pontos
+        let p = |x: f32, y: f32| BrushPoint { x, y, pressure: 1.0 };
+        let pts = [p(0.0, 0.0), p(200.0, 0.0), p(203.0, 3.0), p(203.0, 200.0)];
+        let out = spline_path(&pts);
+        let (mx, my) = out.iter().fold((f32::MIN, f32::MIN), |a, q| (a.0.max(q.x), a.1.max(q.y)));
+        let mn = out.iter().fold(f32::MAX, |a, q| a.min(q.y));
+        // a uniforme passava 12,5 px da quina (x 215,5; y −12,3); a centrípeta fica em ~2,6 px
+        assert!(mx <= 206.0 && my <= 200.5 && mn >= -3.0, "sem barriga: max x {mx}, min y {mn}");
+        assert!((out[0].x - 0.0).abs() < 1e-3 && (out.last().unwrap().y - 200.0).abs() < 1e-3);
+    }
 }
 
 pub fn paint_command(p: &Project, blobs: &mut BlobStore, req: &PaintRequest) -> ToolResult<Command> {

@@ -121,6 +121,9 @@ pub struct LintRegion {
     /// Um ponto dentro da região (para usar como semente).
     pub point: [u32; 2],
     pub bounds: [i32; 4],
+    /// Fração dos pixels da região coberta por preenchimentos (0 = vazia; parcial quando < 0,95).
+    #[serde(default)]
+    pub coverage: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -128,6 +131,10 @@ pub struct LintReport {
     pub regions_total: u32,
     pub unpainted: Vec<LintRegion>,
     pub painted: usize,
+    /// Sem `include_border`: regiões que tocam a borda do quadro e não estão pintadas, tirando a maior delas (o
+    /// "fora" do desenho). Num close a manga ou o cabelo cortados pelo quadro aparecem aqui em vez de sumirem.
+    #[serde(default)]
+    pub border_unpainted: Vec<LintRegion>,
 }
 
 /// Regiões fechadas (que não tocam a borda e têm área ≥ `min_area`) sem preenchimento no cel exposto.
@@ -210,18 +217,47 @@ pub fn lint_with(
             best[l as usize] = dist[i];
         }
     }
+    // cobertura por pixel (cada máscara decodificada uma vez): a região conta como pintada com ≥ 95% coberta,
+    // não por um ponto só (uma máscara velha que pegasse o ponto representativo escondia a região inteira)
+    let mut cov = vec![false; w * h];
+    for f in &fills {
+        let [bx, by, bw, bh] = f.bounds;
+        let Some(m) = f.mask.as_ref().and_then(|hh| blobs.get(hh)).and_then(|b| aiai_paint::Mask::decode(&b).ok()) else { continue };
+        for yy in by.max(0)..(by + bh).min(h as i32) {
+            for xx in bx.max(0)..(bx + bw).min(w as i32) {
+                if m.get((xx - bx) as u32, (yy - by) as u32) > 0.5 {
+                    cov[yy as usize * w + xx as usize] = true;
+                }
+            }
+        }
+    }
+    let mut covered = vec![0usize; lr.regions.count as usize + 1];
+    for (i, &l) in labels.iter().enumerate() {
+        if l != 0 && cov[i] {
+            covered[l as usize] += 1;
+        }
+    }
+    let outside = (1..=lr.regions.count).filter(|&l| border[l as usize]).max_by_key(|&l| (areas[l as usize], std::cmp::Reverse(l)));
+    let mut border_unpainted = Vec::new();
     for label in 1..=lr.regions.count {
-        if (border[label as usize] && !include_border) || areas[label as usize] < min_area {
+        if areas[label as usize] < min_area {
             continue;
         }
         let Some((x, y)) = first[label as usize] else { continue };
-        let covered = fills.iter().any(|f| fill_covers(blobs, f, x, y));
-        if covered {
+        let frac = covered[label as usize] as f32 / areas[label as usize].max(1) as f32;
+        if frac >= 0.95 {
             painted += 1;
+            continue;
+        }
+        let (bounds, _) = lr.regions.mask_of(label).expect("existe");
+        let r = LintRegion { label, area: areas[label as usize], point: [x, y], bounds, coverage: (frac * 1000.0).round() / 1000.0 };
+        if border[label as usize] && !include_border {
+            if Some(label) != outside {
+                border_unpainted.push(r);
+            }
         } else {
-            let (bounds, _) = lr.regions.mask_of(label).expect("existe");
-            unpainted.push(LintRegion { label, area: areas[label as usize], point: [x, y], bounds });
+            unpainted.push(r);
         }
     }
-    Ok(LintReport { regions_total: lr.regions.count, unpainted, painted })
+    Ok(LintReport { regions_total: lr.regions.count, unpainted, painted, border_unpainted })
 }

@@ -123,15 +123,14 @@ fn yes() -> bool {
     true
 }
 
-fn stroke_center(s: &Stroke) -> (f32, f32) {
-    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-    for p in &s.points {
-        x0 = x0.min(p.x);
-        y0 = y0.min(p.y);
-        x1 = x1.max(p.x);
-        y1 = y1.max(p.y);
+/// Um traço vai junto com a seleção quando a maioria dos seus pontos está dentro dela (o mesmo critério na
+/// prévia da interface e no comando; o centro da caixa puxava traços grandes que mal tocavam a seleção).
+pub fn stroke_in_selection(s: &Stroke, inside: impl Fn(f32, f32) -> bool) -> bool {
+    if s.points.is_empty() {
+        return false;
     }
-    ((x0 + x1) / 2.0, (y0 + y1) / 2.0)
+    let n = s.points.iter().filter(|p| inside(p.x, p.y)).count();
+    n * 2 >= s.points.len()
 }
 
 pub fn transform_command(p: &Project, blobs: &mut BlobStore, req: &TransformRequest) -> ToolResult<Command> {
@@ -159,9 +158,11 @@ pub fn transform_command(p: &Project, blobs: &mut BlobStore, req: &TransformRequ
                     continue;
                 }
                 if let Some(sel) = &sel {
-                    let (cx, cy) = stroke_center(s);
-                    let (ix, iy) = (cx as i64, cy as i64);
-                    if ix < 0 || iy < 0 || ix >= w as i64 || iy >= h as i64 || sel.cov[(iy as u32 * w + ix as u32) as usize] < 0.5 {
+                    let inside = |x: f32, y: f32| {
+                        let (ix, iy) = (x.floor() as i64, y.floor() as i64);
+                        ix >= 0 && iy >= 0 && ix < w as i64 && iy < h as i64 && sel.cov[(iy as u32 * w + ix as u32) as usize] >= 0.5
+                    };
+                    if !stroke_in_selection(s, inside) {
                         continue;
                     }
                 }

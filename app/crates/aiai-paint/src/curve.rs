@@ -206,10 +206,13 @@ pub fn sample_stroke(stroke: &Stroke) -> Vec<StrokeSample> {
         .zip(&cum)
         .map(|(q, &s)| {
             let t = s / total;
-            let mut r = 0.5 * stroke.width * tip_factor(stroke.tip, q.p) * profile_at(&stroke.profile.0, t);
+            // perfil explícito e afinamento automático da ponta: vale o mais fino dos dois. Multiplicar os dois
+            // (0,12 × 0,15) derrubava a ponta para o raio mínimo e as linhas não se encontravam nos cantos.
+            let mut k = profile_at(&stroke.profile.0, t);
             if !stroke.closed {
-                r *= taper(stroke.tip, s, total, stroke.width);
+                k = k.min(taper(stroke.tip, s, total, stroke.width));
             }
+            let r = 0.5 * stroke.width * tip_factor(stroke.tip, q.p) * k;
             StrokeSample { x: q.x, y: q.y, r: r.max(min_r) }
         })
         .collect()

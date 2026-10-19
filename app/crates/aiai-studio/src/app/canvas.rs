@@ -695,7 +695,7 @@ fn paint_selection(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId
         let Some(cd) = cmds::cel_data(&env.core.project, &cel) else { return };
         let accent = env.t.accent;
         for s in &cd.strokes {
-            if !sel.whole && !sel.contains(stroke_center(s)) {
+            if !sel.whole && !aiai_tools::transform::stroke_in_selection(s, |x, y| sel.contains(Vec2::new(x, y))) {
                 continue;
             }
             let pts: Vec<Pos2> = s.points.iter().map(|p| xf.to_screen(Vec2::new(p.x, p.y) + sel.offset)).collect();

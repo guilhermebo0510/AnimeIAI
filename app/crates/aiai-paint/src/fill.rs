@@ -137,24 +137,40 @@ impl Regions {
         self.labels[y as usize * self.width + x as usize]
     }
 
-    /// Rótulo da região na semente; se a semente cair na linha, a região mais próxima (busca em espiral até 6 px).
+    /// Rótulo da região na semente; se a semente cair na linha, a região mais próxima andando só pela linha
+    /// (BFS por pixels sem rótulo, até 6 px): nunca pula por cima de uma região para pegar a do outro lado.
     pub fn label_near(&self, x: u32, y: u32) -> u32 {
         let l = self.label_at(x, y);
         if l != 0 {
             return l;
         }
-        for r in 1..=6i32 {
-            for dy in -r..=r {
-                for dx in -r..=r {
-                    let (xx, yy) = (x as i32 + dx, y as i32 + dy);
-                    if xx >= 0 && yy >= 0 && (xx as usize) < self.width && (yy as usize) < self.height {
-                        let l = self.labels[yy as usize * self.width + xx as usize];
-                        if l != 0 {
-                            return l;
-                        }
+        let (w, h) = (self.width, self.height);
+        let start = y as usize * w + x as usize;
+        let mut seen = std::collections::HashSet::from([start]);
+        let mut ring = vec![start];
+        for _ in 0..6 {
+            let mut next = Vec::new();
+            let mut found = 0u32;
+            for &i in &ring {
+                let (cx, cy) = (i % w, i / w);
+                let neigh = [(cx > 0).then(|| i - 1), (cx + 1 < w).then(|| i + 1), (cy > 0).then(|| i - w), (cy + 1 < h).then(|| i + w)];
+                for j in neigh.into_iter().flatten() {
+                    if !seen.insert(j) {
+                        continue;
+                    }
+                    let lj = self.labels[j];
+                    if lj != 0 {
+                        // empate na mesma distância: o menor rótulo (determinístico)
+                        found = if found == 0 { lj } else { found.min(lj) };
+                    } else {
+                        next.push(j);
                     }
                 }
             }
+            if found != 0 {
+                return found;
+            }
+            ring = next;
         }
         0
     }
@@ -276,6 +292,26 @@ pub fn label_regions(boundary: &[bool], w: usize, h: usize, params: &FillParams)
     while !f.is_empty() {
         f = wave(f, &mut labels, false);
     }
+    // regiões fechadas mais estreitas que o `gap` (espinho, ponta de mecha, canto de olho) não têm núcleo e nenhuma
+    // onda chega nelas (estão cercadas de linha): cada componente que sobrou vira uma região própria.
+    for start in 0..n {
+        if labels[start] != 0 || boundary[start] {
+            continue;
+        }
+        count += 1;
+        labels[start] = count;
+        queue.push_back(start);
+        while let Some(i) = queue.pop_front() {
+            let (x, y) = (i % w, i / w);
+            let neigh = [(x > 0).then(|| i - 1), (x + 1 < w).then(|| i + 1), (y > 0).then(|| i - w), (y + 1 < h).then(|| i + w)];
+            for j in neigh.into_iter().flatten() {
+                if labels[j] == 0 && !boundary[j] {
+                    labels[j] = count;
+                    queue.push_back(j);
+                }
+            }
+        }
+    }
     // ondas para dentro da linha
     let mut f: Vec<usize> = (0..n)
         .filter(|&i| labels[i] != 0)
@@ -364,5 +400,33 @@ mod tests {
         let a0 = fill_at(&b, w, h, (50, 50), &FillParams { gap: 0.0, expand: 0, line_threshold: 0.5 }).unwrap().1.data.iter().filter(|&&v| v > 0).count();
         let a2 = fill_at(&b, w, h, (50, 50), &FillParams { gap: 0.0, expand: 2, line_threshold: 0.5 }).unwrap().1.data.iter().filter(|&&v| v > 0).count();
         assert!(a2 > a0 + 200, "expandir 2 px cresce a área: {a0} → {a2}");
+    }
+
+    #[test]
+    fn narrow_closed_region_gets_its_own_label_and_never_leaks() {
+        // "espinho": retângulo fechado de 3 px de vão interno (mais estreito que gap = 4) no meio de um fundo aberto
+        let (w, h) = (60, 40);
+        let mut b = vec![false; w * h];
+        for x in 20..=40 {
+            for y in [15usize, 16, 20, 21] {
+                b[y * w + x] = true;
+            }
+        }
+        for y in 15..=21 {
+            for x in [20usize, 21, 39, 40] {
+                b[y * w + x] = true;
+            }
+        }
+        let params = FillParams { gap: 4.0, expand: 0, line_threshold: 0.5 };
+        let r = label_regions(&b, w, h, &params);
+        let inside = r.label_at(30, 18);
+        let outside = r.label_at(5, 5);
+        assert!(inside != 0 && outside != 0 && inside != outside, "o vão estreito tem rótulo próprio: dentro {inside}, fora {outside}");
+        let (bounds, m) = fill_at(&b, w, h, (30, 18), &params).unwrap();
+        assert!(bounds[2] <= 17 && bounds[3] <= 3, "a máscara fica no espinho: {bounds:?}");
+        assert!(m.data.iter().filter(|&&v| v > 0).count() < 60);
+        // semente em cima da linha de baixo do espinho: anda pela linha e pega uma das regiões vizinhas, não pula longe
+        let l = r.label_near(30, 20);
+        assert!(l == inside || l == outside);
     }
 }

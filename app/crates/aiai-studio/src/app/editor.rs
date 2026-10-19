@@ -328,18 +328,6 @@ pub(crate) fn point_in_polygon(p: Vec2, poly: &[Vec2]) -> bool {
     inside
 }
 
-/// Centro da caixa do traço (a regra de `transform_command` para decidir se o traço está dentro da seleção).
-pub(crate) fn stroke_center(s: &Stroke) -> Vec2 {
-    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-    for p in &s.points {
-        x0 = x0.min(p.x);
-        y0 = y0.min(p.y);
-        x1 = x1.max(p.x);
-        y1 = y1.max(p.y);
-    }
-    Vec2::new((x0 + x1) / 2.0, (y0 + y1) / 2.0)
-}
-
 // ------------------------------------------------------------------------------------------------ opções, gestos, reprodução
 
 pub(crate) struct ToolOptions {
@@ -367,7 +355,7 @@ impl Default for ToolOptions {
             pen_width: 3.0,
             pen_tip: VectorTip::GPen,
             pen_aliased: false,
-            pen_autoclose: true,
+            pen_autoclose: false,
             stab_mode: StabMode::Average,
             stab_window: 4,
             stab_radius: 10.0,
