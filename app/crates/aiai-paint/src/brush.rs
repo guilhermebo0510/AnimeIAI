@@ -635,102 +635,218 @@ pub fn paint_stroke_at(layer: &mut Image, origin: [i32; 2], preset: &BrushPreset
     if path.is_empty() {
         return None;
     }
-    let (w, h) = (layer.width as i32, layer.height as i32);
-    let max_r = preset.size * 0.5 * (1.0 + preset.size_jitter) + preset.scatter * preset.size + 2.0;
-    let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
-    for p in path {
-        x0 = x0.min((p.x - max_r).floor() as i32);
-        y0 = y0.min((p.y - max_r).floor() as i32);
-        x1 = x1.max((p.x + max_r).ceil() as i32 + 1);
-        y1 = y1.max((p.y + max_r).ceil() as i32 + 1);
-    }
-    let (x0, y0, x1, y1) = (x0.max(0), y0.max(0), x1.min(w), y1.min(h));
-    if x0 >= x1 || y0 >= y1 {
-        return None;
-    }
-    let (bw, bh) = ((x1 - x0) as usize, (y1 - y0) as usize);
-    // buffer do traço, pré-multiplicado
-    let mut buf = vec![[0.0f32; 4]; bw * bh];
-    let mut dual_buf = preset.dual.as_ref().map(|_| vec![0.0f32; bw * bh]);
-    let mut rng = Rng::new(seed);
-    // borrador: pegada 2D (pré-multiplicada) carregada de dab em dab, lida da camada + do traço em andamento
-    let mut carry: Option<(i32, Vec<[f32; 4]>)> = None;
+    let mut sb = StrokeBuffer::new(preset, color, seed, layer.width, layer.height, origin);
+    // o borrador lê a camada de antes do traço (o buffer do traço é composto só no fim)
+    sb.add(Some(&*layer), path);
+    sb.finish(Some(&*layer));
+    sb.composite(layer, [0, 0])
+}
 
-    // dabs ao longo do caminho com espaçamento por distância
-    let mut dabs: Vec<(f32, f32, f32, f32)> = Vec::new(); // x, y, pressão, direção (graus)
-    let mut acc = 0.0f32;
-    let first = path[0];
-    dabs.push((first.x, first.y, first.pressure, 0.0));
-    // direção com passa-baixa (≈ meio diâmetro de memória): a ponta elíptica não gira aos trancos nas microparadas
-    let mut sdir: Option<f32> = None;
-    let memory = (preset.size * 0.5).max(1.0);
-    for seg in path.windows(2) {
-        let (a, b) = (seg[0], seg[1]);
+// ------------------------------------------------------------------------------------------------ traço incremental
+
+const STS: i32 = 64;
+
+/// Dab gerado e ainda não carimbado (o primeiro espera a direção do primeiro trecho, como no traço inteiro).
+#[derive(Clone, Copy)]
+struct Dab {
+    x: f32,
+    y: f32,
+    pr: f32,
+    dir: f32,
+}
+
+/// Traço de pincel em andamento, alimentado aos pedaços: guarda o buffer do traço (em tiles), o gerador aleatório, o
+/// espaçamento acumulado, a direção suavizada e a pegada do borrador entre uma chamada e outra. Alimentar o caminho
+/// inteiro de uma vez ou em pedaços dá o MESMO resultado (é o mesmo laço, com o estado guardado): a prévia ao vivo
+/// do app carimba só o trecho novo a cada movimento e o commit passa pelo mesmo código.
+#[derive(Clone)]
+pub struct StrokeBuffer {
+    preset: BrushPreset,
+    color: [f32; 4],
+    /// Limites da camada (coordenadas locais) e deslocamento da textura do papel (posição absoluta no canvas).
+    w: i32,
+    h: i32,
+    tex_origin: [i32; 2],
+    rng: Rng,
+    drng: Rng,
+    /// Tiles compartilhados (`Arc`): a cópia para a prévia do fim do traço custa só os ponteiros; quem escreve num tile
+    /// compartilhado ganha a própria cópia dele.
+    tiles: std::collections::HashMap<(i32, i32), std::sync::Arc<Vec<[f32; 4]>>>,
+    dual: Option<std::collections::HashMap<(i32, i32), std::sync::Arc<Vec<f32>>>>,
+    /// Retângulo [x0, y0, x1, y1) carimbado desde o último `take_dirty` (prévia: só ele é recomposto).
+    dirty: Option<[i32; 4]>,
+    /// Maior alfa do buffer (o nível da borda molhada; o alfa de um pixel do traço só sobe).
+    max_a: f32,
+    carry: Option<(i32, Vec<[f32; 4]>)>,
+    prev: Option<BrushPoint>,
+    acc: f32,
+    sdir: Option<f32>,
+    pending: Option<Dab>,
+}
+
+impl StrokeBuffer {
+    /// Traço numa camada `w`×`h` (coordenadas locais); `tex_origin` = posição do canto da camada no canvas (textura).
+    pub fn new(preset: &BrushPreset, color: [f32; 4], seed: u64, w: u32, h: u32, tex_origin: [i32; 2]) -> Self {
+        StrokeBuffer {
+            preset: preset.clone(),
+            color,
+            w: w as i32,
+            h: h as i32,
+            tex_origin,
+            rng: Rng::new(seed),
+            drng: Rng::new(seed ^ 0xD0A1),
+            tiles: Default::default(),
+            dual: preset.dual.as_ref().map(|_| Default::default()),
+            carry: None,
+            prev: None,
+            acc: 0.0,
+            sdir: None,
+            pending: None,
+            dirty: None,
+            max_a: 0.0,
+        }
+    }
+
+    /// Retângulo carimbado desde a última chamada (coordenadas locais).
+    pub fn take_dirty(&mut self) -> Option<[i32; 4]> {
+        self.dirty.take()
+    }
+
+    fn mark(&mut self, r: [i32; 4]) {
+        self.dirty = Some(match self.dirty {
+            Some(d) => [d[0].min(r[0]), d[1].min(r[1]), d[2].max(r[2]), d[3].max(r[3])],
+            None => r,
+        });
+    }
+
+    fn buf_get(&self, x: i32, y: i32) -> [f32; 4] {
+        match self.tiles.get(&(x.div_euclid(STS), y.div_euclid(STS))) {
+            Some(t) => t[(y.rem_euclid(STS) * STS + x.rem_euclid(STS)) as usize],
+            None => [0.0; 4],
+        }
+    }
+
+    fn buf_mut(&mut self, x: i32, y: i32) -> &mut [f32; 4] {
+        let t = self.tiles.entry((x.div_euclid(STS), y.div_euclid(STS))).or_insert_with(|| std::sync::Arc::new(vec![[0.0f32; 4]; (STS * STS) as usize]));
+        &mut std::sync::Arc::make_mut(t)[(y.rem_euclid(STS) * STS + x.rem_euclid(STS)) as usize]
+    }
+
+    /// Mais pontos do caminho (coordenadas locais). `layer` = a camada antes do traço, só para o borrador (mix > 0).
+    pub fn add(&mut self, layer: Option<&Image>, pts: &[BrushPoint]) {
+        for &p in pts {
+            match self.prev {
+                None => self.pending = Some(Dab { x: p.x, y: p.y, pr: p.pressure, dir: 0.0 }),
+                Some(a) => self.segment(layer, a, p),
+            }
+            self.prev = Some(p);
+        }
+    }
+
+    /// Fim do caminho: carimba o primeiro dab se o caminho não andou.
+    pub fn finish(&mut self, layer: Option<&Image>) {
+        if let Some(d) = self.pending.take() {
+            self.stamp(layer, d);
+        }
+    }
+
+    fn segment(&mut self, layer: Option<&Image>, a: BrushPoint, b: BrushPoint) {
         let (dx, dy) = (b.x - a.x, b.y - a.y);
         let len = (dx * dx + dy * dy).sqrt();
-        if len <= 1e-6 {
-            continue;
+        // pincel duplo: segunda ponta ao longo do caminho (máximo das coberturas); o traço só aparece onde ela cobre
+        if let Some(dual) = self.preset.dual.clone() {
+            let r = (dual.size * 0.5).max(0.3);
+            let step = (dual.size * dual.spacing).max(0.5);
+            let n = (len / step).ceil().max(1.0) as usize;
+            let tip = BrushTip::Round { hardness: dual.hardness, roundness: 1.0, angle: 0.0 };
+            for k in 0..n {
+                let f = k as f32 / n as f32;
+                let px = a.x + (b.x - a.x) * f + dual.scatter * dual.size * self.drng.signed();
+                let py = a.y + (b.y - a.y) * f + dual.scatter * dual.size * self.drng.signed();
+                let (dx0, dy0, dx1, dy1) = (((px - r - 1.0) as i32).max(0), ((py - r - 1.0) as i32).max(0), ((px + r + 1.0) as i32 + 1).min(self.w), ((py + r + 1.0) as i32 + 1).min(self.h));
+                if dx0 < dx1 && dy0 < dy1 {
+                    self.mark([dx0, dy0, dx1, dy1]);
+                }
+                for y in dy0..dy1 {
+                    for x in dx0..dx1 {
+                        let a2 = tip_alpha(&tip, x as f32 + 0.5 - px, y as f32 + 0.5 - py, r, 0.0, false);
+                        let db = self.dual.as_mut().expect("pincel duplo");
+                        let t = std::sync::Arc::make_mut(db.entry((x.div_euclid(STS), y.div_euclid(STS))).or_insert_with(|| std::sync::Arc::new(vec![0.0f32; (STS * STS) as usize])));
+                        let i = (y.rem_euclid(STS) * STS + x.rem_euclid(STS)) as usize;
+                        t[i] = t[i].max(a2);
+                    }
+                }
+            }
         }
+        if len <= 1e-6 {
+            return;
+        }
+        // direção com passa-baixa (≈ meio diâmetro de memória): a ponta elíptica não gira aos trancos nas microparadas
+        let memory = (self.preset.size * 0.5).max(1.0);
         let raw = dy.atan2(dx).to_degrees();
-        let dir = match sdir {
+        let dir = match self.sdir {
             None => raw,
             Some(prev) => {
                 let d = (raw - prev + 540.0).rem_euclid(360.0) - 180.0;
                 prev + d * (1.0 - (-len / memory).exp())
             }
         };
-        sdir = Some(dir);
-        if dabs.len() == 1 {
-            dabs[0].3 = dir;
+        self.sdir = Some(dir);
+        if let Some(pd) = &mut self.pending {
+            pd.dir = dir;
         }
         let mut t = 0.0f32;
         loop {
             let pr = a.pressure + (b.pressure - a.pressure) * (t / len);
-            let diam = preset.size * (preset.size_pressure_min + (1.0 - preset.size_pressure_min) * pr.clamp(0.0, 1.0));
-            let step = (diam * preset.spacing).max(0.5);
-            let need = step - acc;
+            let diam = self.preset.size * (self.preset.size_pressure_min + (1.0 - self.preset.size_pressure_min) * pr.clamp(0.0, 1.0));
+            let step = (diam * self.preset.spacing).max(0.5);
+            let need = step - self.acc;
             if t + need > len {
-                acc += len - t;
+                self.acc += len - t;
                 break;
             }
             t += need;
-            acc = 0.0;
+            self.acc = 0.0;
             let f = t / len;
-            dabs.push((a.x + dx * f, a.y + dy * f, a.pressure + (b.pressure - a.pressure) * f, dir));
+            if let Some(d) = self.pending.take() {
+                self.stamp(layer, d);
+            }
+            self.stamp(layer, Dab { x: a.x + dx * f, y: a.y + dy * f, pr: a.pressure + (b.pressure - a.pressure) * f, dir });
         }
     }
 
-    for &(cx, cy, pr, dir) in &dabs {
-        let pr = pr.clamp(0.0, 1.0);
+    fn stamp(&mut self, layer: Option<&Image>, d: Dab) {
+        let preset = self.preset.clone();
+        let (cx, cy, dir) = (d.x, d.y, d.dir);
+        let pr = d.pr.clamp(0.0, 1.0);
+        let color = self.color;
         for _ in 0..preset.count {
             let mut size = preset.size * (preset.size_pressure_min + (1.0 - preset.size_pressure_min) * pr);
             if preset.size_jitter > 0.0 {
-                size *= 1.0 + preset.size_jitter * rng.signed();
+                size *= 1.0 + preset.size_jitter * self.rng.signed();
             }
             let r = (size * 0.5).max(0.3);
             let (mut px, mut py) = (cx, cy);
             if preset.scatter > 0.0 {
                 let perp = (dir + 90.0).to_radians();
-                let off = preset.scatter * preset.size * rng.signed();
+                let off = preset.scatter * preset.size * self.rng.signed();
                 px += perp.cos() * off;
                 py += perp.sin() * off;
                 if preset.count > 1 {
-                    px += preset.scatter * preset.size * 0.5 * rng.signed();
+                    px += preset.scatter * preset.size * 0.5 * self.rng.signed();
                 }
             }
             let mut angle = if preset.follow_direction { dir } else { 0.0 };
             if preset.angle_jitter > 0.0 {
-                angle += preset.angle_jitter * rng.signed();
+                angle += preset.angle_jitter * self.rng.signed();
             }
             let dab_opacity = preset.opacity_pressure_min + (1.0 - preset.opacity_pressure_min) * pr;
             let flow = preset.flow * (preset.flow_pressure_min + (1.0 - preset.flow_pressure_min) * pr);
-            // cor do dab
             let mut rgb = [color[0], color[1], color[2]];
             if preset.hue_jitter > 0.0 || preset.saturation_jitter > 0.0 || preset.value_jitter > 0.0 {
                 let mut hsv = rgb_to_hsv(rgb);
-                hsv[0] += preset.hue_jitter * 0.5 * rng.signed();
-                hsv[1] = (hsv[1] + preset.saturation_jitter * rng.signed()).clamp(0.0, 1.0);
-                hsv[2] = (hsv[2] + preset.value_jitter * rng.signed()).clamp(0.0, 1.0);
+                hsv[0] += preset.hue_jitter * 0.5 * self.rng.signed();
+                hsv[1] = (hsv[1] + preset.saturation_jitter * self.rng.signed()).clamp(0.0, 1.0);
+                hsv[2] = (hsv[2] + preset.value_jitter * self.rng.signed()).clamp(0.0, 1.0);
                 rgb = hsv_to_rgb(hsv);
             }
             let two = preset.two_tone.as_ref().filter(|_| matches!(preset.tip, BrushTip::Shape { .. })).map(|t| t.second(rgb));
@@ -744,29 +860,25 @@ pub fn paint_stroke_at(layer: &mut Image, origin: [i32; 2], preset: &BrushPreset
                 for j in 0..side as i32 {
                     for i in 0..side as i32 {
                         let (xx, yy) = (sx - pr_i + i, sy - pr_i + j);
-                        if xx < 0 || yy < 0 || xx >= w || yy >= h {
+                        if xx < 0 || yy < 0 || xx >= self.w || yy >= self.h {
                             continue;
                         }
-                        let l = layer.get(xx as u32, yy as u32);
-                        let mut v = l;
-                        if xx >= x0 && xx < x1 && yy >= y0 && yy < y1 {
-                            let b = buf[(yy - y0) as usize * bw + (xx - x0) as usize];
-                            for c in 0..4 {
-                                v[c] = b[c] + l[c] * (1.0 - b[3]);
-                            }
-                        }
-                        sample[j as usize * side + i as usize] = v;
+                        let l = layer.filter(|l| (xx as u32) < l.width && (yy as u32) < l.height).map(|l| l.get(xx as u32, yy as u32)).unwrap_or([0.0; 4]);
+                        let b = self.buf_get(xx, yy);
+                        sample[j as usize * side + i as usize] = [0, 1, 2, 3].map(|c| b[c] + l[c] * (1.0 - b[3]));
                     }
                 }
                 let k = preset.smudge_carry.clamp(0.0, 1.0);
-                carry = Some(match carry.take() {
+                self.carry = Some(match self.carry.take() {
                     Some((cr, prev)) if cr == pr_i => (pr_i, prev.iter().zip(&sample).map(|(a, b)| [0, 1, 2, 3].map(|c| a[c] * k + b[c] * (1.0 - k))).collect()),
                     _ => (pr_i, sample),
                 });
             }
-            // carimbo
-            let (bx0, by0) = (((px - r - 1.0).floor() as i32).max(x0), ((py - r - 1.0).floor() as i32).max(y0));
-            let (bx1, by1) = (((px + r + 1.0).ceil() as i32).min(x1), ((py + r + 1.0).ceil() as i32).min(y1));
+            let (bx0, by0) = (((px - r - 1.0).floor() as i32).max(0), ((py - r - 1.0).floor() as i32).max(0));
+            let (bx1, by1) = (((px + r + 1.0).ceil() as i32).min(self.w), ((py + r + 1.0).ceil() as i32).min(self.h));
+            if bx0 < bx1 && by0 < by1 {
+                self.mark([bx0, by0, bx1, by1]);
+            }
             for y in by0..by1 {
                 for x in bx0..bx1 {
                     let (dx, dy) = (x as f32 + 0.5 - px, y as f32 + 0.5 - py);
@@ -775,7 +887,7 @@ pub fn paint_stroke_at(layer: &mut Image, origin: [i32; 2], preset: &BrushPreset
                         continue;
                     }
                     if let Some(t) = &preset.texture {
-                        let tv = texture_value(t, (x + origin[0]) as f32, (y + origin[1]) as f32);
+                        let tv = texture_value(t, (x + self.tex_origin[0]) as f32, (y + self.tex_origin[1]) as f32);
                         a = match t.mode {
                             TextureMode::Multiply => a * (1.0 - t.depth + t.depth * tv),
                             TextureMode::Subtract => (a - (1.0 - tv) * t.depth).max(0.0),
@@ -785,8 +897,6 @@ pub fn paint_stroke_at(layer: &mut Image, origin: [i32; 2], preset: &BrushPreset
                     if da <= 0.0 {
                         continue;
                     }
-                    let i = (y - y0) as usize * bw + (x - x0) as usize;
-                    // cor do carimbo (pré-multiplicada): a do pincel, misturada com a pegada carregada
                     let mut src = [rgb[0], rgb[1], rgb[2], 1.0];
                     if let (Some(c2), Some((shape, u, v))) = (two, shape_uv(&preset.tip, dx, dy, r, angle)) {
                         let k = shape_tone(shape, u, v, 1.0 / r.max(0.25));
@@ -794,7 +904,7 @@ pub fn paint_stroke_at(layer: &mut Image, origin: [i32; 2], preset: &BrushPreset
                             src[c] += (c2[c] - src[c]) * k;
                         }
                     }
-                    if let Some((cr, cp)) = &carry {
+                    if let Some((cr, cp)) = &self.carry {
                         let side = (2 * cr + 1) as usize;
                         let (ci, cj) = (x - (px.round() as i32 - cr), y - (py.round() as i32 - cr));
                         if ci >= 0 && cj >= 0 && (ci as usize) < side && (cj as usize) < side {
@@ -804,101 +914,148 @@ pub fn paint_stroke_at(layer: &mut Image, origin: [i32; 2], preset: &BrushPreset
                             }
                         }
                     }
-                    let d = &mut buf[i];
+                    let d = self.buf_mut(x, y);
                     let k = 1.0 - da;
-                    d[0] = src[0] * da + d[0] * k;
-                    d[1] = src[1] * da + d[1] * k;
-                    d[2] = src[2] * da + d[2] * k;
-                    d[3] = src[3] * da + d[3] * k;
+                    for c in 0..4 {
+                        d[c] = src[c] * da + d[c] * k;
+                    }
+                    let a = d[3];
+                    self.max_a = self.max_a.max(a);
                 }
             }
         }
     }
 
-    // pincel duplo: segunda ponta ao longo do caminho; o traço só aparece onde as duas se sobrepõem
-    if let (Some(dual), Some(db)) = (&preset.dual, dual_buf.as_mut()) {
-        let r = (dual.size * 0.5).max(0.3);
-        let step = (dual.size * dual.spacing).max(0.5);
-        let mut drng = Rng::new(seed ^ 0xD0A1);
-        for seg in path.windows(2) {
-            let (a, b) = (seg[0], seg[1]);
-            let len = ((b.x - a.x).powi(2) + (b.y - a.y).powi(2)).sqrt();
-            let n = (len / step).ceil().max(1.0) as usize;
-            for k in 0..n {
-                let f = k as f32 / n as f32;
-                let px = a.x + (b.x - a.x) * f + dual.scatter * dual.size * drng.signed();
-                let py = a.y + (b.y - a.y) * f + dual.scatter * dual.size * drng.signed();
-                let tip = BrushTip::Round { hardness: dual.hardness, roundness: 1.0, angle: 0.0 };
-                for y in ((py - r - 1.0) as i32).max(y0)..((py + r + 1.0) as i32 + 1).min(y1) {
-                    for x in ((px - r - 1.0) as i32).max(x0)..((px + r + 1.0) as i32 + 1).min(x1) {
-                        let a2 = tip_alpha(&tip, x as f32 + 0.5 - px, y as f32 + 0.5 - py, r, 0.0, false);
-                        let i = (y - y0) as usize * bw + (x - x0) as usize;
-                        db[i] = db[i].max(a2);
+    /// Caixa [x0, y0, x1, y1) dos tiles que o traço tocou (coordenadas locais), presa à camada.
+    pub fn bounds(&self) -> Option<[i32; 4]> {
+        if self.tiles.is_empty() {
+            return None;
+        }
+        let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+        for (tx, ty) in self.tiles.keys() {
+            x0 = x0.min(tx * STS);
+            y0 = y0.min(ty * STS);
+            x1 = x1.max((tx + 1) * STS);
+            y1 = y1.max((ty + 1) * STS);
+        }
+        let b = [x0.max(0), y0.max(0), x1.min(self.w), y1.min(self.h)];
+        (b[0] < b[2] && b[1] < b[3]).then_some(b)
+    }
+
+    /// Compõe o traço em `img` (um recorte da camada que começa em `img_origin`, coordenadas locais) com a opacidade
+    /// e o modo do pincel, depois do pincel duplo e das bordas molhadas. Devolve a caixa composta (local).
+    pub fn composite(&self, img: &mut Image, img_origin: [i32; 2]) -> Option<PaintResult> {
+        let b = self.bounds()?;
+        self.composite_in(img, img_origin, b, None)
+    }
+
+    /// Como [`composite`](Self::composite), só no retângulo `rect` [x0, y0, x1, y1) (prévia ao vivo: só o que mudou).
+    /// O nível da borda molhada é o do traço inteiro (sem pincel duplo, exato; com ele, aproximado pelo alfa antes
+    /// da máscara da segunda ponta).
+    pub fn composite_rect(&self, img: &mut Image, img_origin: [i32; 2], rect: [i32; 4]) -> Option<PaintResult> {
+        self.composite_in(img, img_origin, rect, Some(self.max_a))
+    }
+
+    fn composite_in(&self, img: &mut Image, img_origin: [i32; 2], area: [i32; 4], level: Option<f32>) -> Option<PaintResult> {
+        let [bx0, by0, bx1, by1] = area;
+        if self.tiles.is_empty() || bx0 >= bx1 || by0 >= by1 {
+            return None;
+        }
+        let preset = &self.preset;
+        // borda molhada desfoca a máscara até `rad` px: a região densa ganha essa margem (presa à camada)
+        let rad = (preset.size * 0.12).clamp(1.0, 12.0) as i32;
+        let m = if preset.wet_edges > 0.0 { rad } else { 0 };
+        let (x0, y0, x1, y1) = ((bx0 - m).max(0), (by0 - m).max(0), (bx1 + m).min(self.w), (by1 + m).min(self.h));
+        if x0 >= x1 || y0 >= y1 {
+            return None;
+        }
+        let (bw, bh) = ((x1 - x0) as usize, (y1 - y0) as usize);
+        let mut buf = vec![[0.0f32; 4]; bw * bh];
+        for ((tx, ty), t) in &self.tiles {
+            for j in 0..STS {
+                let y = ty * STS + j;
+                if y < y0 || y >= y1 {
+                    continue;
+                }
+                for i in 0..STS {
+                    let x = tx * STS + i;
+                    if x < x0 || x >= x1 {
+                        continue;
+                    }
+                    buf[(y - y0) as usize * bw + (x - x0) as usize] = t[(j * STS + i) as usize];
+                }
+            }
+        }
+        if let Some(db) = &self.dual {
+            for y in y0..y1 {
+                for x in x0..x1 {
+                    let mval = db.get(&(x.div_euclid(STS), y.div_euclid(STS))).map(|t| t[(y.rem_euclid(STS) * STS + x.rem_euclid(STS)) as usize]).unwrap_or(0.0);
+                    for c in buf[(y - y0) as usize * bw + (x - x0) as usize].iter_mut() {
+                        *c *= mval;
                     }
                 }
             }
         }
-        for (p, m) in buf.iter_mut().zip(db.iter()) {
-            for c in p.iter_mut() {
-                *c *= m;
-            }
-        }
-    }
-
-    // bordas molhadas: a poça tem borda definida e o pigmento se acumula na borda de FORA (como a aquarela seca).
-    // A máscara da poça é o alfa do traço com limiar suave; a borda é a parte da máscara que o desfoque esvazia.
-    // (Antes: alfa − desfoque do próprio alfa, que num pincel macio marcava o joelho de dentro e fazia um tubo.)
-    if preset.wet_edges > 0.0 {
-        let rad = (preset.size * 0.12).clamp(1.0, 12.0) as i32;
-        let level = buf.iter().map(|p| p[3]).fold(0.0f32, f32::max);
-        let smooth = |a: f32| {
-            let t = ((a / level.max(1e-6) - 0.08) / 0.30).clamp(0.0, 1.0);
-            t * t * (3.0 - 2.0 * t)
-        };
-        let mask: Vec<f32> = buf.iter().map(|p| smooth(p[3])).collect();
-        let blurred = box_blur(&mask, bw, bh, rad);
-        for (i, p) in buf.iter_mut().enumerate() {
-            if p[3] <= 0.0 {
-                continue;
-            }
-            let edge = ((mask[i] - blurred[i]).max(0.0) * 3.0).min(1.0);
-            let factor = (1.0 - preset.wet_edges * 0.5) + preset.wet_edges * 0.8 * edge;
-            let na = (mask[i] * level * factor).min(1.0);
-            let s = if p[3] > 0.0 { na / p[3] } else { 0.0 };
-            for c in p.iter_mut() {
-                *c *= s;
-            }
-        }
-    }
-
-    // compõe na camada com a opacidade do traço e o modo
-    let mode = match preset.mode {
-        BrushMode::Normal => BlendMode::Normal,
-        BrushMode::Behind => BlendMode::Behind,
-        BrushMode::Multiply => BlendMode::Multiply,
-        BrushMode::Screen => BlendMode::Screen,
-        BrushMode::Overlay => BlendMode::Overlay,
-        BrushMode::Add => BlendMode::Add,
-        BrushMode::Erase => BlendMode::Normal,
-    };
-    for y in 0..bh {
-        for x in 0..bw {
-            let s = buf[y * bw + x];
-            if s[3] <= 0.0 {
-                continue;
-            }
-            let i = layer.idx(x as u32 + x0 as u32, y as u32 + y0 as u32);
-            if preset.mode == BrushMode::Erase {
-                let k = 1.0 - s[3] * preset.opacity;
-                for c in layer.data[i].iter_mut() {
-                    *c *= k;
+        // bordas molhadas: a poça tem borda definida e o pigmento se acumula na borda de FORA (como a aquarela seca).
+        if preset.wet_edges > 0.0 {
+            let level = level.unwrap_or_else(|| buf.iter().map(|p| p[3]).fold(0.0f32, f32::max));
+            let smooth = |a: f32| {
+                let t = ((a / level.max(1e-6) - 0.08) / 0.30).clamp(0.0, 1.0);
+                t * t * (3.0 - 2.0 * t)
+            };
+            let mask: Vec<f32> = buf.iter().map(|p| smooth(p[3])).collect();
+            let blurred = box_blur(&mask, bw, bh, rad);
+            for (i, p) in buf.iter_mut().enumerate() {
+                if p[3] <= 0.0 {
+                    continue;
                 }
-            } else {
-                blend_pixel(&mut layer.data[i], s, mode, preset.opacity);
+                let edge = ((mask[i] - blurred[i]).max(0.0) * 3.0).min(1.0);
+                let factor = (1.0 - preset.wet_edges * 0.5) + preset.wet_edges * 0.8 * edge;
+                let na = (mask[i] * level * factor).min(1.0);
+                let s = if p[3] > 0.0 { na / p[3] } else { 0.0 };
+                for c in p.iter_mut() {
+                    *c *= s;
+                }
             }
         }
+        let mode = match preset.mode {
+            BrushMode::Normal => BlendMode::Normal,
+            BrushMode::Behind => BlendMode::Behind,
+            BrushMode::Multiply => BlendMode::Multiply,
+            BrushMode::Screen => BlendMode::Screen,
+            BrushMode::Overlay => BlendMode::Overlay,
+            BrushMode::Add => BlendMode::Add,
+            BrushMode::Erase => BlendMode::Normal,
+        };
+        let (iw, ih) = (img.width as i32, img.height as i32);
+        let (wx0, wy0, wx1, wy1) = if level.is_some() { (bx0.max(x0), by0.max(y0), bx1.min(x1), by1.min(y1)) } else { (x0, y0, x1, y1) };
+        for y in wy0..wy1 {
+            let iy = y - img_origin[1];
+            if iy < 0 || iy >= ih {
+                continue;
+            }
+            for x in wx0..wx1 {
+                let ix = x - img_origin[0];
+                if ix < 0 || ix >= iw {
+                    continue;
+                }
+                let s = buf[(y - y0) as usize * bw + (x - x0) as usize];
+                if s[3] <= 0.0 {
+                    continue;
+                }
+                let i = img.idx(ix as u32, iy as u32);
+                if preset.mode == BrushMode::Erase {
+                    let k = 1.0 - s[3] * preset.opacity;
+                    for c in img.data[i].iter_mut() {
+                        *c *= k;
+                    }
+                } else {
+                    blend_pixel(&mut img.data[i], s, mode, preset.opacity);
+                }
+            }
+        }
+        Some(PaintResult { bounds: [wx0, wy0, wx1, wy1] })
     }
-    Some(PaintResult { bounds: [x0, y0, x1, y1] })
 }
 
 fn box_blur(src: &[f32], w: usize, h: usize, r: i32) -> Vec<f32> {

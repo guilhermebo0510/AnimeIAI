@@ -970,6 +970,7 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
             let pts: Vec<Vec2> = g.samples.iter().map(|s| g.to_canvas(s.p)).collect();
             let k = g.fwd.map(|a| a.0[0].hypot(a.0[3])).unwrap_or(1.0);
             match g.tool {
+                ToolId::Pen if has_live => {}
                 ToolId::Pen => {
                     // a prévia é o traço que a caneta gravaria agora (ponta, pressão e afinamento do motor)
                     let c = cmds::resolve_color(&env.core.project, &env.ed.color);

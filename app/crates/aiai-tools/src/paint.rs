@@ -3,7 +3,7 @@
 use crate::context::*;
 use aiai_core::command::TileEdit;
 use aiai_core::*;
-use aiai_paint::brush::{BrushPoint, BrushPreset, BrushTip, GradientKind, gradient_fill, paint_stroke_at};
+use aiai_paint::brush::{BrushPoint, BrushPreset, BrushTip, GradientKind, StrokeBuffer, gradient_fill};
 use aiai_paint::{Image, Mask, tile};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -145,42 +145,51 @@ fn raster_cel<'a>(p: &'a Project, cut_id: &Id, layer: &Id, frame: u32) -> ToolRe
     Ok((node, cel, w, h))
 }
 
-fn spline_path(pts: &[BrushPoint]) -> Vec<BrushPoint> {
-    // Catmull-Rom centrípeta (α = 0,5) amostrada a cada ~1 px (o motor de dab cuida do espaçamento). A uniforme
-    // fazia barriga/laço quando um trecho longo vinha seguido de um curto e o traço mudava de forma ao soltar.
+/// Caminho suave do pincel: Catmull-Rom centrípeta (α = 0,5) amostrada a cada ~1 px (o motor de dab cuida do
+/// espaçamento). A uniforme fazia barriga/laço quando um trecho longo vinha seguido de um curto e o traço mudava de
+/// forma ao soltar. Com menos de 3 pontos, os próprios pontos.
+pub fn spline_path(pts: &[BrushPoint]) -> Vec<BrushPoint> {
     if pts.len() < 3 {
         return pts.to_vec();
     }
+    let mut out = Vec::new();
+    for i in 0..pts.len() - 1 {
+        out.extend(spline_segment(pts, i));
+    }
+    out.push(pts[pts.len() - 1]);
+    out
+}
+
+/// Amostras do trecho `i` (de `pts[i]` até antes de `pts[i + 1]`): dependem só de `pts[i - 1 ..= i + 2]`, então um
+/// trecho cujos vizinhos já não mudam fica pronto (a prévia ao vivo carimba cada trecho uma vez).
+pub fn spline_segment(pts: &[BrushPoint], i: usize) -> Vec<BrushPoint> {
     let n = pts.len();
     let get = |i: isize| pts[i.clamp(0, n as isize - 1) as usize];
     let knot = |a: BrushPoint, b: BrushPoint| ((b.x - a.x).powi(2) + (b.y - a.y).powi(2)).sqrt().sqrt().max(1e-4);
-    let mut out = Vec::new();
-    for i in 0..n - 1 {
-        let (p0, p1, p2, p3) = (get(i as isize - 1), get(i as isize), get(i as isize + 1), get(i as isize + 2));
-        let t0 = 0.0f32;
-        let t1 = t0 + knot(p0, p1);
-        let t2 = t1 + knot(p1, p2);
-        let t3 = t2 + knot(p2, p3);
-        let len = ((p2.x - p1.x).powi(2) + (p2.y - p1.y).powi(2)).sqrt();
-        let steps = len.ceil().max(1.0) as usize;
-        let lerp = |a: (f32, f32), b: (f32, f32), ta: f32, tb: f32, t: f32| {
-            let f = if (tb - ta).abs() < 1e-6 { 0.0 } else { (t - ta) / (tb - ta) };
-            (a.0 + (b.0 - a.0) * f, a.1 + (b.1 - a.1) * f)
-        };
-        for k in 0..steps {
-            let t = t1 + (t2 - t1) * k as f32 / steps as f32;
-            let (q0, q1, q2, q3) = ((p0.x, p0.y), (p1.x, p1.y), (p2.x, p2.y), (p3.x, p3.y));
-            let a1 = lerp(q0, q1, t0, t1, t);
-            let a2 = lerp(q1, q2, t1, t2, t);
-            let a3 = lerp(q2, q3, t2, t3, t);
-            let b1 = lerp(a1, a2, t0, t2, t);
-            let b2 = lerp(a2, a3, t1, t3, t);
-            let c = lerp(b1, b2, t1, t2, t);
-            let f = k as f32 / steps as f32;
-            out.push(BrushPoint { x: c.0, y: c.1, pressure: p1.pressure + (p2.pressure - p1.pressure) * f });
-        }
+    let (p0, p1, p2, p3) = (get(i as isize - 1), get(i as isize), get(i as isize + 1), get(i as isize + 2));
+    let t0 = 0.0f32;
+    let t1 = t0 + knot(p0, p1);
+    let t2 = t1 + knot(p1, p2);
+    let t3 = t2 + knot(p2, p3);
+    let len = ((p2.x - p1.x).powi(2) + (p2.y - p1.y).powi(2)).sqrt();
+    let steps = len.ceil().max(1.0) as usize;
+    let lerp = |a: (f32, f32), b: (f32, f32), ta: f32, tb: f32, t: f32| {
+        let f = if (tb - ta).abs() < 1e-6 { 0.0 } else { (t - ta) / (tb - ta) };
+        (a.0 + (b.0 - a.0) * f, a.1 + (b.1 - a.1) * f)
+    };
+    let mut out = Vec::with_capacity(steps);
+    for k in 0..steps {
+        let t = t1 + (t2 - t1) * k as f32 / steps as f32;
+        let (q0, q1, q2, q3) = ((p0.x, p0.y), (p1.x, p1.y), (p2.x, p2.y), (p3.x, p3.y));
+        let a1 = lerp(q0, q1, t0, t1, t);
+        let a2 = lerp(q1, q2, t1, t2, t);
+        let a3 = lerp(q2, q3, t2, t3, t);
+        let b1 = lerp(a1, a2, t0, t2, t);
+        let b2 = lerp(a2, a3, t1, t3, t);
+        let c = lerp(b1, b2, t1, t2, t);
+        let f = k as f32 / steps as f32;
+        out.push(BrushPoint { x: c.0, y: c.1, pressure: p1.pressure + (p2.pressure - p1.pressure) * f });
     }
-    out.push(pts[n - 1]);
     out
 }
 
@@ -234,6 +243,28 @@ pub struct PaintedRegion {
 /// pincel/borracha raster usa e que a prévia ao vivo do app roda a cada movimento (a prévia sai igual ao traço gravado).
 #[allow(clippy::too_many_arguments)]
 pub fn paint_on_cel(blobs: &BlobStore, cel: Option<&CelData>, w: u32, h: u32, preset: &BrushPreset, color: [f32; 4], strokes: &[PaintStrokeSpec], seed: u64, keep_before: bool) -> ToolResult<PaintedRegion> {
+    let paths = brush_paths(strokes)?;
+    // o borrador lê a camada inteira de antes do traço
+    let full = if preset.mix > 0.0 {
+        Some(match cel {
+            Some(c) => cel_raster(blobs, c, w, h)?,
+            None => Image::new(w, h),
+        })
+    } else {
+        None
+    };
+    let mut sbs = Vec::new();
+    for (k, path) in paths.iter().enumerate() {
+        let mut sb = StrokeBuffer::new(preset, color, seed.wrapping_add(k as u64 * 7919), w, h, [0, 0]);
+        sb.add(full.as_ref(), path);
+        sb.finish(full.as_ref());
+        sbs.push(sb);
+    }
+    paint_region(blobs, cel, w, h, &sbs, keep_before)
+}
+
+/// Pontos dos traços do pedido, suavizados como o pincel pinta.
+pub fn brush_paths(strokes: &[PaintStrokeSpec]) -> ToolResult<Vec<Vec<BrushPoint>>> {
     let mut paths = Vec::new();
     for s in strokes {
         let pts: Vec<BrushPoint> = s
@@ -247,22 +278,26 @@ pub fn paint_on_cel(blobs: &BlobStore, cel: Option<&CelData>, w: u32, h: u32, pr
             .collect::<ToolResult<_>>()?;
         paths.push(if s.smooth { spline_path(&pts) } else { pts });
     }
-    // caixa de tudo que os carimbos podem tocar (mesma margem do motor), alinhada aos tiles e presa no canvas
-    let max_r = preset.size * 0.5 * (1.0 + preset.size_jitter) + preset.scatter * preset.size + preset.dual.as_ref().map_or(0.0, |d| d.size * (0.5 + d.scatter)) + 2.0;
-    let mut bb = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
-    for q in paths.iter().flatten() {
-        bb = [bb[0].min(q.x - max_r), bb[1].min(q.y - max_r), bb[2].max(q.x + max_r), bb[3].max(q.y + max_r)];
+    Ok(paths)
+}
+
+/// Compõe traços já carimbados na camada: o recorte (alinhado aos tiles) do que eles tocaram, antes e depois.
+pub fn paint_region(blobs: &BlobStore, cel: Option<&CelData>, w: u32, h: u32, sbs: &[StrokeBuffer], keep_before: bool) -> ToolResult<PaintedRegion> {
+    let mut bb = [i32::MAX, i32::MAX, i32::MIN, i32::MIN];
+    for b in sbs.iter().filter_map(StrokeBuffer::bounds) {
+        bb = [bb[0].min(b[0]), bb[1].min(b[1]), bb[2].max(b[2]), bb[3].max(b[3])];
     }
-    let ts = TILE_SIZE as i32;
-    let area = [
-        ((bb[0].floor() as i32).div_euclid(ts) * ts).max(0),
-        ((bb[1].floor() as i32).div_euclid(ts) * ts).max(0),
-        (((bb[2].ceil() as i32 + 1).div_euclid(ts) + 1) * ts).min(w as i32),
-        (((bb[3].ceil() as i32 + 1).div_euclid(ts) + 1) * ts).min(h as i32),
-    ];
-    if area[0] >= area[2] || area[1] >= area[3] {
+    if bb[0] >= bb[2] {
         return Err(ToolError::Invalid("o traço ficou fora do canvas".into()));
     }
+    // margem das bordas molhadas (o composto pode passar da caixa dos tiles em até 12 px) e alinhamento aos tiles
+    let ts = TILE_SIZE as i32;
+    let area = [
+        ((bb[0] - 12).div_euclid(ts) * ts).max(0),
+        ((bb[1] - 12).div_euclid(ts) * ts).max(0),
+        (((bb[2] + 12).div_euclid(ts) + 1) * ts).min(w as i32),
+        (((bb[3] + 12).div_euclid(ts) + 1) * ts).min(h as i32),
+    ];
     let origin = [area[0], area[1]];
     let mut img = match cel {
         Some(cel) => cel_raster_region(blobs, cel, area)?,
@@ -270,11 +305,9 @@ pub fn paint_on_cel(blobs: &BlobStore, cel: Option<&CelData>, w: u32, h: u32, pr
     };
     let before = keep_before.then(|| img.clone());
     let mut bounds = [i32::MAX, i32::MAX, i32::MIN, i32::MIN];
-    for (k, path) in paths.iter().enumerate() {
-        let local: Vec<BrushPoint> = path.iter().map(|q| BrushPoint { x: q.x - origin[0] as f32, y: q.y - origin[1] as f32, pressure: q.pressure }).collect();
-        if let Some(r) = paint_stroke_at(&mut img, origin, preset, &local, color, seed.wrapping_add(k as u64 * 7919)) {
-            let rb = [r.bounds[0] + origin[0], r.bounds[1] + origin[1], r.bounds[2] + origin[0], r.bounds[3] + origin[1]];
-            bounds = [bounds[0].min(rb[0]), bounds[1].min(rb[1]), bounds[2].max(rb[2]), bounds[3].max(rb[3])];
+    for sb in sbs {
+        if let Some(r) = sb.composite(&mut img, origin) {
+            bounds = [bounds[0].min(r.bounds[0]), bounds[1].min(r.bounds[1]), bounds[2].max(r.bounds[2]), bounds[3].max(r.bounds[3])];
         }
     }
     if bounds[0] >= bounds[2] {

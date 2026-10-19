@@ -3,6 +3,8 @@
 //! canvas mostra o resultado por cima do quadro. Antes a prévia era uma polilinha (pincel) ou uma faixa branca
 //! (borracha) e o traço "mudava" ao soltar.
 //!
+//! - Caneta: o traço vetorial rasterizado pelo mesmo motor do render (largura, pontas, antisserrilhado), com as
+//!   camadas de cima na frente, em vez do polígono desenhado pela interface.
 //! - Pincel: o recorte pintado, só nos pixels que mudaram, com a opacidade da camada, com as camadas de cima na frente
 //!   (renderizadas uma vez no começo do traço) e os efeitos de cor de cima (Grade) aplicados.
 //! - Borracha: o que fica embaixo da camada (o quadro renderizado sem ela, sobre o xadrez do canvas) na proporção do
@@ -14,13 +16,14 @@ use super::commands::NodeId;
 use aiai_core::*;
 use aiai_paint::Affine;
 use aiai_tools::erase::EraseMode;
-use aiai_tools::paint::{PaintStrokeSpec, paint_on_cel};
+use aiai_paint::brush::BrushPoint;
 use egui::{Color32, ColorImage, TextureHandle, TextureOptions};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Mode {
+    Pen,
     Brush,
     EraseRaster,
     EraseVector,
@@ -54,6 +57,7 @@ pub(crate) struct StartSpec {
 struct Req {
     pts: Vec<Vec<f32>>,
     path: Vec<[f32; 2]>,
+    stroke: Option<Stroke>,
 }
 
 #[derive(Default)]
@@ -65,6 +69,10 @@ struct State {
 struct Out {
     origin: [i32; 2],
     image: ColorImage,
+    /// Pincel/borracha raster: pedaço da prévia do tamanho do canvas (atualiza só este retângulo da textura).
+    partial: Option<[usize; 2]>,
+    /// Tempo da thread para este resultado (ms).
+    ms: f32,
 }
 
 pub(crate) struct Overlay {
@@ -83,6 +91,10 @@ pub(crate) struct Live {
     fwd: Option<Affine>,
     pub overlay: Option<Overlay>,
     started_for: Option<Instant>,
+    mode: Option<Mode>,
+    /// Medida: ms do último resultado e quantos chegaram neste traço.
+    pub last_ms: f32,
+    pub updates: u32,
     /// Depois de soltar: some quando o canvas mostrar um render com este contador (ou em 5 s).
     hold: Option<(u64, Instant)>,
 }
@@ -96,6 +108,8 @@ impl Live {
     pub(crate) fn start(&mut self, ctx: &egui::Context, spec: StartSpec, gesture: Instant) {
         self.stop();
         self.started_for = Some(gesture);
+        self.mode = Some(spec.mode);
+        self.updates = 0;
         self.overlay = None;
         self.hold = None;
         self.sent = 0;
@@ -111,34 +125,60 @@ impl Live {
     }
 
     /// Manda o traço até aqui (o mais novo substitui o que não começou).
-    pub(crate) fn feed(&mut self, pts: Vec<Vec<f32>>, path: Vec<[f32; 2]>, count: usize) {
+    pub(crate) fn mode(&self) -> Option<Mode> {
+        self.mode.filter(|_| self.shared.is_some())
+    }
+
+    pub(crate) fn feed(&mut self, pts: Vec<Vec<f32>>, path: Vec<[f32; 2]>, stroke: Option<Stroke>, count: usize) {
         if count == self.sent {
             return;
         }
         let Some(sh) = &self.shared else { return };
         self.sent = count;
         if let Ok(mut st) = sh.0.lock() {
-            st.req = Some(Req { pts, path });
+            st.req = Some(Req { pts, path, stroke });
         }
         sh.1.notify_one();
     }
 
     pub(crate) fn poll(&mut self, ctx: &egui::Context, shown_counter: Option<u64>) {
         if let Some(rx) = &self.rx {
-            let mut last = None;
+            let mut got: Vec<Out> = Vec::new();
             while let Ok(o) = rx.try_recv() {
-                last = Some(o);
+                // pedaços de uma prévia em tiles valem todos (cada um é um retângulo diferente); inteiras: só a última
+                if o.partial.is_none() {
+                    got.retain(|g| g.partial.is_some());
+                }
+                got.push(o);
             }
-            if let Some(o) = last {
-                let size = o.image.size;
-                let tex = match self.overlay.take() {
-                    Some(mut ov) if ov.size == size => {
-                        ov.tex.set(o.image, TextureOptions::LINEAR);
-                        ov.tex
+            for o in got {
+                self.last_ms = o.ms;
+                self.updates += 1;
+                match o.partial {
+                    Some(full) => {
+                        let ov = match self.overlay.take() {
+                            Some(ov) if ov.size == full && ov.origin == [0, 0] => ov,
+                            _ => {
+                                let blank = ColorImage::new(full, vec![Color32::TRANSPARENT; full[0] * full[1]]);
+                                Overlay { origin: [0, 0], size: full, tex: ctx.load_texture("live-stroke", blank, TextureOptions::LINEAR), fwd: self.fwd }
+                            }
+                        };
+                        let mut ov = ov;
+                        ov.tex.set_partial([o.origin[0].max(0) as usize, o.origin[1].max(0) as usize], o.image, TextureOptions::LINEAR);
+                        self.overlay = Some(ov);
                     }
-                    _ => ctx.load_texture("live-stroke", o.image, TextureOptions::LINEAR),
-                };
-                self.overlay = Some(Overlay { origin: o.origin, size, tex, fwd: self.fwd });
+                    None => {
+                        let size = o.image.size;
+                        let tex = match self.overlay.take() {
+                            Some(mut ov) if ov.size == size => {
+                                ov.tex.set(o.image, TextureOptions::LINEAR);
+                                ov.tex
+                            }
+                            _ => ctx.load_texture("live-stroke", o.image, TextureOptions::LINEAR),
+                        };
+                        self.overlay = Some(Overlay { origin: o.origin, size, tex, fwd: self.fwd });
+                    }
+                }
             }
         }
         if let Some((c, t)) = self.hold {
@@ -187,9 +227,10 @@ fn worker(spec: StartSpec, sh: Arc<(Mutex<State>, Condvar)>, tx: crossbeam_chann
         _ => spec.project.as_ref().and_then(|p| render_under(p, &spec)),
     };
     let above = match spec.mode {
-        Mode::Brush => spec.project.as_ref().map(|p| render_above(p, &spec)),
+        Mode::Brush | Mode::Pen => spec.project.as_ref().map(|p| render_above(p, &spec)),
         _ => None,
     };
+    let mut inc = matches!(spec.mode, Mode::Brush | Mode::EraseRaster).then(|| Incremental::new(&spec));
     loop {
         let req = {
             let Ok(mut st) = sh.0.lock() else { return };
@@ -206,12 +247,15 @@ fn worker(spec: StartSpec, sh: Arc<(Mutex<State>, Condvar)>, tx: crossbeam_chann
                 };
             }
         };
+        let t0 = Instant::now();
         let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match spec.mode {
-            Mode::Brush => brush_overlay(&spec, &req, above.as_ref()),
-            Mode::EraseRaster => under.as_ref().and_then(|u| raster_erase_overlay(&spec, &req, u)),
+            Mode::Pen => pen_overlay(&spec, &req, above.as_ref()),
+            Mode::Brush => brush_overlay(&spec, &req, above.as_ref(), inc.as_mut()?),
+            Mode::EraseRaster => under.as_ref().and_then(|u| raster_erase_overlay(&spec, &req, u, inc.as_mut()?)),
             Mode::EraseVector => under.as_ref().and_then(|u| vector_erase_overlay(&spec, &req, u)),
         }));
-        if let Ok(Some(o)) = out {
+        if let Ok(Some(mut o)) = out {
+            o.ms = t0.elapsed().as_secs_f32() * 1000.0;
             if tx.send(o).is_err() {
                 return;
             }
@@ -295,12 +339,84 @@ fn render_under(p: &Project, spec: &StartSpec) -> Option<(u32, u32, Vec<[f32; 3]
     Some((img.width, img.height, rgb))
 }
 
-fn painted(spec: &StartSpec, req: &Req) -> Option<aiai_tools::paint::PaintedRegion> {
-    if req.pts.is_empty() {
-        return None;
+/// Traço incremental do pincel/borracha raster: os trechos do caminho que já não mudam são carimbados uma vez só;
+/// a cada movimento, só o fim (que ainda depende do último ponto) é refeito numa cópia. Mesmo motor e mesma
+/// suavização do commit (`paint_on_cel`), então o resultado sai igual, sem o custo crescer com o tamanho do traço.
+struct Incremental {
+    sb: aiai_paint::brush::StrokeBuffer,
+    /// Trechos da spline já carimbados.
+    fed: usize,
+    /// A camada inteira antes do traço (borrador e recorte do antes/depois).
+    layer: aiai_paint::Image,
+    /// Retângulo do fim provisório da prévia anterior (é refeito na próxima: o fim muda).
+    prev_tail: Option<[i32; 4]>,
+}
+
+fn union(a: Option<[i32; 4]>, b: Option<[i32; 4]>) -> Option<[i32; 4]> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some([a[0].min(b[0]), a[1].min(b[1]), a[2].max(b[2]), a[3].max(b[3])]),
+        (a, None) => a,
+        (None, b) => b,
     }
-    let strokes = [PaintStrokeSpec { points: req.pts.clone(), smooth: true }];
-    paint_on_cel(&spec.blobs, spec.cel.as_ref(), spec.canvas.0, spec.canvas.1, &spec.preset, spec.color, &strokes, spec.seed, true).ok()
+}
+
+impl Incremental {
+    fn new(spec: &StartSpec) -> Self {
+        let (w, h) = spec.canvas;
+        let layer = spec.cel.as_ref().and_then(|c| aiai_tools::paint::cel_raster(&spec.blobs, c, w, h).ok()).unwrap_or_else(|| aiai_paint::Image::new(w, h));
+        Incremental { sb: aiai_paint::brush::StrokeBuffer::new(&spec.preset, spec.color, spec.seed, w, h, [0, 0]), fed: 0, layer, prev_tail: None }
+    }
+
+    fn region(&mut self, spec: &StartSpec, req: &Req) -> Option<aiai_tools::paint::PaintedRegion> {
+        let pts: Vec<BrushPoint> = req.pts.iter().filter_map(|q| match q.as_slice() {
+            [x, y] => Some(BrushPoint { x: *x, y: *y, pressure: 1.0 }),
+            [x, y, pr] => Some(BrushPoint { x: *x, y: *y, pressure: pr.clamp(0.0, 1.0) }),
+            _ => None,
+        }).collect();
+        let n = pts.len();
+        if n == 0 {
+            return None;
+        }
+        let smudge = (spec.preset.mix > 0.0).then_some(&self.layer);
+        // o último ponto ainda pode mudar (espaçamento das amostras): pronto é o trecho que não depende dele
+        while n >= 4 && self.fed + 4 <= n {
+            let seg = aiai_tools::paint::spline_segment(&pts, self.fed);
+            self.sb.add(smudge, &seg);
+            self.fed += 1;
+        }
+        let committed = self.sb.take_dirty();
+        let mut tmp = self.sb.clone();
+        if n < 3 {
+            tmp.add(smudge, &pts);
+        } else {
+            for i in self.fed..n - 1 {
+                tmp.add(smudge, &aiai_tools::paint::spline_segment(&pts, i));
+            }
+            tmp.add(smudge, &pts[n - 1..]);
+        }
+        tmp.finish(smudge);
+        // só o que mudou: os trechos novos, o fim novo e o fim anterior (que pode ter recuado)
+        let tail = tmp.take_dirty();
+        let changed = union(union(committed, tail), self.prev_tail);
+        self.prev_tail = tail;
+        let b = changed?;
+        let m = if spec.preset.wet_edges > 0.0 { 12 } else { 0 };
+        let (w, h) = (self.layer.width as i32, self.layer.height as i32);
+        let area = [(b[0] - m).max(0), (b[1] - m).max(0), (b[2] + m).min(w), (b[3] + m).min(h)];
+        if area[0] >= area[2] || area[1] >= area[3] {
+            return None;
+        }
+        let (cw, ch) = ((area[2] - area[0]) as u32, (area[3] - area[1]) as u32);
+        let mut crop = aiai_paint::Image::new(cw, ch);
+        for y in 0..ch {
+            let src = self.layer.idx(area[0] as u32, area[1] as u32 + y);
+            let dst = crop.idx(0, y);
+            crop.data[dst..dst + cw as usize].copy_from_slice(&self.layer.data[src..src + cw as usize]);
+        }
+        let before = crop.clone();
+        tmp.composite_rect(&mut crop, [area[0], area[1]], area);
+        Some(aiai_tools::paint::PaintedRegion { origin: [area[0], area[1]], before: Some(before), after: crop, bounds: area })
+    }
 }
 
 /// Recorte [x0, y0, x1, y1) relativo ao `origin` da região tocada.
@@ -313,8 +429,8 @@ fn crop_of(r: &aiai_tools::paint::PaintedRegion) -> (usize, usize, usize, usize)
     (x0, y0, x1, y1)
 }
 
-fn brush_overlay(spec: &StartSpec, req: &Req, above: Option<&Above>) -> Option<Out> {
-    let r = painted(spec, req)?;
+fn brush_overlay(spec: &StartSpec, req: &Req, above: Option<&Above>, inc: &mut Incremental) -> Option<Out> {
+    let r = inc.region(spec, req)?;
     let before = r.before.as_ref()?;
     let (x0, y0, x1, y1) = crop_of(&r);
     if x0 >= x1 || y0 >= y1 {
@@ -324,27 +440,68 @@ fn brush_overlay(spec: &StartSpec, req: &Req, above: Option<&Above>) -> Option<O
     let (cw, ch) = (x1 - x0, y1 - y0);
     let k = spec.layer_opacity.clamp(0.0, 1.0);
     let mut crop = aiai_paint::Image::new(cw as u32, ch as u32);
+    let mut mask = vec![false; cw * ch];
     for y in y0..y1 {
         for x in x0..x1 {
             let (a, b) = (r.after.data[y * w + x], before.data[y * w + x]);
             if !(0..4).any(|c| (a[c] - b[c]).abs() > 1e-4) {
                 continue;
             }
-            let mut o = [a[0] * k, a[1] * k, a[2] * k, a[3] * k];
-            // as camadas de cima ficam na frente do traço (a cerca na frente da casa)
-            if let Some(img) = above.and_then(|ab| ab.img.as_ref()) {
+            let i = (y - y0) * cw + (x - x0);
+            crop.data[i] = [a[0] * k, a[1] * k, a[2] * k, a[3] * k];
+            mask[i] = true;
+        }
+    }
+    let mut o = dress(spec, [r.origin[0] + x0 as i32, r.origin[1] + y0 as i32], crop, &mask, above);
+    o.partial = Some([spec.canvas.0 as usize, spec.canvas.1 as usize]);
+    Some(o)
+}
+
+/// Caneta: o traço rasterizado como o render faz (`sample_stroke` + `rasterize_stroke`), na cor e opacidade dele.
+fn pen_overlay(spec: &StartSpec, req: &Req, above: Option<&Above>) -> Option<Out> {
+    let s = req.stroke.as_ref()?;
+    let smp = aiai_paint::sample_stroke(s);
+    let cov = aiai_paint::stroke_raster::rasterize_stroke(&smp, s.aliased, spec.canvas.0, spec.canvas.1)?;
+    let (cw, ch) = (cov.width as usize, cov.height as usize);
+    if cw == 0 || ch == 0 {
+        return None;
+    }
+    let a = spec.color[3] * s.opacity * spec.layer_opacity.clamp(0.0, 1.0);
+    let mut crop = aiai_paint::Image::new(cw as u32, ch as u32);
+    let mut mask = vec![false; cw * ch];
+    for (i, c) in cov.cov.iter().enumerate() {
+        if *c > 0.0 {
+            let k = a * c;
+            crop.data[i] = [spec.color[0] * k, spec.color[1] * k, spec.color[2] * k, k];
+            mask[i] = true;
+        }
+    }
+    Some(dress(spec, [cov.x0, cov.y0], crop, &mask, above))
+}
+
+/// O que fica na frente (camadas de cima, efeitos de cor de cima) aplicado aos pixels do traço (`mask`).
+fn dress(spec: &StartSpec, origin: [i32; 2], mut crop: aiai_paint::Image, mask: &[bool], above: Option<&Above>) -> Out {
+    let (cw, ch) = (crop.width as usize, crop.height as usize);
+    // as camadas de cima ficam na frente do traço (a cerca na frente da casa)
+    if let Some(img) = above.and_then(|ab| ab.img.as_ref()) {
+        for y in 0..ch {
+            for x in 0..cw {
+                let i = y * cw + x;
+                if !mask[i] {
+                    continue;
+                }
+                let (px0, py0) = ((origin[0] + x as i32) as f32 + 0.5, (origin[1] + y as i32) as f32 + 0.5);
                 let (cx, cy) = match &spec.fwd {
-                    Some(af) => af.apply((r.origin[0] + x as i32) as f32 + 0.5, (r.origin[1] + y as i32) as f32 + 0.5),
-                    None => ((r.origin[0] + x as i32) as f32 + 0.5, (r.origin[1] + y as i32) as f32 + 0.5),
+                    Some(af) => af.apply(px0, py0),
+                    None => (px0, py0),
                 };
                 let (xi, yi) = (cx.floor() as i64, cy.floor() as i64);
                 if xi >= 0 && yi >= 0 && (xi as u32) < img.width && (yi as u32) < img.height {
                     let t = img.data[(yi as u32 * img.width + xi as u32) as usize];
-                    o = [t[0] + o[0] * (1.0 - t[3]), t[1] + o[1] * (1.0 - t[3]), t[2] + o[2] * (1.0 - t[3]), t[3] + o[3] * (1.0 - t[3])];
+                    let o = crop.data[i];
+                    crop.data[i] = [t[0] + o[0] * (1.0 - t[3]), t[1] + o[1] * (1.0 - t[3]), t[2] + o[2] * (1.0 - t[3]), t[3] + o[3] * (1.0 - t[3])];
                 }
             }
-            let i = crop.idx((x - x0) as u32, (y - y0) as u32);
-            crop.data[i] = o;
         }
     }
     // efeitos de cor de cima (Grade): o que é feito em cada pixel sai igual; efeitos espaciais ficam aproximados
@@ -363,7 +520,7 @@ fn brush_overlay(spec: &StartSpec, req: &Req, above: Option<&Above>) -> Option<O
         }
     }
     let pixels = crop.data.iter().map(|p| px(*p)).collect();
-    Some(Out { origin: [r.origin[0] + x0 as i32, r.origin[1] + y0 as i32], image: ColorImage { size: [cw, ch], source_size: egui::vec2(cw as f32, ch as f32), pixels } })
+    Out { origin, image: ColorImage { size: [cw, ch], source_size: egui::vec2(cw as f32, ch as f32), pixels }, partial: None, ms: 0.0 }
 }
 
 /// Pixel do "embaixo" (canvas) para o pixel (x, y) do cel.
@@ -391,11 +548,11 @@ fn erase_pixels(x0: i32, y0: i32, w: usize, h: usize, amount: impl Fn(usize, usi
             });
         }
     }
-    Out { origin: [x0, y0], image: ColorImage { size: [w, h], source_size: egui::vec2(w as f32, h as f32), pixels } }
+    Out { origin: [x0, y0], image: ColorImage { size: [w, h], source_size: egui::vec2(w as f32, h as f32), pixels }, partial: None, ms: 0.0 }
 }
 
-fn raster_erase_overlay(spec: &StartSpec, req: &Req, u: &(u32, u32, Vec<[f32; 3]>)) -> Option<Out> {
-    let r = painted(spec, req)?;
+fn raster_erase_overlay(spec: &StartSpec, req: &Req, u: &(u32, u32, Vec<[f32; 3]>), inc: &mut Incremental) -> Option<Out> {
+    let r = inc.region(spec, req)?;
     let before = r.before.as_ref()?;
     let (x0, y0, x1, y1) = crop_of(&r);
     if x0 >= x1 || y0 >= y1 {
@@ -408,7 +565,9 @@ fn raster_erase_overlay(spec: &StartSpec, req: &Req, u: &(u32, u32, Vec<[f32; 3]
         let (a, b) = (r.after.data[(y0 + y) * w + x0 + x][3], before.data[(y0 + y) * w + x0 + x][3]);
         (b - a).max(0.0) * k
     };
-    Some(erase_pixels(r.origin[0] + x0 as i32, r.origin[1] + y0 as i32, x1 - x0, y1 - y0, amount, u, &spec.fwd))
+    let mut o = erase_pixels(r.origin[0] + x0 as i32, r.origin[1] + y0 as i32, x1 - x0, y1 - y0, amount, u, &spec.fwd);
+    o.partial = Some([spec.canvas.0 as usize, spec.canvas.1 as usize]);
+    Some(o)
 }
 
 fn vector_erase_overlay(spec: &StartSpec, req: &Req, u: &(u32, u32, Vec<[f32; 3]>)) -> Option<Out> {

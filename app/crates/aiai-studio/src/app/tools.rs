@@ -397,6 +397,7 @@ pub(crate) fn start_live(env: &mut Env, ctx: &egui::Context, g: &StrokeGesture, 
     let Some(cut) = env.ed.cut.clone() else { return };
     let Some(l) = cmds::layer_data(&env.core.project, &g.layer).cloned() else { return };
     let mode = match (g.tool, l.kind) {
+        (ToolId::Pen, LayerType::Vector) => super::live::Mode::Pen,
         (ToolId::Brush, LayerType::Raster) => super::live::Mode::Brush,
         (ToolId::Eraser, LayerType::Raster) => super::live::Mode::EraseRaster,
         (ToolId::Eraser, LayerType::Vector) => super::live::Mode::EraseVector,
@@ -439,9 +440,15 @@ pub(crate) fn feed_live(env: &mut Env, g: &StrokeGesture) {
     if !env.ed.live_stroke.active() {
         return;
     }
-    let pts = brush_points(&g.samples);
-    let path: Vec<[f32; 2]> = g.path.iter().map(|p| [p.x, p.y]).collect();
-    env.ed.live_stroke.feed(pts, path, g.samples.len() + g.path.len());
+    let pen = env.ed.live_stroke.mode() == Some(super::live::Mode::Pen);
+    let stroke = if pen {
+        // a cor resolvida vai na prévia: a do traço é a mesma referência que o commit grava
+        pen_preview(env, g)
+    } else {
+        None
+    };
+    let (pts, path) = if pen { (Vec::new(), Vec::new()) } else { (brush_points(&g.samples), g.path.iter().map(|p| [p.x, p.y]).collect()) };
+    env.ed.live_stroke.feed(pts, path, stroke, g.samples.len() + g.path.len());
 }
 
 fn commit_brush(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant, erase: bool) {
