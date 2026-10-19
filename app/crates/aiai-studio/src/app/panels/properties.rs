@@ -266,6 +266,21 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
             row(ui, &t, compact, "opt.size", |ui| {
                 ui.add(egui::DragValue::new(&mut o.eraser_size).range(1.0..=600.0).speed(0.5).max_decimals(0).suffix(" px"));
             });
+            row(ui, &t, compact, "opt.eraser_mode", |ui| {
+                use aiai_tools::erase::EraseMode;
+                let key = |m: EraseMode| match m {
+                    EraseMode::Whole => "opt.erase_whole",
+                    EraseMode::Segment => "opt.erase_segment",
+                    EraseMode::Intersection => "opt.erase_intersection",
+                };
+                egui::ComboBox::from_id_salt(("eraser_mode", compact)).selected_text(tr(key(o.eraser_mode))).show_ui(ui, |ui| {
+                    for m in [EraseMode::Segment, EraseMode::Intersection, EraseMode::Whole] {
+                        ui.selectable_value(&mut o.eraser_mode, m, tr(key(m)));
+                    }
+                })
+                .response
+                .on_hover_text(tr("opt.eraser_mode.tip"));
+            });
             if !compact {
                 dim_label(ui, &t, tr("opt.eraser_hint"));
             }

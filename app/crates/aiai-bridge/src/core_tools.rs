@@ -25,7 +25,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 use std::path::Path;
 
-pub const TOOL_ACTIONS: &[&str] = &["RENDER", "DRAW_CURVES", "FILL", "LINT", "PAINT", "GRADIENT", "TRANSFORM", "REPEAT", "BRUSH_PRESETS"];
+pub const TOOL_ACTIONS: &[&str] = &["RENDER", "DRAW_CURVES", "FILL", "LINT", "PAINT", "GRADIENT", "TRANSFORM", "REPEAT", "ERASE_VECTOR", "BRUSH_PRESETS"];
 
 /// Todas as ações de ferramenta de documento: as de aqui + as de [`crate::production_tools`].
 pub fn is_tool_action(action: &str) -> bool {
@@ -37,7 +37,7 @@ pub fn is_tool_action(action: &str) -> bool {
 
 /// Ações de ferramenta que mudam o documento.
 pub fn is_mutating_tool(action: &str) -> bool {
-    matches!(action, "DRAW_CURVES" | "FILL" | "PAINT" | "GRADIENT" | "TRANSFORM" | "REPEAT") || crate::production_tools::is_mutating(action) || crate::preprod_tools::is_mutating(action) || crate::review_tools::is_mutating(action)
+    matches!(action, "DRAW_CURVES" | "FILL" | "PAINT" | "GRADIENT" | "TRANSFORM" | "REPEAT" | "ERASE_VECTOR") || crate::production_tools::is_mutating(action) || crate::preprod_tools::is_mutating(action) || crate::review_tools::is_mutating(action)
         || crate::satsuei_tools::is_mutating(action)
         || crate::preview_tools::is_mutating(action)
 }
@@ -73,6 +73,10 @@ pub fn handle_tool_action(session: &mut CoreSession, action: &str, params: &Valu
         "PAINT" => paint(session, params),
         "GRADIENT" => request::<GradientRequest>(params, "GRADIENT").and_then(|r| {
             let cmd = gradient_command(&session.project, &mut session.blobs, &r).map_err(tool_error)?;
+            apply(session, params, cmd)
+        }),
+        "ERASE_VECTOR" => request::<aiai_tools::erase::EraseVectorRequest>(params, "ERASE_VECTOR").and_then(|r| {
+            let cmd = aiai_tools::erase::erase_vector_command(&session.project, &r).map_err(tool_error)?;
             apply(session, params, cmd)
         }),
         "TRANSFORM" => request::<TransformRequest>(params, "TRANSFORM").and_then(|r| {

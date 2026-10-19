@@ -35,6 +35,11 @@ impl P {
 /// Distância máxima entre amostras consecutivas (px).
 const STEP: f32 = 1.0;
 
+/// Pontos da curva (x, y, pressão) achatados a ~1 px, como o motor desenha (para cortar traços: borracha vetorial).
+pub fn flatten_points(stroke: &Stroke) -> Vec<(f32, f32, f32)> {
+    flatten(stroke).into_iter().map(|q| (q.x, q.y, q.p)).collect()
+}
+
 /// Pontos da curva (x, y, pressão) já achatados, antes da largura.
 fn flatten(stroke: &Stroke) -> Vec<P> {
     let pts: Vec<P> = stroke.points.iter().map(|q| P { x: q.x, y: q.y, p: q.pressure }).collect();

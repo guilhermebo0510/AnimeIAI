@@ -359,17 +359,25 @@ fn editor_script(c: &Client) {
     c.input(json!([{"kind": "key", "key": "z", "modifiers": ["ctrl", "shift"]}, {"kind": "wait", "frames": 2}]));
     assert!(c.ok("GET_STATUS", json!({}))["revision"].as_u64().unwrap() > rev);
 
-    // borracha vetorial: atravessa o lado de cima do quadrado; some o traço inteiro; um passo de undo
+    // borracha vetorial (modo padrão "trecho tocado"): atravessa o lado de cima do quadrado; o traço fechado vira um
+    // pedaço aberto com o vão onde a borracha passou; um passo de undo devolve o quadrado
     c.click_widget("layers:row:0");
     c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "eraser"}));
+    let original = c.strokes(&vcel)[0]["id"].as_str().unwrap().to_string();
     c.drag_canvas(&[(160.0, 30.0), (160.0, 50.0)], false);
     let t0 = Instant::now();
-    while !c.strokes(&vcel).is_empty() {
+    while c.strokes(&vcel).first().and_then(|s| s["id"].as_str()) == Some(original.as_str()) {
         assert!(t0.elapsed() < Duration::from_secs(10), "a borracha não apagou");
         std::thread::sleep(Duration::from_millis(20));
     }
+    let left = c.strokes(&vcel);
+    assert_eq!(left.len(), 1, "um pedaço aberto: {left:?}");
+    assert_eq!(left[0]["closed"], false);
+    assert_eq!(c.render_px(&cut, 0, 160, 40)[3], 0, "vão onde a borracha passou");
+    assert!(c.render_px(&cut, 0, 240, 90)[3] > 0, "o resto do quadrado fica");
     c.input(json!([{"kind": "key", "key": "Z", "modifiers": ["ctrl"]}, {"kind": "wait", "frames": 2}]));
     assert_eq!(c.strokes(&vcel).len(), 1, "Ctrl+Z devolve o traço apagado");
+    assert_eq!(c.strokes(&vcel)[0]["id"], original);
 
     // selecionar (retângulo) + mover (Enter aplica): o traço anda 30 px para a direita
     c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "lasso"}));

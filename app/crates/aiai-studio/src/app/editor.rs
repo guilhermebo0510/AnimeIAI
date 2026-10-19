@@ -346,6 +346,8 @@ pub(crate) struct ToolOptions {
     /// Ajustes finos do pincel (cópia editada do preset escolhido); escolher outro preset descarta.
     pub brush_custom: Option<aiai_paint::brush::BrushPreset>,
     pub eraser_size: f32,
+    /// Borracha em camada vetorial: traço inteiro, trecho coberto ou até a interseção.
+    pub eraser_mode: aiai_tools::erase::EraseMode,
     pub fill_gap: f32,
     pub fill_expand: u32,
     /// Balde fecha as frestas em volta (regiões sem tinta de até `LEFTOVER_PX`) com a cor que as cerca.
@@ -368,6 +370,7 @@ impl Default for ToolOptions {
             brush_opacity: 1.0,
             brush_custom: None,
             eraser_size: 20.0,
+            eraser_mode: aiai_tools::erase::EraseMode::Segment,
             fill_gap: 3.0,
             fill_expand: 2,
             fill_close_leftovers: false,

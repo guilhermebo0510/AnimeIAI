@@ -296,8 +296,16 @@ fn commit_erase_vector(env: &mut Env, t: &Target, g: &StrokeGesture, released_at
     if ids.is_empty() {
         return;
     }
-    let Some(cel) = cmds::exposed_cel(&env.core.project, &t.cut, &t.layer, t.frame) else { return };
-    let planned = Ok(Command::RemoveStrokes { cel, ids });
+    // trecho / até a interseção / traço inteiro (o caminho já está no espaço do cel)
+    let req = aiai_tools::erase::EraseVectorRequest {
+        cut: t.cut.clone(),
+        frame: t.frame,
+        layer: t.layer.clone(),
+        path: g.path.iter().map(|p| [p.x, p.y]).collect(),
+        radius: env.ed.opts.eraser_size / 2.0,
+        mode: env.ed.opts.eraser_mode,
+    };
+    let planned = aiai_tools::erase::erase_vector_command(&env.core.project, &req).map_err(|e| e.to_string());
     commit(env, planned, released_at, "erase_vector", None);
 }
 

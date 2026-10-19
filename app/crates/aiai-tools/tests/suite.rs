@@ -473,3 +473,58 @@ fn import_image_fits_into_reference_and_raster_cels() {
     assert!(img.get(10, 10)[2] > 0.7 && img.get(150, 80)[0] > 0.7 && img.get(300, 300)[3] < 0.01);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn vector_eraser_whole_segment_and_up_to_intersection() {
+    use aiai_tools::erase::{EraseMode, EraseVectorRequest, erase_vector_command};
+    let setup = || {
+        let mut s = CoreSession::for_tests("erase");
+        s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 400, "height": 200}}) }).unwrap();
+        let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+        let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+        let cut = create(&mut s, Some(&sc), "C", NodeKind::Cut(CutData::new(4)));
+        let vl = create(&mut s, Some(&cut), "V", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+        let cel = create(&mut s, Some(&vl), "1", NodeKind::Cel(CelData::new(1)));
+        let ink = ColorRef::Direct { rgba: Rgba::BLACK };
+        let mut line = |pts: &[[f32; 3]]| {
+            let mut c = curve(pts, 3.0, &ink, false);
+            c.geometry = serde_json::from_value(json!("polyline")).unwrap();
+            c
+        };
+        let h = line(&[[20.0, 100.0, 1.0], [380.0, 100.0, 1.0]]);
+        let v1 = line(&[[150.0, 40.0, 1.0], [150.0, 160.0, 1.0]]);
+        let v2 = line(&[[250.0, 40.0, 1.0], [250.0, 160.0, 1.0]]);
+        s.apply(draw_command(&s.project, &DrawRequest { cut: cut.clone(), frame: 0, layer: vl.clone(), curves: vec![h, v1, v2], mirror_x: None }).unwrap()).unwrap();
+        (s, cut, vl, cel)
+    };
+    let strokes = |s: &CoreSession, cel: &Id| match &s.project.node(cel).unwrap().data { NodeKind::Cel(c) => c.strokes.clone(), _ => unreachable!() };
+    let span = |st: &Stroke| (st.points.iter().map(|p| p.x).fold(f32::MAX, f32::min), st.points.iter().map(|p| p.x).fold(f32::MIN, f32::max));
+    for mode in [EraseMode::Whole, EraseMode::Segment, EraseMode::Intersection] {
+        let (mut s, cut, vl, cel) = setup();
+        // borracha passa em x = 200 pela linha horizontal (entre as duas verticais)
+        let req = EraseVectorRequest { cut: cut.clone(), frame: 0, layer: vl.clone(), path: vec![[200.0, 90.0], [200.0, 110.0]], radius: 6.0, mode };
+        let c = erase_vector_command(&s.project, &req).unwrap();
+        s.apply(c).unwrap();
+        let st = strokes(&s, &cel);
+        let horiz: Vec<&Stroke> = st.iter().filter(|x| { let (a, b) = span(x); b - a > 20.0 }).collect();
+        match mode {
+            EraseMode::Whole => assert_eq!((st.len(), horiz.len()), (2, 0), "só as verticais sobram"),
+            EraseMode::Segment => {
+                assert_eq!(horiz.len(), 2, "a horizontal vira dois pedaços");
+                let mut spans: Vec<(f32, f32)> = horiz.iter().map(|x| span(x)).collect();
+                spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+                assert!(spans[0].1 < 196.0 && spans[0].1 > 185.0 && spans[1].0 > 204.0 && spans[1].0 < 215.0, "buraco só onde a borracha passou: {spans:?}");
+            }
+            EraseMode::Intersection => {
+                assert_eq!(horiz.len(), 2);
+                let mut spans: Vec<(f32, f32)> = horiz.iter().map(|x| span(x)).collect();
+                spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+                assert!((spans[0].1 - 150.0).abs() < 1.5 && (spans[1].0 - 250.0).abs() < 1.5, "apaga até as interseções: {spans:?}");
+                assert!((spans[0].0 - 20.0).abs() < 1.0 && (spans[1].1 - 380.0).abs() < 1.0);
+            }
+        }
+        // desfazer volta ao original
+        s.undo().unwrap();
+        assert_eq!(strokes(&s, &cel).len(), 3);
+    }
+}
