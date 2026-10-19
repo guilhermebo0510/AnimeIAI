@@ -57,6 +57,11 @@ pub fn shape_coverage(shape: TipShape, u: f32, v: f32, aa: f32) -> f32 {
     shape_alpha(shape, u, v, aa)
 }
 
+/// Como [`shape_coverage`], com a forma da ponta de duas cores (a rosa vira o botão inteiro): o contorno do cursor.
+pub fn shape_coverage_tone(shape: TipShape, u: f32, v: f32, aa: f32, two_tone: bool) -> f32 {
+    shape_alpha_tone(shape, u, v, aa, two_tone)
+}
+
 fn shape_alpha(shape: TipShape, u: f32, v: f32, aa: f32) -> f32 {
     shape_alpha_tone(shape, u, v, aa, false)
 }
@@ -243,6 +248,9 @@ pub struct DualBrush {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct BrushPreset {
     pub name: String,
+    /// Categoria na biblioteca (lapis, pintura, aquarela, textura, cenario, borracha ou uma do usuário).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub category: String,
     #[serde(default)]
     pub tip: BrushTip,
     /// Diâmetro em px com pressão máxima.
@@ -338,6 +346,7 @@ impl BrushPreset {
     pub fn round(name: &str, size: f32, hardness: f32) -> Self {
         BrushPreset {
             name: name.into(),
+            category: String::new(),
             tip: BrushTip::Round { hardness, roundness: 1.0, angle: 0.0 },
             size,
             spacing: d_spacing(),
@@ -503,6 +512,17 @@ impl BrushPreset {
         let mut eraser = BrushPreset::round("Borracha", 30.0, 0.9);
         eraser.mode = BrushMode::Erase;
         v.push(eraser);
+        for p in &mut v {
+            p.category = match p.name.as_str() {
+                "Lápis de rascunho" => "lapis",
+                "Redondo duro" | "Redondo macio" | "Aerógrafo" | "Guache seco" => "pintura",
+                "Aquarela" | "Borrador" => "aquarela",
+                "Carvão" | "Textura de papel" => "textura",
+                "Borracha" => "borracha",
+                _ => "cenario",
+            }
+            .into();
+        }
         v
     }
 }

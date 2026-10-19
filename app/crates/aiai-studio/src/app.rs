@@ -10,6 +10,7 @@
 mod actions;
 mod audio_out;
 mod autosave;
+mod brushes;
 mod bridge_host;
 mod canvas;
 mod commands;
@@ -55,6 +56,8 @@ pub struct StudioApp {
     prefs_path: Option<PathBuf>,
     prefs_dirty: bool,
     ws: WorkspaceId,
+    /// Ferramenta do quadro anterior (troca de ferramenta traz o painel Pincéis).
+    last_tool: Option<crate::workspace::ToolId>,
     trees: HashMap<WorkspaceId, Tree<PanelKind>>,
     icons: Icons,
     tool: ToolId,
@@ -130,6 +133,7 @@ impl StudioApp {
             prefs_path,
             prefs_dirty: false,
             trees: HashMap::new(),
+            last_tool: None,
             icons: Icons::default(),
             tool: ToolId::default(),
             about_open: false,
@@ -163,6 +167,8 @@ impl StudioApp {
             screenshot_requested: false,
         };
         app.ed.keys = crate::keymap::Keymap::from_overrides(&app.prefs.shortcuts);
+        // pincéis de fábrica + os do usuário (sem sessão: só os de fábrica, nada é gravado)
+        app.ed.brushes = brushes::BrushLibrary::load(if app.cli.no_session { None } else { brushes::default_path() });
         if let Some(dir) = app.cli.project.clone() {
             app.doc_open_path(std::path::Path::new(&dir));
         } else {
@@ -587,6 +593,14 @@ impl StudioApp {
         let t = self.tokens();
         let ws = self.ws;
         let tree = self.trees.entry(ws).or_insert_with(|| layout::default_tree(ws));
+        // caneta, pincel ou borracha escolhidos agora (clique ou atalho): o painel Pincéis vem para a frente
+        if self.last_tool.is_some_and(|t| t != self.tool) && matches!(self.tool, crate::workspace::ToolId::Pen | crate::workspace::ToolId::Brush | crate::workspace::ToolId::Eraser) {
+            self.ed.want_panel = Some(PanelKind::Brushes);
+        }
+        self.last_tool = Some(self.tool);
+        if let Some(want) = self.ed.want_panel.take() {
+            tree.make_active(|_, tile| matches!(tile, egui_tiles::Tile::Pane(k) if *k == want));
+        }
         let mut notes: Vec<(String, Rect)> = Vec::new();
         let env = ui_kit::Env { t, core: &mut self.core, ed: &mut self.ed, icons: &mut self.icons, notes: &mut notes, tool: &mut self.tool, ws };
         let mut behavior = DockBehavior { t, in_tabs: layout::panes_in_tabs(tree), env };
@@ -826,6 +840,7 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::Navigator if self.env.ws == WorkspaceId::Cor => panels::audio::monitor(&mut self.env, ui, body),
             PanelKind::Navigator => panels::navigator::show(&mut self.env, ui, body),
             PanelKind::SubView => panels::subview::show(&mut self.env, ui, body),
+            PanelKind::Brushes => panels::brushes::show(&mut self.env, ui, body),
             PanelKind::Characters => panels::characters::list(&mut self.env, ui, body),
             PanelKind::Sheet => panels::characters::sheet(&mut self.env, ui, body),
             PanelKind::Media => panels::edit::media(&mut self.env, ui, body),

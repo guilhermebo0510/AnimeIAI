@@ -511,7 +511,8 @@ fn editor_script2(c: &Client) {
     let roots = |cat: &str| c.ok("QUERY", json!({"query": {"kind": "roots", "category": cat}})).as_array().unwrap().clone();
     let typed = |text: &str| c.input(json!([{"kind": "key", "key": "A", "modifiers": ["ctrl"]}, {"kind": "text", "text": text}, {"kind": "key", "key": "Enter"}, {"kind": "wait", "frames": 3}]));
 
-    // Projeto: episódio -> cena -> corte pelos botões; o corte novo vira o ativo
+    // Projeto: episódio -> cena -> corte pelos botões; o corte novo vira o ativo (o painel divide aba com Pincéis)
+    c.ok("UI_ACTION", json!({"action": "open_panel", "panel": "project"}));
     c.click_widget("project:add_episode");
     assert_eq!(roots("episodes").len(), 1);
     c.click_widget("project:add_scene");

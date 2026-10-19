@@ -363,6 +363,10 @@ impl StudioApp {
                 let now = tree.tiles.is_visible(id);
                 let target = if action == "open_panel" { true } else { want.unwrap_or(!now) };
                 tree.tiles.set_visible(id, target);
+                // aberto = também a aba da frente quando divide espaço com outros (ex.: Projeto e Pincéis)
+                if target {
+                    tree.make_active(|tid, _| tid == id);
+                }
                 json!({ "panel": key, "visible": target, "workspace": ws.key() })
             }
             "set_theme" => {

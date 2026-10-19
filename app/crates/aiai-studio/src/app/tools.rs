@@ -375,12 +375,12 @@ fn brush_points(samples: &[Sample]) -> Vec<Vec<f32>> {
 }
 
 /// Preset do traço (o do pincel com tamanho/opacidade da barra, ou o da borracha).
-fn stroke_preset(env: &Env, erase: bool) -> BrushPreset {
+pub(crate) fn stroke_preset(env: &Env, erase: bool) -> BrushPreset {
     let o = &env.ed.opts;
     if erase {
         eraser_preset(o.eraser_size)
     } else {
-        let mut p = o.brush_custom.clone().or_else(|| presets().get(o.brush_preset).cloned()).or_else(|| presets().first().cloned()).unwrap_or_else(|| BrushPreset::round("Pincel", 24.0, 0.9));
+        let mut p = o.brush_custom.clone().or_else(|| env.ed.brushes.get(o.brush_preset).cloned()).or_else(|| presets().first().cloned()).unwrap_or_else(|| BrushPreset::round("Pincel", 24.0, 0.9));
         p.size = o.brush_size.max(0.5);
         p.opacity = o.brush_opacity.clamp(0.0, 1.0);
         p

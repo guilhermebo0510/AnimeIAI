@@ -609,6 +609,79 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
     }
 }
 
+/// Contorno da ponta do pincel em pontos da tela (raio `r`, sem giro), como segmentos: a elipse da ponta redonda
+/// (achatamento e ângulo) ou o contorno da forma de cenário, tirado da própria cobertura do motor (quadrados
+/// marchantes numa grade, calculado uma vez por forma). `None` = círculo comum.
+fn tip_outline(tip: &aiai_paint::brush::BrushTip, two_tone: bool, r: f32) -> Option<Vec<[Vec2; 2]>> {
+    use aiai_paint::brush::BrushTip;
+    match tip {
+        BrushTip::Round { roundness, angle, .. } if *roundness < 0.98 || angle.abs() > 0.5 => {
+            let (s, c) = angle.to_radians().sin_cos();
+            let n = 48;
+            let pt = |k: usize| {
+                let a = k as f32 / n as f32 * std::f32::consts::TAU;
+                let (x, y) = (a.cos() * r, a.sin() * r * roundness.clamp(0.05, 1.0));
+                Vec2::new(x * c - y * s, x * s + y * c)
+            };
+            Some((0..n).map(|k| [pt(k), pt(k + 1)]).collect())
+        }
+        BrushTip::Shape { shape, aspect } => {
+            let unit = shape_outline_unit(*shape, two_tone);
+            let a = aspect.clamp(0.1, 4.0);
+            Some(unit.iter().map(|[p, q]| [Vec2::new(p.x * r * a, p.y * r), Vec2::new(q.x * r * a, q.y * r)]).collect())
+        }
+        _ => None,
+    }
+}
+
+/// Contorno (coordenadas da forma, -1..1) da forma de ponta, em cache.
+fn shape_outline_unit(shape: aiai_paint::brush::TipShape, two_tone: bool) -> Vec<[Vec2; 2]> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<String, Vec<[Vec2; 2]>>>> = OnceLock::new();
+    let key = format!("{shape:?}{two_tone}");
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(v) = cache.lock().ok().and_then(|c| c.get(&key).cloned()) {
+        return v;
+    }
+    // grade de amostras da cobertura e quadrados marchantes no nível 0,5
+    let n = 64usize;
+    let (lo, hi) = (-1.25f32, 1.25f32);
+    let step = (hi - lo) / n as f32;
+    let at = |i: usize, j: usize| Vec2::new(lo + i as f32 * step, lo + j as f32 * step);
+    let f: Vec<f32> = (0..=n).flat_map(|j| (0..=n).map(move |i| (i, j))).map(|(i, j)| {
+        let p = at(i, j);
+        aiai_paint::brush::shape_coverage_tone(shape, p.x, p.y, step, two_tone) - 0.5
+    }).collect();
+    let v = |i: usize, j: usize| f[j * (n + 1) + i];
+    let mut segs = Vec::new();
+    for j in 0..n {
+        for i in 0..n {
+            let c = [(i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1)];
+            let val = c.map(|(x, y)| v(x, y));
+            let mut cross = Vec::new();
+            for k in 0..4 {
+                let (a, b) = (k, (k + 1) % 4);
+                if (val[a] > 0.0) != (val[b] > 0.0) {
+                    let t = val[a] / (val[a] - val[b]);
+                    let (pa, pb) = (at(c[a].0, c[a].1), at(c[b].0, c[b].1));
+                    cross.push(pa + (pb - pa) * t);
+                }
+            }
+            if cross.len() >= 2 {
+                segs.push([cross[0], cross[1]]);
+            }
+            if cross.len() == 4 {
+                segs.push([cross[2], cross[3]]);
+            }
+        }
+    }
+    if let Ok(mut c) = cache.lock() {
+        c.insert(key, segs.clone());
+    }
+    segs
+}
+
 /// Ferramentas cuja mira o canvas desenha (no mesmo quadro do contorno do pincel).
 fn own_cursor(tool: ToolId) -> bool {
     matches!(tool, ToolId::Pen | ToolId::Brush | ToolId::Eraser | ToolId::Fill | ToolId::Eyedropper | ToolId::Lasso)
@@ -709,8 +782,23 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
             };
             if let Some(d) = d.filter(|_| ring && !nav) {
                 let r = (d * xf.scale / 2.0).max(1.5);
-                painter.circle_stroke(p, r + 0.5, Stroke::new(1.0, Color32::from_black_alpha(160)));
-                painter.circle_stroke(p, r - 0.5, Stroke::new(1.0, Color32::from_white_alpha(200)));
+                // pincel: o contorno da ponta de verdade (forma de cenário ou elipse da ponta redonda)
+                let tip = (*env.tool == ToolId::Brush).then(|| tools::stroke_preset(env, false).tip);
+                let segs = tip.as_ref().and_then(|t| tip_outline(t, tools::stroke_preset(env, false).two_tone.is_some(), r));
+                match segs {
+                    Some(segs) => {
+                        for [a, b] in &segs {
+                            painter.line_segment([p + *a, p + *b], Stroke::new(2.5, Color32::from_black_alpha(150)));
+                        }
+                        for [a, b] in &segs {
+                            painter.line_segment([p + *a, p + *b], Stroke::new(1.0, Color32::from_white_alpha(220)));
+                        }
+                    }
+                    None => {
+                        painter.circle_stroke(p, r + 0.5, Stroke::new(1.0, Color32::from_black_alpha(160)));
+                        painter.circle_stroke(p, r - 0.5, Stroke::new(1.0, Color32::from_white_alpha(200)));
+                    }
+                }
             }
             if own_cursor(*env.tool) && !nav {
                 // mira fina em duas cores (aparece em fundo claro e escuro), com um vão no meio para ver o ponto
@@ -782,14 +870,25 @@ fn paint_camera(env: &mut Env, painter: &egui::Painter, xf: &Xf, cd: &CutData, c
     let frame = scaled(1.0);
     painter.add(Shape::closed_line(frame.clone(), Stroke::new(1.5, t.accent)));
     let dash = Stroke::new(1.0, t.accent.gamma_multiply(0.75));
-    for k in [0.93f32, 0.9] {
+    // áreas de segurança de TV, dentro do quadro da câmera: ação (93%) e título (90%)
+    for (k, key) in [(0.93f32, "canvas.safe_action"), (0.9, "canvas.safe_title")] {
         let mut pts = scaled(k);
         pts.push(pts[0]);
         painter.extend(Shape::dashed_line(&pts, dash, 6.0, 4.0));
+        let g = painter.layout_no_wrap(tr(key).to_owned(), egui::FontId::proportional(9.5), t.accent.gamma_multiply(0.8));
+        let at = if k > 0.92 { pts[1] + egui::vec2(-g.size().x - 3.0, 2.0) } else { pts[1] + egui::vec2(-g.size().x - 3.0, 13.0) };
+        painter.galley(at, g, t.accent);
     }
     let label = format!("{}  {:.0} x {:.0}", tr("canvas.camera_label"), ow, oh);
     let galley = painter.layout_no_wrap(label, egui::FontId::proportional(11.0), t.accent);
     painter.galley(frame[0] + egui::vec2(2.0, -galley.size().y - 3.0), galley, t.accent);
+    // o canvas do corte maior que a câmera (fundo para movimento de câmera): o tamanho dele, no canto do canvas
+    if canvas.0 as f32 > ow + 0.5 || canvas.1 as f32 > oh + 0.5 {
+        let text = format!("{}  {} x {}", tr("canvas.cut_canvas_label"), canvas.0, canvas.1);
+        let g = painter.layout_no_wrap(text, egui::FontId::proportional(11.0), t.text_dim);
+        let top_left = xf.to_screen(Vec2::new(0.0, 0.0));
+        painter.galley(top_left + egui::vec2(2.0, -g.size().y - 3.0), g, t.text_dim);
+    }
 }
 
 fn two_tone(painter: &egui::Painter, pts: Vec<Pos2>, closed: bool) {

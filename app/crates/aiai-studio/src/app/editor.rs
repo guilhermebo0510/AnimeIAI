@@ -604,7 +604,11 @@ pub(crate) struct Editor {
     /// Traço escolhido para editar pontos (Mover em "Editar pontos").
     pub node_stroke: Option<aiai_core::Id>,
     /// Miniatura de traço de cada preset de pincel (feita pelo próprio motor, uma vez).
-    pub brush_thumbs: Vec<egui::TextureHandle>,
+    /// Biblioteca de pincéis (fábrica + usuário) e estado do painel Pincéis.
+    pub brushes: super::brushes::BrushLibrary,
+    pub brush_panel: super::panels::brushes::BrushPanelState,
+    /// Painel a trazer para a frente no próximo quadro (aba do layout).
+    pub want_panel: Option<crate::layout::PanelKind>,
     /// Som ao vivo (reprodução e scrub da mixagem do corte).
     pub live: super::audio_out::AudioOut,
     pub cut: Option<NodeId>,
@@ -707,7 +711,9 @@ impl Default for Editor {
             subview: Default::default(),
             node_stroke: None,
             shift: false,
-            brush_thumbs: Vec::new(),
+            brushes: Default::default(),
+            brush_panel: Default::default(),
+            want_panel: None,
             live: super::audio_out::AudioOut::new(false),
             keys: crate::keymap::Keymap::default(),
             cut: None,

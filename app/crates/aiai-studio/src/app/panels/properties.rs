@@ -46,7 +46,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: egui::Rect) {
 }
 
 /// Miniatura 140×28 de cada preset: uma pincelada senoidal com pressão crescente desenhada pelo `paint_stroke`.
-fn brush_thumbnails(ctx: &egui::Context, presets: &[aiai_paint::brush::BrushPreset], bg: egui::Color32, ink: egui::Color32) -> Vec<egui::TextureHandle> {
+pub(crate) fn brush_thumbnails(ctx: &egui::Context, presets: &[aiai_paint::brush::BrushPreset], bg: egui::Color32, ink: egui::Color32) -> Vec<egui::TextureHandle> {
     use aiai_paint::brush::{BrushPoint, paint_stroke};
     let (w, h) = (280u32, 56u32); // 2× para ficar nítida
     let bgc = [bg.r() as f32 / 255.0, bg.g() as f32 / 255.0, bg.b() as f32 / 255.0, 1.0];
@@ -72,25 +72,63 @@ fn brush_thumbnails(ctx: &egui::Context, presets: &[aiai_paint::brush::BrushPres
         .collect()
 }
 
-/// Ajustes finos do pincel ativo: os parâmetros do motor, numa cópia do preset (o preset de fábrica não muda).
-fn brush_settings(ui: &mut Ui, o: &mut super::super::editor::ToolOptions) {
-    let base = tools::presets().get(o.brush_preset).cloned();
+/// Ajustes finos do pincel ativo: os parâmetros do motor, numa cópia do preset (o preset da biblioteca não muda;
+/// "Salvar como pincel novo" no painel Pincéis guarda a cópia).
+fn brush_settings(ui: &mut Ui, o: &mut super::super::editor::ToolOptions, base: Option<aiai_paint::brush::BrushPreset>) {
     let Some(mut p) = o.brush_custom.clone().or(base.clone()) else { return };
     let before = p.clone();
-    egui::CollapsingHeader::new(tr("brush.settings")).id_salt("brush_settings").default_open(false).show(ui, |ui| {
+    egui::CollapsingHeader::new(tr("brush.settings")).id_salt("brush_settings").default_open(true).show(ui, |ui| {
         egui::Grid::new("brush_settings_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
             let slider = |ui: &mut Ui, key: &str, v: &mut f32, lo: f32, hi: f32| {
                 ui.label(tr(key));
                 ui.add(egui::Slider::new(v, lo..=hi).max_decimals(2));
                 ui.end_row();
             };
+            // ponta: redonda (dureza, achatamento, ângulo) ou forma de cenário (folha, grama, nuvem...)
+            {
+                use aiai_paint::brush::{BrushTip, TipShape};
+                const SHAPES: [(TipShape, &str); 7] = [
+                    (TipShape::Leaf, "tipshape.leaf"),
+                    (TipShape::Petal, "tipshape.petal"),
+                    (TipShape::GrassBlade, "tipshape.grass"),
+                    (TipShape::CloudPuff, "tipshape.cloud"),
+                    (TipShape::Star, "tipshape.star"),
+                    (TipShape::Square, "tipshape.square"),
+                    (TipShape::Rose, "tipshape.rose"),
+                ];
+                let current = match &p.tip {
+                    BrushTip::Round { .. } => tr("tipshape.round").to_owned(),
+                    BrushTip::Shape { shape, .. } => SHAPES.iter().find(|(s, _)| s == shape).map(|(_, k)| tr(k).to_owned()).unwrap_or_default(),
+                    BrushTip::Image { .. } => tr("tipshape.image").to_owned(),
+                };
+                ui.label(tr("brush.tip"));
+                let mut next: Option<BrushTip> = None;
+                egui::ComboBox::from_id_salt("brush_tip_kind").selected_text(current).show_ui(ui, |ui| {
+                    if ui.selectable_label(matches!(p.tip, BrushTip::Round { .. }), tr("tipshape.round")).clicked() {
+                        next = Some(BrushTip::Round { hardness: 0.8, roundness: 1.0, angle: 0.0 });
+                    }
+                    for (s, k) in SHAPES {
+                        if ui.selectable_label(matches!(&p.tip, BrushTip::Shape { shape, .. } if *shape == s), tr(k)).clicked() {
+                            next = Some(BrushTip::Shape { shape: s, aspect: 1.0 });
+                        }
+                    }
+                });
+                ui.end_row();
+                if let Some(n) = next {
+                    p.tip = n;
+                }
+                match &mut p.tip {
+                    BrushTip::Round { hardness, roundness, angle } => {
+                        slider(ui, "brush.hardness", hardness, 0.0, 1.0);
+                        slider(ui, "brush.roundness", roundness, 0.1, 1.0);
+                        slider(ui, "brush.angle", angle, -90.0, 90.0);
+                    }
+                    BrushTip::Shape { aspect, .. } => slider(ui, "brush.aspect", aspect, 0.2, 3.0),
+                    BrushTip::Image { .. } => {}
+                }
+            }
             slider(ui, "brush.flow", &mut p.flow, 0.02, 1.0);
             slider(ui, "brush.spacing", &mut p.spacing, 0.02, 2.0);
-            if let aiai_paint::brush::BrushTip::Round { hardness, roundness, angle } = &mut p.tip {
-                slider(ui, "brush.hardness", hardness, 0.0, 1.0);
-                slider(ui, "brush.roundness", roundness, 0.1, 1.0);
-                slider(ui, "brush.angle", angle, -90.0, 90.0);
-            }
             slider(ui, "brush.size_pressure", &mut p.size_pressure_min, 0.0, 1.0);
             slider(ui, "brush.opacity_pressure", &mut p.opacity_pressure_min, 0.0, 1.0);
             slider(ui, "brush.flow_pressure", &mut p.flow_pressure_min, 0.0, 1.0);
@@ -109,6 +147,29 @@ fn brush_settings(ui: &mut Ui, o: &mut super::super::editor::ToolOptions) {
             ui.label(tr("brush.follow"));
             ui.checkbox(&mut p.follow_direction, "");
             ui.end_row();
+            // modo de mistura do traço e antisserrilhado
+            {
+                use aiai_paint::brush::BrushMode as M;
+                let key = |m: M| match m {
+                    M::Normal => "bmode.normal",
+                    M::Multiply => "bmode.multiply",
+                    M::Screen => "bmode.screen",
+                    M::Overlay => "bmode.overlay",
+                    M::Add => "bmode.add",
+                    M::Behind => "bmode.behind",
+                    M::Erase => "bmode.erase",
+                };
+                ui.label(tr("brush.mode"));
+                egui::ComboBox::from_id_salt("brush_mode").selected_text(tr(key(p.mode))).show_ui(ui, |ui| {
+                    for m in [M::Normal, M::Multiply, M::Screen, M::Overlay, M::Add, M::Behind, M::Erase] {
+                        ui.selectable_value(&mut p.mode, m, tr(key(m)));
+                    }
+                });
+                ui.end_row();
+                ui.label(tr("brush.aliased"));
+                ui.checkbox(&mut p.aliased, "").on_hover_text(tr("brush.aliased.tip"));
+                ui.end_row();
+            }
             // duas cores no carimbo (pontas de forma): sombra derivada da cor do pincel por um tom e uma quantidade
             if matches!(p.tip, aiai_paint::brush::BrushTip::Shape { .. }) {
                 ui.label(tr("brush.two_tone"));
@@ -247,49 +308,34 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
             ui.checkbox(&mut o.pen_autoclose, tr("opt.autoclose")).on_hover_text(tr("opt.autoclose.tip"));
         }
         ToolId::Brush => {
-            let presets = tools::presets();
-            if env.ed.brush_thumbs.len() != presets.len() {
-                env.ed.brush_thumbs = brush_thumbnails(ui.ctx(), presets, t.bg_widget, t.text);
-            }
-            let thumbs = env.ed.brush_thumbs.clone();
-            let o = &mut env.ed.opts;
+            // o pincel é escolhido no painel Pincéis (categorias e miniaturas): aqui só o nome, que leva até lá
+            let base = env.ed.brushes.get(env.ed.opts.brush_preset).cloned();
+            let name = base.as_ref().map(|p| p.name.clone()).unwrap_or_else(|| "-".into());
+            let custom = if env.ed.opts.brush_custom.is_some() { " *" } else { "" };
+            let mut open_panel = false;
             row(ui, &t, compact, "opt.preset", |ui| {
-                let name = presets.get(o.brush_preset).map(|p| p.name.as_str()).unwrap_or("-");
-                let custom = if o.brush_custom.is_some() { " *" } else { "" };
-                egui::ComboBox::from_id_salt(("brush_preset", compact))
-                    .width(130.0)
-                    .height(560.0)
-                    .selected_text(format!("{name}{custom}"))
-                    .show_ui(ui, |ui| {
-                        // lista com a miniatura do traço de cada preset (o motor de verdade desenha a miniatura)
-                        for (i, p) in presets.iter().enumerate() {
-                            let r = ui.horizontal(|ui| {
-                                if let Some(tex) = thumbs.get(i) {
-                                    ui.add(egui::Image::new(tex).fit_to_exact_size(egui::vec2(140.0, 28.0)));
-                                }
-                                ui.selectable_label(o.brush_preset == i, &p.name)
-                            });
-                            if r.inner.clicked() || r.response.clicked() {
-                                o.brush_preset = i;
-                                o.brush_size = p.size;
-                                o.brush_opacity = p.opacity;
-                                o.brush_custom = None;
-                            }
-                        }
-                    })
-                    .response
-                    .on_hover_text(tr("opt.preset"));
+                let b = ui.button(format!("{name}{custom}  ›"));
+                open_panel = b.on_hover_text(tr("opt.preset.tip")).clicked();
             });
+            if open_panel {
+                env.ed.want_panel = Some(crate::layout::PanelKind::Brushes);
+            }
+            let o = &mut env.ed.opts;
+            let mut size_rect = None;
             row(ui, &t, compact, "opt.size", |ui| {
-                ui.add(egui::DragValue::new(&mut o.brush_size).range(1.0..=600.0).speed(0.5).max_decimals(0).suffix(" px"));
+                size_rect = Some(ui.add(egui::DragValue::new(&mut o.brush_size).range(1.0..=600.0).speed(0.5).max_decimals(0).suffix(" px")).rect);
             });
+            if let Some(r) = size_rect.filter(|_| !compact) {
+                env.notes.push(("opt:brush_size".into(), r));
+            }
+            let o = &mut env.ed.opts;
             row(ui, &t, compact, "opt.opacity", |ui| {
                 ui.spacing_mut().slider_width = if compact { 64.0 } else { 120.0 };
                 ui.add(egui::Slider::new(&mut o.brush_opacity, 0.05..=1.0).show_value(!compact).custom_formatter(|v, _| format!("{:.0}%", v * 100.0)).trailing_fill(true)).on_hover_text(tr("opt.opacity"));
             });
             stabilizer_row(ui, &t, compact, o);
             if !compact {
-                brush_settings(ui, o);
+                brush_settings(ui, o, base);
             }
         }
         ToolId::Eraser => {
@@ -406,7 +452,17 @@ fn stabilizer_row(ui: &mut Ui, t: &crate::theme::Tokens, compact: bool, o: &mut 
             }
         })
         .response
-        .on_hover_text(tr("opt.stabilizer"));
+        .on_hover_text(tr("opt.stabilizer.tip"));
+        // força da correção de tremura
+        match o.stab_mode {
+            StabMode::Average => {
+                ui.add(egui::DragValue::new(&mut o.stab_window).range(1..=30).speed(0.2)).on_hover_text(tr("stab.window.tip"));
+            }
+            StabMode::Lazy => {
+                ui.add(egui::DragValue::new(&mut o.stab_radius).range(1.0..=80.0).speed(0.3).suffix(" pt").max_decimals(0)).on_hover_text(tr("stab.radius.tip"));
+            }
+            StabMode::Off => {}
+        }
     });
 }
 
@@ -423,7 +479,7 @@ fn layer_properties(env: &mut Env, ui: &mut Ui) {
         dim_label(ui, &t, tr("props.type"));
         ui.label(tr(cmds::layer_type_key(l.kind)));
         ui.end_row();
-        dim_label(ui, &t, tr("props.role"));
+        ui.label(egui::RichText::new(tr("props.role")).size(12.0).color(t.text_dim)).on_hover_text(tr("props.role.tip"));
         let mut role = l.role;
         egui::ComboBox::from_id_salt("layer_role").width(130.0).selected_text(tr(role_key(role))).show_ui(ui, |ui| {
             for r in ROLES {
@@ -434,12 +490,12 @@ fn layer_properties(env: &mut Env, ui: &mut Ui) {
             let _ = cmds::set_layer_props(env.core, &layer, json!({ "role": role }));
         }
         ui.end_row();
-        dim_label(ui, &t, tr("props.depth"));
+        ui.label(egui::RichText::new(tr("props.depth")).size(12.0).color(t.text_dim)).on_hover_text(tr("props.depth.tip"));
         if let Some(v) = commit_on_release(ui, Id::new(("depth", &layer)), l.depth, |ui, v| ui.add(egui::DragValue::new(v).range(0.0..=100.0).speed(0.05).max_decimals(2))) {
             let _ = cmds::set_layer_props(env.core, &layer, json!({ "depth": v }));
         }
         ui.end_row();
-        dim_label(ui, &t, tr("props.offset"));
+        ui.label(egui::RichText::new(tr("props.offset")).size(12.0).color(t.text_dim)).on_hover_text(tr("props.offset.tip"));
         ui.horizontal(|ui| {
             for axis in 0..2 {
                 if let Some(v) = commit_on_release(ui, Id::new(("offset", &layer, axis)), l.offset[axis], |ui, v| ui.add(egui::DragValue::new(v).speed(0.5).max_decimals(1).suffix(" px"))) {
