@@ -542,6 +542,8 @@ pub(crate) enum Gesture {
     MoveSel { last: Vec2 },
     /// Editar pontos: arrasto de um ponto de controle (posições no espaço do cel; `width` = muda a largura no ponto).
     DragNode { idx: usize, start: Vec2, cur: Vec2, width: bool, t0: std::time::Instant },
+    /// Editar pontos: arrasto de uma ponta da alça do ponto `idx` (`side` = +1 a de saída, -1 a de chegada).
+    DragHandle { idx: usize, side: f32, cur: Vec2, t0: std::time::Instant },
     /// Caneta em forma de régua (linha, retângulo, elipse): do ponto de partida até o cursor.
     Shape { start: Vec2, cur: Vec2 },
     /// Caneta em curva por cliques: cada clique põe um ponto; Enter, duplo clique ou botão direito termina.

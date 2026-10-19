@@ -22,6 +22,9 @@ impl Chord {
     pub const fn ctrl(key: Key) -> Chord {
         Chord { ctrl: true, shift: false, alt: false, key }
     }
+    pub const fn shift(key: Key) -> Chord {
+        Chord { ctrl: false, shift: true, alt: false, key }
+    }
     pub const fn ctrl_shift(key: Key) -> Chord {
         Chord { ctrl: true, shift: true, alt: false, key }
     }
@@ -123,10 +126,15 @@ pub enum Action {
     FileSaveAs,
     EditUndo,
     EditRedo,
+    PointDelete,
+    PointNext,
+    PointPrev,
+    PointCorner,
+    PointAutoHandle,
 }
 
 /// (ação, id guardado nas preferências, chave i18n do nome, atalho padrão), na ordem do editor de atalhos.
-pub const ACTIONS: [(Action, &str, &str, Chord); 24] = [
+pub const ACTIONS: [(Action, &str, &str, Chord); 29] = [
     (Action::ToolMove, "tool.move", "tool.move", Chord::plain(Key::V)),
     (Action::ToolBrush, "tool.brush", "tool.brush", Chord::plain(Key::B)),
     (Action::ToolPen, "tool.pen", "tool.pen", Chord::plain(Key::P)),
@@ -151,6 +159,11 @@ pub const ACTIONS: [(Action, &str, &str, Chord); 24] = [
     (Action::FileSaveAs, "file.save_as", "menu.file.save_as", Chord::ctrl_shift(Key::S)),
     (Action::EditUndo, "edit.undo", "menu.edit.undo", Chord::ctrl(Key::Z)),
     (Action::EditRedo, "edit.redo", "menu.edit.redo", Chord::ctrl_shift(Key::Z)),
+    (Action::PointDelete, "point.delete", "keys.point_delete", Chord::plain(Key::Delete)),
+    (Action::PointNext, "point.next", "keys.point_next", Chord::plain(Key::Period)),
+    (Action::PointPrev, "point.prev", "keys.point_prev", Chord::plain(Key::Comma)),
+    (Action::PointCorner, "point.corner", "keys.point_corner", Chord::plain(Key::C)),
+    (Action::PointAutoHandle, "point.auto_handle", "keys.point_auto_handle", Chord::shift(Key::C)),
 ];
 
 impl Action {

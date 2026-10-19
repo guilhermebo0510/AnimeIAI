@@ -77,7 +77,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
             tools::feed_live(env, &g);
             env.ed.gesture = Gesture::Stroke(g);
         }
-    } else if let Gesture::DragNode { t0, .. } = env.ed.gesture {
+    } else if let Gesture::DragNode { t0, .. } | Gesture::DragHandle { t0, .. } = env.ed.gesture {
         // Editar pontos: a linha de verdade anda junto com o ponto
         if env.ed.live_stroke.started_for() != Some(t0) {
             super::nodes::start_live(env, &ctx, t0, xf.scale);
@@ -564,7 +564,7 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
             }
         }
         Gesture::Shape { cur, .. } => *cur = c,
-        Gesture::DragNode { .. } => super::nodes::drag(env, c),
+        Gesture::DragNode { .. } | Gesture::DragHandle { .. } => super::nodes::drag(env, c),
         Gesture::PolyCurve { .. } => {}
         Gesture::ScaleSel { start_dist, start_scale } => {
             if let Some(s) = env.ed.selection.as_mut() {
@@ -623,7 +623,7 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
                 }
             }
         }
-        g @ Gesture::DragNode { .. } => {
+        g @ (Gesture::DragNode { .. } | Gesture::DragHandle { .. }) => {
             super::nodes::release(env, g);
             let counter = env.core.change_counter;
             env.ed.live_stroke.release(Some(counter));

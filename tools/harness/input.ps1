@@ -148,7 +148,7 @@ function Glide([int]$x, [int]$y, [int]$n) {
 $VK = @{ 'esc'=27; 'enter'=13; 'tab'=9; 'space'=32; 'back'=8; 'del'=46; 'delete'=46; 'ins'=45; 'home'=36; 'end'=35; 'pgup'=33; 'pgdn'=34;
   'left'=37; 'up'=38; 'right'=39; 'down'=40; 'ctrl'=17; 'shift'=16; 'alt'=18; 'win'=91;
   'f1'=112; 'f2'=113; 'f3'=114; 'f4'=115; 'f5'=116; 'f6'=117; 'f7'=118; 'f8'=119; 'f9'=120; 'f10'=121; 'f11'=122; 'f12'=123;
-  'minus'=189; 'plus'=187; 'comma'=188; 'period'=190 }
+  'minus'=189; 'plus'=187; 'comma'=188; 'period'=190; 'obracket'=219; 'cbracket'=221 }
 function VkOf([string]$name) {
     $k = $name.ToLower()
     if ($VK.ContainsKey($k)) { return [uint16]$VK[$k] }

@@ -241,7 +241,11 @@ fn pts_field(env: &mut Env, ui: &mut Ui, key: &'static str, label: &str, cur: f3
             Some((k, v)) if k == key => v,
             _ => cur,
         };
-        let r = ui.add(egui::DragValue::new(&mut v).range(min..=max).speed(0.1).max_decimals(2).suffix(if key == "x" || key == "y" { "" } else { " px" }));
+        let r = ui.add(egui::DragValue::new(&mut v).range(min..=max).speed(0.1).max_decimals(2).suffix(match key {
+            "x" | "y" => "",
+            "hang" => "°",
+            _ => " px",
+        }));
         env.note(format!("pts:{key}"), r.rect);
         let editing = r.dragged() || r.has_focus();
         if editing {
@@ -576,6 +580,24 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
                                 st.points[i].y = v;
                                 true
                             });
+                            if let Some(h) = aiai_paint::point_handle(&s, i).filter(|_| !q.corner) {
+                                let (len, ang) = (h[0].hypot(h[1]), h[1].atan2(h[0]).to_degrees());
+                                pts_field(env, ui, "hlen", tr("pts.handle_len"), len, 0.0, 5000.0, move |st, v| {
+                                    let a = ang.to_radians();
+                                    st.points[i].handle = Some([v * a.cos(), v * a.sin()]);
+                                    true
+                                });
+                                pts_field(env, ui, "hang", tr("pts.handle_angle"), ang, -360.0, 360.0, move |st, v| {
+                                    let a = v.to_radians();
+                                    st.points[i].handle = Some([len * a.cos(), len * a.sin()]);
+                                    true
+                                });
+                                let b = ui.add_enabled(q.handle.is_some(), egui::Button::new(tr("pts.handle_auto")));
+                                env.note("pts:handle_auto", b.rect);
+                                if b.on_hover_text(tr("pts.handle_auto.tip")).clicked() {
+                                    nodes::auto_handle(env);
+                                }
+                            }
                             let mut corner = q.corner;
                             let r = ui.checkbox(&mut corner, tr("pts.corner"));
                             env.note("pts:corner", r.rect);

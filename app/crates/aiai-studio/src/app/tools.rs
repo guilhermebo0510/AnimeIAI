@@ -893,6 +893,55 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
     use egui::{Key, Modifiers};
     let none = Modifiers::NONE;
     let keys = env.ed.keys.clone();
+    // Editar pontos com um ponto escolhido: Delete apaga, . e , passam de ponto, C alterna canto/suave,
+    // Shift+C volta a alça para a automática, setas movem (Shift = 10 px) e Esc solta o ponto. Vem antes dos atalhos
+    // gerais (as setas trocam de quadro quando não há ponto escolhido).
+    if *env.tool == ToolId::Points && env.ed.node_stroke.is_some() {
+        let has_point = env.ed.node_sel.is_some();
+        let (del, next, prev, corner, auto, arrows, esc) = ctx.input_mut(|i| {
+            let hit = |a: A, i: &mut egui::InputState| keys.get(a).is_some_and(|c| c.take(i));
+            let (next, prev) = (hit(A::PointNext, i), hit(A::PointPrev, i));
+            let (del, corner, auto) = if has_point {
+                let d = hit(A::PointDelete, i) || i.consume_key(Modifiers::NONE, Key::Backspace);
+                (d, hit(A::PointCorner, i), hit(A::PointAutoHandle, i))
+            } else {
+                (false, false, false)
+            };
+            let mut arrows = Vec2::ZERO;
+            if has_point {
+                // Shift primeiro: sem modificador, o egui também casa a tecla com Shift apertado
+                for (m, step) in [(Modifiers::SHIFT, 10.0), (Modifiers::NONE, 1.0)] {
+                    for (k, d) in [(Key::ArrowLeft, Vec2::new(-1.0, 0.0)), (Key::ArrowRight, Vec2::new(1.0, 0.0)), (Key::ArrowUp, Vec2::new(0.0, -1.0)), (Key::ArrowDown, Vec2::new(0.0, 1.0))] {
+                        if i.consume_key(m, k) {
+                            arrows += d * step;
+                        }
+                    }
+                }
+            }
+            (del, next, prev, corner, auto, arrows, i.consume_key(Modifiers::NONE, Key::Escape))
+        });
+        if del {
+            super::nodes::delete_selected(env);
+        }
+        if next || prev {
+            super::nodes::select_step(env, if next { 1 } else { -1 });
+        }
+        if corner {
+            super::nodes::toggle_corner(env);
+        }
+        if auto {
+            super::nodes::auto_handle(env);
+        }
+        if arrows != Vec2::ZERO {
+            super::nodes::nudge(env, arrows.x, arrows.y);
+        }
+        if esc {
+            // Esc solta o ponto; com nenhum ponto, solta o traço
+            if env.ed.node_sel.take().is_none() {
+                env.ed.node_stroke = None;
+            }
+        }
+    }
     let (tool_key, size_dir, enter, esc, step, home_end, fit, one) = ctx.input_mut(|i| {
         // atalho configurável (Preferências > Atalhos): só dispara com os modificadores exatos
         let mut hit = |a: A| keys.get(a).is_some_and(|c| c.take(i));
@@ -901,6 +950,7 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
             (A::ToolMove, ToolId::Move),
             (A::ToolBrush, ToolId::Brush),
             (A::ToolPen, ToolId::Pen),
+            (A::ToolPoints, ToolId::Points),
             (A::ToolEraser, ToolId::Eraser),
             (A::ToolFill, ToolId::Fill),
             (A::ToolLasso, ToolId::Lasso),
@@ -934,6 +984,8 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
             ToolId::Pen => o.pen_width = (o.pen_width * k).clamp(0.5, 200.0),
             ToolId::Brush => o.brush_size = (o.brush_size * k).clamp(1.0, 600.0),
             ToolId::Eraser => o.eraser_size = (o.eraser_size * k).clamp(1.0, 600.0),
+            // Editar pontos: [ e ] afinam/engrossam o traço no ponto escolhido
+            ToolId::Points => super::nodes::width_step(env, k),
             _ => {}
         }
     }

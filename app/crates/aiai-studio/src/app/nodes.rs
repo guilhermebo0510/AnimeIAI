@@ -112,9 +112,19 @@ pub(crate) fn press(env: &mut Env, c_canvas: Vec2, pix: f32, button: egui::Point
     let mode = env.ed.opts.points_mode;
     let t0 = std::time::Instant::now();
     if let Some(s) = picked(env, &c) {
+        if button == egui::PointerButton::Primary {
+            if let Some((i, side)) = handle_hit(env, &s, p, pix, tol) {
+                env.ed.gesture = Gesture::DragHandle { idx: i, side, cur: p, t0 };
+                return;
+            }
+        }
         let near = s.points.iter().enumerate().map(|(i, q)| (i, (Vec2::new(q.x, q.y) - p).length())).filter(|(_, d)| *d <= tol).min_by(|a, b| a.1.total_cmp(&b.1));
         if let Some((i, _)) = near {
-            if button == egui::PointerButton::Secondary || (mode == PointsMode::Delete && button == egui::PointerButton::Primary) {
+            if button == egui::PointerButton::Secondary {
+                env.ed.node_sel = Some(i);
+                return;
+            }
+            if mode == PointsMode::Delete && button == egui::PointerButton::Primary {
                 let mut ns = s.clone();
                 if delete_point(&mut ns, i) {
                     replace(env, &c.cel, ns, "apagar ponto");
@@ -168,9 +178,112 @@ pub(crate) fn press(env: &mut Env, c_canvas: Vec2, pix: f32, button: egui::Point
 pub(crate) fn drag(env: &mut Env, c_canvas: Vec2) {
     let Some(c) = ctx(env) else { return };
     let p = apply(&c.inv, c_canvas);
-    if let Gesture::DragNode { cur, .. } = &mut env.ed.gesture {
+    if let Gesture::DragNode { cur, .. } | Gesture::DragHandle { cur, .. } = &mut env.ed.gesture {
         *cur = p;
     }
+}
+
+/// O traço com o gesto em andamento (ponto ou alça) aplicado.
+fn preview(s: &Stroke, g: &Gesture) -> Option<Stroke> {
+    match *g {
+        Gesture::DragNode { idx, start, cur, width, .. } => Some(dragged(s, idx, start, cur, width)),
+        Gesture::DragHandle { idx, side, cur, .. } => {
+            let mut ns = s.clone();
+            let q = ns.points.get_mut(idx)?;
+            q.handle = Some([(cur.x - q.x) * side, (cur.y - q.y) * side]);
+            q.corner = false;
+            Some(ns)
+        }
+        _ => None,
+    }
+}
+
+/// Pontas da alça do ponto escolhido em px do cel (a de saída, a de chegada): `ponto ± alça`; alça curta demais
+/// para pegar com o mouse é mostrada com 14 px de tela (pegar e puxar a deixa do tamanho do arrasto).
+fn handle_ends(s: &Stroke, i: usize, pix: f32) -> Option<(Vec2, Vec2)> {
+    let q = s.points.get(i)?;
+    if q.corner {
+        return None;
+    }
+    let h = aiai_paint::point_handle(s, i)?;
+    let mut hv = Vec2::new(h[0], h[1]);
+    let min = 14.0 * pix;
+    if hv.length() < min {
+        hv = if hv.length() > 1e-4 { hv.normalized() * min } else { Vec2::new(min, 0.0) };
+    }
+    let p = Vec2::new(q.x, q.y);
+    Some((p + hv, p - hv))
+}
+
+fn handle_hit(env: &Env, s: &Stroke, p: Vec2, pix: f32, tol: f32) -> Option<(usize, f32)> {
+    let i = env.ed.node_sel.filter(|&i| i < s.points.len())?;
+    let (out, inn) = handle_ends(s, i, pix)?;
+    let (d1, d2) = ((out - p).length(), (inn - p).length());
+    if d1 <= tol && d1 <= d2 {
+        Some((i, 1.0))
+    } else if d2 <= tol {
+        Some((i, -1.0))
+    } else {
+        None
+    }
+}
+
+// ------------------------------------------------------------------------------------------------ teclado
+
+/// Passa para o ponto seguinte/anterior do traço (. e ,).
+pub(crate) fn select_step(env: &mut Env, d: i32) {
+    let Some((s, sel)) = selection(env) else { return };
+    let n = s.points.len() as i32;
+    if n == 0 {
+        return;
+    }
+    let i = match sel {
+        Some(i) => (i as i32 + d).rem_euclid(n),
+        None if d >= 0 => 0,
+        None => n - 1,
+    };
+    env.ed.node_sel = Some(i as usize);
+}
+
+/// Move o ponto escolhido (setas; Shift = 10 px), em px do canvas.
+pub(crate) fn nudge(env: &mut Env, dx: f32, dy: f32) {
+    let Some(c) = ctx(env) else { return };
+    let Some(i) = env.ed.node_sel else { return };
+    // o deslocamento de tela vira deslocamento no cel (camada com movimento)
+    let (o, d) = (apply(&c.inv, Vec2::ZERO), apply(&c.inv, Vec2::new(dx, dy)));
+    let v = d - o;
+    edit(env, "mover ponto", |s| {
+        let Some(q) = s.points.get_mut(i) else { return false };
+        q.x += v.x;
+        q.y += v.y;
+        true
+    });
+}
+
+/// Alterna canto/suave no ponto escolhido (C).
+pub(crate) fn toggle_corner(env: &mut Env) {
+    let Some(i) = env.ed.node_sel else { return };
+    edit(env, "canto/suave", |s| {
+        let Some(q) = s.points.get_mut(i) else { return false };
+        q.corner = !q.corner;
+        true
+    });
+}
+
+/// Volta a alça do ponto escolhido para a automática (Shift+C).
+pub(crate) fn auto_handle(env: &mut Env) {
+    let Some(i) = env.ed.node_sel else { return };
+    edit(env, "alça automática", |s| s.points.get_mut(i).is_some_and(|q| q.handle.take().is_some()));
+}
+
+/// Engrossa/afina o traço no ponto escolhido (as teclas de tamanho, [ e ]).
+pub(crate) fn width_step(env: &mut Env, k: f32) {
+    let Some(i) = env.ed.node_sel else { return };
+    edit(env, "largura no ponto", |s| {
+        let Some(q) = s.points.get_mut(i) else { return false };
+        q.width = (q.width * k).clamp(0.02, 20.0);
+        true
+    });
 }
 
 /// O traço escolhido com o arrasto em andamento aplicado.
@@ -189,14 +302,18 @@ fn dragged(s: &Stroke, idx: usize, start: Vec2, cur: Vec2, width: bool) -> Strok
 }
 
 pub(crate) fn release(env: &mut Env, g: Gesture) {
-    let Gesture::DragNode { idx, start, cur, width, .. } = g else { return };
     let Some(c) = ctx(env) else { return };
     let Some(s) = picked(env, &c) else { return };
-    if (cur - start).length() < 0.25 {
-        return;
+    let label = match g {
+        Gesture::DragNode { start, cur, .. } if (cur - start).length() < 0.25 => return,
+        Gesture::DragNode { width: true, .. } => "largura no ponto",
+        Gesture::DragNode { .. } => "mover ponto",
+        Gesture::DragHandle { .. } => "alça do ponto",
+        _ => return,
+    };
+    if let Some(ns) = preview(&s, &g) {
+        replace(env, &c.cel, ns, label);
     }
-    let ns = dragged(&s, idx, start, cur, width);
-    replace(env, &c.cel, ns, if width { "largura no ponto" } else { "mover ponto" });
 }
 
 /// Liga a prévia ao vivo do arrasto: o motor redesenha o traço editado com o original escondido.
@@ -231,12 +348,16 @@ pub(crate) fn start_live(env: &mut Env, ctx_ui: &egui::Context, t0: std::time::I
 
 /// Manda o traço com o arrasto atual para a prévia.
 pub(crate) fn feed_live(env: &mut Env) {
-    let Gesture::DragNode { idx, start, cur, width, .. } = env.ed.gesture else { return };
+    let (cur, tag) = match env.ed.gesture {
+        Gesture::DragNode { cur, width, .. } => (cur, width as usize),
+        Gesture::DragHandle { cur, side, .. } => (cur, 2 + (side > 0.0) as usize),
+        _ => return,
+    };
     let Some(c) = ctx(env) else { return };
     let Some(s) = picked(env, &c) else { return };
-    let ns = dragged(&s, idx, start, cur, width);
+    let Some(ns) = preview(&s, &env.ed.gesture) else { return };
     // contagem = posição do arrasto (manda de novo só quando ela muda)
-    let count = ((cur.x * 64.0) as i64 as usize).wrapping_mul(1_000_003) ^ ((cur.y * 64.0) as i64 as usize) ^ (width as usize) ^ 1;
+    let count = ((cur.x * 64.0) as i64 as usize).wrapping_mul(1_000_003) ^ ((cur.y * 64.0) as i64 as usize) ^ (tag << 40) ^ 1;
     env.ed.live_stroke.feed(Vec::new(), Vec::new(), Some(ns), count);
 }
 
@@ -295,8 +416,8 @@ pub(crate) fn paint(env: &mut Env, painter: &egui::Painter, to_screen: impl Fn(V
     let Some(c) = ctx(env) else { return };
     let Some(mut s) = picked(env, &c) else { return };
     let live = env.ed.live_stroke.overlay.is_some();
-    if let Gesture::DragNode { idx, start, cur, width, .. } = &env.ed.gesture {
-        s = dragged(&s, *idx, *start, *cur, *width);
+    if let Some(ns) = preview(&s, &env.ed.gesture) {
+        s = ns;
         if !live {
             let sp: Vec<Pos2> = aiai_paint::sample_stroke(&s).iter().map(|q| to_screen(apply(&c.fwd, Vec2::new(q.x, q.y)))).collect();
             if sp.len() >= 2 {
@@ -322,6 +443,26 @@ pub(crate) fn paint(env: &mut Env, painter: &egui::Painter, to_screen: impl Fn(V
             painter.rect(egui::Rect::from_center_size(*p, egui::vec2(r * 2.0, r * 2.0)), 0.0, fill, EStroke::new(1.3, line), egui::StrokeKind::Inside);
         } else {
             painter.circle(*p, r, fill, EStroke::new(1.3, line));
+        }
+    }
+    // alça do ponto escolhido: a linha que atravessa o ponto; puxar as pontas abre/fecha e gira a curva ali
+    if let Some(i) = sel.filter(|&i| i < s.points.len()) {
+        let pix = {
+            let a = to_screen(apply(&c.fwd, Vec2::ZERO));
+            let b = to_screen(apply(&c.fwd, Vec2::new(100.0, 0.0)));
+            100.0 / (b - a).length().max(1e-3)
+        };
+        if let Some((out, inn)) = handle_ends(&s, i, pix) {
+            let (so, si, sp) = (to_screen(apply(&c.fwd, out)), to_screen(apply(&c.fwd, inn)), pts[i]);
+            let explicit = s.points[i].handle.is_some();
+            let col = if explicit { accent } else { accent.gamma_multiply(0.7) };
+            painter.line_segment([si, so], EStroke::new(1.2, col));
+            for (k, e) in [(1, so), (-1, si)] {
+                let d = egui::Rect::from_center_size(e, egui::vec2(8.0, 8.0));
+                painter.add(egui::Shape::convex_polygon(vec![e + Vec2::new(0.0, -4.5), e + Vec2::new(4.5, 0.0), e + Vec2::new(0.0, 4.5), e + Vec2::new(-4.5, 0.0)], if explicit { accent } else { Color32::WHITE }, EStroke::new(1.2, col)));
+                env.note(if k > 0 { "handle:out".to_owned() } else { "handle:in".to_owned() }, d);
+            }
+            let _ = sp;
         }
     }
 }
