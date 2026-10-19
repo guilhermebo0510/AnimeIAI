@@ -168,6 +168,8 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("board.sheet_done", "Folha de e-conte gravada", "E-conte sheet written"),
     ("menu.file.import_image", "Importar imagem…", "Import image…"),
     ("menu.file.export_frame", "Exportar quadro (PNG)…", "Export frame (PNG)…"),
+    ("menu.file.export_psd", "Exportar PSD em camadas…", "Export layered PSD…"),
+    ("menu.file.export_xdts", "Exportar timesheet (XDTS)…", "Export timesheet (XDTS)…"),
     ("msg.imported", "Importado", "Imported"),
     ("msg.exported", "Exportado", "Exported"),
     ("err.import_type", "Tipo de arquivo não importável", "File type cannot be imported"),

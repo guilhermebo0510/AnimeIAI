@@ -336,6 +336,14 @@ impl StudioApp {
                 self.request_export_frame();
                 ui.close();
             }
+            if self.menu_item(ui, "file.export_psd", "menu.file.export_psd", "", self.ed.cut.is_some()) {
+                self.request_export(doc::DialogKind::ExportPsd);
+                ui.close();
+            }
+            if self.menu_item(ui, "file.export_xdts", "menu.file.export_xdts", "", self.ed.cut.is_some()) {
+                self.request_export(doc::DialogKind::ExportXdts);
+                ui.close();
+            }
             ui.separator();
             if self.menu_item(ui, "file.quit", "menu.file.quit", "", true) {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);

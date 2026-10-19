@@ -43,7 +43,7 @@ use std::time::Instant;
 
 pub const PRODUCTION_ACTIONS: &[&str] = &[
     "SKY", "PATTERN_FILL", "TEXT", "LINES", "GAG_BG", "PARTICLES", "GUIDE3D", "PERSPECTIVE", "MODEL_SHEET", "CONSISTENCY", "INBETWEEN", "PROPAGATE_FILLS",
-    "TTS_LINE", "TTS_KOKORO", "VOICE_PROFILE", "LIPSYNC", "SFX", "BGM", "IMPORT_AUDIO", "IMPORT_IMAGE", "MIX_CUT", "LOUDNESS", "COMPARE", "PROBE_COLOR", "MEASURE_LINE", "MEASURE_EDGE", "FILL_SHAPE", "EDIT_SET", "EXPORT_VIDEO",
+    "TTS_LINE", "TTS_KOKORO", "VOICE_PROFILE", "LIPSYNC", "SFX", "BGM", "IMPORT_AUDIO", "IMPORT_IMAGE", "EXPORT_PSD", "EXPORT_XDTS", "MIX_CUT", "LOUDNESS", "COMPARE", "PROBE_COLOR", "MEASURE_LINE", "MEASURE_EDGE", "FILL_SHAPE", "EDIT_SET", "EXPORT_VIDEO",
 ];
 
 /// Ações que mudam o documento (o headless salva o projeto depois delas).
@@ -189,6 +189,18 @@ pub fn handle(session: &mut CoreSession, action: &str, params: &Value) -> Result
             check_abs(&r.path, "path")?;
             let cmd = aiai_tools::import::import_image_command(&session.project, &mut session.blobs, &r).map_err(tool_error)?;
             apply(session, params, cmd)
+        }
+        "EXPORT_PSD" => {
+            let r: aiai_tools::export::ExportPsdRequest = request(params, action)?;
+            check_abs(&r.out, "out")?;
+            ensure_parent(std::path::Path::new(&r.out))?;
+            aiai_tools::export::export_psd(&session.project, &session.blobs, &r).map_err(tool_error)
+        }
+        "EXPORT_XDTS" => {
+            let r: aiai_tools::export::ExportXdtsRequest = request(params, action)?;
+            check_abs(&r.out, "out")?;
+            ensure_parent(std::path::Path::new(&r.out))?;
+            aiai_tools::export::export_xdts(&session.project, &r).map_err(tool_error)
         }
         "MIX_CUT" => mix_cut(session, params),
         "LOUDNESS" => loudness(session, params),

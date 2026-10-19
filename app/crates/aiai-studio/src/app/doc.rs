@@ -30,6 +30,10 @@ pub(crate) enum DialogKind {
     ImportImage,
     /// Arquivo > Exportar quadro (PNG do quadro atual, como o RENDER).
     ExportFrame,
+    /// Arquivo > Exportar PSD em camadas (quadro atual).
+    ExportPsd,
+    /// Arquivo > Exportar timesheet XDTS (corte ativo).
+    ExportXdts,
 }
 
 const IMAGE_EXTS: [&str; 8] = ["png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff", "gif"];
@@ -260,8 +264,12 @@ impl StudioApp {
             DialogKind::ProjectsDir => tr("prefs.projects_dir"),
             DialogKind::ImportImage => tr("menu.file.import_image"),
             DialogKind::ExportFrame => tr("menu.file.export_frame"),
+            DialogKind::ExportPsd => tr("menu.file.export_psd"),
+            DialogKind::ExportXdts => tr("menu.file.export_xdts"),
         }
         .to_owned();
+        let cut_name = self.ed.cut.as_ref().and_then(|c| self.core.project.node(c)).map(|n| n.name.clone()).unwrap_or_else(|| "corte".into());
+        let (psd_name, xdts_name) = (format!("{cut_name}_q{:03}.psd", self.ed.frame + 1), format!("{cut_name}.xdts"));
         let frame_name = format!("{}_q{:03}.png", self.ed.cut.as_ref().and_then(|c| self.core.project.node(c)).map(|n| n.name.clone()).unwrap_or_else(|| "quadro".into()), self.ed.frame + 1);
         let prefs_dir = self.prefs.projects_dir.clone().filter(|d| d.is_dir());
         let start = match kind {
@@ -279,6 +287,8 @@ impl StudioApp {
                 DialogKind::SaveAs => d.set_file_name(file_name).save_file(),
                 DialogKind::ImportImage => d.add_filter("Imagem", &IMAGE_EXTS).pick_file(),
                 DialogKind::ExportFrame => d.add_filter("PNG", &["png"]).set_file_name(frame_name).save_file(),
+                DialogKind::ExportPsd => d.add_filter("PSD", &["psd"]).set_file_name(psd_name).save_file(),
+                DialogKind::ExportXdts => d.add_filter("XDTS", &["xdts"]).set_file_name(xdts_name).save_file(),
             };
             let _ = tx.send(picked);
         });
@@ -311,6 +321,8 @@ impl StudioApp {
                         }
                         DialogKind::ImportImage => self.import_file(&path),
                         DialogKind::ExportFrame => self.export_frame(&path),
+                        DialogKind::ExportPsd => self.export_with("EXPORT_PSD", &path),
+                        DialogKind::ExportXdts => self.export_with("EXPORT_XDTS", &path),
                     }
                 }
                 ctx.request_repaint();
@@ -365,6 +377,23 @@ impl StudioApp {
         match r {
             Ok(m) => self.notice(m),
             Err(e) => self.doc_error("importar", e),
+        }
+    }
+
+    pub(crate) fn request_export(&mut self, kind: DialogKind) {
+        self.spawn_dialog(kind, None);
+    }
+
+    /// PSD em camadas do quadro atual / XDTS do corte ativo.
+    fn export_with(&mut self, action: &str, path: &Path) {
+        let Some(cut) = self.ed.active_cut(&self.core) else {
+            self.notice(tr("err.no_cut").to_owned());
+            return;
+        };
+        let r = super::actions::run(&mut self.core, action, json!({ "cut": cut, "frame": self.ed.frame, "out": path.display().to_string() }));
+        match r {
+            Ok(_) => self.notice(format!("{}: {}", tr("msg.exported"), path.display())),
+            Err(e) => self.doc_error("exportar", e),
         }
     }
 

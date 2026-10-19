@@ -12,6 +12,7 @@ pub mod context;
 pub mod draw;
 pub mod edit;
 pub mod erase;
+pub mod export;
 pub mod fill;
 pub mod fx2d;
 pub mod guide;

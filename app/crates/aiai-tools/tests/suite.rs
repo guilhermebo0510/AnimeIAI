@@ -528,3 +528,74 @@ fn vector_eraser_whole_segment_and_up_to_intersection() {
         assert_eq!(strokes(&s, &cel).len(), 3);
     }
 }
+
+#[test]
+fn psd_and_xdts_exports_read_back() {
+    use aiai_tools::export::{ExportPsdRequest, ExportXdtsRequest, export_psd, export_xdts};
+    let dir = std::env::temp_dir().join(format!("aiai-export-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = CoreSession::for_tests("export");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 200, "height": 100}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = create(&mut s, Some(&sc), "C001", NodeKind::Cut(CutData::new(12)));
+    let a = create(&mut s, Some(&cut), "線画", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+    let b = create(&mut s, Some(&cut), "B", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+    for (l, n) in [(&a, 1u32), (&a, 2), (&b, 1)] {
+        create(&mut s, Some(l), &n.to_string(), NodeKind::Cel(CelData::new(n)));
+    }
+    let ink = ColorRef::Direct { rgba: Rgba::from_hex("#c02020").unwrap() };
+    s.apply(draw_command(&s.project, &DrawRequest { cut: cut.clone(), frame: 0, layer: a.clone(), curves: vec![curve(&[[20.0, 20.0, 1.0], [80.0, 60.0, 1.0]], 6.0, &ink, false)], mirror_x: None }).unwrap()).unwrap();
+    s.apply(draw_command(&s.project, &DrawRequest { cut: cut.clone(), frame: 0, layer: b.clone(), curves: vec![curve(&[[120.0, 20.0, 1.0], [180.0, 80.0, 1.0]], 6.0, &ink, false)], mirror_x: None }).unwrap()).unwrap();
+    s.apply(Command::SetProps { id: b.clone(), name: None, data: json!({"visible": false}) }).unwrap();
+    // timesheet de A: cel 1 nos quadros 0-5, cel 2 em 6-9, vazio em 10-11
+    let tid = s.ids.next();
+    s.apply(Command::AddTrack { cut: cut.clone(), index: None, track: Track::new(tid.clone(), "A", TrackKind::Drawing, Some(a.clone())) }).unwrap();
+    s.apply(Command::SetCells { cut: cut.clone(), track: tid, cells: vec![
+        aiai_core::command::CellEdit { frame: 0, cell: Some(CellRef::Cel { number: 1 }) },
+        aiai_core::command::CellEdit { frame: 6, cell: Some(CellRef::Cel { number: 2 }) },
+        aiai_core::command::CellEdit { frame: 10, cell: Some(CellRef::Empty) },
+    ] }).unwrap();
+    // ---- PSD
+    let psd = dir.join("c001.psd");
+    let r = export_psd(&s.project, &s.blobs, &ExportPsdRequest { cut: cut.clone(), frame: 0, out: psd.display().to_string(), camera: false }).unwrap();
+    assert_eq!(r["layers"], 2);
+    let f = std::fs::read(&psd).unwrap();
+    let be32 = |o: usize| u32::from_be_bytes(f[o..o + 4].try_into().unwrap());
+    let be16 = |o: usize| u16::from_be_bytes(f[o..o + 2].try_into().unwrap());
+    assert_eq!(&f[0..4], b"8BPS");
+    assert_eq!((be32(14), be32(18), be16(24), be16(12)), (100, 200, 3, 4), "altura, largura, RGB, 4 canais");
+    let mut o = 26;
+    o += 4 + be32(o) as usize; // modo de cor
+    o += 4 + be32(o) as usize; // recursos
+    let lmi_len = be32(o) as usize;
+    let layer_info = o + 4;
+    let count = i16::from_be_bytes(f[layer_info + 4..layer_info + 6].try_into().unwrap());
+    assert_eq!(count, -2, "duas camadas, alfa no composto");
+    // primeiro registro: a camada de baixo (線画), com caixa do conteúdo e visível
+    let rec = layer_info + 6;
+    let (top, left, bottom, right) = (be32(rec) as i32, be32(rec + 4) as i32, be32(rec + 8) as i32, be32(rec + 12) as i32);
+    assert!(top > 10 && left > 10 && bottom < 75 && right < 95, "recortada no traço: {top} {left} {bottom} {right}");
+    let flags = f[rec + 18 + 6 * 4 + 4 + 4 + 2];
+    assert_eq!(flags & 0x02, 0, "visível");
+    let text = String::from_utf8_lossy(&f);
+    assert!(f.windows(4).any(|w| w == b"luni"), "nome unicode gravado");
+    let _ = text;
+    let total = f.len();
+    assert!(o + 4 + lmi_len < total, "composto depois das camadas");
+    // ---- XDTS
+    let xd = dir.join("c001.xdts");
+    export_xdts(&s.project, &ExportXdtsRequest { cut: cut.clone(), out: xd.display().to_string() }).unwrap();
+    let t = std::fs::read_to_string(&xd).unwrap();
+    let (first, rest) = t.split_once('\n').unwrap();
+    assert_eq!(first, "exchangeDigitalTimeSheet Save Data");
+    let v: serde_json::Value = serde_json::from_str(rest).unwrap();
+    assert_eq!(v["version"], 5);
+    let tt = &v["timeTables"][0];
+    assert_eq!(tt["duration"], 12);
+    assert_eq!(tt["timeTableHeaders"][0]["names"], json!(["線画", "B"]));
+    let frames = &tt["fields"][0]["tracks"][0]["frames"];
+    let vals: Vec<(u64, String)> = frames.as_array().unwrap().iter().map(|fr| (fr["frame"].as_u64().unwrap(), fr["data"][0]["values"][0].as_str().unwrap().to_string())).collect();
+    assert_eq!(vals, vec![(0, "1".into()), (6, "2".into()), (10, "SYMBOL_NULL_CELL".into()), (12, "SYMBOL_NULL_CELL".into())]);
+    let _ = std::fs::remove_dir_all(&dir);
+}

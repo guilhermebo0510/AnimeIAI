@@ -139,6 +139,8 @@ pub fn definitions() -> Vec<Value> {
         json!({ "name": "aiai_bgm", "description": BGM_DESC, "inputSchema": schema_of::<audio::BgmRequest>() }),
         json!({ "name": "aiai_import_audio", "description": IMPORT_AUDIO_DESC, "inputSchema": schema_of::<audio::ImportAudioRequest>() }),
         json!({ "name": "aiai_import_image", "description": IMPORT_IMAGE_DESC, "inputSchema": schema_of::<aiai_tools::import::ImportImageRequest>() }),
+        json!({ "name": "aiai_export_psd", "description": "PSD em camadas (RGB 8 bits) do quadro `frame` do corte: cada camada desenhável renderizada sozinha e recortada no conteúdo, com nome (Unicode), visibilidade e modo de mistura, mais a imagem composta. `camera` true = quadro da câmera; false (padrão) = canvas inteiro. `out` = caminho absoluto .psd. Não altera o documento.", "inputSchema": schema_of::<aiai_tools::export::ExportPsdRequest>() }),
+        json!({ "name": "aiai_export_xdts", "description": "Timesheet do corte em XDTS (Exchange Digital TimeSheet v5, formato público Celsys/Toei; abre no Clip Studio Paint EX, TVPaint, OpenToonz): campo de células por camada (de baixo para cima, SYMBOL_NULL_CELL no vazio) e campo de falas pelos clipes de diálogo. `out` = caminho absoluto .xdts. Não altera o documento.", "inputSchema": schema_of::<aiai_tools::export::ExportXdtsRequest>() }),
         json!({ "name": "aiai_mix", "description": MIX_DESC, "inputSchema": schema_of::<pt::MixRequest>() }),
         json!({
             "name": "aiai_loudness", "description": LOUDNESS_DESC,
@@ -215,6 +217,8 @@ pub fn plan(name: &str, m: &Map<String, Value>) -> Option<Result<Plan, ToolError
         "aiai_bgm" => with_req(&["song"], "BGM", false),
         "aiai_import_audio" => with_req(&["path"], "IMPORT_AUDIO", false),
         "aiai_import_image" => with_req(&["cut", "layer", "path"], "IMPORT_IMAGE", false),
+        "aiai_export_psd" => with_req(&["cut", "out"], "EXPORT_PSD", false),
+        "aiai_export_xdts" => with_req(&["cut", "out"], "EXPORT_XDTS", false),
         "aiai_mix" => with_req(&["cut"], "MIX_CUT", false),
         "aiai_loudness" => simple("LOUDNESS", Value::Object(m.clone())),
         "aiai_compare" => with_req(&["cut", "reference"], "COMPARE", true),
