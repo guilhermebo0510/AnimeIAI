@@ -15,6 +15,8 @@ mod brushes;
 mod bridge_host;
 mod canvas;
 mod commands;
+mod comp;
+mod comp_viewer;
 pub(crate) mod doc;
 mod prefs_ui;
 mod start;
@@ -202,6 +204,7 @@ impl StudioApp {
         // workspace Áudio: mesma regra de som; predefinições de rack só com sessão
         app.ed.audio_ws.player.muted = cli_no_autosave && !std::env::var("AIAI_AUDIO").is_ok_and(|v| v == "1");
         app.ed.audio_ws.user_files = !app.cli.no_session;
+        app.ed.comp.user_files = !app.cli.no_session;
         if !cli_no_autosave {
             if let Some(root) = autosave::recovery_root() {
                 app.recoveries = autosave::leftovers(&root, app.autosave.dir.as_deref());
@@ -949,13 +952,14 @@ impl StudioApp {
                             let ink = if selected || resp.hovered() { t.text } else { t.text_dim };
                             self.icons.paint(p, tool.icon(), rect.shrink(7.0), ink);
                             // dica com o atalho em uso (Preferências > Atalhos)
-                            let tip = match self.ed.keys.get(crate::keymap::Action::for_tool(tool)) {
-                                Some(c) => format!("{} ({})", tr(tool.title_key()), c.label()),
+                            let key = crate::keymap::Action::for_tool(tool).and_then(|a| self.ed.keys.get(a)).map(|c| c.label()).or(tool.comp_key().map(str::to_owned));
+                            let tip = match key {
+                                Some(k) => format!("{} ({k})", tr(tool.title_key())),
                                 None => tr(tool.title_key()).to_owned(),
                             };
                             if resp.on_hover_text(tip).clicked() {
                                 // clicar na ferramenta (mesmo a que já está em uso) mostra o painel dela
-                                if !matches!(tool, ToolId::Move | ToolId::Hand | ToolId::Zoom | ToolId::Eyedropper) {
+                                if !matches!(tool, ToolId::Move | ToolId::Hand | ToolId::Zoom | ToolId::Eyedropper) && tool.comp_key().is_none() {
                                     self.ed.want_panel = Some(PanelKind::Brushes);
                                 }
                                 self.tool = tool;
@@ -975,7 +979,7 @@ impl StudioApp {
         let Some(tree) = self.trees.get_mut(&ws) else { return };
         // ferramenta com itens (caneta, pincel, borracha, balde, seleção, editar pontos) escolhida agora (clique ou
         // atalho): o painel Ferramenta vem para a frente
-        if self.last_tool.is_some_and(|(t, w)| t != self.tool && w == ws) && !matches!(self.tool, crate::workspace::ToolId::Move | crate::workspace::ToolId::Hand | crate::workspace::ToolId::Zoom | crate::workspace::ToolId::Eyedropper) {
+        if self.last_tool.is_some_and(|(t, w)| t != self.tool && w == ws) && !matches!(self.tool, crate::workspace::ToolId::Move | crate::workspace::ToolId::Hand | crate::workspace::ToolId::Zoom | crate::workspace::ToolId::Eyedropper) && self.tool.comp_key().is_none() {
             self.ed.want_panel = Some(PanelKind::Brushes);
         }
         self.last_tool = Some((self.tool, ws));
@@ -1017,6 +1021,10 @@ impl StudioApp {
         let before = self.tool;
         let mut notes = Vec::new();
         let mut env = ui_kit::Env { t, core: &mut self.core, ed: &mut self.ed, icons: &mut self.icons, notes: &mut notes, tool: &mut self.tool, ws };
+        // na Composição, as teclas do After Effects (A P S R T U, J/K, F9, W/Y/C) antes das gerais
+        if ws == WorkspaceId::Composicao {
+            comp::shortcuts(ctx, &mut env);
+        }
         // as teclas da animação antes (Ctrl+Shift+T não pode cair no Ctrl+T da transformação)
         anim::shortcuts(ctx, &mut env);
         tools::shortcuts(ctx, &mut env);
@@ -1311,6 +1319,9 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::Rulers => panels::rulers::show(&mut self.env, ui, body),
             PanelKind::Characters => panels::characters::list(&mut self.env, ui, body),
             PanelKind::CharFolder => panels::char_folder::show(&mut self.env, ui, body),
+            PanelKind::CompTimeline => panels::comp_timeline::show(&mut self.env, ui, body),
+            PanelKind::EffectsBrowser => panels::effects_browser::show(&mut self.env, ui, body),
+            PanelKind::EffectControls => panels::effect_controls::show(&mut self.env, ui, body),
             PanelKind::Sheet => panels::characters::sheet(&mut self.env, ui, body),
             PanelKind::Media => panels::edit::media(&mut self.env, ui, body),
             PanelKind::Presets => panels::deliver::presets(&mut self.env, ui, body),

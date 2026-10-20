@@ -1,5 +1,5 @@
-//! Composição e Cor: no painel Propriedades da Composição, a pilha de efeitos de satsuei da camada ativa (`EFFECTS`) e a
-//! câmera do corte (`CAMERA`); no workspace Cor, o painel Navegador mostra o quadro do corte (monitor em segundo plano) e
+//! Composição e Cor: no painel Propriedades da Composição, a câmera do corte (`CAMERA`; a pilha de efeitos da camada
+//! fica no painel Controles de efeito, `effect_controls`); no workspace Cor, o painel Navegador mostra o quadro do corte (monitor em segundo plano) e
 //! o Propriedades edita a cor do corte (`GRADE`: rodas lift/gamma/gain, saturação, temperatura, contraste, e vinheta,
 //! difusão e grão).
 //!
@@ -38,23 +38,22 @@ pub(crate) fn effect_presets(w: f32, h: f32) -> Vec<(&'static str, Value)> {
         ("fx.e.color_overlay", json!({ "type": "color_overlay", "color": [1.0, 0.55, 0.25, 0.3] })),
         ("fx.e.two_tone", json!({ "type": "two_tone", "threshold": 0.5, "dark": [0.08, 0.04, 0.14], "light": [1.0, 0.95, 0.9] })),
         ("fx.e.invert", json!({ "type": "invert" })),
+        ("fx.e.radial_blur", json!({ "type": "radial_blur", "center": [w * 0.5, h * 0.5], "amount": 0.15 })),
+        ("fx.e.color_aware_blur", json!({ "type": "color_aware_blur", "radius": 4.0, "tolerance": 0.12 })),
+        ("fx.e.para", json!({ "type": "para", "from": [w * 0.5, 0.0], "to": [w * 0.5, h], "color_from": [1.0, 0.6, 0.3, 0.5], "color_to": [0.3, 0.2, 0.6, 0.0], "mode": "overlay" })),
+        ("fx.e.adjust", json!({ "type": "adjust", "adjustment": { "type": "hue_saturation", "hue": 0.0, "saturation": 0.0, "lightness": 0.0 } })),
+        ("fx.e.grade", default_grade()),
     ]
 }
 
 /// Nome legível de um efeito pelo `type` (cai no próprio `type` se não estiver no menu).
-fn effect_label(ty: &str) -> String {
+pub(crate) fn effect_label(ty: &str) -> String {
     effect_presets(1.0, 1.0).into_iter().find(|(_, v)| v["type"] == ty).map(|(k, _)| tr(k).to_owned()).unwrap_or_else(|| ty.to_owned())
 }
 
 /// Pilha de efeitos de uma camada (JSON das instâncias).
 pub(crate) fn stack(p: &Project, layer: &NodeId) -> Vec<Value> {
     cmds::layer_data(p, layer).and_then(|l| l.params.get("effects").and_then(Value::as_array).cloned()).unwrap_or_default()
-}
-
-fn effects_op(env: &mut Env, op: &str, mut fields: Value) -> bool {
-    fields["op"] = json!(op);
-    let r = actions::run(env.core, "EFFECTS", fields);
-    actions::notify_err(env.ed, r).is_some()
 }
 
 /// Editor genérico dos campos de um efeito (`type` fica de fora). Devolve o efeito mudado, se mudou.
@@ -139,13 +138,13 @@ fn is_color_field(k: &str) -> bool {
     matches!(k, "color" | "color_from" | "color_to" | "dark" | "light")
 }
 
-fn field_label(k: &str) -> String {
+pub(crate) fn field_label(k: &str) -> String {
     let key = format!("fx.f.{k}");
     let s = tr(&key);
     if s == key { k.replace('_', " ") } else { s.to_owned() }
 }
 
-fn field_range(k: &str) -> (f32, f32, f32) {
+pub(crate) fn field_range(k: &str) -> (f32, f32, f32) {
     match k {
         "radius" | "length" | "blur" | "width" => (0.0, 400.0, 0.2),
         "angle" | "rotation" => (-360.0, 360.0, 0.5),
@@ -158,73 +157,6 @@ fn field_range(k: &str) -> (f32, f32, f32) {
 }
 
 // ------------------------------------------------------------------------------------------------ Composição
-
-/// Pilha de efeitos da camada ativa (seção do painel Propriedades da Composição).
-pub(crate) fn layer_effects(env: &mut Env, ui: &mut Ui) {
-    let t = env.t;
-    let Some(layer) = env.ed.active_layer(env.core) else { return };
-    let Some(cut) = env.ed.cut.clone() else { return };
-    let kind = cmds::layer_data(&env.core.project, &layer).map(|l| l.kind);
-    section(ui, &t, "fx.layer_effects");
-    dim_label(ui, &t, tr(if kind == Some(LayerType::Effect) { "fx.scope_below" } else { "fx.scope_content" }));
-    let list = stack(&env.core.project, &layer);
-    if list.is_empty() {
-        dim_label(ui, &t, tr("fx.none"));
-    }
-    for (i, inst) in list.iter().enumerate() {
-        let Some(effect) = inst.get("effect").and_then(Value::as_object) else { continue };
-        let ty = effect.get("type").and_then(Value::as_str).unwrap_or("?");
-        let enabled = inst.get("enabled").and_then(Value::as_bool).unwrap_or(true);
-        let post = inst.get("posterize_time").and_then(Value::as_u64).unwrap_or(1) as u32;
-        egui::Frame::new().fill(t.bg_widget).corner_radius(4.0).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                let mut on = enabled;
-                let r = ui.checkbox(&mut on, egui::RichText::new(effect_label(ty)).strong());
-                env.note(format!("fx:effect:{i}:enabled"), r.rect);
-                if on != enabled {
-                    effects_op(env, "update", json!({ "layer": layer, "index": i, "enabled": on }));
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let del = env.icon_button(ui, crate::icons::IconId::Trash, "fx.remove", false, true, &format!("fx:effect:{i}:remove"));
-                    if del.clicked() {
-                        effects_op(env, "remove", json!({ "layer": layer, "index": i }));
-                    }
-                    let down = env.icon_button(ui, crate::icons::IconId::ArrowDown, "fx.down", false, i + 1 < list.len(), &format!("fx:effect:{i}:down"));
-                    let up = env.icon_button(ui, crate::icons::IconId::ArrowUp, "fx.up", false, i > 0, &format!("fx:effect:{i}:up"));
-                    let swap = if up.clicked() { Some(i - 1) } else if down.clicked() { Some(i + 1) } else { None };
-                    if let Some(j) = swap {
-                        let mut l2 = list.clone();
-                        l2.swap(i, j);
-                        effects_op(env, "set", json!({ "layer": layer, "effects": l2 }));
-                    }
-                });
-            });
-            if let Some(new) = effect_fields(ui, &t, (&layer.0, i), effect) {
-                effects_op(env, "update", json!({ "layer": layer, "index": i, "effect": new }));
-            }
-            ui.horizontal(|ui| {
-                dim_label(ui, &t, tr("fx.posterize"));
-                if let Some(v) = commit_on_release(ui, EId::new(("fx_post", &layer.0, i)), post, |ui, v| ui.add(egui::DragValue::new(v).range(1..=6).speed(0.05).suffix(format!(" {}", tr("unit.frames_short"))))) {
-                    effects_op(env, "update", json!({ "layer": layer, "index": i, "posterize_time": v }));
-                }
-            });
-        });
-        ui.add_space(3.0);
-    }
-    let (w, h) = cmds::canvas_size(&env.core.project, &cut);
-    let mut add = None;
-    let r = egui::ComboBox::from_id_salt(("fx_add", &layer.0)).width((ui.available_width() - 8.0).clamp(80.0, 260.0)).selected_text(tr("fx.add")).show_ui(ui, |ui| {
-        for (k, v) in effect_presets(w as f32, h as f32) {
-            if ui.selectable_label(false, tr(k)).clicked() {
-                add = Some(v);
-            }
-        }
-    });
-    env.note("fx:add", r.response.rect);
-    if let Some(e) = add {
-        effects_op(env, "add", json!({ "layer": layer, "effect": e }));
-    }
-}
 
 /// Câmera do corte (seção do painel Propriedades da Composição).
 pub(crate) fn camera(env: &mut Env, ui: &mut Ui) {

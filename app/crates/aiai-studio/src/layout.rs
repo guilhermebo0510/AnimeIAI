@@ -64,6 +64,12 @@ pub enum PanelKind {
     Rulers,
     /// Personagens: a pasta do personagem (materiais por tipo, criar a partir de modelos, abrir para desenhar).
     CharFolder,
+    /// Composição: linha do tempo estilo After Effects (camadas, transformação e efeitos com cronômetro e chaves).
+    CompTimeline,
+    /// Composição: efeitos e predefinições (árvore por categoria, busca, favoritos, miniaturas, predefinições do usuário).
+    EffectsBrowser,
+    /// Composição: controles de efeito da camada selecionada (parâmetros, ordem, ligar/desligar, cronômetros).
+    EffectControls,
 }
 
 /// Categoria do painel (agrupa o Exibir > Painéis e decide junto de quem um painel novo entra como aba).
@@ -141,7 +147,7 @@ use WorkspaceId as W;
 const DRAWING_WS: &[WorkspaceId] = &[W::Personagens, W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Composicao];
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 38] = [
+    pub const ALL: [PanelKind; 41] = [
         PanelKind::Canvas,
         PanelKind::Layers,
         PanelKind::Properties,
@@ -180,6 +186,9 @@ impl PanelKind {
         PanelKind::CharRef,
         PanelKind::Rulers,
         PanelKind::CharFolder,
+        PanelKind::CompTimeline,
+        PanelKind::EffectsBrowser,
+        PanelKind::EffectControls,
     ];
 
     /// Identificador estável (bridge/UI_ACTION, `layouts.json`): `canvas`, `layers`, `timeline`...
@@ -232,6 +241,9 @@ impl PanelKind {
             PanelKind::CharRef => "panel.char_ref.title",
             PanelKind::Rulers => "panel.rulers.title",
             PanelKind::CharFolder => "panel.char_folder.title",
+            PanelKind::CompTimeline => "panel.comp_timeline.title",
+            PanelKind::EffectsBrowser => "panel.effects_browser.title",
+            PanelKind::EffectControls => "panel.effect_controls.title",
         }
     }
 
@@ -276,6 +288,9 @@ impl PanelKind {
             PanelKind::CharRef => "panel.char_ref.empty",
             PanelKind::Rulers => "panel.rulers.empty",
             PanelKind::CharFolder => "panel.char_folder.empty",
+            PanelKind::CompTimeline => "panel.comp_timeline.empty",
+            PanelKind::EffectsBrowser => "panel.effects_browser.empty",
+            PanelKind::EffectControls => "panel.effect_controls.empty",
         }
     }
 
@@ -322,6 +337,9 @@ impl PanelKind {
             PanelKind::CharRef => (C::Character, Left, &[W::Storyboard, W::Layout, W::Animacao, W::Pintura], false),
             PanelKind::Rulers => (C::Drawing, Left, &[W::Layout, W::Cenario, W::Animacao], true),
             PanelKind::CharFolder => (C::Character, Left, &[W::Personagens], false),
+            PanelKind::CompTimeline => (C::Time, Bottom, &[W::Composicao], false),
+            PanelKind::EffectsBrowser => (C::Color, Right, &[W::Composicao], false),
+            PanelKind::EffectControls => (C::Color, Right, &[W::Composicao], false),
         };
         PanelMeta { key: self.key(), title_key: self.title_key(), category, dock_hint, workspaces, needs_canvas }
     }
@@ -377,7 +395,10 @@ pub fn factory_rev(ws: WorkspaceId) -> u32 {
         // S24: fábricas novas (cada etapa de desenho com a sua cara) e os workspaces novos
         // S24: Réguas (perspectiva) em aba com os pincéis
         W::Layout => 3,
-        W::Cenario | W::Pintura | W::Composicao | W::Biblioteca | W::Modelagem => 2,
+        W::Cenario | W::Pintura | W::Biblioteca | W::Modelagem => 2,
+        // S24 3.1–3.5: viewer no centro, Linha do tempo da composição embaixo, Efeitos e predefinições e Controles de
+        // efeito à direita
+        W::Composicao => 3,
         // S24: painel Texto (legendas) em aba com as Propriedades
         W::Edicao => 2,
         // S24: Forma de onda, Efeitos, Medidores, Multipista e Voz sintética
@@ -440,15 +461,16 @@ fn default_node(ws: WorkspaceId) -> Node {
             ])),
             (0.20, Pane(P::Timeline)),
         ]),
-        // satsuei como no After Effects: projeto à esquerda, viewer no centro, camadas e efeitos/câmera/cor (e o texto
-        // dos letreiros em aba) à direita, linha do tempo embaixo
+        // satsuei como no After Effects (S24 3.1–3.5): projeto e camadas à esquerda, viewer no centro, Efeitos e
+        // predefinições (com a câmera/cor e o texto em aba) em cima e Controles de efeito embaixo à direita; a Linha do
+        // tempo da composição embaixo de tudo (a de exposição em aba)
         W::Composicao => Col(vec![
-            (0.68, Row(vec![
-                (0.18, TabsOf(&[P::Project, P::Navigator])),
-                (0.54, Pane(P::Canvas)),
-                (0.28, Col(vec![(0.40, Pane(P::Layers)), (0.60, TabsOf(&[P::Properties, P::Text]))])),
+            (0.62, Row(vec![
+                (0.17, TabsOf(&[P::Project, P::Layers])),
+                (0.55, Pane(P::Canvas)),
+                (0.28, Col(vec![(0.48, TabsOf(&[P::EffectsBrowser, P::Properties, P::Text])), (0.52, Pane(P::EffectControls))])),
             ])),
-            (0.32, Pane(P::Timeline)),
+            (0.38, TabsOf(&[P::CompTimeline, P::Timeline])),
         ]),
         // em construção: o painel central diz o que vem; paletas e referências já são recursos
         W::Biblioteca => Row(vec![(0.24, Pane(P::Palette)), (0.50, Pane(P::Library)), (0.26, Pane(P::SubView))]),
@@ -1099,7 +1121,7 @@ mod tests {
             (W::Cenario, 2, 0x10fcc70dc9e4906a),
             (W::Animacao, 3, 0x5d54281aba1d2f5c),
             (W::Pintura, 2, 0xfc53133a1f95cbd3),
-            (W::Composicao, 2, 0xe373fff7d0e1aa31),
+            (W::Composicao, 3, 0x25b2c7d156032ce4),
             (W::Biblioteca, 2, 0xf001e10a1c6ff92d),
             (W::Modelagem, 2, 0xcccad1946cd12fc3),
             (W::Audio, 2, 0xb370ba9cf04cb8ac),

@@ -575,9 +575,22 @@ pub struct LayerData {
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     #[schemars(with = "Option<serde_json::Value>")]
     pub params: serde_json::Value,
-    /// Keyframes: offset_x, offset_y, opacity, rotation (graus, horário), scale.
+    /// Keyframes: offset_x, offset_y, opacity, rotation (graus, horário), scale, anchor_x, anchor_y.
     #[serde(default, skip_serializing_if = "KeyTracks::is_empty")]
     pub keys: KeyTracks,
+    /// Escala fixa da camada (sem chave de `scale`; 1 = tamanho do canvas). Composição (S24 3.2).
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub scale: f32,
+    /// Rotação fixa em graus, horário (sem chave de `rotation`).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rotation: f32,
+    /// Ponto de âncora (pivô da escala e da rotação) em px a partir do centro do canvas; [0, 0] = centro. Mover só a
+    /// âncora não mexe na camada parada (a ferramenta Âncora compensa o deslocamento quando há escala/rotação).
+    #[serde(default, skip_serializing_if = "is_zero2")]
+    pub anchor: [f32; 2],
+    /// Cor de rótulo na Linha do tempo da composição (0 = nenhuma; 1..=8 = paleta de rótulos da interface).
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub label: u8,
 }
 
 fn yes() -> bool {
@@ -585,6 +598,18 @@ fn yes() -> bool {
 }
 fn one() -> f32 {
     1.0
+}
+fn is_one(v: &f32) -> bool {
+    *v == 1.0
+}
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+fn is_zero_u8(v: &u8) -> bool {
+    *v == 0
+}
+fn is_zero2(v: &[f32; 2]) -> bool {
+    v[0] == 0.0 && v[1] == 0.0
 }
 
 impl LayerData {
@@ -603,6 +628,10 @@ impl LayerData {
             line_refs: Vec::new(),
             params: serde_json::Value::Null,
             keys: KeyTracks::default(),
+            scale: 1.0,
+            rotation: 0.0,
+            anchor: [0.0, 0.0],
+            label: 0,
         }
     }
 
@@ -615,6 +644,9 @@ impl LayerData {
         }
         if !(self.depth.is_finite() && self.offset.iter().all(|v| v.is_finite())) {
             return Err("profundidade/deslocamento não finitos".into());
+        }
+        if !(self.scale.is_finite() && self.rotation.is_finite() && self.anchor.iter().all(|v| v.is_finite())) {
+            return Err("escala/rotação/âncora não finitas".into());
         }
         if self.kind == LayerType::Model3d {
             match crate::model3d::Model3dParams::from_layer_params(&self.params) {

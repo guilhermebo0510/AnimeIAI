@@ -62,6 +62,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
     super::text_tool::frame(env, &ctx);
 
     let resp = ui.interact(rect, ui.id().with("canvas_area"), Sense::click_and_drag());
+    super::comp_viewer::drop_target(env, ui, &resp);
     let view_before = env.ed.view;
     handle_input(env, ui, rect, &resp, ppp);
     if env.ed.view != view_before {
@@ -90,7 +91,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
     }
     let shown_counter = env.ed.shown.as_ref().map(|s| s.rendered.key.counter);
     env.ed.live_stroke.poll(&ctx, shown_counter);
-    if *env.tool == ToolId::Move {
+    if *env.tool == ToolId::Move && env.ws != crate::workspace::WorkspaceId::Composicao {
         tools::move_prefetch(env, &ctx);
     }
     env.ed.move_live.poll(&ctx, shown_counter);
@@ -184,6 +185,11 @@ fn toolbar(env: &mut Env, ui: &mut Ui, has_cut: bool) {
             }
         }
         sep(ui, &t);
+        // Composição: viewer (resolução, xadrez, canais, região de interesse) no lugar das opções de pintura
+        if env.ws == crate::workspace::WorkspaceId::Composicao {
+            super::comp_viewer::toolbar(env, ui, has_cut);
+            return;
+        }
         if env.icon_button_sized(ui, IconId::RotateView, "canvas.rotate_left", false, has_cut, "canvas:rot_left", 24.0, true).clicked() {
             env.ed.view.rotate_by(-15f32.to_radians());
             env.ed.auto_fit = false;
@@ -286,8 +292,10 @@ fn update_render(env: &mut Env, ctx: &egui::Context, cut: &NodeId, canvas: (u32,
     let playing = ed.playback.playing;
     let max_side = ctx.input(|i| i.max_texture_side) as u32;
     let want_reduce = if playing { ((canvas.0 as f32 * canvas.1 as f32 / 700_000.0).sqrt().ceil() as u32).max(1) } else { 1 };
+    let want_reduce = want_reduce.max(super::comp_viewer::reduce(env.ws, &ed.comp));
+    let solo = if env.ws == crate::workspace::WorkspaceId::Composicao { super::comp_viewer::solo_ids(&core.project, cut, &ed.comp.solo) } else { Vec::new() };
     let reduce = pick_reduce(canvas.0, canvas.1, want_reduce, max_side);
-    let key_for = |frame: u32| FrameKey { counter: core.change_counter, cut: cut.clone(), frame, guides: ed.show_guides, reference: ed.show_reference, reduce };
+    let key_for = |frame: u32| FrameKey { counter: core.change_counter, cut: cut.clone(), frame, guides: ed.show_guides, reference: ed.show_reference, reduce, solo: solo.clone() };
     let want = key_for(ed.frame);
     let dur = cmds::cut_data(&core.project, cut).map(|c| c.duration).unwrap_or(1);
     let show_key = if playing && svc.get(&want).is_none() {
@@ -380,6 +388,7 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
     let events: Vec<Event> = ui.input(|i| i.events.clone());
     let (space, r_held, any_down) = ui.input(|i| (i.key_down(egui::Key::Space), i.key_down(egui::Key::R), i.pointer.any_down()));
     env.ed.shift = ui.input(|i| i.modifiers.shift);
+    env.ed.comp.ctrl = ui.input(|i| i.modifiers.command);
     env.ed.alt = ui.input(|i| i.modifiers.alt);
     if let Some(p) = ui.input(|i| i.pointer.hover_pos()) {
         env.ed.cursor = Some(p);
@@ -456,10 +465,13 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
             _ => {}
         }
     }
+    // soltou fora da janela sem o evento de soltar: termina o gesto
+    if !any_down && env.ed.comp.drag.is_some() {
+        super::comp_viewer::release(env);
+    }
     if !any_down && super::model3d::dragging(env) {
         super::model3d::release(env);
     }
-    // soltou fora da janela sem o evento de soltar: termina o gesto
     if !any_down && !matches!(env.ed.gesture, Gesture::None) && !events.iter().any(|e| matches!(e, Event::PointerButton { pressed: true, .. })) {
         let p = env.ed.cursor.unwrap_or(rect.center());
         on_release(env, rect, ppp, p, egui::PointerButton::Primary);
@@ -500,6 +512,10 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
     if tool == ToolId::Points && !space && matches!(button, egui::PointerButton::Primary | egui::PointerButton::Secondary) {
         // editar pontos: o tamanho de 1 px de tela em px do canvas dá a tolerância do clique
         super::nodes::press(env, xf.to_canvas(pos), 1.0 / xf.scale.max(1e-3), button, mods);
+        return;
+    }
+    // Composição: as ferramentas agem na camada e na câmera (viewer), não nos pixels
+    if button == egui::PointerButton::Primary && !space && !r_held && (super::comp_viewer::handles(env, tool) || env.ed.comp.roi_pick) && super::comp_viewer::press(env, &xf, pos, mods) {
         return;
     }
     // camada 3D: gizmo e câmera da camada (ferramenta 3D; com o Mover, Alt+arrastar orbita)
@@ -583,7 +599,8 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
                         env.ed.view.zoom_at(rect, ppp, pos, f);
                     }
                     ToolId::Ruler => env.ed.gesture = super::rulers::press(env, c, &xf),
-                    ToolId::Hand | ToolId::Points | ToolId::Text | ToolId::Model3d => {}
+                    // as da Composição agem pelo viewer (`comp_viewer::press`)
+                    ToolId::Hand | ToolId::Points | ToolId::Text | ToolId::Rotate | ToolId::Anchor | ToolId::Camera | ToolId::Model3d => {}
                 }
             }
         }
@@ -600,6 +617,12 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
     }
     if super::model3d::dragging(env) {
         super::model3d::drag(env, &xf, pos);
+        return;
+    }
+    if env.ed.comp.drag.is_some() {
+        let mods = egui::Modifiers { shift: env.ed.shift, alt: env.ed.alt, ..Default::default() };
+        let ctrl = env.ed.comp.ctrl;
+        super::comp_viewer::drag(env, &xf, pos, egui::Modifiers { ctrl, command: ctrl, ..mods });
         return;
     }
     match &mut env.ed.gesture {
@@ -669,6 +692,10 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
     let c = xf.to_canvas(pos);
     if button == egui::PointerButton::Primary && super::text_tool::dragging(env) {
         super::text_tool::release(env, c, xf.scale);
+        return;
+    }
+    if button == egui::PointerButton::Primary && env.ed.comp.drag.is_some() {
+        super::comp_viewer::release(env);
         return;
     }
     if button == egui::PointerButton::Primary && super::model3d::dragging(env) {
@@ -837,6 +864,8 @@ fn set_cursor(env: &Env, ctx: &egui::Context, resp: &egui::Response, tool: ToolI
                     ToolId::Zoom => C::ZoomIn,
                     ToolId::Move => C::Move,
                     ToolId::Text => C::Text,
+                    ToolId::Camera => C::Grab,
+                    ToolId::Rotate => C::Alias,
                     ToolId::Ruler if env.ed.rulers.hover.is_some() => C::Grab,
                     // a mira é desenhada pelo canvas junto com o contorno do pincel (paint_canvas): a do Windows anda
                     // na hora e o contorno um quadro depois, e os dois se separavam ao mover rápido
@@ -870,8 +899,13 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
     let cs = corners(cw, ch);
     let sp: [Pos2; 4] = std::array::from_fn(|i| xf.to_screen(cs[i]));
 
-    // xadrez de transparência: células fixas de 8 pontos na tela (giram junto com o desenho)
-    if let Some(chk) = &env.ed.checker {
+    // xadrez de transparência: células fixas de 8 pontos na tela (giram junto com o desenho); o viewer da Composição
+    // pode trocar por fundo preto
+    let comp_ws = env.ws == crate::workspace::WorkspaceId::Composicao;
+    let alpha_tex = if comp_ws && env.ed.comp.alpha_view { super::comp_viewer::alpha_texture(env.ed, painter.ctx()) } else { None };
+    if comp_ws && (!env.ed.comp.checker || env.ed.comp.alpha_view) {
+        painter.add(Shape::convex_polygon(sp.to_vec(), Color32::BLACK, Stroke::NONE));
+    } else if let Some(chk) = &env.ed.checker {
         let k = xf.scale / 16.0;
         let uv: [Pos2; 4] = std::array::from_fn(|i| Pos2::new(cs[i].x * k, cs[i].y * k));
         painter.add(quad(chk.id(), sp, uv));
@@ -905,7 +939,8 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
         if shown.rendered.key.cut == *cut {
             let uvm = shown.rendered.uv_max;
             let uv = [Pos2::new(0.0, 0.0), Pos2::new(uvm[0], 0.0), Pos2::new(uvm[0], uvm[1]), Pos2::new(0.0, uvm[1])];
-            painter.add(quad(shown.tex.id(), sp, uv));
+            // canal alfa da Composição: a textura em cinza do mesmo quadro
+            painter.add(quad(alpha_tex.unwrap_or(shown.tex.id()), sp, uv));
         }
     }
     // mesa de luz: os desenhos vizinhos, tingidos, por baixo das linhas do desenho atual (só visão)
@@ -930,6 +965,9 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
     paint_selection(env, painter, xf, cut);
     paint_gestures(env, painter, xf, cut);
     super::text_tool::paint(env, painter, xf, cut);
+    if comp_ws {
+        super::comp_viewer::paint_overlay(env, painter, rect, xf, cut, canvas);
+    }
 
     // ponta/pincel sob o cursor
     if let Some(p) = env.ed.cursor {

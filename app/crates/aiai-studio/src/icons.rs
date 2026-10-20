@@ -84,6 +84,16 @@ pub enum IconId {
     NodeDocument,
     /// Mesa de luz (papel cebola): folhas sobrepostas.
     OnionSkin,
+    /// Composição: girar a camada (W).
+    ToolRotate,
+    /// Composição: ponto de âncora (Y).
+    ToolAnchor,
+    /// Composição: câmera (C).
+    ToolCamera,
+    /// Cronômetro: anima a propriedade (liga as chaves).
+    Stopwatch,
+    /// Favorito.
+    Star,
     /// Marca do app (colorida, não é recolorida).
     Logo,
     /// A marca para o tema claro.
@@ -93,7 +103,7 @@ pub enum IconId {
 }
 
 impl IconId {
-    pub const ALL: [IconId; 72] = [
+    pub const ALL: [IconId; 77] = [
         IconId::WsRoteiro,
         IconId::WsPersonagens,
         IconId::WsStoryboard,
@@ -163,6 +173,11 @@ impl IconId {
         IconId::NodeCharacter,
         IconId::NodeDocument,
         IconId::OnionSkin,
+        IconId::ToolRotate,
+        IconId::ToolAnchor,
+        IconId::ToolCamera,
+        IconId::Stopwatch,
+        IconId::Star,
         IconId::Logo,
         IconId::LogoLight,
         IconId::LogoSmall,
@@ -244,6 +259,11 @@ impl IconId {
             IconId::NodeCharacter => include_str!("../assets/icons/node-character.svg"),
             IconId::NodeDocument => include_str!("../assets/icons/node-document.svg"),
             IconId::OnionSkin => include_str!("../assets/icons/onion-skin.svg"),
+            IconId::ToolRotate => include_str!("../assets/icons/tool-rotate.svg"),
+            IconId::ToolAnchor => include_str!("../assets/icons/tool-anchor.svg"),
+            IconId::ToolCamera => include_str!("../assets/icons/tool-camera.svg"),
+            IconId::Stopwatch => include_str!("../assets/icons/stopwatch.svg"),
+            IconId::Star => include_str!("../assets/icons/star.svg"),
             IconId::Logo => include_str!("../assets/brand/logo.svg"),
             IconId::LogoLight => include_str!("../assets/brand/logo-light.svg"),
             IconId::LogoSmall => include_str!("../assets/brand/logo-small.svg"),

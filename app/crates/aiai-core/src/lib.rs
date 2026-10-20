@@ -26,7 +26,7 @@ pub use color::{ColorRef, Rgba};
 pub use command::{Command, Outcome};
 pub use error::CoreError;
 pub use ids::{Id, IdGen};
-pub use keys::{Ease, Key, KeyTracks};
+pub use keys::{Ease, Key, KeyInterp, KeyTracks};
 pub use model::*;
 pub use query::{Query, QueryResult};
 pub use session::{Clock, CoreSession, LogEntry};

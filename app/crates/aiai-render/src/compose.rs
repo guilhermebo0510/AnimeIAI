@@ -129,9 +129,20 @@ pub fn layer_placement(layer: &LayerData, cel_transform: [f32; 4], frame: u32, w
     let [tx, ty, s, rot] = cel_transform;
     let ox = layer_prop(layer, "offset_x", frame, layer.offset[0]);
     let oy = layer_prop(layer, "offset_y", frame, layer.offset[1]);
-    let ks = layer_prop(layer, "scale", frame, 1.0);
-    let kr = layer_prop(layer, "rotation", frame, 0.0);
-    Affine::from_trs(tx + ox, ty + oy, s * ks, rot + kr, [width as f32 / 2.0, height as f32 / 2.0])
+    let ks = layer_prop(layer, "scale", frame, layer.scale);
+    let kr = layer_prop(layer, "rotation", frame, layer.rotation);
+    let ax = layer_prop(layer, "anchor_x", frame, layer.anchor[0]);
+    let ay = layer_prop(layer, "anchor_y", frame, layer.anchor[1]);
+    let center = [width as f32 / 2.0, height as f32 / 2.0];
+    if ax == 0.0 && ay == 0.0 {
+        // âncora no centro: a mesma conta de sempre (projetos sem âncora renderizam idênticos)
+        return Affine::from_trs(tx + ox, ty + oy, s * ks, rot + kr, center);
+    }
+    // âncora fora do centro: o cel com o pivô dele (centro) e, por cima, o movimento da camada girando/escalando em
+    // volta da âncora
+    let cel = Affine::from_trs(tx, ty, s, rot, center);
+    let motion = Affine::from_trs(ox, oy, ks, kr, [center[0] + ax, center[1] + ay]);
+    compose_affine(motion, cel)
 }
 
 /// Tamanho do canvas do corte.

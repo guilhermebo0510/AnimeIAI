@@ -177,7 +177,7 @@ impl WorkspaceId {
     /// - Animação: o que o animador usa no genga e no douga, e o balde para conferir o fechamento das linhas;
     /// - Pintura: balde primeiro, pincel e borracha para acertos; sem caneta nem pontos (não se desenha linha aqui);
     /// - Personagens: desenha nos materiais da pasta do personagem (caneta, pincel, balde para conferir o fechamento);
-    /// - Composição: é um viewer: mover, conta-gotas, mão e zoom.
+    /// - Composição: é um viewer como o do After Effects: seleção (mover camada), girar, âncora, mão, zoom e câmera.
     pub fn profile(self) -> WorkspaceProfile {
         use ToolId as T;
         use WorkspaceId as W;
@@ -213,7 +213,7 @@ impl WorkspaceId {
                 canvas: true,
                 editor_keys: true,
             },
-            W::Composicao => WorkspaceProfile { tools: &[T::Move, T::Text, T::Eyedropper, T::Hand, T::Zoom], default_tool: T::Move, canvas: true, editor_keys: true },
+            W::Composicao => WorkspaceProfile { tools: &[T::Move, T::Rotate, T::Anchor, T::Hand, T::Zoom, T::Camera], default_tool: T::Move, canvas: true, editor_keys: true },
             // sem canvas, mas com linha do tempo: quadros e reprodução pelas teclas do editor
             W::Storyboard | W::Audio | W::Edicao => WorkspaceProfile { tools: NO_TOOLS, default_tool: T::Move, canvas: false, editor_keys: true },
             W::Roteiro | W::Biblioteca | W::Modelagem | W::Entrega | W::Producao => {
@@ -244,10 +244,26 @@ pub enum ToolId {
     Ruler,
     /// Camada 3D: gizmo de mover/girar/escalar o modelo e órbita, pan e dolly da câmera da camada (M).
     Model3d,
+    /// Composição: gira a camada em volta da âncora (W).
+    Rotate,
+    /// Composição: move o ponto de âncora sem mover a camada (Y, "pan behind").
+    Anchor,
+    /// Composição: arrasta o quadro da câmera do corte (C; Shift = zoom, Ctrl = rotação).
+    Camera,
 }
 
 impl ToolId {
-    pub const ALL: [ToolId; 13] = [
+    /// Ferramentas só da Composição: a tecla delas (W, Y, C) é fixa e vale só lá (fora do mapa de atalhos geral).
+    pub fn comp_key(self) -> Option<&'static str> {
+        match self {
+            ToolId::Rotate => Some("W"),
+            ToolId::Anchor => Some("Y"),
+            ToolId::Camera => Some("C"),
+            _ => None,
+        }
+    }
+
+    pub const ALL: [ToolId; 16] = [
         ToolId::Move,
         ToolId::Brush,
         ToolId::Pen,
@@ -261,6 +277,9 @@ impl ToolId {
         ToolId::Text,
         ToolId::Ruler,
         ToolId::Model3d,
+        ToolId::Rotate,
+        ToolId::Anchor,
+        ToolId::Camera,
     ];
 
     /// Identificador estável (bridge/UI_ACTION): `move`, `brush`, `pen`...
@@ -287,6 +306,9 @@ impl ToolId {
             ToolId::Text => "tool.text",
             ToolId::Ruler => "tool.ruler",
             ToolId::Model3d => "tool.model3d",
+            ToolId::Rotate => "tool.rotate",
+            ToolId::Anchor => "tool.anchor",
+            ToolId::Camera => "tool.camera",
         }
     }
 
@@ -305,6 +327,9 @@ impl ToolId {
             ToolId::Text => IconId::ToolText,
             ToolId::Ruler => IconId::ToolRuler,
             ToolId::Model3d => IconId::ToolModel3d,
+            ToolId::Rotate => IconId::ToolRotate,
+            ToolId::Anchor => IconId::ToolAnchor,
+            ToolId::Camera => IconId::ToolCamera,
         }
     }
 }

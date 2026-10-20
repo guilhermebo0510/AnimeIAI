@@ -41,7 +41,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: egui::Rect) {
         }
         layer_properties(env, ui);
         if env.ws == WorkspaceId::Composicao {
-            super::satsuei::layer_effects(env, ui);
+            // os efeitos da camada ficam no painel Controles de efeito; aqui a câmera e a cor do corte
             super::satsuei::camera(env, ui);
             // a grade do corte (lift/gamma/gain), que ficava no antigo workspace Cor, agora é trabalho do satsuei
             ui.add_space(4.0);
@@ -318,7 +318,7 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
     let t = env.t;
     let tool = *env.tool;
     // cor atual (vale para caneta, pincel e balde)
-    if (matches!(tool, ToolId::Pen | ToolId::Brush | ToolId::Fill | ToolId::Eyedropper) || !compact) && !matches!(tool, ToolId::Text | ToolId::Ruler | ToolId::Model3d) {
+    if (matches!(tool, ToolId::Pen | ToolId::Brush | ToolId::Fill | ToolId::Eyedropper) || !compact) && !matches!(tool, ToolId::Text | ToolId::Ruler | ToolId::Rotate | ToolId::Anchor | ToolId::Camera | ToolId::Model3d) {
         row(ui, &t, compact, "opt.color", |ui| {
             let cur = cmds::resolve_color(&env.core.project, &env.ed.color);
             let mut c32 = rgba_to_color32(Rgba([cur.0[0], cur.0[1], cur.0[2], 1.0]));
@@ -654,6 +654,16 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
                     ToolId::Eyedropper => "opt.eyedropper_hint",
                     ToolId::Hand => "opt.hand_hint",
                     _ => "opt.zoom_hint",
+                }));
+            }
+        }
+        // ferramentas do viewer da Composição: a dica de uso
+        ToolId::Rotate | ToolId::Anchor | ToolId::Camera => {
+            if !compact {
+                dim_label(ui, &t, tr(match tool {
+                    ToolId::Rotate => "comp.hint.rotate",
+                    ToolId::Anchor => "comp.hint.anchor",
+                    _ => "comp.hint.camera",
                 }));
             }
         }

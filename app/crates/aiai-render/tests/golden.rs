@@ -352,3 +352,90 @@ fn frame_cache_reuses_the_composite_below_the_edited_layer_and_matches_a_full_re
     let e = render_frame_cached(&s.project, &s.blobs, &cut, 0, &opts, &mut cache).unwrap().image;
     assert_eq!(e.content_hash(), full(&s).content_hash());
 }
+
+// ------------------------------------------------------------------------------------------------ Composição (S24 3.2/3.5)
+// Parâmetros de efeito com chave mudam o quadro renderizado, a âncora da camada é o pivô da rotação/escala, e um
+// projeto sem chave nem âncora renderiza igual.
+
+/// Corte 64×64 de 12 quadros com uma camada raster: quadrado branco opaco de 16 px em (8, 8).
+fn comp_scene() -> (CoreSession, Id, Id) {
+    let mut s = CoreSession::for_tests("comp");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 64, "height": 64}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = create(&mut s, Some(&sc), "C", NodeKind::Cut(CutData::new(12)));
+    let l = create(&mut s, Some(&cut), "Q", NodeKind::Layer(LayerData::new(LayerType::Raster)));
+    let cel = create(&mut s, Some(&l), "Q1", NodeKind::Cel(CelData::new(1)));
+    let mut img = Image::new(64, 64);
+    for y in 8..24 {
+        for x in 8..24 {
+            let i = img.idx(x, y);
+            img.data[i] = [1.0, 1.0, 1.0, 1.0];
+        }
+    }
+    let mut edits = Vec::new();
+    for (tx, ty, px) in tile::image_to_tiles(&img, [0, 0]) {
+        if let Some(px) = px {
+            edits.push(TileEdit { x: tx, y: ty, blob: Some(s.blobs.put(tile::encode_tile(&px))) });
+        }
+    }
+    s.apply(Command::SetTiles { cel, tiles: edits }).unwrap();
+    (s, cut, l)
+}
+
+fn comp_render(s: &CoreSession, cut: &Id, frame: u32) -> Image {
+    let out = render_frame(&s.project, &s.blobs, cut, frame, &RenderOptions { camera: false, ..Default::default() }).unwrap();
+    assert!(out.warnings.is_empty(), "avisos: {:?}", out.warnings);
+    out.image
+}
+
+#[test]
+fn a_keyed_blur_radius_changes_the_render_between_frames() {
+    let (mut s, cut, l) = comp_scene();
+    // estático: todos os quadros iguais
+    s.apply(Command::SetProps { id: l.clone(), name: None, data: json!({"params": {"effects": [{"effect": {"type": "gaussian_blur", "radius": 2.0}}]}}) }).unwrap();
+    assert_eq!(comp_render(&s, &cut, 0).content_hash(), comp_render(&s, &cut, 11).content_hash());
+    // raio com chave: 0 no quadro 0, 12 no quadro 10
+    s.apply(Command::SetProps {
+        id: l.clone(),
+        name: None,
+        data: json!({"params": {"effects": [{"effect": {"type": "gaussian_blur", "radius": 2.0}, "keys": {"radius": [{"frame": 0, "value": 0.0}, {"frame": 10, "value": 12.0}]}}]}}),
+    })
+    .unwrap();
+    let (a, b, c) = (comp_render(&s, &cut, 0), comp_render(&s, &cut, 5), comp_render(&s, &cut, 10));
+    assert_ne!(a.content_hash(), b.content_hash());
+    assert_ne!(b.content_hash(), c.content_hash());
+    // sem desfoque no quadro 0 a borda é dura; com raio maior a cobertura vaza mais para fora do quadrado
+    let leak = |img: &Image| img.get(28, 16)[3];
+    assert_eq!(leak(&a), 0.0);
+    assert!(leak(&c) > leak(&b), "raio 12 vaza mais que raio 6: {} vs {}", leak(&c), leak(&b));
+    // depois da última chave segura o valor
+    assert_eq!(comp_render(&s, &cut, 11).content_hash(), c.content_hash());
+}
+
+#[test]
+fn the_anchor_is_the_pivot_of_rotation_and_a_static_project_is_unchanged() {
+    let (mut s, cut, l) = comp_scene();
+    let plain = comp_render(&s, &cut, 0);
+    // âncora sem rotação/escala não mexe na camada
+    s.apply(Command::SetProps { id: l.clone(), name: None, data: json!({"anchor": [-16.0, -16.0]}) }).unwrap();
+    assert_eq!(comp_render(&s, &cut, 0).content_hash(), plain.content_hash());
+    // 180° em volta do centro do quadrado (16, 16) = âncora (-16, -16): o quadrado fica no mesmo lugar
+    s.apply(Command::SetProps { id: l.clone(), name: None, data: json!({"rotation": 180.0}) }).unwrap();
+    let around_anchor = comp_render(&s, &cut, 0);
+    assert!(around_anchor.get(16, 16)[3] > 0.99 && around_anchor.get(48, 48)[3] == 0.0);
+    // 180° em volta do centro do canvas: o quadrado vai para o canto oposto
+    s.apply(Command::SetProps { id: l.clone(), name: None, data: json!({"anchor": [0.0, 0.0]}) }).unwrap();
+    let around_center = comp_render(&s, &cut, 0);
+    assert!(around_center.get(48, 48)[3] > 0.99 && around_center.get(16, 16)[3] == 0.0);
+    // escala fixa 0,5 em volta da âncora no canto do quadrado (8, 8): cobre só 8..16
+    s.apply(Command::SetProps { id: l.clone(), name: None, data: json!({"rotation": 0.0, "scale": 0.5, "anchor": [-24.0, -24.0]}) }).unwrap();
+    let half = comp_render(&s, &cut, 0);
+    assert!(half.get(10, 10)[3] > 0.99 && half.get(20, 20)[3] == 0.0);
+    // os campos padrão não aparecem no documento
+    s.apply(Command::SetProps { id: l.clone(), name: None, data: json!({"scale": 1.0, "anchor": [0.0, 0.0]}) }).unwrap();
+    let NodeKind::Layer(ld) = &s.project.node(&l).unwrap().data else { unreachable!() };
+    let j = serde_json::to_value(ld).unwrap();
+    assert!(j.get("scale").is_none() && j.get("rotation").is_none() && j.get("anchor").is_none(), "{j}");
+    assert_eq!(comp_render(&s, &cut, 0).content_hash(), plain.content_hash());
+}

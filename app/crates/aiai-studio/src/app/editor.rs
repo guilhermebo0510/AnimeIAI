@@ -785,6 +785,8 @@ pub(crate) struct Editor {
     pub rulers: super::rulers::RulerState,
     /// Camada 3D: modo do gizmo, arrasto em curso e prévia reduzida.
     pub m3d: super::model3d::M3dState,
+    /// Composição (S24 3.1–3.5): viewer, Linha do tempo da composição, Efeitos e predefinições.
+    pub comp: super::comp::CompState,
 }
 
 impl Default for Editor {
@@ -794,6 +796,7 @@ impl Default for Editor {
             anim: Default::default(),
             rulers: Default::default(),
             m3d: Default::default(),
+            comp: Default::default(),
             live_stroke: Default::default(),
             move_live: Default::default(),
             text: Default::default(),

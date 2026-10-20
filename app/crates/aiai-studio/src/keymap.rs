@@ -217,10 +217,11 @@ impl Action {
         ACTIONS.iter().find(|a| a.1 == id).map(|a| a.0)
     }
 
-    /// A ação de escolher a ferramenta (dicas da prateleira).
-    pub fn for_tool(t: crate::workspace::ToolId) -> Action {
+    /// A ação de escolher a ferramenta (dicas da prateleira). As ferramentas da Composição (girar, âncora, câmera) têm
+    /// tecla fixa naquele workspace (`ToolId::comp_key`) e não entram no mapa geral.
+    pub fn for_tool(t: crate::workspace::ToolId) -> Option<Action> {
         use crate::workspace::ToolId as T;
-        match t {
+        Some(match t {
             T::Move => Action::ToolMove,
             T::Brush => Action::ToolBrush,
             T::Pen => Action::ToolPen,
@@ -234,7 +235,8 @@ impl Action {
             T::Text => Action::ToolText,
             T::Ruler => Action::ToolRuler,
             T::Model3d => Action::ToolModel3d,
-        }
+            T::Rotate | T::Anchor | T::Camera => return None,
+        })
     }
 }
 

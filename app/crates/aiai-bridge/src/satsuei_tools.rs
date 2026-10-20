@@ -8,7 +8,7 @@
 
 use crate::core_tools::{apply, request};
 use crate::protocol::BridgeError;
-use aiai_core::keys::{Ease, Key, KeyTracks};
+use aiai_core::keys::{Ease, Key, KeyInterp, KeyTracks};
 use aiai_core::{Command, CoreSession, Id, LayerData, LayerType, NodeKind};
 use aiai_fx::{Effect, EffectInstance};
 use schemars::JsonSchema;
@@ -22,7 +22,7 @@ pub fn is_mutating(action: &str) -> bool {
 }
 
 const CAMERA_PROPS: &[&str] = &["center_x", "center_y", "zoom", "rotation", "shake"];
-const LAYER_PROPS: &[&str] = &["offset_x", "offset_y", "opacity", "rotation", "scale"];
+const LAYER_PROPS: &[&str] = &["offset_x", "offset_y", "opacity", "rotation", "scale", "anchor_x", "anchor_y"];
 
 // ------------------------------------------------------------------------------------------------- requisições
 
@@ -63,6 +63,23 @@ pub enum EffectsRequest {
     },
     Remove { layer: Id, index: usize },
     Clear { layer: Id },
+    /// Substitui as chaves de UM parâmetro do efeito `index` (caminho numérico: `radius`, `center.0`, `color.2`,
+    /// `adjustment.hue`); lista vazia apaga a animação (o efeito volta ao valor fixo).
+    Key { layer: Id, index: usize, param: String, keys: Vec<Key> },
+    /// Interpolação das chaves de parâmetro do efeito `index`: só `param` (padrão: todos) e só os quadros `frames`
+    /// (padrão: todas as chaves). `interpolation` como no After Effects ou `ease` cru (Bézier etc.).
+    Ease {
+        layer: Id,
+        index: usize,
+        #[serde(default)]
+        param: Option<String>,
+        #[serde(default)]
+        frames: Option<Vec<u32>>,
+        #[serde(default)]
+        interpolation: Option<KeyInterp>,
+        #[serde(default)]
+        ease: Option<Ease>,
+    },
 }
 
 /// `GRADE`: cor do corte numa camada de efeito no topo (criada se faltar, sempre movida para o topo).
@@ -161,9 +178,32 @@ pub enum LayerMotionRequest {
         depth: Option<f32>,
         #[serde(default)]
         opacity: Option<f32>,
+        /// Escala fixa (1 = tamanho do canvas), usada quando `scale` não tem chave.
+        #[serde(default)]
+        scale: Option<f32>,
+        /// Rotação fixa em graus (horário), usada quando `rotation` não tem chave.
+        #[serde(default)]
+        rotation: Option<f32>,
+        /// Ponto de âncora (pivô da escala/rotação) em px a partir do centro do canvas.
+        #[serde(default)]
+        anchor: Option<[f32; 2]>,
     },
-    /// Substitui as chaves de uma propriedade (offset_x, offset_y, opacity, rotation, scale); lista vazia apaga.
+    /// Substitui as chaves de uma propriedade (offset_x, offset_y, opacity, rotation, scale, anchor_x, anchor_y); lista
+    /// vazia apaga.
     Keys { layer: Id, property: String, keys: Vec<Key> },
+    /// Interpolação das chaves: só `property` (padrão: todas) e só os quadros `frames` (padrão: todas as chaves).
+    /// `interpolation` como no After Effects (linear, hold, easy_ease, easy_ease_in, easy_ease_out) ou `ease` cru.
+    Ease {
+        layer: Id,
+        #[serde(default)]
+        property: Option<String>,
+        #[serde(default)]
+        frames: Option<Vec<u32>>,
+        #[serde(default)]
+        interpolation: Option<KeyInterp>,
+        #[serde(default)]
+        ease: Option<Ease>,
+    },
     /// Desliza a camada de `from` a `to` (offset em px) entre `start` e `end`.
     Slide {
         layer: Id,
@@ -203,7 +243,7 @@ fn stack_of(l: &LayerData) -> Result<Vec<EffectInstance>, BridgeError> {
 
 fn with_stack(mut l: LayerData, stack: &[EffectInstance]) -> Result<LayerData, BridgeError> {
     for e in stack {
-        e.keys.validate().map_err(|m| BridgeError::invalid_params(format!("chaves do efeito: {m}")))?;
+        e.validate().map_err(|m| BridgeError::invalid_params(format!("chaves do efeito: {m}")))?;
         if e.posterize_time == 0 {
             return Err(BridgeError::invalid_params("posterize_time deve ser ≥ 1"));
         }
@@ -231,7 +271,9 @@ fn effects(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeErr
         | EffectsRequest::Add { layer, .. }
         | EffectsRequest::Update { layer, .. }
         | EffectsRequest::Remove { layer, .. }
-        | EffectsRequest::Clear { layer } => layer.clone(),
+        | EffectsRequest::Clear { layer }
+        | EffectsRequest::Key { layer, .. }
+        | EffectsRequest::Ease { layer, .. } => layer.clone(),
     };
     let l = layer_of(session, &id)?;
     let mut stack = stack_of(&l)?;
@@ -267,6 +309,29 @@ fn effects(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeErr
             stack.remove(index);
         }
         EffectsRequest::Clear { .. } => stack.clear(),
+        EffectsRequest::Key { index, param, keys, .. } => {
+            let n = stack.len();
+            let e = stack.get_mut(index).ok_or_else(|| bad_index(index, n))?;
+            let v = serde_json::to_value(&e.effect).map_err(|x| BridgeError::failed(x.to_string()))?;
+            if aiai_fx::param_get(&v, &param).is_none() {
+                return Err(BridgeError::invalid_params(format!(
+                    "'{param}' não é um parâmetro numérico de '{}' (use {})",
+                    e.effect.name(),
+                    aiai_fx::numeric_params(&e.effect).join(", ")
+                )));
+            }
+            set_track(&mut e.keys, &param, keys);
+        }
+        EffectsRequest::Ease { index, param, frames, interpolation, ease, .. } => {
+            let n = stack.len();
+            let e = stack.get_mut(index).ok_or_else(|| bad_index(index, n))?;
+            let props: Vec<String> = match param {
+                Some(p) if !e.keys.has(&p) => return Err(BridgeError::invalid_params(format!("o parâmetro '{p}' não tem chaves"))),
+                Some(p) => vec![p],
+                None => e.keys.0.keys().cloned().collect(),
+            };
+            apply_ease(&mut e.keys, &props, frames.as_deref(), interpolation, ease)?;
+        }
     }
     let kind = l.kind;
     let l = with_stack(l, &stack)?;
@@ -334,6 +399,30 @@ fn set_track(tracks: &mut KeyTracks, prop: &str, mut keys: Vec<Key>) {
     } else {
         tracks.0.insert(prop.into(), keys);
     }
+}
+
+/// `ease`/`interpolation` (um dos dois) nas chaves de `props`; erro se nada foi dado ou se não há chave para mexer.
+fn apply_ease(tracks: &mut KeyTracks, props: &[String], frames: Option<&[u32]>, interp: Option<KeyInterp>, ease: Option<Ease>) -> Result<(), BridgeError> {
+    if interp.is_some() == ease.is_some() {
+        return Err(BridgeError::invalid_params("dê `interpolation` (linear|hold|easy_ease|easy_ease_in|easy_ease_out) ou `ease`, um dos dois"));
+    }
+    if props.is_empty() {
+        return Err(BridgeError::invalid_params("não há chaves para mudar a interpolação"));
+    }
+    if let Some(f) = frames {
+        let any = props.iter().any(|p| tracks.frames(p).iter().any(|k| f.contains(k)));
+        if !any {
+            return Err(BridgeError::invalid_params(format!("nenhuma chave nos quadros {f:?}")));
+        }
+    }
+    for p in props {
+        match (interp, ease) {
+            (Some(i), _) => tracks.set_interp(p, frames, i),
+            (None, Some(e)) => tracks.set_ease(p, frames, e),
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 fn two_keys(start: u32, end: u32, a: f32, b: f32, ease: Ease) -> Vec<Key> {
@@ -445,14 +534,33 @@ fn layer_motion(session: &mut CoreSession, params: &Value) -> Result<Value, Brid
         | LayerMotionRequest::Set { layer, .. }
         | LayerMotionRequest::Keys { layer, .. }
         | LayerMotionRequest::Slide { layer, .. }
-        | LayerMotionRequest::ClearKeys { layer } => layer.clone(),
+        | LayerMotionRequest::ClearKeys { layer }
+        | LayerMotionRequest::Ease { layer, .. } => layer.clone(),
     };
     let mut l = layer_of(session, &id)?;
     match req {
         LayerMotionRequest::Read { .. } => {
-            return Ok(json!({ "layer": id, "offset": l.offset, "depth": l.depth, "opacity": l.opacity, "keys": l.keys }));
+            return Ok(json!({ "layer": id, "offset": l.offset, "depth": l.depth, "opacity": l.opacity, "scale": l.scale, "rotation": l.rotation, "anchor": l.anchor, "keys": l.keys }));
         }
-        LayerMotionRequest::Set { offset, depth, opacity, .. } => {
+        LayerMotionRequest::Set { offset, depth, opacity, scale, rotation, anchor, .. } => {
+            if let Some(s) = scale {
+                if !(s.is_finite() && s > 0.0) {
+                    return Err(BridgeError::invalid_params("scale deve ser > 0"));
+                }
+                l.scale = s;
+            }
+            if let Some(r) = rotation {
+                if !r.is_finite() {
+                    return Err(BridgeError::invalid_params("rotation não finita"));
+                }
+                l.rotation = r;
+            }
+            if let Some(a) = anchor {
+                if !a.iter().all(|v| v.is_finite()) {
+                    return Err(BridgeError::invalid_params("anchor não finita"));
+                }
+                l.anchor = a;
+            }
             if let Some(o) = offset {
                 l.offset = o;
             }
@@ -483,8 +591,19 @@ fn layer_motion(session: &mut CoreSession, params: &Value) -> Result<Value, Brid
             l.offset = from;
         }
         LayerMotionRequest::ClearKeys { .. } => l.keys = KeyTracks::default(),
+        LayerMotionRequest::Ease { property, frames, interpolation, ease, .. } => {
+            let props: Vec<String> = match property {
+                Some(p) if !LAYER_PROPS.contains(&p.as_str()) => {
+                    return Err(BridgeError::invalid_params(format!("propriedade '{p}' desconhecida (use {})", LAYER_PROPS.join(", "))));
+                }
+                Some(p) if !l.keys.has(&p) => return Err(BridgeError::invalid_params(format!("'{p}' não tem chaves"))),
+                Some(p) => vec![p],
+                None => l.keys.0.keys().cloned().collect(),
+            };
+            apply_ease(&mut l.keys, &props, frames.as_deref(), interpolation, ease)?;
+        }
     }
-    let out = json!({ "offset": l.offset, "depth": l.depth, "opacity": l.opacity, "keys": l.keys });
+    let out = json!({ "offset": l.offset, "depth": l.depth, "opacity": l.opacity, "scale": l.scale, "rotation": l.rotation, "anchor": l.anchor, "keys": l.keys });
     let mut v = replace_layer(session, params, &id, l)?;
     v["layer_motion"] = out;
     Ok(v)

@@ -26,6 +26,8 @@ pub(crate) struct FrameKey {
     pub reference: bool,
     /// Divisor do tamanho da imagem (1 = resolução cheia).
     pub reduce: u32,
+    /// Solo da Composição (só de visão): só estas camadas entram no quadro; vazio = todas.
+    pub solo: Vec<NodeId>,
 }
 
 /// Quadro pronto: pixels pré-multiplicados (o que o egui espera) e o tamanho do canvas que eles cobrem.
@@ -261,7 +263,8 @@ fn worker(shared: Arc<Shared>, tx: crossbeam_channel::Sender<Done>, ctx: egui::C
 
 fn render_job(job: &Job, t0: Instant, cache: &mut FrameCache) -> Result<Rendered, String> {
     let k = &job.key;
-    let opts = RenderOptions { include_guides: k.guides, include_reference: k.reference, only_layers: None, background: None, camera: false, layer_motion: true };
+    let only_layers = (!k.solo.is_empty()).then(|| k.solo.clone());
+    let opts = RenderOptions { include_guides: k.guides, include_reference: k.reference, only_layers, background: None, camera: false, layer_motion: true };
     let out = render_frame_cached(&job.snap.project, &job.snap.blobs, &k.cut, k.frame, &opts, cache).map_err(|e| e.to_string())?;
     let (w, h) = (out.image.width as usize, out.image.height as usize);
     let r = k.reduce.max(1) as usize;
@@ -329,7 +332,7 @@ mod tests {
         let cut = super::super::commands::quick_start(&mut core, 6, None).unwrap();
         let layer = super::super::commands::add_layer(&mut core, &cut, LayerType::Raster, None).unwrap();
         let mut svc = RenderService::new(&ctx);
-        let key = FrameKey { counter: core.change_counter, cut: cut.clone(), frame: 0, guides: false, reference: false, reduce: 1 };
+        let key = FrameKey { counter: core.change_counter, cut: cut.clone(), frame: 0, guides: false, reference: false, reduce: 1, solo: Vec::new() };
         svc.request(&core, std::slice::from_ref(&key));
         let t0 = Instant::now();
         while svc.get(&key).is_none() {

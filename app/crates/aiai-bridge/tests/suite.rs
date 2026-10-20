@@ -1838,3 +1838,47 @@ fn rulers_live_in_the_guide_layer_and_are_one_undo_step_each() {
         assert_eq!(act_err(&mut d.s, "RULER", bad.clone()).code, code::INVALID_PARAMS, "{bad}");
     }
 }
+
+#[test]
+fn comp_keyframe_interpolation_anchor_and_keyed_effect_params() {
+    let mut d = prod_doc();
+    let (cut, line) = (d.cut.clone(), d.line.clone());
+    act(&mut d.s, "DRAW_CURVES", json!({"cut": cut, "frame": 0, "layer": line, "curves": [{"points": [[160.0, 40.0], [160.0, 140.0]], "width": 6.0, "geometry": "polyline", "tip": "marker", "color": black()}]}));
+    // transformação: valores fixos novos (escala, rotação, âncora) e chaves com Easy Ease
+    let o = act(&mut d.s, "LAYER_MOTION", json!({"op": "set", "layer": line, "scale": 0.5, "rotation": 15.0, "anchor": [10.0, -4.0]}));
+    assert_eq!(o["layer_motion"]["scale"], 0.5);
+    assert_eq!(o["layer_motion"]["anchor"], json!([10.0, -4.0]));
+    assert!(act_err(&mut d.s, "LAYER_MOTION", json!({"op": "set", "layer": line, "scale": 0.0})).to_string().contains("scale"));
+    act(&mut d.s, "LAYER_MOTION", json!({"op": "keys", "layer": line, "property": "anchor_x", "keys": [{"frame": 0, "value": 0.0}, {"frame": 10, "value": 20.0}]}));
+    act(&mut d.s, "LAYER_MOTION", json!({"op": "keys", "layer": line, "property": "rotation", "keys": [{"frame": 0, "value": 0.0}, {"frame": 12, "value": 90.0}, {"frame": 24, "value": 0.0}]}));
+    let o = act(&mut d.s, "LAYER_MOTION", json!({"op": "ease", "layer": line, "property": "rotation", "frames": [12], "interpolation": "easy_ease"}));
+    let rot = &o["layer_motion"]["keys"]["rotation"];
+    assert_eq!(rot[0]["ease"]["type"], "bezier", "chegada na chave 12: {rot}");
+    assert_eq!(rot[0]["ease"]["y2"], 1.0);
+    assert_eq!(rot[1]["ease"]["type"], "bezier");
+    assert_eq!(rot[1]["ease"]["y1"], 0.0);
+    let o = act(&mut d.s, "LAYER_MOTION", json!({"op": "ease", "layer": line, "interpolation": "hold"}));
+    assert_eq!(o["layer_motion"]["keys"]["anchor_x"][0]["ease"]["type"], "hold", "sem property: todas as chaves");
+    assert!(act_err(&mut d.s, "LAYER_MOTION", json!({"op": "ease", "layer": line, "property": "rotation", "frames": [3], "interpolation": "linear"})).to_string().contains("nenhuma chave"));
+    assert!(act_err(&mut d.s, "LAYER_MOTION", json!({"op": "ease", "layer": line, "property": "rotation"})).to_string().contains("interpolation"));
+    act(&mut d.s, "LAYER_MOTION", json!({"op": "clear_keys", "layer": line}));
+    act(&mut d.s, "LAYER_MOTION", json!({"op": "set", "layer": line, "scale": 1.0, "rotation": 0.0, "anchor": [0.0, 0.0]}));
+
+    // parâmetro de efeito com chave: o raio do desfoque muda o quadro renderizado
+    act(&mut d.s, "EFFECTS", json!({"op": "add", "layer": line, "effect": {"type": "gaussian_blur", "radius": 0.0}}));
+    let still0 = shot(&mut d.s, &cut, 0, &[&line], json!({}));
+    assert_eq!(opaque(&still0), opaque(&shot(&mut d.s, &cut, 20, &[&line], json!({}))), "sem chave o efeito é estático");
+    let e = act_err(&mut d.s, "EFFECTS", json!({"op": "key", "layer": line, "index": 0, "param": "raio", "keys": [{"frame": 0, "value": 1.0}]}));
+    assert!(e.to_string().contains("radius"), "a recusa lista os parâmetros: {e}");
+    act(&mut d.s, "EFFECTS", json!({"op": "key", "layer": line, "index": 0, "param": "radius", "keys": [{"frame": 0, "value": 0.0}, {"frame": 20, "value": 16.0}]}));
+    let o = act(&mut d.s, "EFFECTS", json!({"op": "ease", "layer": line, "index": 0, "interpolation": "easy_ease"}));
+    assert_eq!(o["effects"][0]["instance"]["keys"]["radius"][0]["ease"]["type"], "bezier");
+    let (a, b) = (opaque(&shot(&mut d.s, &cut, 0, &[&line], json!({}))), opaque(&shot(&mut d.s, &cut, 20, &[&line], json!({}))));
+    assert!(b > a + 50, "raio 16 espalha a linha: {a} → {b}");
+    // trocar o efeito por um sem 'radius' com a chave ainda lá é recusado (a chave ficaria órfã)
+    assert!(act_err(&mut d.s, "EFFECTS", json!({"op": "update", "layer": line, "index": 0, "effect": {"type": "vignette", "amount": 0.2, "softness": 0.5}})).to_string().contains("radius"));
+    // lista vazia volta ao valor fixo
+    act(&mut d.s, "EFFECTS", json!({"op": "key", "layer": line, "index": 0, "param": "radius", "keys": []}));
+    let l = act(&mut d.s, "EFFECTS", json!({"op": "list", "layer": line}));
+    assert!(l["effects"][0]["instance"].get("keys").is_none(), "{l}");
+}
