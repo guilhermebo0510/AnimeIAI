@@ -58,6 +58,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
         env.ed.view.fit(rect, ppp, canvas, MARGIN);
     }
     update_render(env, &ctx, &cut, canvas);
+    super::text_tool::frame(env, &ctx);
 
     let resp = ui.interact(rect, ui.id().with("canvas_area"), Sense::click_and_drag());
     let view_before = env.ed.view;
@@ -454,6 +455,16 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
         super::nodes::press(env, xf.to_canvas(pos), 1.0 / xf.scale.max(1e-3), button, mods);
         return;
     }
+    // Texto: clique cria/edita; o Mover leva a camada de texto ativa
+    if button == egui::PointerButton::Primary && !space && !r_held {
+        if tool == ToolId::Text {
+            super::text_tool::press(env, xf.to_canvas(pos), xf.scale, mods);
+            return;
+        }
+        if tool == ToolId::Move && super::text_tool::move_press(env, xf.to_canvas(pos)) {
+            return;
+        }
+    }
     match button {
         egui::PointerButton::Middle => env.ed.gesture = Gesture::Pan { last: pos, button },
         egui::PointerButton::Primary => {
@@ -520,7 +531,7 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
                         let f = if mods.shift { 0.5 } else { 2.0 };
                         env.ed.view.zoom_at(rect, ppp, pos, f);
                     }
-                    ToolId::Hand | ToolId::Points => {}
+                    ToolId::Hand | ToolId::Points | ToolId::Text => {}
                 }
             }
         }
@@ -531,6 +542,10 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
 fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
     let xf = env.ed.view.xf(rect, ppp);
     let c = xf.to_canvas(pos);
+    if super::text_tool::dragging(env) {
+        super::text_tool::drag(env, c);
+        return;
+    }
     match &mut env.ed.gesture {
         Gesture::None => {}
         Gesture::Pan { last, .. } => {
@@ -594,6 +609,10 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
     let at = Instant::now();
     let xf = env.ed.view.xf(rect, ppp);
     let c = xf.to_canvas(pos);
+    if button == egui::PointerButton::Primary && super::text_tool::dragging(env) {
+        super::text_tool::release(env, c, xf.scale);
+        return;
+    }
     let g = std::mem::replace(&mut env.ed.gesture, Gesture::None);
     match g {
         Gesture::None => {}
@@ -751,6 +770,7 @@ fn set_cursor(env: &Env, ctx: &egui::Context, resp: &egui::Response, tool: ToolI
                     ToolId::Hand => C::Grab,
                     ToolId::Zoom => C::ZoomIn,
                     ToolId::Move => C::Move,
+                    ToolId::Text => C::Text,
                     // a mira é desenhada pelo canvas junto com o contorno do pincel (paint_canvas): a do Windows anda
                     // na hora e o contorno um quadro depois, e os dois se separavam ao mover rápido
                     t if own_cursor(t) => C::None,
@@ -834,6 +854,7 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
 
     paint_selection(env, painter, xf, cut);
     paint_gestures(env, painter, xf, cut);
+    super::text_tool::paint(env, painter, xf, cut);
 
     // ponta/pincel sob o cursor
     if let Some(p) = env.ed.cursor {

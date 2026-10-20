@@ -12,12 +12,12 @@ use serde::{Deserialize, Serialize};
 
 /// Fonte padrão (Noto Sans JP Regular, OFL) embutida no app.
 pub fn default_font() -> &'static [u8] {
-    include_bytes!("../../aiai-studio/assets/fonts/NotoSansJP-Regular.otf")
+    aiai_paint::fonts::default_font()
 }
 
 /// Fonte pesada (Noto Sans JP Black, OFL) para onomatopeias e títulos.
 pub fn heavy_font() -> &'static [u8] {
-    include_bytes!("../../aiai-studio/assets/fonts/NotoSansJP-Black.otf")
+    aiai_paint::fonts::heavy_font()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

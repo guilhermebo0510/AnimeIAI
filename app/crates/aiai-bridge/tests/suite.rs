@@ -823,6 +823,45 @@ fn production_scenery_and_2d_effects_round_trip() {
     assert_eq!(e.code, code::INVALID_PARAMS);
     act(&mut d.s, "TEXT", json!({"cut": cut, "frame": 0, "fill_layer": txt2, "text": "ABC", "size": 40.0, "center": [60.0, 40.0], "color": black(), "font": "regular"}));
 
+    // TEXT_LAYER: camada de texto editável (criada, editada por campo, renderizada ao vivo, um passo de undo cada)
+    let n_layers = |s: &CoreSession| s.project.nodes.len();
+    let before = n_layers(&d.s);
+    let t = act(&mut d.s, "TEXT_LAYER", json!({"cut": cut, "text": "Hi", "size": 60.0, "align": "left", "pos": [20.0, 20.0], "color": {"type": "direct", "rgba": [0.0, 0.0, 1.0, 1.0]}}));
+    let tl = t["layer"].as_str().unwrap().to_string();
+    assert_eq!(t["created"], true);
+    assert_eq!(n_layers(&d.s), before + 1, "uma camada nova");
+    assert_eq!(t["text"]["lines"], 1);
+    assert!(t["text"]["bounds"][0].as_f64().unwrap() >= 19.0 && t["text"]["bounds"][1].as_f64().unwrap() >= 19.0, "{t}");
+    let img = shot(&mut d.s, &cut, 0, &[&tl], json!({}));
+    let blue = img.pixels().filter(|p| p.0[3] > 200 && p.0[2] > 200 && p.0[0] < 60).count();
+    assert!(blue > 150, "letras azuis desenhadas: {blue}");
+    // só o texto muda: tamanho, cor e posição ficam
+    let e = act(&mut d.s, "TEXT_LAYER", json!({"layer": tl, "text": "Hi\nthere"}));
+    assert_eq!((e["created"].as_bool(), e["text"]["lines"].as_u64()), (Some(false), Some(2)));
+    assert_eq!(e["text"]["params"]["size"], 60.0);
+    // contorno e sombra entram e saem (`null` apaga)
+    let plain = opaque(&shot(&mut d.s, &cut, 0, &[&tl], json!({})));
+    act(&mut d.s, "TEXT_LAYER", json!({"layer": tl, "stroke": {"width": 5.0, "color": black()}, "shadow": {"offset": [6.0, 6.0], "blur": 0.0, "color": black()}}));
+    let dressed = opaque(&shot(&mut d.s, &cut, 0, &[&tl], json!({})));
+    assert!(dressed > plain + 100, "contorno e sombra ampliam a mancha: {plain} -> {dressed}");
+    let e = act(&mut d.s, "TEXT_LAYER", json!({"layer": tl, "stroke": null, "shadow": null}));
+    assert!(e["text"]["params"]["stroke"].is_null() && e["text"]["params"]["shadow"].is_null());
+    assert_eq!(opaque(&shot(&mut d.s, &cut, 0, &[&tl], json!({}))), plain, "voltou ao simples");
+    // caixa com quebra automática e alinhamento à direita
+    let e = act(&mut d.s, "TEXT_LAYER", json!({"layer": tl, "text": "um dois tres quatro cinco", "box_size": [120.0, 100.0], "align": "right", "size": 24.0}));
+    assert!(e["text"]["lines"].as_u64().unwrap() >= 2, "quebrou dentro da caixa: {e}");
+    // um passo de undo por chamada
+    let rev = d.s.project.revision;
+    act(&mut d.s, "UNDO", json!({}));
+    assert!(d.s.project.revision > rev);
+    // erros claros, sem mudar nada
+    assert_eq!(act_err(&mut d.s, "TEXT_LAYER", json!({"cut": cut, "text": "x", "font": "Fonte Que Nao Existe 123"})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "TEXT_LAYER", json!({"layer": line, "text": "x"})).code, code::INVALID_PARAMS, "camada que não é de texto");
+    assert_eq!(act_err(&mut d.s, "TEXT_LAYER", json!({"text": "x"})).code, code::INVALID_PARAMS, "sem corte");
+    assert_eq!(act_err(&mut d.s, "TEXT_LAYER", json!({"cut": cut})).code, code::INVALID_PARAMS, "sem texto");
+    let fonts = act(&mut d.s, "TEXT_LAYER", json!({"list_fonts": true}));
+    assert!(fonts["fonts"].as_array().unwrap().iter().any(|f| f["family"] == "Noto Sans JP"));
+
     // PARTICLES: pétalas (preset + overrides); o quadro 12 tem partículas; trocar o sistema substitui o anterior; undo desfaz um passo
     let o = act(&mut d.s, "PARTICLES", json!({"layer": parts, "preset": "petalas", "overrides": {"rate": 60.0}, "seed": 3}));
     assert_eq!(o["canvas"], json!([320, 180]));

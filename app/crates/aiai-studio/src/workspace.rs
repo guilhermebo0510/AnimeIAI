@@ -121,10 +121,12 @@ pub enum ToolId {
     Eyedropper,
     Hand,
     Zoom,
+    /// Texto: clique cria texto de ponto, arrasto cria caixa; edita no canvas (camada de texto editavel).
+    Text,
 }
 
 impl ToolId {
-    pub const ALL: [ToolId; 10] = [
+    pub const ALL: [ToolId; 11] = [
         ToolId::Move,
         ToolId::Brush,
         ToolId::Pen,
@@ -135,6 +137,7 @@ impl ToolId {
         ToolId::Eyedropper,
         ToolId::Hand,
         ToolId::Zoom,
+        ToolId::Text,
     ];
 
     /// Identificador estável (bridge/UI_ACTION): `move`, `brush`, `pen`...
@@ -158,6 +161,7 @@ impl ToolId {
             ToolId::Eyedropper => "tool.eyedropper",
             ToolId::Hand => "tool.hand",
             ToolId::Zoom => "tool.zoom",
+            ToolId::Text => "tool.text",
         }
     }
 
@@ -173,6 +177,7 @@ impl ToolId {
             ToolId::Eyedropper => IconId::ToolEyedropper,
             ToolId::Hand => IconId::ToolHand,
             ToolId::Zoom => IconId::ToolZoom,
+            ToolId::Text => IconId::ToolText,
         }
     }
 }

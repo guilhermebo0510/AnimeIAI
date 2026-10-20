@@ -380,6 +380,7 @@ impl<'a> Renderer<'a> {
                     continue;
                 }
                 LayerType::Particles => self.particles_image(node, layer, cut, frame),
+                LayerType::Text => self.text_image(node, layer, frame),
                 k if k.holds_cels() => self.layer_image(id, node, layer, cut, frame),
                 other => {
                     self.warnings.push(format!("camada '{}' do tipo {other:?} ainda não é renderizada", node.name));
@@ -514,6 +515,37 @@ impl<'a> Renderer<'a> {
         let fps = self.project.settings.fps() as f32;
         let img = sys.render(self.width, self.height, frame as f32 / fps, fps, &sprites);
         Some(self.place(img, layer, frame, [0.0, 0.0, 1.0, 0.0]))
+    }
+
+    /// Camada de texto: refaz o layout de `params.text` e pinta os glifos já no lugar final (movimento da camada e câmera).
+    fn text_image(&mut self, node: &Node, layer: &LayerData, frame: u32) -> Option<Image> {
+        use aiai_paint::text_layer::{TextParams, layout};
+        let p = match TextParams::from_layer_params(&layer.params) {
+            Some(Ok(p)) => p,
+            Some(Err(e)) => {
+                self.warnings.push(format!("{}: {e}", node.name));
+                return None;
+            }
+            None => {
+                self.warnings.push(format!("camada de texto '{}' sem params.text", node.name));
+                return None;
+            }
+        };
+        if p.content.chars().all(|c| c.is_whitespace()) {
+            return None;
+        }
+        let lay = layout(&p);
+        let wanted = p.font.trim();
+        if !wanted.is_empty() && !wanted.eq_ignore_ascii_case(lay.family_used()) {
+            self.warnings.push(format!("{}: fonte '{wanted}' não encontrada; usando '{}'", node.name, lay.family_used()));
+        }
+        let colors = crate::text::TextColors {
+            fill: self.resolve_color(&p.color),
+            stroke: p.stroke.as_ref().map(|s| self.resolve_color(&s.color)).unwrap_or([0.0; 4]),
+            shadow: p.shadow.as_ref().map(|s| self.resolve_color(&s.color)).unwrap_or([0.0; 4]),
+        };
+        let xf = self.placement_affine(layer, frame, [0.0, 0.0, 1.0, 0.0]);
+        crate::text::render_text_layer(&p, &lay, &colors, xf, self.out_w, self.out_h)
     }
 
     /// Aplica transformação do cel, chaves da camada e câmera (multiplano) a uma imagem do canvas.

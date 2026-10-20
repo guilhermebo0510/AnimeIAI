@@ -12,6 +12,7 @@ lz4_flex = { version = "0.11", default-features = false, features = ["std", "saf
 image = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 schemars = { workspace = true }
 ab_glyph = "0.2.32"
 flate2 = "1.1"

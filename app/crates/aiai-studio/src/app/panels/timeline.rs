@@ -161,7 +161,7 @@ fn grid(env: &mut Env, ui: &mut Ui, area: Rect, cut: &NodeId, cd: &CutData) {
         .into_iter()
         .filter_map(|r| {
             let l = cmds::layer_data(&env.core.project, &r.id)?.clone();
-            if !l.kind.holds_cels() {
+            if !l.kind.holds_cels() || l.kind == LayerType::Text {
                 return None;
             }
             let name = env.core.project.node(&r.id).map(|n| n.name.clone()).unwrap_or_default();

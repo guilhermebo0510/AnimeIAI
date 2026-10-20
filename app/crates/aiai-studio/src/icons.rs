@@ -33,6 +33,7 @@ pub enum IconId {
     ToolEyedropper,
     ToolHand,
     ToolZoom,
+    ToolText,
     ZoomOut,
     Eye,
     EyeOff,
@@ -81,7 +82,7 @@ pub enum IconId {
 }
 
 impl IconId {
-    pub const ALL: [IconId; 65] = [
+    pub const ALL: [IconId; 66] = [
         IconId::WsRoteiro,
         IconId::WsPersonagens,
         IconId::WsStoryboard,
@@ -105,6 +106,7 @@ impl IconId {
         IconId::ToolEyedropper,
         IconId::ToolHand,
         IconId::ToolZoom,
+        IconId::ToolText,
         IconId::ZoomOut,
         IconId::Eye,
         IconId::EyeOff,
@@ -179,6 +181,7 @@ impl IconId {
             IconId::ToolEyedropper => include_str!("../assets/icons/tool-eyedropper.svg"),
             IconId::ToolHand => include_str!("../assets/icons/tool-hand.svg"),
             IconId::ToolZoom => include_str!("../assets/icons/tool-zoom.svg"),
+            IconId::ToolText => include_str!("../assets/icons/tool-text.svg"),
             IconId::ZoomOut => include_str!("../assets/icons/zoom-out.svg"),
             IconId::Eye => include_str!("../assets/icons/eye.svg"),
             IconId::EyeOff => include_str!("../assets/icons/eye-off.svg"),

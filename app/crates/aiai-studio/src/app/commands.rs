@@ -244,7 +244,7 @@ pub(crate) fn run(core: &mut CoreSession, cmd: Command) -> Result<Outcome, Strin
     core.apply(cmd).map_err(|e| e.to_string())
 }
 
-fn create(id: NodeId, parent: Option<NodeId>, index: Option<usize>, name: impl Into<String>, data: NodeKind) -> Command {
+pub(crate) fn create(id: NodeId, parent: Option<NodeId>, index: Option<usize>, name: impl Into<String>, data: NodeKind) -> Command {
     Command::CreateNode { id: Some(id), parent, index, name: name.into(), data }
 }
 
@@ -357,7 +357,7 @@ pub(crate) fn set_cut_props(core: &mut CoreSession, cut: &NodeId, patch: Value) 
 
 // ------------------------------------------------------------------------------------------------ camadas
 
-fn unique_layer_name(p: &Project, parent: &NodeId, base: &str) -> String {
+pub(crate) fn unique_layer_name(p: &Project, parent: &NodeId, base: &str) -> String {
     let existing: Vec<&str> = p.node(parent).map(|n| n.children.iter().filter_map(|c| p.node(c)).map(|n| n.name.as_str()).collect()).unwrap_or_default();
     (1..)
         .map(|i| format!("{base} {i}"))
@@ -382,6 +382,11 @@ pub(crate) fn add_layer(core: &mut CoreSession, cut: &NodeId, kind: LayerType, a
         None => (cut.clone(), None),
     };
     let mut data = LayerData::new(kind);
+    if kind == LayerType::Text {
+        // camada de texto do "+": texto de ponto no meio do canvas, editavel com a ferramenta Texto ou no painel Texto
+        let tp = super::text_tool::default_layer_params(canvas_size(p, cut), ColorRef::default());
+        data.params = json!({ aiai_paint::text_layer::TextParams::KEY: tp.to_value() });
+    }
     if kind == LayerType::Fill {
         // a tinta fica ABAIXO da linha (tinta-e-pinta): a camada de preenchimento entra logo embaixo da camada vetorial de referência
         let rows = layer_rows(p, cut);

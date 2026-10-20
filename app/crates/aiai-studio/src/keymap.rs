@@ -112,6 +112,7 @@ pub enum Action {
     ToolEyedropper,
     ToolHand,
     ToolZoom,
+    ToolText,
     SizeDown,
     SizeUp,
     FramePrev,
@@ -134,7 +135,7 @@ pub enum Action {
 }
 
 /// (ação, id guardado nas preferências, chave i18n do nome, atalho padrão), na ordem do editor de atalhos.
-pub const ACTIONS: [(Action, &str, &str, Chord); 29] = [
+pub const ACTIONS: [(Action, &str, &str, Chord); 30] = [
     (Action::ToolMove, "tool.move", "tool.move", Chord::plain(Key::V)),
     (Action::ToolBrush, "tool.brush", "tool.brush", Chord::plain(Key::B)),
     (Action::ToolPen, "tool.pen", "tool.pen", Chord::plain(Key::P)),
@@ -145,6 +146,7 @@ pub const ACTIONS: [(Action, &str, &str, Chord); 29] = [
     (Action::ToolEyedropper, "tool.eyedropper", "tool.eyedropper", Chord::plain(Key::I)),
     (Action::ToolHand, "tool.hand", "tool.hand", Chord::plain(Key::H)),
     (Action::ToolZoom, "tool.zoom", "tool.zoom", Chord::plain(Key::Z)),
+    (Action::ToolText, "tool.text", "tool.text", Chord::plain(Key::T)),
     (Action::SizeDown, "size.down", "keys.size_down", Chord::plain(Key::OpenBracket)),
     (Action::SizeUp, "size.up", "keys.size_up", Chord::plain(Key::CloseBracket)),
     (Action::FramePrev, "frame.prev", "keys.frame_prev", Chord::plain(Key::ArrowLeft)),
@@ -194,6 +196,7 @@ impl Action {
             T::Eyedropper => Action::ToolEyedropper,
             T::Hand => Action::ToolHand,
             T::Zoom => Action::ToolZoom,
+            T::Text => Action::ToolText,
         }
     }
 }

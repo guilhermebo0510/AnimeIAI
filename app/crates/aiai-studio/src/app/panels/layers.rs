@@ -11,9 +11,10 @@ use aiai_core::*;
 use egui::{Align2, FontId, Id, Rect, Sense, Stroke, Ui};
 use serde_json::json;
 
-pub(crate) const ADD_KINDS: [LayerType; 8] = [
+pub(crate) const ADD_KINDS: [LayerType; 9] = [
     LayerType::Vector,
     LayerType::Raster,
+    LayerType::Text,
     LayerType::Fill,
     LayerType::Group,
     LayerType::Guide,
@@ -428,7 +429,7 @@ fn layer_settings(env: &mut Env, ui: &mut Ui, cut: &NodeId, layer: &NodeId, rows
         let why = match below.and_then(|b| cmds::layer_data(&env.core.project, &b.id).map(|d| (b, d))) {
             None => Some(tr("layers.clip.none_below")),
             Some((_, d)) if !d.visible => Some(tr("layers.clip.below_hidden")),
-            Some((b, d)) if d.kind.holds_cels() && env.ed.cut.as_ref().and_then(|c| cmds::exposed_number(&env.core.project, c, &b.id, env.ed.frame)).is_none() => Some(tr("layers.clip.below_empty")),
+            Some((b, d)) if d.kind.holds_cels() && d.kind != LayerType::Text && env.ed.cut.as_ref().and_then(|c| cmds::exposed_number(&env.core.project, c, &b.id, env.ed.frame)).is_none() => Some(tr("layers.clip.below_empty")),
             _ => None,
         };
         if let Some(w) = why {
@@ -481,7 +482,8 @@ fn layer_settings(env: &mut Env, ui: &mut Ui, cut: &NodeId, layer: &NodeId, rows
 fn cel_list(env: &mut Env, ui: &mut Ui, layer: &NodeId) {
     let t = env.t;
     let Some(l) = cmds::layer_data(&env.core.project, layer) else { return };
-    if !l.kind.holds_cels() {
+    // a camada de texto guarda o texto em params, sem cels
+    if !l.kind.holds_cels() || l.kind == LayerType::Text {
         return;
     }
     let cels = cmds::layer_cels(&env.core.project, layer);

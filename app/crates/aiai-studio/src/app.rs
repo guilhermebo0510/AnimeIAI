@@ -24,6 +24,7 @@ mod move_live;
 mod nodes;
 mod panels;
 mod render_service;
+mod text_tool;
 mod tools;
 mod ui_kit;
 mod ui_state;
@@ -894,6 +895,7 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::Navigator => panels::navigator::show(&mut self.env, ui, body),
             PanelKind::SubView => panels::subview::show(&mut self.env, ui, body),
             PanelKind::Brushes => panels::brushes::show(&mut self.env, ui, body),
+            PanelKind::Text => panels::text::show(&mut self.env, ui, body),
             PanelKind::Characters => panels::characters::list(&mut self.env, ui, body),
             PanelKind::Sheet => panels::characters::sheet(&mut self.env, ui, body),
             PanelKind::Media => panels::edit::media(&mut self.env, ui, body),

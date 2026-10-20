@@ -30,10 +30,12 @@ pub enum PanelKind {
     SubView,
     /// Pincéis por categoria e propriedades da ferramenta.
     Brushes,
+    /// Texto: fonte, tamanho, cor, alinhamento, contorno e sombra da camada de texto.
+    Text,
 }
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 22] = [
+    pub const ALL: [PanelKind; 23] = [
         PanelKind::Canvas,
         PanelKind::Layers,
         PanelKind::Properties,
@@ -56,6 +58,7 @@ impl PanelKind {
         PanelKind::Project,
         PanelKind::SubView,
         PanelKind::Brushes,
+        PanelKind::Text,
     ];
 
     /// Identificador estável (bridge/UI_ACTION): `canvas`, `layers`, `timeline`...
@@ -92,6 +95,7 @@ impl PanelKind {
             PanelKind::Project => "panel.project.title",
             PanelKind::SubView => "panel.subview.title",
             PanelKind::Brushes => "panel.brushes.title",
+            PanelKind::Text => "panel.text.title",
         }
     }
 
@@ -120,6 +124,7 @@ impl PanelKind {
             PanelKind::Project => "panel.project.empty",
             PanelKind::SubView => "panel.subview.empty",
             PanelKind::Brushes => "panel.brushes.empty",
+            PanelKind::Text => "panel.text.empty",
         }
     }
 }

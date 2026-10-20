@@ -21,6 +21,7 @@ pub mod paint;
 pub mod points;
 pub mod preprod;
 pub mod preview;
+pub mod text_layer;
 pub mod production;
 pub mod transform;
 

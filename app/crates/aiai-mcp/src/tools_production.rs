@@ -16,6 +16,9 @@ Exemplo: {"cut":"<corte>","layer":"<raster>","texture":{"spec":{"type":"paper","
 const TEXT_DESC: &str = r##"Letreiro/onomatopeia/título desenhado: o preenchimento das letras vai numa camada RASTER (`fill_layer`) e, se `outline_layer` (VETORIAL) e `outline_width`>0, o contorno vai como traços fechados — um passo de undo. `font`: "black" (Noto Sans JP Black, padrão: onomatopeias e títulos), "regular" ou caminho de um .otf/.ttf sob C:\AnimeIAI. Japonês ok (ドン, ゴゴゴ). `size` px, `center` [x,y], `vertical` (tategaki), `letter_spacing`, `rotation` (graus, horário), `skew`, `scale` [sx,sy], `color` (direta ou de paleta), `roughness` (px de borda irregular de letreiro à mão) + `roughness_wavelength`, `seed`. Cada camada pode receber efeitos/tremor depois. Confirme com aiai_render.
 Exemplo: {"cut":"<corte>","fill_layer":"<raster>","outline_layer":"<vetorial>","text":"ドン","size":260,"center":[960,540],"color":{"type":"direct","rgba":[1,0.9,0,1]},"outline_width":10,"roughness":3}"##;
 
+const TEXT_LAYER_DESC: &str = r##"Camada de TEXTO EDITÁVEL (o texto e o estilo ficam na camada e o render refaz o layout a cada quadro: depois dá para trocar o texto, a fonte e o tamanho, no app ou aqui). SEM `layer` cria uma camada nova em `cut` (exige `text`); COM `layer` (camada de texto) muda só os campos informados (`null` apaga `box_size`, `stroke` e `shadow`). Um passo de undo. Campos: `text` (quebra de linha = newline), `font` (família: instalada no Windows, da pasta Documentos/AnimeIAI/Fontes, ou "Noto Sans JP", embutida e padrão; `list_fonts:true` lista as famílias e não altera nada; fonte desconhecida dá erro com sugestões), `bold`/`italic` (usa a face da família se existir, senão sintetiza), `size` (px do canvas, altura do em), `color` (direta ou de paleta), `tracking` (milésimos de em), `leading` (entrelinha, múltiplo do tamanho, 1.25), `align` (left|center|right|justify), `vertical` (tategaki), `pos` [x,y] (texto de ponto: topo da primeira linha em y; x é a borda esquerda, o centro ou a direita conforme `align`; no vertical, a borda direita da primeira coluna), `box_size` [largura, altura] (texto de caixa: `pos` é o canto superior esquerdo e o texto quebra dentro da largura), `rotation` (graus, horário, em torno de `pos`), `stroke` {width px, color} (contorno por fora), `shadow` {offset [x,y], blur px, color com alfa}, `opacity` da camada, `name`, `above` (a camada nova entra acima desta). Devolve o Outcome + `layer`, `created` e `text` {bounds [x0,y0,x1,y1] no canvas, lines, font_used, params}. Mova a camada com aiai_text_layer {layer, pos} (ou com a ferramenta Mover no app). Para letras assadas em pixels/traços (onomatopeia com efeitos por camada) use aiai_text. Confirme com aiai_render.
+Exemplo: {"cut":"<corte>","text":"Olá, mundo","font":"Arial","size":72,"pos":[960,200],"color":{"type":"direct","rgba":[1,1,1,1]},"stroke":{"width":6,"color":{"type":"direct","rgba":[0,0,0,1]}}}"##;
+
 const LINES_DESC: &str = r##"Linhas de velocidade (paralelas) ou de foco/concentração (集中線, convergindo num ponto) como traços vetoriais afinados na camada VETORIAL (editáveis; troque `seed` por quadro para "ferver"). `kind`: {type:"speed", angle (graus), area:[x,y,w,h]} ou {type:"focus", center:[x,y], clear:[rx,ry] (elipse livre no meio)}; `count` (até 2000), `length` [mín,máx] px, `width` [mín,máx] px, `color`, `seed`. Entra no undo. Confirme com aiai_render.
 Exemplo: {"cut":"<corte>","layer":"<vetorial>","kind":{"type":"focus","center":[960,540],"clear":[220,160]},"count":90,"length":[300,900],"width":[2,9],"color":{"type":"direct","rgba":[0,0,0,1]}}"##;
 
@@ -115,13 +118,14 @@ fn with_props(mut s: Value, extra: Value) -> Value {
 
 pub fn definitions() -> Vec<Value> {
     use aiai_bridge::production_tools as pt;
-    use aiai_tools::{anim, audio, background, character, compare, fx2d, guide};
+    use aiai_tools::{anim, audio, background, character, compare, fx2d, guide, text_layer as tl};
     let voicevox = json!({ "voicevox_url": { "type": "string", "description": "URL do VOICEVOX Engine (só loopback). Padrão: env AIAI_VOICEVOX_URL ou http://127.0.0.1:50021." } });
     let compare_schema = schema_frame0::<compare::CompareRequest>();
     vec![
         json!({ "name": "aiai_sky", "description": SKY_DESC, "inputSchema": schema_frame0::<background::SkyRequest>() }),
         json!({ "name": "aiai_pattern_fill", "description": PATTERN_FILL_DESC, "inputSchema": schema_frame0::<background::PatternFillRequest>() }),
         json!({ "name": "aiai_text", "description": TEXT_DESC, "inputSchema": schema_frame0::<fx2d::TextRequest>() }),
+        json!({ "name": "aiai_text_layer", "description": TEXT_LAYER_DESC, "inputSchema": schema_of::<tl::TextLayerRequest>() }),
         json!({ "name": "aiai_lines", "description": LINES_DESC, "inputSchema": schema_frame0::<fx2d::LinesRequest>() }),
         json!({ "name": "aiai_gag_bg", "description": GAG_BG_DESC, "inputSchema": schema_frame0::<fx2d::GagBgRequest>() }),
         json!({ "name": "aiai_particles", "description": PARTICLES_DESC, "inputSchema": schema_of::<pt::ParticlesRequest>() }),
@@ -195,6 +199,14 @@ pub fn plan(name: &str, m: &Map<String, Value>) -> Option<Result<Plan, ToolError
         "aiai_sky" => with_req(&["cut", "layer", "sky"], "SKY", true),
         "aiai_pattern_fill" => with_req(&["cut", "layer", "texture", "mapping"], "PATTERN_FILL", true),
         "aiai_text" => with_req(&["cut", "fill_layer", "text", "size", "center", "color"], "TEXT", true),
+        "aiai_text_layer" => {
+            let list = m.get("list_fonts").and_then(Value::as_bool).unwrap_or(false);
+            if !list && m.get("layer").is_none_or(Value::is_null) {
+                required(m, &["cut", "text"]).and_then(|_| simple("TEXT_LAYER", Value::Object(m.clone())))
+            } else {
+                simple("TEXT_LAYER", Value::Object(m.clone()))
+            }
+        }
         "aiai_lines" => with_req(&["cut", "layer", "kind", "count", "length", "width", "color"], "LINES", true),
         "aiai_gag_bg" => with_req(&["cut", "layer", "pattern"], "GAG_BG", true),
         "aiai_particles" => {

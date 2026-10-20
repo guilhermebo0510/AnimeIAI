@@ -19,6 +19,7 @@ pub(crate) mod satsuei;
 pub(crate) mod script;
 pub(crate) mod shots;
 pub(crate) mod subview;
+pub(crate) mod text;
 pub(crate) mod timeline;
 
 use egui::{Id, Response, Ui};

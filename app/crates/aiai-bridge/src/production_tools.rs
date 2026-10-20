@@ -33,6 +33,7 @@ use aiai_tools::character::{ConsistencyRequest, ModelSheetRequest, consistency, 
 use aiai_tools::compare::{CompareRequest, compare_frame};
 use aiai_tools::context::{canvas_size, cut_data, layer_data};
 use aiai_tools::fx2d::{GagBgRequest, LinesRequest, TextRequest, gag_bg_command, lines_command, text_command};
+use aiai_tools::text_layer::{TextLayerRequest, text_layer_command};
 use aiai_tools::guide::{Guide3dRequest, PerspectiveRequest, guide3d_command, perspective_command, perspective_info};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -42,7 +43,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 pub const PRODUCTION_ACTIONS: &[&str] = &[
-    "SKY", "PATTERN_FILL", "TEXT", "LINES", "GAG_BG", "PARTICLES", "GUIDE3D", "PERSPECTIVE", "MODEL_SHEET", "CONSISTENCY", "INBETWEEN", "PROPAGATE_FILLS",
+    "SKY", "PATTERN_FILL", "TEXT", "TEXT_LAYER", "LINES", "GAG_BG", "PARTICLES", "GUIDE3D", "PERSPECTIVE", "MODEL_SHEET", "CONSISTENCY", "INBETWEEN", "PROPAGATE_FILLS",
     "TTS_LINE", "TTS_KOKORO", "VOICE_PROFILE", "LIPSYNC", "SFX", "BGM", "IMPORT_AUDIO", "IMPORT_IMAGE", "EXPORT_PSD", "EXPORT_XDTS", "EXPORT_SVG", "EXPORT_OTIO", "MIX_CUT", "LOUDNESS", "COMPARE", "PROBE_COLOR", "MEASURE_LINE", "MEASURE_EDGE", "FILL_SHAPE", "EDIT_SET", "EXPORT_VIDEO",
 ];
 
@@ -50,7 +51,7 @@ pub const PRODUCTION_ACTIONS: &[&str] = &[
 pub fn is_mutating(action: &str) -> bool {
     matches!(
         action,
-        "SKY" | "PATTERN_FILL" | "TEXT" | "LINES" | "GAG_BG" | "PARTICLES" | "GUIDE3D" | "PERSPECTIVE" | "MODEL_SHEET" | "INBETWEEN" | "PROPAGATE_FILLS" | "TTS_LINE" | "TTS_KOKORO" | "VOICE_PROFILE" | "LIPSYNC" | "SFX" | "BGM" | "IMPORT_AUDIO" | "IMPORT_IMAGE" | "FILL_SHAPE" | "EDIT_SET"
+        "SKY" | "PATTERN_FILL" | "TEXT" | "TEXT_LAYER" | "LINES" | "GAG_BG" | "PARTICLES" | "GUIDE3D" | "PERSPECTIVE" | "MODEL_SHEET" | "INBETWEEN" | "PROPAGATE_FILLS" | "TTS_LINE" | "TTS_KOKORO" | "VOICE_PROFILE" | "LIPSYNC" | "SFX" | "BGM" | "IMPORT_AUDIO" | "IMPORT_IMAGE" | "FILL_SHAPE" | "EDIT_SET"
     )
 }
 
@@ -89,6 +90,15 @@ pub fn handle(session: &mut CoreSession, action: &str, params: &Value) -> Result
             let r: TextRequest = request(params, action)?;
             let cmd = text_command(&session.project, &mut session.blobs, &r).map_err(tool_error)?;
             apply(session, params, cmd)
+        }
+        "TEXT_LAYER" => {
+            let r: TextLayerRequest = request(params, action)?;
+            if r.list_fonts {
+                return Ok(aiai_tools::text_layer::list_fonts());
+            }
+            let plan = text_layer_command(&session.project, &mut session.ids, &r).map_err(tool_error)?;
+            let info = aiai_tools::text_layer::info(&plan.params);
+            apply_with(session, params, plan.command, json!({ "layer": plan.layer, "created": plan.created, "text": info }))
         }
         "LINES" => {
             let r: LinesRequest = request(params, action)?;
