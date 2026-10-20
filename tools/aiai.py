@@ -97,7 +97,7 @@ def call(action: str, params: dict[str, Any] | None = None, timeout: float | Non
     """Uma ação pela bridge (HTTP ``POST /rpc`` com token Bearer). Devolve ``data``; levanta ``BridgeError`` em erro.
 
     Qualquer ação de ferramenta vale (SKY, PATTERN_FILL, TEXT, LINES, GAG_BG, PARTICLES, GUIDE3D, PERSPECTIVE, MODEL_SHEET,
-    CONSISTENCY, INBETWEEN, PROPAGATE_FILLS, FILL_SHAPE, TTS_LINE, TTS_KOKORO, VOICE_PROFILE, LIPSYNC, SFX, BGM, MIX_CUT, LOUDNESS, AUDIO_EDIT, AUDIO_ANALYZE,
+    CHARACTER_MATERIAL, CONSISTENCY, INBETWEEN, PROPAGATE_FILLS, FILL_SHAPE, TTS_LINE, TTS_KOKORO, VOICE_PROFILE, LIPSYNC, SFX, BGM, MIX_CUT, LOUDNESS, AUDIO_EDIT, AUDIO_ANALYZE,
     COMPARE, PROBE_COLOR, MEASURE_LINE, MEASURE_EDGE, EDIT_SET, EXPORT_VIDEO...). ``timeout`` omitido = ``default_timeout(action)``."""
     if timeout is None:
         timeout = default_timeout(action)

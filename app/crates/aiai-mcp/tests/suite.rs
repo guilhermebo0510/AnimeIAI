@@ -170,7 +170,7 @@ fn stdio_protocol_initialize_list_and_headless_apply_query_undo() {
     for want in [
         "aiai_status", "aiai_apply", "aiai_query", "aiai_undo", "aiai_redo", "aiai_log", "aiai_project", "aiai_render", "aiai_compare", "aiai_screenshot", "aiai_input", "aiai_ui", "aiai_schema",
         "aiai_draw_curves", "aiai_fill", "aiai_lint", "aiai_paint", "aiai_gradient", "aiai_transform", "aiai_repeat", "aiai_brush_presets",
-        "aiai_sky", "aiai_pattern_fill", "aiai_text", "aiai_lines", "aiai_gag_bg", "aiai_particles", "aiai_guide3d", "aiai_perspective", "aiai_model_sheet", "aiai_consistency", "aiai_inbetween",
+        "aiai_sky", "aiai_pattern_fill", "aiai_text", "aiai_lines", "aiai_gag_bg", "aiai_particles", "aiai_guide3d", "aiai_perspective", "aiai_model_sheet", "aiai_character_material", "aiai_consistency", "aiai_inbetween",
         "aiai_propagate_fills", "aiai_tts_line", "aiai_tts_kokoro", "aiai_voice_profile", "aiai_lipsync", "aiai_sfx", "aiai_bgm", "aiai_mix", "aiai_loudness", "aiai_probe_color",
         "aiai_measure_line", "aiai_measure_edge", "aiai_fill_shape", "aiai_edit", "aiai_export_video",
     ] {
@@ -552,7 +552,7 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
     assert!(plan("aiai_zzz", json!({})).is_err());
     // o catálogo é uma lista estável de ferramentas, todas com plano
     let defs = tools::definitions();
-    assert_eq!(defs.as_array().unwrap().len(), 75);
+    assert_eq!(defs.as_array().unwrap().len(), 76);
     // todas as ferramentas de produção: descrição com exemplo de uma linha, schema de objeto, plano com a ação certa e frame 0 por padrão
     for t in defs.as_array().unwrap() {
         let n = t["name"].as_str().unwrap();
@@ -572,6 +572,7 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
         ("aiai_guide3d", json!({"cut": "c", "layer": "l", "scene": {}, "camera": {}}), "GUIDE3D"),
         ("aiai_perspective", json!({"cut": "c", "layer": "l"}), "PERSPECTIVE"),
         ("aiai_model_sheet", json!({"character": "x", "heads_tall": 6}), "MODEL_SHEET"),
+        ("aiai_character_material", json!({"character": "x"}), "CHARACTER_MATERIAL"),
         ("aiai_consistency", json!({"character": "x", "head_top": 0, "chin": 10}), "CONSISTENCY"),
         ("aiai_inbetween", json!({"cut": "c", "layer": "l", "key_a": 1, "key_b": 2, "count": 1}), "INBETWEEN"),
         ("aiai_propagate_fills", json!({"cut": "c", "fill_layer": "l", "key_frame_a": 0, "key_frame_b": 4, "frames": [2]}), "PROPAGATE_FILLS"),

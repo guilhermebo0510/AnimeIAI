@@ -50,6 +50,8 @@ pub enum PanelKind {
     SceneInfo,
     /// Referências do personagem: folhas de modelo e paleta de settei dos personagens do corte.
     CharRef,
+    /// Personagens: a pasta do personagem (materiais por tipo, criar a partir de modelos, abrir para desenhar).
+    CharFolder,
 }
 
 /// Categoria do painel (agrupa o Exibir > Painéis e decide junto de quem um painel novo entra como aba).
@@ -124,10 +126,10 @@ pub struct PanelMeta {
 }
 
 use WorkspaceId as W;
-const DRAWING_WS: &[WorkspaceId] = &[W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Composicao];
+const DRAWING_WS: &[WorkspaceId] = &[W::Personagens, W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Composicao];
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 31] = [
+    pub const ALL: [PanelKind; 32] = [
         PanelKind::Canvas,
         PanelKind::Layers,
         PanelKind::Properties,
@@ -159,6 +161,7 @@ impl PanelKind {
         PanelKind::LightTable,
         PanelKind::SceneInfo,
         PanelKind::CharRef,
+        PanelKind::CharFolder,
     ];
 
     /// Identificador estável (bridge/UI_ACTION, `layouts.json`): `canvas`, `layers`, `timeline`...
@@ -204,6 +207,7 @@ impl PanelKind {
             PanelKind::LightTable => "panel.light_table.title",
             PanelKind::SceneInfo => "panel.scene_info.title",
             PanelKind::CharRef => "panel.char_ref.title",
+            PanelKind::CharFolder => "panel.char_folder.title",
         }
     }
 
@@ -241,6 +245,7 @@ impl PanelKind {
             PanelKind::LightTable => "panel.light_table.empty",
             PanelKind::SceneInfo => "panel.scene_info.empty",
             PanelKind::CharRef => "panel.char_ref.empty",
+            PanelKind::CharFolder => "panel.char_folder.empty",
         }
     }
 
@@ -273,13 +278,14 @@ impl PanelKind {
             PanelKind::ProdAi => (C::Management, Right, &[W::Producao], false),
             PanelKind::Project => (C::General, Left, DRAWING_WS, false),
             PanelKind::SubView => (C::Reference, Left, &[W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Biblioteca, W::Modelagem], false),
-            PanelKind::Brushes => (C::Drawing, Left, &[W::Layout, W::Cenario, W::Animacao, W::Pintura], false),
+            PanelKind::Brushes => (C::Drawing, Left, &[W::Personagens, W::Layout, W::Cenario, W::Animacao, W::Pintura], false),
             PanelKind::Library => (C::Resources, Center, &[W::Biblioteca], false),
             PanelKind::Modeling => (C::Resources, Center, &[W::Modelagem], false),
             PanelKind::Text => (C::Drawing, Right, &[W::Layout, W::Cenario, W::Animacao, W::Composicao, W::Edicao], false),
             PanelKind::LightTable => (C::Drawing, Right, &[W::Animacao, W::Pintura], false),
             PanelKind::SceneInfo => (C::PreProduction, Left, &[W::Storyboard, W::Layout, W::Cenario, W::Animacao, W::Pintura], false),
             PanelKind::CharRef => (C::Character, Left, &[W::Storyboard, W::Layout, W::Animacao, W::Pintura], false),
+            PanelKind::CharFolder => (C::Character, Left, &[W::Personagens], false),
         };
         PanelMeta { key: self.key(), title_key: self.title_key(), category, dock_hint, workspaces, needs_canvas }
     }
@@ -330,6 +336,8 @@ pub fn factory_rev(ws: WorkspaceId) -> u32 {
         // S24: Animação com Cena, Referências do personagem e Mesa de luz no lugar de Projeto e Sub View, linha do tempo
         // mais baixa (compacta) e a variante Douga
         W::Animacao => 3,
+        // S24: pasta do personagem (materiais por tipo) e canvas para desenhar neles
+        W::Personagens => 2,
         // S24: fábricas novas (cada etapa de desenho com a sua cara) e os workspaces novos
         W::Layout | W::Cenario | W::Pintura | W::Composicao | W::Biblioteca | W::Modelagem => 2,
         // S24: painel Texto (legendas) em aba com as Propriedades
@@ -347,10 +355,12 @@ fn default_node(ws: WorkspaceId) -> Node {
     use PanelKind as P;
     match ws {
         W::Roteiro => Row(vec![(0.22, Pane(P::Outline)), (0.52, Pane(P::Script)), (0.26, Pane(P::Properties))]),
+        // pasta do personagem: a lista e a pasta (materiais por tipo) à esquerda, o canvas do material aberto no centro
+        // (a folha com guias em aba) e à direita cores, camadas e a ficha em abas (ficha, paleta, consistência, voz, material)
         W::Personagens => Row(vec![
-            (0.22, Pane(P::Characters)),
-            (0.50, Pane(P::Sheet)),
-            (0.28, Col(vec![(0.42, Pane(P::Palette)), (0.58, Pane(P::Properties))])),
+            (0.19, Col(vec![(0.30, Pane(P::Characters)), (0.70, Pane(P::CharFolder))])),
+            (0.49, TabsOf(&[P::Canvas, P::Sheet])),
+            (0.32, Col(vec![(0.22, Pane(P::Palette)), (0.26, Pane(P::Layers)), (0.52, Pane(P::Properties))])),
         ]),
         W::Storyboard => Col(vec![
             (0.72, Row(vec![(0.20, Pane(P::Shots)), (0.56, Pane(P::Board)), (0.24, Pane(P::Properties))])),
@@ -1036,7 +1046,7 @@ mod tests {
     fn factory_changes_bump_the_revision() {
         let expected: &[(WorkspaceId, u32, u64)] = &[
             (W::Roteiro, 1, 0x815a21560ccb6c0e),
-            (W::Personagens, 1, 0x5b309a476b020e21),
+            (W::Personagens, 2, 0xcafb2020580c879a),
             (W::Storyboard, 1, 0x14d8a62efb1d9b23),
             (W::Layout, 2, 0xd1d0b0db8901276e),
             (W::Cenario, 2, 0x10fcc70dc9e4906a),

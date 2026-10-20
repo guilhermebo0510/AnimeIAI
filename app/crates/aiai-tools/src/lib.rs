@@ -7,6 +7,7 @@ pub mod audio;
 pub mod audio_edit;
 pub mod background;
 pub mod calib;
+pub mod char_material;
 pub mod character;
 pub mod compare;
 pub mod context;

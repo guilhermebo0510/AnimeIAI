@@ -211,7 +211,7 @@ fn tts_voicevox_line_timings_lipsync_and_regeneration() {
         return;
     }
     let mut r = rig(240);
-    let character = create(&mut r.s, None, "Menina", NodeKind::Character(CharacterData { profile: String::new(), age: String::new(), heads_tall: 6.0, palette: None, voice: serde_json::Value::Null, measurements: serde_json::Value::Null }));
+    let character = create(&mut r.s, None, "Menina", NodeKind::Character(CharacterData { profile: String::new(), age: String::new(), heads_tall: 6.0, palette: None, voice: serde_json::Value::Null, measurements: serde_json::Value::Null, materials: Vec::new() }));
     let profile = VoiceProfile { engine: "voicevox".into(), speaker: 8, speaker_name: "春日部つむぎ".into(), params: VoiceParams { speed_scale: Some(1.0), ..Default::default() } };
     r.s.apply(voice_profile_command(&r.s.project, &character, &profile).unwrap()).unwrap();
     let req = TtsLineRequest {
@@ -383,7 +383,7 @@ fn s17_evidence() {
         create(&mut r.s, Some(&mouth_b), &format!("BOCA-B{n}"), NodeKind::Cel(CelData::new(n)));
     }
     let map: BTreeMap<String, u32> = [("closed", 1u32), ("a", 2), ("i", 3), ("u", 4), ("e", 5), ("o", 6), ("n", 1)].iter().map(|(k, v)| (k.to_string(), *v)).collect();
-    let mk_char = |s: &mut CoreSession, name: &str| create(s, None, name, NodeKind::Character(CharacterData { profile: String::new(), age: String::new(), heads_tall: 6.0, palette: None, voice: serde_json::Value::Null, measurements: serde_json::Value::Null }));
+    let mk_char = |s: &mut CoreSession, name: &str| create(s, None, name, NodeKind::Character(CharacterData { profile: String::new(), age: String::new(), heads_tall: 6.0, palette: None, voice: serde_json::Value::Null, measurements: serde_json::Value::Null, materials: Vec::new() }));
     let haru = mk_char(&mut r.s, "Haru");
     let mio = mk_char(&mut r.s, "Mio");
 

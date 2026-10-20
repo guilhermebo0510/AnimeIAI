@@ -751,10 +751,90 @@ pub struct CharacterData {
     #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
     #[schemars(with = "Option<serde_json::Value>")]
     pub measurements: serde_json::Value,
+    /// Pasta do personagem: os materiais (folha de modelo, expressões, boca, olhos, figurinos, extras), na ordem de
+    /// exibição. Projetos antigos não têm a lista; os cortes soltos do personagem entram como materiais ao ler
+    /// (`aiai_tools::char_material::materials`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub materials: Vec<CharMaterial>,
 }
 
 fn default_heads() -> f32 {
     6.5
+}
+
+/// Tipo de material da pasta do personagem.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MaterialKind {
+    /// Folha de modelo (turnaround: frente, 3/4, perfil, costas).
+    ModelSheet,
+    /// Folha de expressões do rosto.
+    Expressions,
+    /// Tabela de bocas do lip-sync.
+    MouthChart,
+    /// Detalhe dos olhos.
+    Eyes,
+    /// Figurino (folha própria + variante de paleta).
+    Outfit,
+    /// Folha extra livre.
+    #[default]
+    Other,
+}
+
+impl MaterialKind {
+    pub const ALL: [MaterialKind; 6] = [MaterialKind::ModelSheet, MaterialKind::Expressions, MaterialKind::MouthChart, MaterialKind::Eyes, MaterialKind::Outfit, MaterialKind::Other];
+
+    /// Chave estável (`model_sheet`, `expressions`...), a mesma do serde.
+    pub fn key(self) -> &'static str {
+        match self {
+            MaterialKind::ModelSheet => "model_sheet",
+            MaterialKind::Expressions => "expressions",
+            MaterialKind::MouthChart => "mouth_chart",
+            MaterialKind::Eyes => "eyes",
+            MaterialKind::Outfit => "outfit",
+            MaterialKind::Other => "other",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<MaterialKind> {
+        Self::ALL.into_iter().find(|k| k.key() == key)
+    }
+}
+
+/// Conteúdo de um material: sempre um corte-canvas filho do personagem (a folha desenhável, com camadas); a imagem
+/// importada também vive num corte (camada de referência com a imagem + camada de linha por cima para anotar) e guarda o
+/// blob original.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MaterialContent {
+    /// Folha desenhável.
+    Sheet { cut: Id },
+    /// Imagem importada (PNG em blob) mostrada no corte `cut`.
+    Image { blob: BlobHash, cut: Id },
+}
+
+impl MaterialContent {
+    /// Corte que mostra o material.
+    pub fn cut(&self) -> &Id {
+        match self {
+            MaterialContent::Sheet { cut } | MaterialContent::Image { cut, .. } => cut,
+        }
+    }
+}
+
+/// Um material da pasta do personagem.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct CharMaterial {
+    pub id: Id,
+    #[serde(default)]
+    pub kind: MaterialKind,
+    pub name: String,
+    pub content: MaterialContent,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub notes: String,
+    /// Figurino: a variante de paleta (settei) deste material.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub palette: Option<Id>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -967,6 +1047,10 @@ impl Project {
                 NodeKind::Character(c) => {
                     scan_blob_hashes(&c.voice, &mut out);
                     scan_blob_hashes(&c.measurements, &mut out);
+                    out.extend(c.materials.iter().filter_map(|m| match &m.content {
+                        MaterialContent::Image { blob, .. } => Some(blob.clone()),
+                        MaterialContent::Sheet { .. } => None,
+                    }));
                 }
                 _ => {}
             }
@@ -1039,6 +1123,18 @@ impl Project {
                 for r in &l.line_refs {
                     if !self.nodes.contains_key(r) {
                         return Err(format!("referência de linha {r} de {id} não existe"));
+                    }
+                }
+            }
+            if let NodeKind::Character(c) = &n.data {
+                let mut ids = std::collections::BTreeSet::new();
+                for m in &c.materials {
+                    if !ids.insert(&m.id) {
+                        return Err(format!("material {} repetido em {}", m.id, n.name));
+                    }
+                    let cut = m.content.cut();
+                    if !matches!(self.nodes.get(cut), Some(cn) if matches!(cn.data, NodeKind::Cut(_))) {
+                        return Err(format!("material {} de {} aponta para um corte inexistente ({cut})", m.name, n.name));
                     }
                 }
             }

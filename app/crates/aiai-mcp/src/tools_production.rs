@@ -37,6 +37,9 @@ Exemplo: {"cut":"<corte>","layer":"<camada de guia>","points":[[-900,540],[2800,
 const MODEL_SHEET_DESC: &str = r##"Cria o model sheet de um personagem (nó `character`): um corte-canvas com camadas de grade de proporção, manequim de guia (várias vistas), linha e cor, e grava as medidas (`heads_tall` etc.) no personagem — um passo de undo. `heads_tall`: altura em cabeças (1,5..10; chibi < 4), `figure_px` (padrão 800), `views`: graus de rotação por vista (padrão frente, 3/4, perfil, 3/4 costas, costas), `pose`. Devolve o Outcome + `cut`, `line_layer`, `fill_layer` (desenhe e pinte o personagem nelas). Depois use aiai_consistency para conferir as proporções dos desenhos.
 Exemplo: {"character":"<id do personagem>","heads_tall":6.5,"name":"Hana"}"##;
 
+const CHARACTER_MATERIAL_DESC: &str = r##"Pasta do personagem: lista e cria os MATERIAIS de um personagem (folha de modelo, expressões, tabela de boca, olhos, figurinos e folhas extras). Cada material é um corte-canvas filho do personagem com camadas para desenhar (`linha` vetorial, `cor`, grade de guia e, nos modelos, rótulos de texto por célula); a Animação (Referências do personagem) e o workspace Personagens abrem todos. `action`: list (padrão; não altera nada), create (`kind`: model_sheet | expressions (grade 4×3: neutro, alegre, triste, bravo, surpreso, vergonha, medo, cansado, maroto, chorando, sono, nojo) | mouth_chart (uma célula por forma do lip-sync: repouso, A, I, U, E, O, N, meia, aberta) | eyes (3×3: aberto, meio, fechado, piscada, esquerda, direita, cima, baixo, brilho) | outfit (folha + variante de paleta copiada da do personagem; `new_palette` false não copia) | other (canvas livre, `size` [w,h])), import (`path` de uma imagem; vira um corte com a imagem numa camada de referência travada e uma camada `linha` por cima), rename (`name`), duplicate (copia folha e, no figurino, a paleta), delete (apaga o material e o corte), move (`index` 0-based), update (`notes`, `name`, `palette`, `kind`). `labels` troca os rótulos das células (da esquerda para a direita, de cima para baixo). create devolve o Outcome + `material`, `cut`, `line_layer`, `fill_layer` (desenhe nelas com aiai_draw_curves/aiai_fill), `cells` ([{label, rect:[x,y,w,h]}] para você desenhar cada célula no lugar certo), `canvas` e `materials`. Um passo de undo por chamada. Para a folha de modelo com manequim e medidas use `kind: model_sheet` (igual a aiai_model_sheet) e confira com aiai_consistency; confirme o desenho com aiai_render do `cut`.
+Exemplo: {"character":"<id>","action":"create","kind":"expressions"}"##;
+
 const CONSISTENCY_DESC: &str = r##"Mede a consistência de um desenho contra o model sheet do personagem (não altera nada): você informa as medidas que desenhou (y em px: `head_top`, `chin`, opcionais `eyes`, `shoulders`, `feet`) e recebe o erro relativo (%) de cada proporção em unidades de cabeça. Devolve {errors_pct, max_error_pct, ok} (ok = todos ≤ 5%). O personagem precisa ter model sheet (aiai_model_sheet). As linhas esperadas são as genéricas do model sheet (olhos 0,55, ombros 1,35 cabeça...) ou as do settei do personagem, se gravadas em `measurements.landmarks` (ex.: aiai_apply set_props {measurements:{landmarks:{olhos:0.6}}}).
 Exemplo: {"character":"<id>","head_top":120,"chin":260,"eyes":200,"feet":1010}"##;
 
@@ -118,7 +121,7 @@ fn with_props(mut s: Value, extra: Value) -> Value {
 
 pub fn definitions() -> Vec<Value> {
     use aiai_bridge::production_tools as pt;
-    use aiai_tools::{anim, audio, background, character, compare, fx2d, guide, text_layer as tl};
+    use aiai_tools::{anim, audio, background, char_material, character, compare, fx2d, guide, text_layer as tl};
     let voicevox = json!({ "voicevox_url": { "type": "string", "description": "URL do VOICEVOX Engine (só loopback). Padrão: env AIAI_VOICEVOX_URL ou http://127.0.0.1:50021." } });
     let compare_schema = schema_frame0::<compare::CompareRequest>();
     vec![
@@ -132,6 +135,7 @@ pub fn definitions() -> Vec<Value> {
         json!({ "name": "aiai_guide3d", "description": GUIDE3D_DESC, "inputSchema": schema_frame0::<guide::Guide3dRequest>() }),
         json!({ "name": "aiai_perspective", "description": PERSPECTIVE_DESC, "inputSchema": schema_frame0::<guide::PerspectiveRequest>() }),
         json!({ "name": "aiai_model_sheet", "description": MODEL_SHEET_DESC, "inputSchema": schema_of::<character::ModelSheetRequest>() }),
+        json!({ "name": "aiai_character_material", "description": CHARACTER_MATERIAL_DESC, "inputSchema": schema_of::<char_material::CharMaterialRequest>() }),
         json!({ "name": "aiai_consistency", "description": CONSISTENCY_DESC, "inputSchema": schema_of::<character::ConsistencyRequest>() }),
         json!({ "name": "aiai_inbetween", "description": INBETWEEN_DESC, "inputSchema": schema_of::<anim::InbetweenRequest>() }),
         json!({ "name": "aiai_propagate_fills", "description": PROPAGATE_FILLS_DESC, "inputSchema": schema_of::<anim::PropagateFillsRequest>() }),
@@ -220,6 +224,7 @@ pub fn plan(name: &str, m: &Map<String, Value>) -> Option<Result<Plan, ToolError
         "aiai_guide3d" => with_req(&["cut", "layer", "scene", "camera"], "GUIDE3D", true),
         "aiai_perspective" => with_req(&["cut", "layer"], "PERSPECTIVE", true),
         "aiai_model_sheet" => with_req(&["character", "heads_tall"], "MODEL_SHEET", false),
+        "aiai_character_material" => with_req(&["character"], "CHARACTER_MATERIAL", false),
         "aiai_consistency" => with_req(&["character", "head_top", "chin"], "CONSISTENCY", false),
         "aiai_inbetween" => with_req(&["cut", "layer", "key_a", "key_b", "count"], "INBETWEEN", false),
         "aiai_propagate_fills" => with_req(&["cut", "fill_layer", "key_frame_a", "key_frame_b", "frames"], "PROPAGATE_FILLS", false),

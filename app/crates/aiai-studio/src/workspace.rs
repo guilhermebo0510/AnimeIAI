@@ -176,6 +176,7 @@ impl WorkspaceId {
     /// - Cenário: pintura de fundo (pincel, balde), sem caneta vetorial nem pontos;
     /// - Animação: o que o animador usa no genga e no douga, e o balde para conferir o fechamento das linhas;
     /// - Pintura: balde primeiro, pincel e borracha para acertos; sem caneta nem pontos (não se desenha linha aqui);
+    /// - Personagens: desenha nos materiais da pasta do personagem (caneta, pincel, balde para conferir o fechamento);
     /// - Composição: é um viewer: mover, conta-gotas, mão e zoom.
     pub fn profile(self) -> WorkspaceProfile {
         use ToolId as T;
@@ -205,10 +206,17 @@ impl WorkspaceId {
                 canvas: true,
                 editor_keys: true,
             },
+            // pasta do personagem: desenha-se nos materiais (folha de modelo, expressões, boca...): linha, cor e conferência
+            W::Personagens => WorkspaceProfile {
+                tools: &[T::Move, T::Pen, T::Brush, T::Eraser, T::Fill, T::Lasso, T::Text, T::Eyedropper, T::Hand, T::Zoom],
+                default_tool: T::Pen,
+                canvas: true,
+                editor_keys: true,
+            },
             W::Composicao => WorkspaceProfile { tools: &[T::Move, T::Text, T::Eyedropper, T::Hand, T::Zoom], default_tool: T::Move, canvas: true, editor_keys: true },
             // sem canvas, mas com linha do tempo: quadros e reprodução pelas teclas do editor
             W::Storyboard | W::Audio | W::Edicao => WorkspaceProfile { tools: NO_TOOLS, default_tool: T::Move, canvas: false, editor_keys: true },
-            W::Roteiro | W::Personagens | W::Biblioteca | W::Modelagem | W::Entrega | W::Producao => {
+            W::Roteiro | W::Biblioteca | W::Modelagem | W::Entrega | W::Producao => {
                 WorkspaceProfile { tools: NO_TOOLS, default_tool: T::Move, canvas: false, editor_keys: false }
             }
         }

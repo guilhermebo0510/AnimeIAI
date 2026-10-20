@@ -1,8 +1,9 @@
 //! Workspace Personagens: painel Personagens (lista com a paleta de settei, a altura em cabeças e a voz de cada um),
-//! Folha de modelo (o corte da folha gerado pelo `MODEL_SHEET`, renderizado em segundo plano, com as linhas-guia de
-//! proporção e o nome de cada vista) e, no Propriedades, a ficha do personagem: nome, perfil, idade, altura em cabeças,
-//! paleta de settei, perfil de voz (`VOICE_PROFILE`), geração da folha (`MODEL_SHEET`) e o medidor de consistência
-//! (`CONSISTENCY`: proporções de um desenho contra a folha).
+//! Folha de modelo (o material aberto da pasta do personagem, renderizado em segundo plano; na folha de modelo, com as
+//! linhas-guia de proporção e o nome de cada vista) e, no Propriedades, a ficha do personagem em abas: Ficha (nome,
+//! perfil, idade, altura em cabeças e a geração da folha por `MODEL_SHEET`), Paleta de settei, Consistência
+//! (`CONSISTENCY`: proporções de um desenho contra a folha), Voz (`VOICE_PROFILE`) e Material (o material aberto). A
+//! pasta com todos os materiais fica em `char_folder`.
 //!
 //! Tudo passa pelas ações da bridge ou por `SetProps` (o mesmo caminho do MCP): um ajuste = um passo de desfazer.
 
@@ -12,7 +13,6 @@ use crate::app::actions;
 use crate::app::commands::{self as cmds, NodeId};
 use crate::app::ui_kit::{Env, body_ui, dim_label, rgba_to_color32, section};
 use crate::i18n::tr;
-use crate::workspace::WorkspaceId;
 use aiai_core::{CharacterData, Command, CoreSession, Id, NodeKind, Project};
 use egui::{Color32, FontId, Id as EId, Rect, Sense, Stroke, StrokeKind, Ui};
 use serde_json::{Value, json};
@@ -49,6 +49,34 @@ pub(crate) struct CharState {
     pub report: Option<(NodeId, u64, Result<Value, String>)>,
     /// Diálogo "Novo personagem" aberto.
     pub new_form: Option<NewCharForm>,
+    /// Aba da ficha (Propriedades).
+    pub tab: CharTab,
+    /// Material aberto no canvas (id na pasta do personagem); vazio = a folha de modelo.
+    pub open: Option<Id>,
+    /// Renomeando na árvore: (material, texto em edição).
+    pub rename: Option<(Id, String)>,
+    /// Diálogo de arquivo da importação de imagem em andamento.
+    pub import_job: Option<crossbeam_channel::Receiver<Option<std::path::PathBuf>>>,
+    /// Estamos no workspace (para `tick` saber quando saiu).
+    pub entered: bool,
+    /// Corte ativo de antes de entrar (volta a ele ao sair) e o corte que o workspace colocou no lugar.
+    pub return_cut: Option<NodeId>,
+    pub pushed: Option<NodeId>,
+    /// Ao sair, manter o corte do material (aberto na Animação).
+    pub keep_cut: bool,
+    /// Câmera e guias do canvas antes de entrar (voltam ao sair).
+    pub saved_view: Option<(bool, bool)>,
+}
+
+/// Abas da ficha do personagem (Propriedades do workspace Personagens).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum CharTab {
+    #[default]
+    Settei,
+    Palette,
+    Consistency,
+    Voice,
+    Material,
 }
 
 /// Diálogo de personagem novo: nada é criado até "Criar"; a folha de modelo já sai junto se marcada.
@@ -62,7 +90,7 @@ pub(crate) struct NewCharForm {
 
 impl Default for CharState {
     fn default() -> Self {
-        CharState { sel: None, sheet: EditPreview::default(), views: [true; 5], figure_px: 800.0, guides: true, cons: ConsForm::default(), report: None, new_form: None }
+        CharState { sel: None, sheet: EditPreview::default(), views: [true; 5], figure_px: 800.0, guides: true, cons: ConsForm::default(), report: None, new_form: None, tab: CharTab::default(), open: None, rename: None, import_job: None, entered: false, return_cut: None, pushed: None, keep_cut: false, saved_view: None }
     }
 }
 
@@ -129,7 +157,16 @@ fn make_sheet(env: &mut Env, ch: &NodeId, heads: f32, views_on: [bool; 5]) {
     }
     let name = format!("{} {}", tr("panel.sheet.title"), env.core.project.node(ch).map(|n| n.name.clone()).unwrap_or_default());
     let r = actions::run(env.core, "MODEL_SHEET", json!({ "character": ch, "name": name, "heads_tall": heads, "figure_px": env.ed.chars.figure_px, "views": views }));
-    actions::notify_err(env.ed, r);
+    open_created(env, r);
+}
+
+/// Resposta de `MODEL_SHEET`: erro vira aviso; a folha nova abre no canvas.
+fn open_created(env: &mut Env, r: Result<Value, String>) {
+    if let Some(v) = actions::notify_err(env.ed, r) {
+        if let Some(m) = v.get("material").and_then(Value::as_str) {
+            env.ed.chars.open = Some(Id(m.to_owned()));
+        }
+    }
 }
 
 /// Janela "Novo personagem" (nome, altura em cabeças, vistas da folha de modelo).
@@ -239,7 +276,7 @@ pub(crate) fn list(env: &mut Env, ui: &mut Ui, body: Rect) {
         for (i, id) in ids.iter().enumerate() {
             let p = &env.core.project;
             let (Some(n), Some(c)) = (p.node(id), char_data(p, id)) else { continue };
-            let (name, heads, voice, colors, has_sheet) = (n.name.clone(), c.heads_tall, voice_summary(c), palette_colors(p, c), sheet_cut(p, id).is_some());
+            let (name, heads, voice, colors, n_mat) = (n.name.clone(), c.heads_tall, voice_summary(c), palette_colors(p, c), aiai_tools::char_material::materials(p, id).len());
             let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 56.0), Sense::click());
             env.note(format!("char:row:{i}"), rect);
             let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
@@ -258,7 +295,7 @@ pub(crate) fn list(env: &mut Env, ui: &mut Ui, body: Rect) {
             }
             let x = sw.right() + 8.0;
             painter.text(egui::pos2(x, rect.top() + 5.0), egui::Align2::LEFT_TOP, &name, FontId::proportional(13.0), t.text);
-            let line2 = format!("{} {}  ·  {}", fmt_num(heads), tr("char.heads"), tr(if has_sheet { "char.has_sheet" } else { "char.no_sheet" }));
+            let line2 = format!("{} {}  ·  {n_mat} {}", fmt_num(heads), tr("char.heads"), tr("char.n_materials"));
             painter.text(egui::pos2(x, rect.top() + 23.0), egui::Align2::LEFT_TOP, line2, FontId::proportional(11.0), t.text_dim);
             painter.text(egui::pos2(x, rect.top() + 38.0), egui::Align2::LEFT_TOP, voice, FontId::proportional(11.0), t.text_dim);
             if resp.clicked() {
@@ -300,7 +337,7 @@ pub(crate) fn sheet(env: &mut Env, ui: &mut Ui, body: Rect) {
         ui.label(egui::RichText::new(tr("panel.sheet.empty")).color(t.text_dim));
         return;
     };
-    let Some(cut) = sheet_cut(&env.core.project, &ch) else {
+    let Some(cut) = super::char_folder::open_cut(env, &ch) else {
         // sem folha: gerar aqui mesmo, com as vistas marcadas e a altura do personagem
         ui.label(egui::RichText::new(tr("char.sheet_none")).color(t.text_dim));
         ui.add_space(4.0);
@@ -322,8 +359,10 @@ pub(crate) fn sheet(env: &mut Env, ui: &mut Ui, body: Rect) {
         let b = ui.button(tr("char.open_sheet"));
         env.note("char:open_sheet", b.rect);
         if b.on_hover_text(tr("char.open_sheet.tip")).clicked() {
-            env.ed.set_cut(cut.clone());
-            env.ed.want_workspace = Some(WorkspaceId::Animacao);
+            let list = super::char_folder::list_of(&env.core.project, &ch);
+            if let Some(m) = list.iter().find(|m| m.content.cut() == &cut) {
+                super::char_folder::open_in_animation(env, &list, &m.id);
+            }
         }
         let g = ui.checkbox(&mut env.ed.chars.guides, tr("char.guides"));
         env.note("char:guides", g.rect);
@@ -336,7 +375,7 @@ pub(crate) fn sheet(env: &mut Env, ui: &mut Ui, body: Rect) {
     // o canvas inteiro da folha (todas as vistas), não o quadro da câmera do projeto
     env.ed.chars.sheet.request(&ctx, (core.change_counter, format!("{}:{guides}", cut.0), 0), || {
         let (project, blobs, c2) = (core.project.clone(), core.blobs.clone(), cut.clone());
-        move || aiai_render::render_frame(&project, &blobs, &c2, 0, &aiai_render::RenderOptions { background: Some([1.0, 1.0, 1.0]), include_guides: guides, camera: false, ..Default::default() }).map(|o| o.image).map_err(|e| e.to_string())
+        move || aiai_render::render_frame(&project, &blobs, &c2, 0, &aiai_render::RenderOptions { background: Some([1.0, 1.0, 1.0]), include_guides: guides, include_reference: true, camera: false, ..Default::default() }).map(|o| o.image).map_err(|e| e.to_string())
     });
     let (w, h) = cmds::canvas_size(&env.core.project, &cut);
     let (w, h) = (w.max(1) as f32, h.max(1) as f32);
@@ -351,7 +390,9 @@ pub(crate) fn sheet(env: &mut Env, ui: &mut Ui, body: Rect) {
     }
     painter.rect_stroke(img, 0.0, Stroke::new(1.0, t.border), StrokeKind::Outside);
     env.note("char:sheet", img);
-    let m = char_data(&env.core.project, &ch).map(|c| c.measurements.clone()).unwrap_or(Value::Null);
+    // as linhas de proporção e os nomes das vistas só valem na folha de modelo principal
+    let is_model = sheet_cut(&env.core.project, &ch).as_ref() == Some(&cut);
+    let m = if is_model { char_data(&env.core.project, &ch).map(|c| c.measurements.clone()).unwrap_or(Value::Null) } else { Value::Null };
     // linhas-guia de proporção (cabeça, olhos, ombros...) com o nome e a altura em cabeças na margem esquerda
     let (top, head) = (m.get("top_px").and_then(Value::as_f64).unwrap_or(0.0) as f32, m.get("head_px").and_then(Value::as_f64).unwrap_or(0.0) as f32);
     if head > 0.0 {
@@ -388,6 +429,38 @@ pub(crate) fn properties(env: &mut Env, ui: &mut Ui) {
     let name = env.core.project.node(&ch).map(|n| n.name.clone()).unwrap_or_default();
     let w = (ui.available_width() - 4.0).max(60.0);
 
+    // abas: Ficha, Paleta, Consistência, Voz e o material aberto
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        for (tab, key, name) in [
+            (CharTab::Settei, "char.tab.settei", "char:tab:settei"),
+            (CharTab::Palette, "char.tab.palette", "char:tab:palette"),
+            (CharTab::Consistency, "char.tab.consistency", "char:tab:consistency"),
+            (CharTab::Voice, "char.tab.voice", "char:tab:voice"),
+            (CharTab::Material, "char.tab.material", "char:tab:material"),
+        ] {
+            let r = ui.selectable_label(env.ed.chars.tab == tab, tr(key));
+            env.note(name, r.rect);
+            if r.clicked() {
+                env.ed.chars.tab = tab;
+            }
+        }
+    });
+    match env.ed.chars.tab {
+        CharTab::Settei => {
+            settei_tab(env, ui, &ch, &c, &name, w);
+            sheet_form(env, ui, &ch, &c);
+        }
+        CharTab::Palette => palette_tab(env, ui, &ch, &c, &name, w),
+        CharTab::Consistency => consistency(env, ui, &ch, &c),
+        CharTab::Voice => voice(env, ui, &ch, &c, w),
+        CharTab::Material => super::char_folder::material_tab(env, ui, &ch, w),
+    }
+}
+
+fn settei_tab(env: &mut Env, ui: &mut Ui, ch: &NodeId, c: &CharacterData, name: &str, w: f32) {
+    let t = env.t;
+    let ch = ch.clone();
     section(ui, &t, "char.sec.settei");
     egui::Grid::new("char_props").num_columns(2).spacing([8.0, 5.0]).show(ui, |ui| {
         dim_label(ui, &t, tr("char.f.name"));
@@ -418,6 +491,11 @@ pub(crate) fn properties(env: &mut Env, ui: &mut Ui) {
         actions::notify_err(env.ed, r);
     }
 
+}
+
+fn palette_tab(env: &mut Env, ui: &mut Ui, ch: &NodeId, c: &CharacterData, name: &str, w: f32) {
+    let t = env.t;
+    let ch = ch.clone();
     // paleta de settei
     section(ui, &t, "char.sec.palette");
     let pals: Vec<(NodeId, String)> = env.core.project.roots.palettes.iter().filter_map(|id| env.core.project.node(id).map(|n| (id.clone(), n.name.clone()))).collect();
@@ -453,9 +531,6 @@ pub(crate) fn properties(env: &mut Env, ui: &mut Ui) {
         dim_label(ui, &t, &format!("{n_colors} {}", tr("char.colors_hint")));
     }
 
-    voice(env, ui, &ch, &c, w);
-    sheet_form(env, ui, &ch, &c);
-    consistency(env, ui, &ch, &c);
 }
 
 fn voice(env: &mut Env, ui: &mut Ui, ch: &NodeId, c: &CharacterData, w: f32) {
@@ -538,7 +613,7 @@ fn sheet_form(env: &mut Env, ui: &mut Ui, ch: &NodeId, c: &CharacterData) {
     if b.clicked() {
         let name = format!("{} {}", tr("panel.sheet.title"), env.core.project.node(ch).map(|n| n.name.clone()).unwrap_or_default());
         let r = actions::run(env.core, "MODEL_SHEET", json!({ "character": ch, "name": name, "heads_tall": c.heads_tall, "figure_px": figure_px, "views": views }));
-        actions::notify_err(env.ed, r);
+        open_created(env, r);
     }
 }
 

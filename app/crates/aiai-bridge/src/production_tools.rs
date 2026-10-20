@@ -29,6 +29,7 @@ use aiai_tools::background::{PatternFillRequest, SkyRequest, pattern_fill_comman
 use aiai_tools::calib::{load_reference, measure_band, measure_edge, measure_line_color, probe_colors};
 use aiai_tools::edit::{EditDoc, edit_command, load_edit, mix_edit, render_edit_frame};
 use aiai_tools::paint::{FillShapeRequest, fill_shape_command};
+use aiai_tools::char_material::{self, CharMaterialRequest};
 use aiai_tools::character::{ConsistencyRequest, ModelSheetRequest, consistency, model_sheet};
 use aiai_tools::compare::{CompareRequest, compare_frame};
 use aiai_tools::context::{canvas_size, cut_data, layer_data};
@@ -43,7 +44,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 pub const PRODUCTION_ACTIONS: &[&str] = &[
-    "SKY", "PATTERN_FILL", "TEXT", "TEXT_LAYER", "LINES", "GAG_BG", "PARTICLES", "GUIDE3D", "PERSPECTIVE", "MODEL_SHEET", "CONSISTENCY", "INBETWEEN", "PROPAGATE_FILLS",
+    "SKY", "PATTERN_FILL", "TEXT", "TEXT_LAYER", "LINES", "GAG_BG", "PARTICLES", "GUIDE3D", "PERSPECTIVE", "MODEL_SHEET", "CHARACTER_MATERIAL", "CONSISTENCY", "INBETWEEN", "PROPAGATE_FILLS",
     "TTS_LINE", "TTS_KOKORO", "VOICE_PROFILE", "LIPSYNC", "SFX", "BGM", "IMPORT_AUDIO", "IMPORT_IMAGE", "EXPORT_PSD", "EXPORT_XDTS", "EXPORT_SVG", "EXPORT_OTIO", "MIX_CUT", "LOUDNESS", "COMPARE", "PROBE_COLOR", "MEASURE_LINE", "MEASURE_EDGE", "FILL_SHAPE", "EDIT_SET", "EXPORT_VIDEO",
 ];
 
@@ -51,7 +52,7 @@ pub const PRODUCTION_ACTIONS: &[&str] = &[
 pub fn is_mutating(action: &str) -> bool {
     matches!(
         action,
-        "SKY" | "PATTERN_FILL" | "TEXT" | "TEXT_LAYER" | "LINES" | "GAG_BG" | "PARTICLES" | "GUIDE3D" | "PERSPECTIVE" | "MODEL_SHEET" | "INBETWEEN" | "PROPAGATE_FILLS" | "TTS_LINE" | "TTS_KOKORO" | "VOICE_PROFILE" | "LIPSYNC" | "SFX" | "BGM" | "IMPORT_AUDIO" | "IMPORT_IMAGE" | "FILL_SHAPE" | "EDIT_SET"
+        "SKY" | "PATTERN_FILL" | "TEXT" | "TEXT_LAYER" | "LINES" | "GAG_BG" | "PARTICLES" | "GUIDE3D" | "PERSPECTIVE" | "MODEL_SHEET" | "CHARACTER_MATERIAL" | "INBETWEEN" | "PROPAGATE_FILLS" | "TTS_LINE" | "TTS_KOKORO" | "VOICE_PROFILE" | "LIPSYNC" | "SFX" | "BGM" | "IMPORT_AUDIO" | "IMPORT_IMAGE" | "FILL_SHAPE" | "EDIT_SET"
     )
 }
 
@@ -126,8 +127,9 @@ pub fn handle(session: &mut CoreSession, action: &str, params: &Value) -> Result
             let r: ModelSheetRequest = request(params, action)?;
             let plan = model_sheet(&session.project, &mut session.ids, &r).map_err(tool_error)?;
             let cmd = Command::Batch { commands: plan.commands, label: Some(format!("Model sheet {}", r.name)) };
-            apply_with(session, params, cmd, json!({ "cut": plan.cut, "line_layer": plan.line_layer, "fill_layer": plan.fill_layer }))
+            apply_with(session, params, cmd, json!({ "cut": plan.cut, "line_layer": plan.line_layer, "fill_layer": plan.fill_layer, "material": plan.material }))
         }
+        "CHARACTER_MATERIAL" => character_material(session, params),
         "CONSISTENCY" => {
             let r: ConsistencyRequest = request(params, action)?;
             let rep = consistency(&session.project, &r).map_err(tool_error)?;
@@ -266,6 +268,21 @@ fn apply_with(session: &mut CoreSession, params: &Value, cmd: Command, extra: Va
         }
     }
     Ok(v)
+}
+
+/// Pasta do personagem: `list` devolve os materiais (não altera nada); as outras ações (create, import, rename, duplicate,
+/// delete, move, update) aplicam UM comando e devolvem o Outcome + `material`, `cut`, as camadas para desenhar, as células
+/// do modelo (rótulo e retângulo) e a lista depois da mudança.
+fn character_material(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
+    let r: CharMaterialRequest = request(params, "CHARACTER_MATERIAL")?;
+    let plan = char_material::plan(&session.project, &mut session.ids, &mut session.blobs, &r).map_err(tool_error)?;
+    let list: Vec<Value> = plan.list.iter().map(char_material::material_json).collect();
+    let cells: Vec<Value> = plan.cells.iter().map(|(rect, label)| json!({ "label": label, "rect": rect })).collect();
+    let extra = json!({ "material": plan.material, "cut": plan.cut, "line_layer": plan.line_layer, "fill_layer": plan.fill_layer, "cells": cells, "canvas": plan.canvas, "materials": list });
+    match plan.command {
+        None => Ok(extra),
+        Some(cmd) => apply_with(session, params, cmd, extra),
+    }
 }
 
 fn clip_info(c: &audio::ClipOutput) -> Value {

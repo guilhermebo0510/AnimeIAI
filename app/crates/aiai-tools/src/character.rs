@@ -78,11 +78,35 @@ pub struct ModelSheetPlan {
     pub cut: Id,
     pub line_layer: Id,
     pub fill_layer: Id,
+    /// Material da pasta do personagem criado junto com a folha.
+    pub material: Id,
+}
+
+/// A folha pronta, sem tocar no personagem: os comandos que criam o corte e as medidas que a descrevem.
+pub struct SheetBuild {
+    pub commands: Vec<Command>,
+    pub cut: Id,
+    pub line_layer: Id,
+    pub fill_layer: Id,
+    pub measurements: serde_json::Value,
 }
 
 /// Cria o model sheet: um corte-canvas sob o personagem com camadas de grade, manequim (guia), linha e cor; grava as
-/// medidas no personagem.
+/// medidas no personagem e registra a folha como material da pasta (`ModelSheet`; os cortes soltos de projetos antigos
+/// entram na lista junto).
 pub fn model_sheet(p: &Project, idgen: &mut IdGen, req: &ModelSheetRequest) -> ToolResult<ModelSheetPlan> {
+    let b = build_sheet(p, idgen, req)?;
+    let mut cmds = b.commands;
+    let mut list = crate::char_material::materials(p, &req.character);
+    let material = idgen.next();
+    list.push(CharMaterial { id: material.clone(), kind: MaterialKind::ModelSheet, name: req.name.clone(), content: MaterialContent::Sheet { cut: b.cut.clone() }, notes: String::new(), palette: None });
+    cmds.push(Command::SetProps { id: req.character.clone(), name: None, data: json!({"heads_tall": req.heads_tall, "measurements": b.measurements, "materials": list}) });
+    Ok(ModelSheetPlan { commands: cmds, cut: b.cut, line_layer: b.line_layer, fill_layer: b.fill_layer, material })
+}
+
+/// Monta o corte da folha (grade de proporção, manequim em cada vista, cor e linha) sem alterar o personagem. O
+/// model sheet e os figurinos usam a mesma folha.
+pub fn build_sheet(p: &Project, idgen: &mut IdGen, req: &ModelSheetRequest) -> ToolResult<SheetBuild> {
     match &node(p, &req.character)?.data {
         NodeKind::Character(_) => {}
         other => return Err(ToolError::Invalid(format!("{} é {}, não personagem", req.character, other.type_name()))),
@@ -185,9 +209,8 @@ pub fn model_sheet(p: &Project, idgen: &mut IdGen, req: &ModelSheetRequest) -> T
         "sheet_cut": cut.0,
         "landmarks": marks.iter().map(|(n, hh)| json!({"name": n, "heads": hh, "y_px": top + hh * head_px})).collect::<Vec<_>>(),
     });
-    cmds.push(Command::SetProps { id: req.character.clone(), name: None, data: json!({"heads_tall": req.heads_tall, "measurements": measurements}) });
     let _ = (grid_l, mq_l);
-    Ok(ModelSheetPlan { commands: cmds, cut, line_layer: line_l, fill_layer: fill_l })
+    Ok(SheetBuild { commands: cmds, cut, line_layer: line_l, fill_layer: fill_l, measurements })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

@@ -5,6 +5,7 @@ pub(crate) mod audio;
 pub(crate) mod board;
 pub(crate) mod brush_maker;
 pub(crate) mod brushes;
+pub(crate) mod char_folder;
 pub(crate) mod char_ref;
 pub(crate) mod characters;
 pub(crate) mod colors;

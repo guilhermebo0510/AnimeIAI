@@ -687,6 +687,16 @@ fn clean_refs(data: &mut NodeKind, gone: &std::collections::BTreeSet<Id>) -> boo
                 ch.palette = None;
                 changed = true;
             }
+            // material cujo corte sumiu sai da pasta; a paleta de um figurino que sumiu só solta a variante
+            let before = ch.materials.len();
+            ch.materials.retain(|m| !gone.contains(m.content.cut()));
+            changed |= before != ch.materials.len();
+            for m in &mut ch.materials {
+                if m.palette.as_ref().is_some_and(|pl| gone.contains(pl)) {
+                    m.palette = None;
+                    changed = true;
+                }
+            }
         }
         _ => {}
     }

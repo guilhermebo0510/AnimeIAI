@@ -1114,6 +1114,7 @@ impl StudioApp {
         self.ed.pressure_curve = (self.prefs.pen_pressure_min, self.prefs.pen_pressure_gamma);
         self.autosave_tick();
         panels::timeline::tick(&self.core, &mut self.ed, &ctx);
+        panels::char_folder::tick(&self.core, &mut self.ed, self.ws);
         {
             // som ao vivo acompanha a reprodução e o cabeçote
             let cut = self.ed.cut.clone();
@@ -1294,6 +1295,7 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::SceneInfo => panels::scene_info::show(&mut self.env, ui, body),
             PanelKind::CharRef => panels::char_ref::show(&mut self.env, ui, body),
             PanelKind::Characters => panels::characters::list(&mut self.env, ui, body),
+            PanelKind::CharFolder => panels::char_folder::show(&mut self.env, ui, body),
             PanelKind::Sheet => panels::characters::sheet(&mut self.env, ui, body),
             PanelKind::Media => panels::edit::media(&mut self.env, ui, body),
             PanelKind::Presets => panels::deliver::presets(&mut self.env, ui, body),
