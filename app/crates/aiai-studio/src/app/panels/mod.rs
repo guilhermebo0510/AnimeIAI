@@ -13,6 +13,8 @@ pub(crate) mod colors;
 pub(crate) mod comp_timeline;
 pub(crate) mod deliver;
 pub(crate) mod edit;
+pub(crate) mod edit_panels;
+pub(crate) mod edit_timeline;
 pub(crate) mod effect_controls;
 pub(crate) mod effects_browser;
 pub(crate) mod layers;

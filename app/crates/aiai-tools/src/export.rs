@@ -675,12 +675,14 @@ pub fn export_otio(p: &Project, blobs: &BlobStore, req: &ExportOtioRequest) -> T
     if req.render_video && media_dir.is_none() {
         return Err(ToolError::Invalid("render_video precisa de media_dir".into()));
     }
-    let n = doc.clips.len();
+    // a primeira trilha de vídeo vista como a sequência com sobreposição do v1 (o OTIO entende transições assim)
+    let view = doc.v1_view();
+    let n = view.len();
     // ponto de corte das sobreposições: metade antes (entrada do clipe novo), metade depois (saída do anterior)
     let mut in_off = vec![0u32; n];
     let mut out_off = vec![0u32; n];
     for k in 1..n {
-        let overlap = (tl.items[k - 1].0 + tl.items[k - 1].1).saturating_sub(tl.items[k].0);
+        let overlap = (view[k - 1].1.0 + view[k - 1].1.1).saturating_sub(view[k].1.0);
         out_off[k - 1] = overlap / 2;
         in_off[k] = overlap - overlap / 2;
     }
@@ -688,13 +690,13 @@ pub fn export_otio(p: &Project, blobs: &BlobStore, req: &ExportOtioRequest) -> T
     let mut rendered = 0usize;
     let mut global = vec![0u32; n]; // início (já aparado) de cada clipe na linha do tempo
     let mut t = 0u32;
-    for (k, clip) in doc.clips.iter().enumerate() {
-        let (_, dur, off) = tl.items[k];
-        let cut_name = node(p, &clip.cut)?.name.clone();
+    for (k, (cut, (_, dur, off), transition_in)) in view.iter().enumerate() {
+        let (dur, off) = (*dur, *off);
+        let cut_name = node(p, cut)?.name.clone();
         let used = dur - in_off[k] - out_off[k];
         global[k] = t;
         t += used;
-        if let Some(trn) = clip.transition_in.as_ref().filter(|_| k > 0) {
+        if let Some(trn) = transition_in.as_ref().filter(|_| k > 0) {
             let (kind, name) = match trn.kind {
                 TransitionKindRef::Dissolve => ("SMPTE_Dissolve", "dissolve"),
                 TransitionKindRef::Cut => ("", ""),
@@ -708,14 +710,14 @@ pub fn export_otio(p: &Project, blobs: &BlobStore, req: &ExportOtioRequest) -> T
                 }));
             }
         }
-        let meta = json!({ "aiai": { "cut": clip.cut, "cut_name": cut_name, "transition_in": clip.transition_in } });
+        let meta = json!({ "aiai": { "cut": cut, "cut_name": cut_name, "transition_in": transition_in } });
         let media = match (&media_dir, req.render_video) {
             (Some(dir), true) => {
                 let sub = dir.join(format!("{:02}_{}", k + 1, safe_name(&cut_name)));
                 std::fs::create_dir_all(&sub).map_err(|e| ToolError::Invalid(format!("{}: {e}", sub.display())))?;
                 for f in off..off + dur {
                     let opts = RenderOptions { camera: true, ..Default::default() };
-                    let img = render_frame(p, blobs, &clip.cut, f, &opts).map_err(|e| ToolError::Render(e.to_string()))?.image;
+                    let img = render_frame(p, blobs, cut, f, &opts).map_err(|e| ToolError::Render(e.to_string()))?.image;
                     img.save_png(&sub.join(format!("f.{f:04}.png"))).map_err(ToolError::Invalid)?;
                     rendered += 1;
                 }
@@ -726,7 +728,7 @@ pub fn export_otio(p: &Project, blobs: &BlobStore, req: &ExportOtioRequest) -> T
                     "available_range": tr(off as f64, dur as f64, fps), "available_image_bounds": null
                 })
             }
-            _ => missing(json!({ "aiai": { "cut": clip.cut } })),
+            _ => missing(json!({ "aiai": { "cut": cut } })),
         };
         video.push(otio_clip(&cut_name, tr((off + in_off[k]) as f64, used as f64, fps), media, meta));
     }
@@ -737,10 +739,11 @@ pub fn export_otio(p: &Project, blobs: &BlobStore, req: &ExportOtioRequest) -> T
         });
         video.push(otio_clip("Créditos", tr(0.0, (tl.total - tl.credits_start) as f64, fps), credits_ref, json!({})));
     }
-    let markers: Vec<Value> = doc.subtitles.iter().map(|s| json!({
-        "OTIO_SCHEMA": "Marker.2", "name": s.text, "metadata": { "aiai": { "subtitle": true } }, "color": "YELLOW", "comment": "",
-        "marked_range": tr(s.start_frame as f64, s.end_frame.saturating_sub(s.start_frame) as f64, fps)
-    })).collect();
+    // legendas (todas as trilhas S) como marcadores
+    let markers: Vec<Value> = doc.tracks_of(crate::edit::TrackKind::Subtitle).iter().flat_map(|t| doc.items_on(t.id)).filter_map(|i| i.caption_text().map(|text| json!({
+        "OTIO_SCHEMA": "Marker.2", "name": text, "metadata": { "aiai": { "subtitle": true } }, "color": "YELLOW", "comment": "",
+        "marked_range": tr(i.start as f64, i.dur as f64, fps)
+    }))).collect();
     let mut tracks = vec![otio_track("V1", "Video", video, markers)];
 
     // áudio: cada clipe de áudio dos cortes, no trecho aparado de cada clipe da edição
@@ -752,10 +755,10 @@ pub fn export_otio(p: &Project, blobs: &BlobStore, req: &ExportOtioRequest) -> T
     }
     let mut by_kind: Vec<(AudioTrack, Vec<Item>)> = Vec::new();
     let mut written = std::collections::HashSet::new();
-    for (k, clip) in doc.clips.iter().enumerate() {
-        let (_, dur, off) = tl.items[k];
+    for (k, (cut, (_, dur, off), _)) in view.iter().enumerate() {
+        let (dur, off) = (*dur, *off);
         let (lo, hi) = ((off + in_off[k]) as f64, (off + dur - out_off[k]) as f64);
-        let cd = cut_data(p, &clip.cut)?;
+        let cd = cut_data(p, cut)?;
         for a in &cd.audio {
             let Some(an) = p.node(&a.asset) else { continue };
             let NodeKind::Asset(asset) = &an.data else { continue };

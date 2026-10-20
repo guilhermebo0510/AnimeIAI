@@ -304,6 +304,7 @@ dependencies = [
  "aiai-anim",
  "aiai-audio",
  "aiai-core",
+ "aiai-fx",
  "aiai-guide3d",
  "aiai-media",
  "aiai-metrics",

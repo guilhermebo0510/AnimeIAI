@@ -552,7 +552,7 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
     assert!(plan("aiai_zzz", json!({})).is_err());
     // o catálogo é uma lista estável de ferramentas, todas com plano
     let defs = tools::definitions();
-    assert_eq!(defs.as_array().unwrap().len(), 78);
+    assert_eq!(defs.as_array().unwrap().len(), 80);
     // todas as ferramentas de produção: descrição com exemplo de uma linha, schema de objeto, plano com a ação certa e frame 0 por padrão
     for t in defs.as_array().unwrap() {
         let n = t["name"].as_str().unwrap();
@@ -610,6 +610,8 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
         ("aiai_render_sheet", json!({"cut": "c", "out": "x.png"}), "RENDER_SHEET"),
         ("aiai_edit_preview", json!({"edit": "e", "out": "x.png"}), "EDIT_PREVIEW"),
         ("aiai_edit_mix", json!({"edit": "e", "out": "x.wav"}), "EDIT_MIX"),
+        ("aiai_edit_ops", json!({"edit": "e", "ops": []}), "EDIT_OPS"),
+        ("aiai_edit_captions", json!({"edit": "e", "action": "check"}), "EDIT_CAPTIONS"),
         ("aiai_tts_regenerate", json!({"asset": "a"}), "TTS_REGENERATE"),
     ] {
         let p = plan(tool, args.clone()).unwrap_or_else(|e| panic!("{tool}: {e}"));

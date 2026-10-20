@@ -2,6 +2,10 @@
 //! transição e créditos, sem exportar o vídeo), `EDIT_MIX` (mixagem da edição inteira em WAV, com loudness) e
 //! `TTS_REGENERATE` (refaz o áudio de uma fala do VOICEVOX no mesmo asset — o clipe continua no lugar — com ajustes
 //! opcionais na consulta: velocidade, tom, entonação, volume, pausas).
+//!
+//! Edição v2 (S24): `EDIT_OPS` (operações de montagem no documento de edição: navalha, apagar com ripple, inserir e
+//! sobrescrever, mover, aparar, roll, slip, slide, transição, vínculo, campos de item e trilha; um passo de desfazer) e
+//! `EDIT_CAPTIONS` (legendas: exportar SRT/VTT, importar, gerar das falas do roteiro, verificar cps).
 
 use crate::core_tools::{apply, request, tool_error};
 use crate::production_tools::{check_abs, ensure_parent, loudness_json, voicevox_url};
@@ -11,16 +15,18 @@ use aiai_audio::loudness::LoudnessPreset;
 use aiai_audio::voicevox::{AudioQuery, VoicevoxClient};
 use aiai_core::{Command, CoreSession, Id, NodeKind};
 use aiai_tools::audio::{self, WavBits};
-use aiai_tools::edit::{load_edit, mix_edit};
+use aiai_tools::edit::captions::{self, CaptionLimits};
+use aiai_tools::edit::ops::EditOp;
+use aiai_tools::edit::{EditDoc, TrackKind, edit_command, load_edit, media_frames, mix_edit};
 use aiai_tools::preview;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-pub const PREVIEW_ACTIONS: &[&str] = &["RENDER_SHEET", "EDIT_PREVIEW", "EDIT_MIX", "TTS_REGENERATE"];
+pub const PREVIEW_ACTIONS: &[&str] = &["RENDER_SHEET", "EDIT_PREVIEW", "EDIT_MIX", "TTS_REGENERATE", "EDIT_OPS", "EDIT_CAPTIONS"];
 
 pub fn is_mutating(action: &str) -> bool {
-    action == "TTS_REGENERATE"
+    matches!(action, "TTS_REGENERATE" | "EDIT_OPS" | "EDIT_CAPTIONS")
 }
 
 /// Quadros pedidos: lista explícita ou faixa `start..=end` a cada `step`.
@@ -116,8 +122,148 @@ pub struct TtsRegenerateRequest {
     pub voicevox_url: Option<String>,
 }
 
+/// `EDIT_OPS`: operações de montagem aplicadas em ordem ao documento de edição (tudo ou nada; um passo de desfazer).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EditOpsRequest {
+    pub edit: Id,
+    pub ops: Vec<EditOp>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptionsAction {
+    /// Grava a trilha em `out` (.srt ou .vtt).
+    Export,
+    /// Lê `path` (.srt/.vtt) para a trilha.
+    Import,
+    /// Gera das falas (clipes de fala dos cortes + texto do roteiro), presas aos clipes de imagem.
+    Generate,
+    /// Verifica cps, caracteres por linha, linhas e duração.
+    Check,
+}
+
+/// `EDIT_CAPTIONS`: legendas de uma trilha S da edição.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct EditCaptionsRequest {
+    pub edit: Id,
+    pub action: CaptionsAction,
+    /// Trilha de legenda (id); padrão = a primeira S.
+    #[serde(default)]
+    pub track: Option<u32>,
+    /// Exportar: arquivo de saída (.srt ou .vtt).
+    #[serde(default)]
+    pub out: Option<String>,
+    /// Importar: arquivo de entrada (.srt ou .vtt).
+    #[serde(default)]
+    pub path: Option<String>,
+    /// Importar/gerar: apaga as legendas que já estão na trilha (padrão false: sobrescreve só onde cair).
+    #[serde(default)]
+    pub replace: bool,
+    /// Gerar: idioma (padrão: o da trilha; vazio ou diferente do original do roteiro = tradução).
+    #[serde(default)]
+    pub lang: Option<String>,
+    /// Verificar: limites (padrão 17 cps, 42 caracteres por linha, 2 linhas, 0,8–7 s).
+    #[serde(default)]
+    pub limits: Option<CaptionLimits>,
+}
+
+/// Resumo do documento para quem chamou: trilhas e itens (sem os filtros completos).
+pub fn doc_summary(doc: &EditDoc, session: &CoreSession) -> Value {
+    let fps = session.project.settings.fps() as f32;
+    let tl = doc.timeline(&session.project, fps).unwrap_or_default();
+    json!({
+        "total_frames": tl.total, "credits_start": tl.credits_start,
+        "tracks": doc.tracks.iter().map(|t| json!({ "id": t.id, "label": doc.track_label(t.id), "kind": t.kind, "locked": t.locked, "hidden": t.hidden, "muted": t.muted, "solo": t.solo })).collect::<Vec<_>>(),
+        "items": doc.items.iter().map(|i| json!({ "id": i.id, "track": i.track, "track_label": doc.track_label(i.track), "start": i.start, "dur": i.dur, "src_in": i.src_in, "source": i.source, "link": i.link, "anchor": i.anchor,
+            "transition_in": i.transition_in, "transition_out": i.transition_out, "speed": i.speed, "filters": i.filters.len() })).collect::<Vec<_>>(),
+    })
+}
+
+fn save_doc(session: &mut CoreSession, params: &Value, edit: &Id, doc: &EditDoc) -> Result<Value, BridgeError> {
+    let name = session.project.node(edit).map(|n| n.name.clone()).unwrap_or_default();
+    let cmd = edit_command(&session.project, &mut session.ids, &name, doc, Some(edit)).map_err(tool_error)?;
+    apply(session, params, cmd)
+}
+
+fn edit_ops(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
+    let r: EditOpsRequest = request(params, "EDIT_OPS")?;
+    let mut doc = load_edit(&session.project, &r.edit).map_err(tool_error)?;
+    let project = session.project.clone();
+    let media = |s: &aiai_tools::edit::ItemSource| media_frames(&project, s);
+    let mut created = Vec::new();
+    for (k, op) in r.ops.iter().enumerate() {
+        let ids = doc.apply_op(op, &media).map_err(|e| BridgeError::invalid_params(format!("ops[{k}]: {e}")))?;
+        created.push(json!(ids));
+    }
+    doc.validate(&session.project).map_err(|e| BridgeError::invalid_params(format!("resultado inválido: {e}")))?;
+    let mut out = save_doc(session, params, &r.edit, &doc)?;
+    out["created"] = json!(created);
+    out["edit"] = json!(r.edit);
+    out["timeline"] = doc_summary(&doc, session);
+    Ok(out)
+}
+
+fn edit_captions(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
+    let r: EditCaptionsRequest = request(params, "EDIT_CAPTIONS")?;
+    let mut doc = load_edit(&session.project, &r.edit).map_err(tool_error)?;
+    let fps = session.project.settings.fps();
+    let track = match r.track {
+        Some(t) if doc.track(t).map(|x| x.kind) == Some(TrackKind::Subtitle) => t,
+        Some(t) => return Err(BridgeError::invalid_params(format!("trilha {t} não é de legenda"))),
+        None => doc.tracks_of(TrackKind::Subtitle).first().map(|t| t.id).ok_or_else(|| BridgeError::invalid_params("a edição não tem trilha de legenda"))?,
+    };
+    match r.action {
+        CaptionsAction::Export => {
+            let out = r.out.as_deref().ok_or_else(|| BridgeError::invalid_params("exportar precisa de 'out' (.srt ou .vtt)"))?;
+            let path = check_abs(out, "out")?;
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+            let subs = captions::track_subtitles(&doc, track, fps);
+            let text = match ext.as_str() {
+                "srt" => aiai_media::write_srt(&subs),
+                "vtt" => captions::write_vtt(&subs),
+                _ => return Err(BridgeError::invalid_params("'out' deve terminar em .srt ou .vtt")),
+            };
+            ensure_parent(&path)?;
+            std::fs::write(&path, text.as_bytes()).map_err(|e| BridgeError::failed(format!("gravar {}: {e}", path.display())))?;
+            Ok(json!({ "path": path.display().to_string(), "captions": subs.len(), "track": doc.track_label(track) }))
+        }
+        CaptionsAction::Check => {
+            let lim = r.limits.unwrap_or_default();
+            let checks = captions::check_captions(&doc, Some(track), fps, &lim);
+            let bad = checks.iter().filter(|c| !c.issues.is_empty()).count();
+            Ok(json!({ "track": doc.track_label(track), "captions": checks.len(), "with_issues": bad, "limits": lim, "checks": checks }))
+        }
+        CaptionsAction::Import | CaptionsAction::Generate => {
+            let made = if r.action == CaptionsAction::Import {
+                let src = r.path.as_deref().ok_or_else(|| BridgeError::invalid_params("importar precisa de 'path' (.srt ou .vtt)"))?;
+                let path = check_abs(src, "path")?;
+                let text = std::fs::read_to_string(&path).map_err(|e| BridgeError::invalid_params(format!("ler {}: {e}", path.display())))?;
+                let subs = captions::parse_captions(&text).map_err(BridgeError::invalid_params)?;
+                captions::import_into(&mut doc, track, &subs, fps, r.replace).map_err(BridgeError::invalid_params)?
+            } else {
+                let lang = r.lang.clone().unwrap_or_else(|| doc.track(track).map(|t| t.lang.clone()).unwrap_or_default());
+                let items = captions::captions_from_script(&session.project, &doc, track, &lang).map_err(tool_error)?;
+                if items.is_empty() {
+                    return Err(BridgeError::invalid_params("nenhuma fala encontrada: os cortes da edição não têm clipes de fala nem falas vinculadas do roteiro"));
+                }
+                if r.replace {
+                    doc.items.retain(|i| i.track != track);
+                }
+                doc.overwrite_items(items)
+            };
+            let mut out = save_doc(session, params, &r.edit, &doc)?;
+            out["edit"] = json!(r.edit);
+            out["captions"] = json!(made);
+            out["track"] = json!(doc.track_label(track));
+            Ok(out)
+        }
+    }
+}
+
 pub fn handle(session: &mut CoreSession, action: &str, params: &Value) -> Result<Value, BridgeError> {
     match action {
+        "EDIT_OPS" => edit_ops(session, params),
+        "EDIT_CAPTIONS" => edit_captions(session, params),
         "RENDER_SHEET" => render_sheet(session, params),
         "EDIT_PREVIEW" => edit_preview(session, params),
         "EDIT_MIX" => edit_mix(session, params),

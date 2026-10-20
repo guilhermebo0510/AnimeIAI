@@ -22,6 +22,14 @@ pub enum PanelKind {
     Board,
     Preview,
     Media,
+    /// Edição: monitor de origem (corte, som ou imagem aberto da Mídia; marcas I/O, inserir e sobrescrever).
+    SourceMonitor,
+    /// Edição: transições (lista com prévia; arrastar até um ponto de corte).
+    Transitions,
+    /// Edição: efeitos do clipe selecionado (opacidade, velocidade, filtros, rack de áudio, chaves).
+    ClipEffects,
+    /// Edição: legendas (várias trilhas, estilo, cps, gerar das falas, importar/exportar SRT/VTT).
+    Captions,
     Mixer,
     /// Áudio: editor de forma de onda/espectrograma de um clipe (edição não destrutiva com histórico).
     Waveform,
@@ -147,7 +155,7 @@ use WorkspaceId as W;
 const DRAWING_WS: &[WorkspaceId] = &[W::Personagens, W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Composicao];
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 41] = [
+    pub const ALL: [PanelKind; 45] = [
         PanelKind::Canvas,
         PanelKind::Layers,
         PanelKind::Properties,
@@ -162,6 +170,10 @@ impl PanelKind {
         PanelKind::Board,
         PanelKind::Preview,
         PanelKind::Media,
+        PanelKind::SourceMonitor,
+        PanelKind::Transitions,
+        PanelKind::ClipEffects,
+        PanelKind::Captions,
         PanelKind::Mixer,
         PanelKind::Waveform,
         PanelKind::EffectsRack,
@@ -217,6 +229,10 @@ impl PanelKind {
             PanelKind::Board => "panel.board.title",
             PanelKind::Preview => "panel.preview.title",
             PanelKind::Media => "panel.media.title",
+            PanelKind::SourceMonitor => "panel.source_monitor.title",
+            PanelKind::Transitions => "panel.transitions.title",
+            PanelKind::ClipEffects => "panel.clip_effects.title",
+            PanelKind::Captions => "panel.captions.title",
             PanelKind::Mixer => "panel.mixer.title",
             PanelKind::Waveform => "panel.waveform.title",
             PanelKind::EffectsRack => "panel.rack.title",
@@ -264,6 +280,10 @@ impl PanelKind {
             PanelKind::Board => "panel.board.empty",
             PanelKind::Preview => "panel.preview.empty",
             PanelKind::Media => "panel.media.empty",
+            PanelKind::SourceMonitor => "panel.source_monitor.empty",
+            PanelKind::Transitions => "panel.transitions.empty",
+            PanelKind::ClipEffects => "panel.clip_effects.empty",
+            PanelKind::Captions => "panel.captions.empty",
             PanelKind::Mixer => "panel.mixer.empty",
             PanelKind::Waveform => "panel.waveform.empty",
             PanelKind::EffectsRack => "panel.rack.empty",
@@ -313,6 +333,10 @@ impl PanelKind {
             PanelKind::Board => (C::PreProduction, Center, &[W::Storyboard], false),
             PanelKind::Preview => (C::SoundEdit, Center, &[W::Audio, W::Edicao], false),
             PanelKind::Media => (C::SoundEdit, Left, &[W::Audio, W::Edicao], false),
+            PanelKind::SourceMonitor => (C::SoundEdit, Center, &[W::Edicao], false),
+            PanelKind::Transitions => (C::SoundEdit, Left, &[W::Edicao], false),
+            PanelKind::ClipEffects => (C::SoundEdit, Right, &[W::Edicao], false),
+            PanelKind::Captions => (C::SoundEdit, Left, &[W::Edicao], false),
             PanelKind::Mixer => (C::SoundEdit, Right, &[W::Audio], false),
             PanelKind::Waveform => (C::SoundEdit, Center, &[W::Audio], false),
             PanelKind::EffectsRack => (C::SoundEdit, Right, &[W::Audio], false),
@@ -400,7 +424,8 @@ pub fn factory_rev(ws: WorkspaceId) -> u32 {
         // efeito à direita
         W::Composicao => 3,
         // S24: painel Texto (legendas) em aba com as Propriedades
-        W::Edicao => 2,
+        // S24 3.13–3.18: estilo Premiere (Mídia/Transições/Legendas, monitor de origem e do programa, Efeitos do clipe)
+        W::Edicao => 3,
         // S24: Forma de onda, Efeitos, Medidores, Multipista e Voz sintética
         W::Audio => 2,
         // S24: Produção com Gráficos, Gargalos e Análise por IA ao lado do painel principal
@@ -486,8 +511,15 @@ fn default_node(ws: WorkspaceId) -> Node {
             ])),
             (0.44, TabsOf(&[P::Multitrack, P::Mixer, P::Timeline])),
         ]),
+        // estilo Premiere "Editing" (S24 12): Mídia, Transições e Legendas em abas à esquerda, monitor de origem e do
+        // programa lado a lado, Efeitos do clipe e Propriedades à direita; a linha do tempo embaixo
         W::Edicao => Col(vec![
-            (0.55, Row(vec![(0.22, Pane(P::Media)), (0.50, Pane(P::Preview)), (0.28, TabsOf(&[P::Properties, P::Text]))])),
+            (0.55, Row(vec![
+                (0.20, TabsOf(&[P::Media, P::Transitions, P::Captions])),
+                (0.27, Pane(P::SourceMonitor)),
+                (0.31, Pane(P::Preview)),
+                (0.22, TabsOf(&[P::ClipEffects, P::Properties])),
+            ])),
             (0.45, Pane(P::Timeline)),
         ]),
         W::Entrega => Row(vec![(0.24, Pane(P::Presets)), (0.46, Pane(P::Queue)), (0.30, Pane(P::Properties))]),
@@ -1125,7 +1157,7 @@ mod tests {
             (W::Biblioteca, 2, 0xf001e10a1c6ff92d),
             (W::Modelagem, 2, 0xcccad1946cd12fc3),
             (W::Audio, 2, 0xb370ba9cf04cb8ac),
-            (W::Edicao, 2, 0x391a9dc3fd389b14),
+            (W::Edicao, 3, 0x3d752f0083dbd76d),
             (W::Entrega, 1, 0x6989668e53aa64aa),
             (W::Producao, 2, 0x9b17b578f72810dc),
         ];

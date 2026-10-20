@@ -712,13 +712,14 @@ fn svg_and_otio_exports() {
     // ---- OTIO
     let doc = EditDoc {
         clips: vec![
-            EditClip { cut: c1.clone(), in_frame: 2, out_frame: Some(22), transition_in: Some(Transition { kind: TransitionKind::FadeBlack, frames: 6 }) },
-            EditClip { cut: c2.clone(), in_frame: 0, out_frame: None, transition_in: Some(Transition { kind: TransitionKind::Dissolve, frames: 6 }) },
+            EditClip { cut: c1.clone(), in_frame: 2, out_frame: Some(22), transition_in: Some(Transition::new(TransitionKind::FadeBlack, 6)) },
+            EditClip { cut: c2.clone(), in_frame: 0, out_frame: None, transition_in: Some(Transition::new(TransitionKind::Dissolve, 6)) },
         ],
         subtitles: vec![SubtitleEntry { start_frame: 3, end_frame: 15, text: "Olá".into() }],
         credits: vec!["Direção: Claude".into()],
         credits_seconds: 1.0,
         fade_out_end: 0,
+        ..Default::default()
     };
     let cmd = edit_command(&s.project, &mut s.ids, "Edição", &doc, None).unwrap();
     let edit = s.apply(cmd).unwrap().created[0].clone();

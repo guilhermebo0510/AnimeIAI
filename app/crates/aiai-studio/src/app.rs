@@ -1026,6 +1026,10 @@ impl StudioApp {
             comp::shortcuts(ctx, &mut env);
         }
         // as teclas da animação antes (Ctrl+Shift+T não pode cair no Ctrl+T da transformação)
+        // a Edição tem atalhos próprios do Premiere (ferramentas, J/K/L, I/O, inserir/sobrescrever...) antes dos do editor
+        if ws == WorkspaceId::Edicao {
+            panels::edit_timeline::shortcuts(ctx, &mut env);
+        }
         anim::shortcuts(ctx, &mut env);
         tools::shortcuts(ctx, &mut env);
         // a tecla de uma ferramenta que não está na prateleira deste workspace não troca a ferramenta
@@ -1327,6 +1331,10 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::Presets => panels::deliver::presets(&mut self.env, ui, body),
             PanelKind::Queue => panels::deliver::queue(&mut self.env, ui, body),
             PanelKind::Preview => panels::edit::preview(&mut self.env, ui, body),
+            PanelKind::SourceMonitor => panels::edit_panels::source_monitor(&mut self.env, ui, body),
+            PanelKind::Transitions => panels::edit_panels::transitions(&mut self.env, ui, body),
+            PanelKind::ClipEffects => panels::edit_panels::clip_effects(&mut self.env, ui, body),
+            PanelKind::Captions => panels::edit_panels::captions_panel(&mut self.env, ui, body),
             PanelKind::Properties => panels::properties::show(&mut self.env, ui, body),
             PanelKind::Project => panels::project::show(&mut self.env, ui, body),
             PanelKind::Outline => panels::outline::show(&mut self.env, ui, body),

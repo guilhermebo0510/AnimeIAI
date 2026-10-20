@@ -648,7 +648,8 @@ fn measure_edge_action(params: &Value) -> Result<Value, BridgeError> {
     }))
 }
 
-/// Cria (ou, com `id`, substitui) um documento de edição: sequência de cortes, transições, legendas e créditos.
+/// Cria (ou, com `id`, substitui) um documento de edição v2 (trilhas V/A/S, itens, transições, filtros, legendas,
+/// créditos). O v1 (`clips`/`subtitles`) continua aceito e é convertido antes de gravar.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct EditSetRequest {
     /// Nome do documento (padrão "Edição").
@@ -668,15 +669,15 @@ fn edit_set(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeEr
     }
     let name = r.name.clone().unwrap_or_else(|| "Edição".into());
     let cmd = edit_command(&session.project, &mut session.ids, &name, &r.doc, r.id.as_ref()).map_err(tool_error)?;
-    let fps = session.project.settings.fps() as f32;
-    let tl = r.doc.timeline(&session.project, fps).map_err(tool_error)?;
+    let mut doc = r.doc.clone();
+    doc.normalize(&session.project).map_err(tool_error)?;
     let mut out = apply(session, params, cmd)?;
     let id = match &r.id {
         Some(i) => i.clone(),
         None => out["created"][0].as_str().map(Id::from).unwrap_or_default(),
     };
     out["edit"] = json!(id);
-    out["timeline"] = json!({ "total_frames": tl.total, "credits_start": tl.credits_start, "clips": tl.items.iter().map(|(s, d, o)| json!({ "start": s, "frames": d, "cut_offset": o })).collect::<Vec<_>>() });
+    out["timeline"] = crate::preview_tools::doc_summary(&doc, session);
     Ok(out)
 }
 
@@ -722,7 +723,8 @@ pub struct ExportVideoRequest {
     /// Fundo sob a transparência (#rrggbb). Padrão #ffffff.
     #[serde(default)]
     pub background: Option<String>,
-    /// Grava também a legenda como arquivo `.srt` ao lado do vídeo (mesmo nome), para entrega.
+    /// Grava também a legenda como arquivo `.srt` ao lado do vídeo (mesmo nome), para entrega. Com `edit`, uma por
+    /// trilha de legenda visível: a primeira com o nome do vídeo, as outras com o idioma (`.en.srt`) ou o número da trilha.
     #[serde(default)]
     pub sidecar_srt: bool,
 }
@@ -952,22 +954,29 @@ fn export_video(session: &mut CoreSession, params: &Value) -> Result<Value, Brid
     let report = encoder.ok_or_else(|| BridgeError::failed("nenhum quadro renderizado"))?.finish().map_err(BridgeError::failed)?;
     // legenda de entrega ao lado do vídeo
     let mut sidecar = Value::Null;
+    let mut sidecars: Vec<Value> = Vec::new();
     if r.sidecar_srt && r.codec != VideoCodec::PngSequence {
-        let fps = settings.fps();
-        let text = match &edit_doc {
-            Some(doc) => Some(aiai_media::write_srt(
-                &doc.subtitles.iter().map(|s| Subtitle { start: s.start_frame as f64 / fps, end: s.end_frame as f64 / fps, text: s.text.clone() }).collect::<Vec<_>>(),
-            )),
-            None if !r.subtitles.is_empty() => Some(aiai_media::write_srt(&r.subtitles)),
-            None => r.srt.as_ref().and_then(|s| std::fs::read_to_string(s).ok()),
+        // (sufixo, texto): a edição grava uma por trilha de legenda (a primeira com o nome do vídeo)
+        let texts: Vec<(String, String)> = match &edit_doc {
+            Some(doc) => aiai_tools::edit::sidecar_srts(&session.project, doc)
+                .into_iter()
+                .enumerate()
+                .map(|(k, (track, lang, t))| (if k == 0 { String::new() } else if lang.is_empty() { format!(".{}", doc.track_label(track)) } else { format!(".{lang}") }, t))
+                .collect(),
+            None if !r.subtitles.is_empty() => vec![(String::new(), aiai_media::write_srt(&r.subtitles))],
+            None => r.srt.as_ref().and_then(|s| std::fs::read_to_string(s).ok()).map(|t| vec![(String::new(), t)]).unwrap_or_default(),
         };
-        match text.filter(|t| !t.trim().is_empty()) {
-            Some(t) => {
-                let srt = out_path.with_extension("srt");
-                std::fs::write(&srt, t.as_bytes()).map_err(|e| BridgeError::failed(format!("gravar {}: {e}", srt.display())))?;
+        for (suffix, t) in texts.into_iter().filter(|(_, t)| !t.trim().is_empty()) {
+            let stem = out_path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            let srt = out_path.with_file_name(format!("{stem}{suffix}.srt"));
+            std::fs::write(&srt, t.as_bytes()).map_err(|e| BridgeError::failed(format!("gravar {}: {e}", srt.display())))?;
+            if sidecar.is_null() {
                 sidecar = json!(srt.display().to_string());
             }
-            None => sidecar = json!("sem legendas para gravar"),
+            sidecars.push(json!(srt.display().to_string()));
+        }
+        if sidecar.is_null() {
+            sidecar = json!("sem legendas para gravar");
         }
     }
     let probe = if r.codec == VideoCodec::PngSequence { Value::Null } else { to_json(&aiai_media::probe(&out_path).map_err(|e| BridgeError::failed(format!("ffprobe: {e}")))?)? };
@@ -986,6 +995,7 @@ fn export_video(session: &mut CoreSession, params: &Value) -> Result<Value, Brid
         "audio": audio_report,
         "subtitles_burned": burned,
         "sidecar_srt": sidecar,
+        "sidecar_srts": sidecars,
         "probe": probe,
         "warnings": warn_list,
         "elapsed_s": started.elapsed().as_secs_f64(),

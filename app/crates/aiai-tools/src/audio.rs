@@ -35,7 +35,7 @@ fn frames_for(seconds: f64, fps: f64) -> u32 {
     (seconds * fps - 1e-6).ceil().max(1.0) as u32
 }
 
-fn mix_track(t: AudioTrack) -> MixTrack {
+pub(crate) fn mix_track(t: AudioTrack) -> MixTrack {
     match t {
         AudioTrack::Dialogue => MixTrack::Dialogue,
         AudioTrack::Sfx => MixTrack::Sfx,
