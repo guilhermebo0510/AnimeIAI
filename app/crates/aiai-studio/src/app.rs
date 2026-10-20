@@ -187,8 +187,8 @@ impl StudioApp {
         };
         app.ed.keys = crate::keymap::Keymap::from_overrides(&app.prefs.shortcuts);
         app.fit_tool_to_workspace();
-        // pincéis de fábrica + os do usuário (sem sessão: só os de fábrica, nada é gravado)
-        app.ed.brushes = brushes::BrushLibrary::load(if app.cli.no_session { None } else { brushes::default_path() });
+        // pincéis de fábrica + os .aiaibrush da pasta do usuário (sem sessão: só os de fábrica, nada é lido nem gravado)
+        app.ed.brushes = brushes::BrushLibrary::open(!app.cli.no_session, &app.prefs.brush_author);
         if let Some(dir) = app.cli.project.clone() {
             app.doc_open_path(std::path::Path::new(&dir));
         } else {
