@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 559.3 128">
+  <!-- marca + "AnimeIAI" (letras em traçado próprio, sem texto nem fonte) -->
+  <g>
+  <rect x="9" y="9" width="110" height="110" rx="24" fill="none" stroke="currentColor" stroke-width="8"/>
+  <path d="M36 98 L64 28 L92 98" fill="none" stroke="currentColor" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M47 80 L81 80" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(158 28.6) scale(1.18)">
+    <g transform="translate(0 0)"><path d="M4 56 L24 4 L44 56" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><path d="M10.200 40 H37.800" fill="none" stroke="currentColor" stroke-width="6.500" stroke-linecap="round" stroke-linejoin="round"/></g>
+    <g transform="translate(59 0)"><path d="M4 56 V22 M4 38 C4 28 10 22 20 22 C29 22 32 28 32 36 V56" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></g>
+    <g transform="translate(106 0)"><path d="M4 56 V22" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="4" cy="5" r="5" fill="currentColor"/></g>
+    <g transform="translate(125 0)"><path d="M4 56 V22 M4 38 C4 28 8 22 18 22 C26 22 30 28 30 36 V56 M30 38 C30 28 35 22 44 22 C53 22 56 28 56 36 V56" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></g>
+    <g transform="translate(196 0)"><path d="M4 39 H38 A17 17 0 1 0 33 51" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></g>
+    <g transform="translate(249 0)"><path d="M4 4 V56" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></g>
+    <g transform="translate(268 0)"><path d="M4 56 L24 4 L44 56" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><path d="M10.200 40 H37.800" fill="none" stroke="currentColor" stroke-width="6.500" stroke-linecap="round" stroke-linejoin="round"/></g>
+    <g transform="translate(327 0)"><path d="M4 4 V56" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></g>
+  </g>
+</svg>

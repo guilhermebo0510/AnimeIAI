@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- 32 px na grade de pixels: página com dobra e o A -->
+  <path d="M5.5 0.5 H18.5 L26.5 8.5 V31.5 H5.5 Z" fill="#2a2b32" stroke="#8d909c" stroke-width="1" stroke-linejoin="round"/>
+  <path d="M18.5 0.5 V8.5 H26.5" fill="#3d3f49" stroke="#8d909c" stroke-width="1" stroke-linejoin="round"/>
+  <g fill="#ec8a2b"><polygon points="14,12 18,12 11.5,26 7.5,26"/><polygon points="14,12 18,12 20.5,26 24.5,26"/></g>
+  <rect x="12.941" y="21" width="6.118" height="2.5" fill="#fbd2a2"/>
+</svg>

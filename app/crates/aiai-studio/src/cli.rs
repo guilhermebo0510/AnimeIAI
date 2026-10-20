@@ -3,8 +3,11 @@
 //! ```text
 //! aiai-studio [--no-session] [--session-file <json>] [--project <pasta>] [--lang pt|en]
 //!             [--theme light|dark] [--workspace <chave>] [--size LxA] [--bridge]
-//!             [--screenshot <png>] [--frames <n>]
+//!             [--screenshot <png>] [--frames <n>] [--splash | --no-splash]
 //! ```
+//!
+//! A tela de abertura (`splash.rs`) aparece por padrão, menos com `--no-session` e `--screenshot`; `--splash` e
+//! `--no-splash` decidem à força.
 //!
 //! `--bridge` só é lido e guardado aqui; a bridge local entra na S02.
 
@@ -28,6 +31,15 @@ pub struct Cli {
     pub theme: Option<ThemeKind>,
     /// Liga a bridge de automação (S02). Por enquanto só é guardado.
     pub bridge: bool,
+    /// Tela de abertura: `None` = padrão (não aparece com `--no-session` nem `--screenshot`), `Some(b)` = forçado.
+    pub splash: Option<bool>,
+}
+
+impl Cli {
+    /// A tela de abertura deve aparecer nesta execução?
+    pub fn wants_splash(&self) -> bool {
+        self.splash.unwrap_or(!self.no_session && self.screenshot.is_none())
+    }
 }
 
 pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
@@ -55,6 +67,8 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
             "--no-session" => cli.no_session = true,
             "--project" => cli.project = Some(value("--project")?),
             "--bridge" => cli.bridge = true,
+            "--splash" => cli.splash = Some(true),
+            "--no-splash" => cli.splash = Some(false),
             "--lang" => {
                 let v = value("--lang")?;
                 cli.lang = Some(Lang::from_code(&v).ok_or_else(|| format!("idioma desconhecido: {v}"))?);
@@ -109,5 +123,14 @@ mod tests {
         let c = p(&[]).unwrap();
         assert_eq!(c.frames, 8);
         assert!(!c.bridge && !c.no_session && c.screenshot.is_none() && c.workspace.is_none());
+    }
+
+    #[test]
+    fn splash_is_on_by_default_but_never_for_tests_and_captures() {
+        assert!(p(&[]).unwrap().wants_splash());
+        assert!(!p(&["--no-session"]).unwrap().wants_splash());
+        assert!(!p(&["--screenshot", "a.png"]).unwrap().wants_splash());
+        assert!(p(&["--no-session", "--splash"]).unwrap().wants_splash());
+        assert!(!p(&["--no-splash"]).unwrap().wants_splash());
     }
 }

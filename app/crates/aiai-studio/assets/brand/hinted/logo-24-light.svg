@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <!-- 24 px na grade de pixels: só o A sobre o quadrado, bordas e pés alinhados aos pixels -->
+  <defs><linearGradient id="tile" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#e7e9ee"/></linearGradient></defs>
+  <rect x="0.5" y="0.5" width="23" height="23" rx="5.5" fill="url(#tile)" stroke="#8f929d" stroke-width="1"/>
+  <g fill="#b95409"><polygon points="10.4,3 13.6,3 7.2,21 3.8,21"/><polygon points="10.4,3 13.6,3 16.8,21 20.2,21"/></g>
+  <rect x="8.678" y="15" width="6.644" height="2" fill="#f2a65a"/>
+</svg>

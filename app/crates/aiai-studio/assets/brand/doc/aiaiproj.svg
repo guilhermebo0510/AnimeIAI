@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- documento de projeto (.aiaiproj): página com dobra e a marca -->
+  <defs><linearGradient id="amber" gradientUnits="userSpaceOnUse" x1="0" y1="54" x2="0" y2="108"><stop offset="0" stop-color="#f8ae58"/><stop offset="1" stop-color="#ec8a2b"/></linearGradient></defs>
+  <path d="M26 8 H78 L106 36 V114 Q106 120 100 120 H26 Q20 120 20 114 V14 Q20 8 26 8 Z" fill="#2a2b32" stroke="#8d909c" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M78 8 V30 Q78 36 84 36 H106" fill="#3d3f49" stroke="#8d909c" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M38 100 L63 49 L88 100" fill="none" stroke="url(#amber)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M47 84 L79 84" fill="none" stroke="#fbd2a2" stroke-width="5.500" stroke-linecap="round"/>
+  <rect x="36" y="19" width="26" height="4" rx="2" fill="#f0983c"/>
+</svg>

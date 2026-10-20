@@ -1,0 +1,13 @@
+[package]
+name = "brand-rasterize"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Rasteriza os SVG da marca (assets/brand) para PNG com o mesmo resvg do app. Ferramenta de desenvolvimento, fora do workspace."
+
+[workspace]
+
+[dependencies]
+# mesmas versoes e features que o aiai-studio usa em icons.rs (sem texto: o wordmark e feito de tracados)
+resvg = { version = "0.45", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png"] }

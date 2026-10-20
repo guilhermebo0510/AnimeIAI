@@ -1,6 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
   <!-- versão para 16 a 32 px: sem perfurações nem moldura, só o A em pincelada sobre o fundo -->
-  <rect x="4" y="4" width="120" height="120" rx="28" fill="#1d1e23"/>
-  <path d="M30 104 C38 80 49 50 58.500 26 C60.500 21 67.500 21 69.500 26 C79 50 90 80 98 104" fill="none" stroke="#f0983c" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M42 80 C56 72 73 73 87 81" fill="none" stroke="#fbd2a2" stroke-width="9" stroke-linecap="round"/>
+  <defs><linearGradient id="tile" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2c2d34"/><stop offset="1" stop-color="#17181c"/></linearGradient><linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity="0.07"/><stop offset="0.55" stop-color="#ffffff" stop-opacity="0"/></linearGradient><linearGradient id="amber" gradientUnits="userSpaceOnUse" x1="0" y1="20" x2="0" y2="106"><stop offset="0" stop-color="#f8ae58"/><stop offset="1" stop-color="#ec8a2b"/></linearGradient></defs>
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#tile)"/>
+  <rect x="5" y="5" width="118" height="118" rx="27" fill="none" stroke="#565965" stroke-width="2"/>
+  <path d="M30 104 L64 24 L98 104" fill="none" stroke="url(#amber)" stroke-width="17" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M44 83 L84 83" fill="none" stroke="#fbd2a2" stroke-width="9" stroke-linecap="round"/>
 </svg>

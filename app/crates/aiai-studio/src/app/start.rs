@@ -95,10 +95,11 @@ impl StudioApp {
             .fixed_size([600.0, 0.0])
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    let tex = self.icons.texture(ctx, brand::logo_for(self.prefs.theme), 44.0);
-                    ui.add(egui::Image::new((tex, egui::vec2(44.0, 44.0))));
+                    let (tex, size) = brand::wordmark_texture(ctx, self.prefs.theme, 190.0);
+                    ui.add(egui::Image::new((tex, size)));
+                    ui.add_space(8.0);
                     ui.vertical(|ui| {
-                        ui.label(RichText::new(brand::APP_NAME).heading().strong());
+                        ui.add_space(size.y * 0.5 - 10.0);
                         ui.label(RichText::new(tr("about.tagline")).color(t.text_dim));
                     });
                 });

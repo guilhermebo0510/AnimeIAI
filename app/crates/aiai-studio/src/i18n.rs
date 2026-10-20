@@ -801,6 +801,12 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("keys.none", "—", "—"),
     ("keys.click_to_change", "Clique para trocar", "Click to change"),
     ("keys.default", "Padrão", "Default"),
+    ("splash.gpu", "Iniciando a janela e a placa de vídeo…", "Starting the window and the graphics card…"),
+    ("splash.fonts", "Preparando a interface…", "Preparing the interface…"),
+    ("splash.library", "Carregando pincéis e biblioteca…", "Loading brushes and library…"),
+    ("splash.open_project", "Abrindo projeto…", "Opening project…"),
+    ("splash.wal", "Recuperando diário…", "Recovering the journal…"),
+    ("splash.ready", "Quase pronto…", "Almost ready…"),
     ("keys.reset_all", "Restaurar todos", "Restore all"),
     ("keys.no_conflicts", "Nenhum conflito.", "No conflicts."),
     ("keys.conflicts", "{n} conflito(s)", "{n} conflict(s)"),
@@ -2788,7 +2794,7 @@ mod tests {
             ("cli.rs", include_str!("cli.rs")),
             ("prefs.rs", include_str!("prefs.rs")),
         ];
-        const PREFIXES: &[&str] = &["workspace.", "tool.", "panel.", "menu.", "status.", "about.", "prefs.", "lang.", "doc.", "dialog.", "confirm.", "msg.", "blend.", "canvas.", "cel.", "cmd.", "err.", "fill.", "layer.", "layers.", "opt.", "palette.", "project.", "props.", "role.", "sel.", "stab.", "timeline.", "tip.", "tree.", "unit.", "outline.", "script.", "shots.", "board.", "prod.", "editing.", "deliver.", "audio.", "fx.", "char.", "start.", "keys.", "anim.", "scene.", "char_ref."];
+        const PREFIXES: &[&str] = &["workspace.", "tool.", "panel.", "menu.", "status.", "about.", "prefs.", "lang.", "doc.", "dialog.", "confirm.", "msg.", "blend.", "canvas.", "cel.", "cmd.", "err.", "fill.", "layer.", "layers.", "opt.", "palette.", "project.", "props.", "role.", "sel.", "stab.", "timeline.", "tip.", "tree.", "unit.", "outline.", "script.", "shots.", "board.", "prod.", "editing.", "deliver.", "audio.", "fx.", "char.", "start.", "keys.", "anim.", "scene.", "char_ref.", "splash."];
         let known: HashSet<&str> = TABLE.iter().map(|(k, _, _)| *k).collect();
         let mut used = 0;
         for (file, src) in SOURCES {

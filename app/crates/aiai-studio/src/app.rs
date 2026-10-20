@@ -122,11 +122,14 @@ impl StudioApp {
     pub fn new(cc: &eframe::CreationContext<'_>, cli: Cli) -> Self {
         Self::build(&cc.egui_ctx, cli)
     }
+        // ícones pequeno e grande da janela, na grade de pixels e na variante do tema do Windows (brand.rs)
+        crate::brand::init_window_icons(cc);
 
     /// Monta o app a partir de um contexto egui (o eframe passa o dele; os testes, um contexto solto).
     pub fn build(ctx: &egui::Context, cli: Cli) -> Self {
         theme::install_fonts(ctx);
         let prefs_path = if cli.no_session { None } else { cli.session_file.clone().map(PathBuf::from).or_else(prefs::default_path) };
+        crate::splash::status(tr("splash.fonts"));
         let mut prefs = prefs_path.as_deref().map(prefs::load).unwrap_or_default();
         let layouts_path = layout_store::path_for(cli.no_session, cli.session_file.as_deref());
         let layouts = layouts_path.as_deref().map(layout_store::load).unwrap_or_default();
@@ -196,10 +199,14 @@ impl StudioApp {
         // pincéis de fábrica + os .aiaibrush da pasta do usuário (sem sessão: só os de fábrica, nada é lido nem gravado)
         app.ed.brushes = brushes::BrushLibrary::open(!app.cli.no_session, &app.prefs.brush_author);
         // biblioteca de recursos em Documentos\AnimeIAI (com --no-session nada é lido nem gravado, salvo AIAI_LIBRARY_DIR)
+        crate::splash::status(tr("splash.library"));
         aiai_assets::enable_user_folders(!app.cli.no_session);
         if let Some(dir) = app.cli.project.clone() {
             app.doc_open_path(std::path::Path::new(&dir));
         } else {
+            // diário (wal.ndjson) com comandos: a abertura vai reaplicá-los
+            let has_wal = std::fs::metadata(std::path::Path::new(&dir).join("wal.ndjson")).is_ok_and(|m| m.len() > 0);
+            crate::splash::status(tr(if has_wal { "splash.wal" } else { "splash.open_project" }));
             // sem projeto na linha de comando: tela inicial (nunca nas execuções de teste/captura)
             app.start.open = app.prefs.show_start && !app.cli.no_session && app.cli.screenshot.is_none();
         }
@@ -1074,10 +1081,9 @@ impl StudioApp {
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
                     ui.add_space(6.0);
-                    let tex = self.icons.texture(ctx, brand::logo_for(self.prefs.theme), 88.0);
-                    ui.add(egui::Image::new((tex, egui::vec2(88.0, 88.0))));
-                    ui.add_space(8.0);
-                    ui.label(RichText::new(brand::APP_NAME).heading().strong());
+                    let (tex, size) = brand::wordmark_texture(ctx, self.prefs.theme, 250.0);
+                    ui.add(egui::Image::new((tex, size)));
+                    ui.add_space(10.0);
                     ui.label(RichText::new(format!("{} {}", tr("about.version"), brand::VERSION)).color(t.text_dim));
                     ui.add_space(8.0);
                     ui.label(tr("about.tagline"));
@@ -1133,6 +1139,11 @@ impl StudioApp {
         self.frame_count += 1;
         let ctx = ui.ctx().clone();
         self.sample_frame(&ctx);
+        crate::brand::tick_window_icons();
+        if self.frame_count == 2 {
+            // a interface já desenhou: a tela de abertura pode sair
+            crate::splash::finish();
+        }
         self.bridge_tick(&ctx);
         self.ed.pressure_curve = (self.prefs.pen_pressure_min, self.prefs.pen_pressure_gamma);
         self.autosave_tick();

@@ -2,7 +2,7 @@ use aiai_studio::app::StudioApp;
 use aiai_studio::cli;
 
 const USAGE: &str = "uso: aiai-studio [--no-session] [--session-file <json>] [--project <pasta>] [--lang pt|en] [--theme light|dark] \
-[--workspace <chave>] [--size LxA] [--bridge] [--screenshot <png>] [--frames <n>]";
+[--workspace <chave>] [--size LxA] [--bridge] [--screenshot <png>] [--frames <n>] [--splash | --no-splash]";
 
 /// Pânico vira arquivo em `%LOCALAPPDATA%\AnimeIAI\logs\crash-<unix>.txt` (mensagem, local, backtrace): aberto pelo
 /// Explorer ou pelo harness o app não tem console, e uma queda sumia sem rastro (S20 P6e).
@@ -21,7 +21,25 @@ fn install_crash_log() {
     }));
 }
 
+/// Tela de abertura (ver `splash.rs`): sobe antes da GPU e do projeto; o tema e o idioma vêm da linha de comando ou das
+/// preferências já lidas.
+fn start_splash(cli: &cli::Cli, startup: &aiai_studio::prefs::Prefs) {
+    if !cli.wants_splash() {
+        return;
+    }
+    aiai_studio::i18n::set_lang(cli.lang.unwrap_or(startup.lang));
+    let dark = cli.theme.unwrap_or(startup.theme) == aiai_studio::theme::ThemeKind::Dark;
+    use aiai_studio::i18n::tr;
+    aiai_studio::splash::start(aiai_studio::splash::SplashInfo {
+        dark,
+        version: format!("{} {}", tr("about.version"), aiai_studio::brand::VERSION),
+        tagline: tr("about.tagline").to_owned(),
+        status: tr("splash.gpu").to_owned(),
+    });
+}
+
 fn main() -> eframe::Result {
+    aiai_studio::brand::enable_dpi_awareness();
     install_crash_log();
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info,wgpu=warn,naga=warn".into()))
@@ -37,6 +55,7 @@ fn main() -> eframe::Result {
     let mut wgpu_setup = egui_wgpu::WgpuSetupCreateNew::without_display_handle();
     // GTX 1650 (GPU dedicada) em vez da Intel UHD (licao 24), salvo se o usuário escolheu a integrada nas Preferências
     let startup = aiai_studio::prefs::load_for_startup(cli.no_session, cli.session_file.as_deref());
+    start_splash(&cli, &startup);
     wgpu_setup.power_preference = match startup.gpu {
         aiai_studio::prefs::GpuPref::Dedicated => wgpu::PowerPreference::HighPerformance,
         aiai_studio::prefs::GpuPref::Integrated => wgpu::PowerPreference::LowPower,
@@ -44,6 +63,8 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("AnimeIAI")
+            // ícone inicial (variante do tema do Windows, no tamanho do ícone grande do sistema); `StudioApp::new` refaz o par
+            // pequeno + grande certo e acompanha o tema (brand.rs). O ícone do exe vem do recurso embutido (build.rs).
             .with_icon(std::sync::Arc::new(aiai_studio::brand::window_icon()))
             .with_inner_size([w, h])
             .with_min_inner_size([1024.0, 680.0]),

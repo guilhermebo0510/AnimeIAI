@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- monocromática: usa currentColor; contorno do quadro, A em pincelada e travessa -->
+  <rect x="9" y="9" width="110" height="110" rx="24" fill="none" stroke="currentColor" stroke-width="8"/>
+  <path d="M36 98 L64 28 L92 98" fill="none" stroke="currentColor" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M47 80 L81 80" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round"/>
+</svg>

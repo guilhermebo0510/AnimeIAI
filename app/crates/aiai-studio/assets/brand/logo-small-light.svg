@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- versão para 16 a 32 px: sem perfurações nem moldura, só o A em pincelada sobre o fundo -->
+  <defs><linearGradient id="tile" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#e7e9ee"/></linearGradient><linearGradient id="amber" gradientUnits="userSpaceOnUse" x1="0" y1="20" x2="0" y2="106"><stop offset="0" stop-color="#d9731a"/><stop offset="1" stop-color="#b95409"/></linearGradient></defs>
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#tile)"/>
+  <rect x="5" y="5" width="118" height="118" rx="27" fill="none" stroke="#8f929d" stroke-width="2"/>
+  <path d="M30 104 L64 24 L98 104" fill="none" stroke="url(#amber)" stroke-width="17" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M44 83 L84 83" fill="none" stroke="#f2a65a" stroke-width="9" stroke-linecap="round"/>
+</svg>

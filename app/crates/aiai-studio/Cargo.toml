@@ -42,6 +42,8 @@ aiai-assets = { path = "../aiai-assets" }
 glam = { workspace = true }
 pollster = "1"
 # dialogos nativos de abrir/salvar pasta de projeto (Arquivo > Abrir/Salvar como)
+# ícone da janela: o hwnd vem do eframe (CreationContext implementa HasWindowHandle); 0.6.2 já está no Cargo.lock
+raw-window-handle = "0.6"
 rfd = { version = "0.15", default-features = false }
 # Rasterizacao dos icones SVG. Sem as features padrao: nao precisamos de texto nem de imagens raster dentro dos SVGs
 # (evita fontdb/rustybuzz/memmap e deixa o build mais leve; a regra do workspace "resvg = 0.45" continua valendo).
@@ -49,7 +51,11 @@ resvg = { version = "0.45", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 # memoria do processo na barra de status (GetProcessMemoryInfo); 0.61.2 ja esta no Cargo.lock
-windows-sys = { version = "0.61", features = ["Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_Media_Audio"] }
+windows-sys = { version = "0.61", features = ["Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_Media_Audio", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_Graphics_Dwm"] }
+
+[target.'cfg(windows)'.build-dependencies]
+# icone e versao embutidos no .exe (Explorer, atalho, barra de tarefas, menu Iniciar): compila um .rc com o rc.exe do Windows SDK
+embed-resource = "3"
 
 [dev-dependencies]
 tempfile = "3"

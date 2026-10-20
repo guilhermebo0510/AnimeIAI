@@ -13,6 +13,7 @@ pub mod keymap;
 pub mod layout;
 pub mod layout_store;
 pub mod prefs;
+pub mod splash;
 pub mod sysmem;
 pub mod theme;
 pub mod workspace;
