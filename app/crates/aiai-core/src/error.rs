@@ -18,6 +18,8 @@ pub enum CoreError {
     NothingToRedo,
     #[error("blob ausente: {0}")]
     MissingBlob(String),
+    #[error("projeto aberto em outro lugar: {0}")]
+    Locked(String),
     #[error("erro de E/S: {0}")]
     Io(String),
     #[error("JSON inválido: {0}")]

@@ -38,6 +38,12 @@ pub struct BlobStore {
     /// tiles aqui; a coleta automática no meio de uma sequência não pode levá-los).
     now: u64,
     born: HashMap<BlobHash, u64>,
+    /// Blobs que o documento cita mas que não puderam ser lidos ao abrir (arquivo ausente, truncado ou com hash
+    /// diferente). A referência continua no documento (nada é apagado): o render desenha sem eles e avisa, os comandos
+    /// aceitam movê-los (desfazer/refazer) e o Salvar não exige o conteúdo deles.
+    missing: std::collections::BTreeSet<BlobHash>,
+    /// Blobs conferidos (hash lido) ou gravados por nós na pasta atual do projeto: o Salvar não precisa relê-los.
+    on_disk: std::collections::HashSet<BlobHash>,
 }
 
 /// Idade mínima (em comandos aplicados) de um blob órfão para a coleta levar.
@@ -47,6 +53,8 @@ impl BlobStore {
     pub fn put(&mut self, bytes: Vec<u8>) -> BlobHash {
         let h = BlobHash::of(&bytes);
         if !self.blobs.contains_key(&h) {
+            // conteúdo refeito de um blob danificado: volta a existir (o disco é regravado no próximo diário/salvar)
+            self.missing.remove(&h);
             self.blobs.insert(h.clone(), Arc::new(bytes));
             self.dirty.insert(h.clone());
             self.born.insert(h.clone(), self.now);
@@ -59,8 +67,44 @@ impl BlobStore {
         if BlobHash::of(&bytes) != hash {
             return Err(CoreError::invalid("blob", format!("conteúdo não confere com o hash {hash}")));
         }
+        self.missing.remove(&hash);
         self.blobs.insert(hash, Arc::new(bytes));
         Ok(())
+    }
+
+    /// Marca um blob citado pelo documento cujo conteúdo não pôde ser lido (ver `missing`).
+    pub fn mark_missing(&mut self, h: BlobHash) {
+        if !self.blobs.contains_key(&h) {
+            self.missing.insert(h);
+        }
+    }
+
+    pub fn is_missing(&self, h: &BlobHash) -> bool {
+        self.missing.contains(h)
+    }
+
+    /// Blobs danificados/ausentes conhecidos desde a abertura.
+    pub fn missing(&self) -> &std::collections::BTreeSet<BlobHash> {
+        &self.missing
+    }
+
+    /// O conteúdo está aqui ou é um blob danificado já conhecido (referência herdada do documento): os comandos aceitam
+    /// citar os dois; um hash desconhecido continua sendo erro.
+    pub fn known(&self, h: &BlobHash) -> bool {
+        self.blobs.contains_key(h) || self.missing.contains(h)
+    }
+
+    pub fn mark_on_disk(&mut self, h: BlobHash) {
+        self.on_disk.insert(h);
+    }
+
+    pub fn is_on_disk(&self, h: &BlobHash) -> bool {
+        self.on_disk.contains(h)
+    }
+
+    /// A pasta do projeto mudou (Salvar como): nada está conferido na pasta nova.
+    pub fn clear_on_disk(&mut self) {
+        self.on_disk.clear();
     }
 
     pub fn get(&self, h: &BlobHash) -> Option<Arc<Vec<u8>>> {
@@ -105,6 +149,8 @@ impl BlobStore {
         self.blobs.retain(|h, _| keep.contains(h) || young(&born, h));
         self.dirty.retain(|h| keep.contains(h) || young(&born, h));
         self.born = born.into_iter().filter(|(h, _)| self.blobs.contains_key(h)).collect();
+        let blobs = &self.blobs;
+        self.on_disk.retain(|h| blobs.contains_key(h));
         before - self.blobs.len()
     }
 }

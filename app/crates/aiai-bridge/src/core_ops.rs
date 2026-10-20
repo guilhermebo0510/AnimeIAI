@@ -196,24 +196,31 @@ fn new_project(session: &mut CoreSession, params: &Value) -> Result<Value, Bridg
         persist::save(&mut fresh, dir).map_err(core_error)?;
     }
     let wal = fresh.detach_wal();
+    let lock = fresh.take_lock();
     let blobs = std::mem::take(&mut fresh.blobs);
     session.detach_wal();
     session.replace_project(fresh.project, blobs);
     if let Some(w) = wal {
         session.attach_wal(w);
     }
+    // a trava da pasta nova vem junto (a do projeto anterior saiu no replace_project)
+    session.set_lock(lock);
     session.path = dir.clone();
     Ok(json!({ "name": session.project.name, "revision": session.project.revision, "path": dir.map(|d| d.display().to_string()), "settings": session.project.settings }))
 }
 
 fn open_project(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
     let p = obj(params)?;
-    check_keys(params, "OPEN_PROJECT", &["path"])?;
+    check_keys(params, "OPEN_PROJECT", &["path", "take_over"])?;
     let given = path_param(&p)?.ok_or_else(|| BridgeError::invalid_params("'path' (pasta .aiai, arquivo .aiaiproj ou project.json) é obrigatório"))?;
     let dir = persist::resolve_project_dir(&given).ok_or_else(|| BridgeError::invalid_params(format!("{} não é um projeto do AnimeIAI (pasta .aiai com project.json, ou o arquivo .aiaiproj dela)", given.display())))?;
-    let (opened, report) = persist::open(&dir).map_err(core_error)?;
-    // projetos de antes do arquivo de abrir ganham o arquivo (melhor esforço: pasta só de leitura abre igual)
-    let _ = persist::write_opener(&dir, &opened.project);
+    // take_over: assumir a trava de outro processo vivo (sem isso o projeto abre só para leitura)
+    let take_over = opt_bool(&p, "take_over")?.unwrap_or(false);
+    let (opened, report) = persist::open_with(&dir, take_over).map_err(core_error)?;
+    if !report.read_only() {
+        // projetos de antes do arquivo de abrir ganham o arquivo (melhor esforço: pasta só de leitura abre igual)
+        let _ = persist::write_opener(&dir, &opened.project);
+    }
     session.detach_wal();
     // mantém o histórico da recuperação (os comandos reaplicados do WAL continuam no undo)
     session.adopt_document(opened);
@@ -221,7 +228,20 @@ fn open_project(session: &mut CoreSession, params: &Value) -> Result<Value, Brid
     Ok(json!({
         "name": session.project.name, "revision": session.project.revision, "path": dir.display().to_string(),
         "wal_replayed": report.replayed, "wal_truncated_at": report.wal_truncated_at, "wal_error": report.replay_error,
+        "wal_lines_skipped": report.wal_lines_skipped, "wal_tail_only": report.wal_tail_only,
+        "wal_backup": report.wal_backup.as_ref().map(|p| p.display().to_string()),
+        "damaged_blobs": report.damaged_blobs.iter().map(|d| json!({ "hash": d.hash.0, "problem": d.problem, "used_by": d.used_by })).collect::<Vec<_>>(),
+        "read_only": report.read_only(),
+        "locked_by": report.locked_by.as_ref().map(lock_json),
+        "replaced_lock": report.replaced_lock.as_ref().map(lock_json),
+        "backup": report.backup.as_ref().map(|p| p.display().to_string()),
+        "warnings": report.warnings,
     }))
+}
+
+/// Trava "aberto em outro lugar" para o JSON de resposta (sem o token).
+fn lock_json(i: &aiai_core::lock::LockInfo) -> Value {
+    json!({ "pid": i.pid, "host": i.host, "started_ms": i.started_ms, "exe": i.exe, "description": i.describe() })
 }
 
 fn save_project(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {

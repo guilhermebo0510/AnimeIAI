@@ -1,5 +1,6 @@
 //! Núcleo do AnimeIAI: documento (projeto → episódio → cena → corte → camadas/cels/timesheet), Command Bus com
-//! undo/redo por inverso, consultas, armazenamento de blobs por conteúdo e persistência em pasta `.aiai`.
+//! undo/redo por inverso, consultas, armazenamento de blobs por conteúdo e persistência em pasta `.aiai` (com trava
+//! "aberto em outro lugar", ver [`lock`]).
 //!
 //! Regras (ADR-002): todo efeito no documento é um [`Command`] serializável aplicado por [`CoreSession::apply`];
 //! nada aqui depende de GPU ou de UI; relógio e gerador de ids são injetáveis para testes determinísticos.
@@ -10,6 +11,7 @@ pub mod command;
 pub mod error;
 pub mod ids;
 pub mod keys;
+pub mod lock;
 pub mod model;
 pub mod patch;
 pub mod persist;

@@ -43,6 +43,8 @@ pub(crate) struct StartState {
     pub parent: Option<PathBuf>,
     /// Recente escolhido esperando a decisão sobre alterações não salvas.
     pub open_path: Option<PathBuf>,
+    /// Avisos da última abertura (tiles danificados, diário, trava de outro processo, pincéis) até o usuário fechar.
+    pub warn: Option<super::doc::OpenWarnings>,
 }
 
 impl StartState {

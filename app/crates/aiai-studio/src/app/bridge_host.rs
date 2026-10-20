@@ -136,6 +136,12 @@ impl StudioApp {
                 if is_file_action(action) {
                     self.mark_saved();
                 }
+                // abrir pelo agente mostra os mesmos avisos (tiles danificados, trava, diário); salvar grava a miniatura
+                match action {
+                    "OPEN_PROJECT" => self.note_open_report(v),
+                    "SAVE_PROJECT" => self.spawn_thumbnail(),
+                    _ => {}
+                }
                 if core_ops::is_mutating(action) || is_file_action(action) {
                     let what = v.get("description").and_then(Value::as_str).unwrap_or(action).to_string();
                     self.notice(format!("{}: {what}", tr("status.bridge")));

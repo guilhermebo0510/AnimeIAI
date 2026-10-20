@@ -51,6 +51,32 @@ pub(crate) struct DialogJob {
 
 pub(crate) const AUTHOR: &str = "human";
 
+/// Avisos da abertura que pedem atenção (tiles danificados, diário recuperado com perdas, trava de outro processo,
+/// pincéis ilegíveis): ficam numa janela até o usuário fechar, em vez de sumirem em segundos na barra de status.
+#[derive(Debug, Default)]
+pub(crate) struct OpenWarnings {
+    pub lines: Vec<String>,
+    /// (hash, problema, onde o documento usa)
+    pub damaged: Vec<(String, String, Vec<String>)>,
+    /// Pasta travada por outro processo vivo e a descrição do dono: aberto só para leitura, com a opção de assumir.
+    pub locked: Option<(PathBuf, String)>,
+}
+
+impl OpenWarnings {
+    fn is_empty(&self) -> bool {
+        self.lines.is_empty() && self.damaged.is_empty() && self.locked.is_none()
+    }
+
+    /// Junta outro lote (avisos novos não apagam os que o usuário ainda não leu).
+    fn merge(&mut self, o: OpenWarnings) {
+        self.lines.extend(o.lines);
+        self.damaged.extend(o.damaged);
+        if o.locked.is_some() {
+            self.locked = o.locked;
+        }
+    }
+}
+
 /// Nome padrão da pasta ao salvar: `<nome>.aiai`, sem caracteres inválidos no Windows.
 pub(crate) fn suggested_folder_name(project_name: &str) -> String {
     let clean: String = project_name.chars().map(|c| if r#"<>:"/\|?*"#.contains(c) || c.is_control() { '-' } else { c }).collect();
@@ -143,7 +169,12 @@ impl StudioApp {
     }
 
     pub(crate) fn doc_open_path(&mut self, path: &Path) {
-        match handle_core_action(&mut self.core, "OPEN_PROJECT", &json!({ "path": path.display().to_string() })) {
+        self.doc_open(path, false);
+    }
+
+    /// Abre; `take_over` assume a trava de outro processo vivo (botão "Assumir" da janela de avisos).
+    fn doc_open(&mut self, path: &Path, take_over: bool) {
+        match handle_core_action(&mut self.core, "OPEN_PROJECT", &json!({ "path": path.display().to_string(), "take_over": take_over })) {
             Some(Ok(v)) => {
                 self.mark_saved();
                 // a janela de projeto (aberta no começo ou pelo menu) não fica por cima do projeto aberto
@@ -153,6 +184,7 @@ impl StudioApp {
                 if super::autosave::is_recovery(path) {
                     // cópia de recuperação: o documento volta sem pasta (Salvar pergunta onde) e conta como não salvo
                     self.core.detach_wal();
+                    self.core.release_lock();
                     self.core.path = None;
                     self.saved_log_len = usize::MAX;
                     self.recovered_from = Some(path.to_path_buf());
@@ -165,9 +197,127 @@ impl StudioApp {
                 } else {
                     self.notice(format!("{}: {}", tr("msg.opened"), self.core.project.name));
                 }
+                if v["read_only"].as_bool() == Some(true) {
+                    self.notice(tr("msg.read_only").to_owned());
+                } else if take_over {
+                    let who = v["replaced_lock"]["description"].as_str().unwrap_or("?").to_owned();
+                    self.notice(format!("{} {who}", tr("msg.taken_over")));
+                }
+                self.note_open_report(&v);
             }
             Some(Err(e)) => self.doc_error("abrir projeto", e),
             None => {}
+        }
+    }
+
+    /// Avisos da resposta do OPEN_PROJECT (pelo menu ou pela bridge) para a janela de avisos: tiles danificados, trava de
+    /// outro processo, diário com linhas puladas, cópia de segurança que falhou.
+    pub(crate) fn note_open_report(&mut self, v: &serde_json::Value) {
+        let mut w = OpenWarnings::default();
+        for d in v["damaged_blobs"].as_array().into_iter().flatten() {
+            let used: Vec<String> = d["used_by"].as_array().into_iter().flatten().filter_map(|u| u.as_str().map(str::to_owned)).collect();
+            w.damaged.push((d["hash"].as_str().unwrap_or("?").to_owned(), d["problem"].as_str().unwrap_or("").to_owned(), used));
+        }
+        let read_only = v["read_only"].as_bool() == Some(true);
+        if read_only {
+            let dir = PathBuf::from(v["path"].as_str().unwrap_or_default());
+            w.locked = Some((dir, v["locked_by"]["description"].as_str().unwrap_or("?").to_owned()));
+        }
+        let skipped = v["wal_lines_skipped"].as_u64().unwrap_or(0);
+        if let Some(line) = v["wal_truncated_at"].as_u64() {
+            if v["wal_tail_only"].as_bool() == Some(true) {
+                w.lines.push(tr("msg.wal_tail").to_owned());
+            } else {
+                w.lines.push(tr("msg.wal_skipped").replace("{n}", &skipped.to_string()).replace("{line}", &(line + 1).to_string()));
+            }
+        }
+        if let Some(e) = v["wal_error"].as_str() {
+            w.lines.push(format!("{}: {e}", tr("msg.wal_replay_error")));
+            w.lines.push(tr("msg.wal_skipped").replace("{n}", &skipped.to_string()).replace("{line}", "?"));
+        }
+        if let Some(p) = v["wal_backup"].as_str() {
+            w.lines.push(format!("{} {p}", tr("msg.wal_backup")));
+        }
+        let replayed = v["wal_replayed"].as_u64().unwrap_or(0);
+        if let Some(who) = v["replaced_lock"]["description"].as_str().filter(|_| replayed > 0 && !read_only) {
+            // trava velha de um processo que morreu + comandos no diário = o app caiu com trabalho não salvo
+            w.lines.push(tr("msg.stale_lock").replace("{who}", who).replace("{n}", &replayed.to_string()));
+        }
+        for t in v["warnings"].as_array().into_iter().flatten().filter_map(|x| x.as_str()) {
+            w.lines.push(t.to_owned());
+        }
+        for (h, p, _) in &w.damaged {
+            tracing::warn!("blob danificado {h}: {p}");
+        }
+        self.push_warnings(w);
+    }
+
+    fn push_warnings(&mut self, w: OpenWarnings) {
+        if w.is_empty() {
+            return;
+        }
+        match &mut self.start.warn {
+            Some(cur) => cur.merge(w),
+            None => self.start.warn = Some(w),
+        }
+    }
+
+    /// Janela de avisos da abertura (fica até "OK"); com trava de outro processo, oferece "Assumir".
+    fn open_warnings_window(&mut self, ctx: &egui::Context) {
+        let Some(w) = self.start.warn.as_ref() else { return };
+        let (mut ok, mut take_over) = (false, false);
+        let dirty = self.doc_dirty();
+        let mut rects: Vec<(&str, egui::Rect)> = Vec::new();
+        let r = egui::Window::new(tr("dialog.warn_title"))
+            .collapsible(false)
+            .resizable(true)
+            .default_width(560.0)
+            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                    if let Some((_, who)) = &w.locked {
+                        ui.label(egui::RichText::new(tr("dialog.warn_locked").replace("{who}", who)).strong());
+                        ui.add_space(6.0);
+                    }
+                    for l in &w.lines {
+                        ui.label(l);
+                    }
+                    if !w.damaged.is_empty() {
+                        ui.add_space(6.0);
+                        ui.label(egui::RichText::new(format!("{} ({})", tr("dialog.warn_damaged"), w.damaged.len())).strong());
+                        for (h, problem, used) in &w.damaged {
+                            ui.label(format!("• {}…: {problem}", &h[..h.len().min(12)])).on_hover_text(h.as_str());
+                            for u in used {
+                                ui.label(format!("    {} {u}", tr("dialog.warn_used_by")));
+                            }
+                        }
+                    }
+                });
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    let okb = ui.button(tr("dialog.ok"));
+                    rects.push(("warn:ok", okb.rect));
+                    ok = okb.clicked();
+                    if w.locked.is_some() {
+                        let tb = ui.add_enabled(!dirty, egui::Button::new(tr("dialog.take_over")));
+                        let tb = if dirty { tb.on_disabled_hover_text(tr("dialog.take_over_dirty")) } else { tb };
+                        rects.push(("warn:take_over", tb.rect));
+                        take_over = tb.clicked();
+                    }
+                });
+            });
+        if let Some(r) = r {
+            rects.push(("dialog:warnings", r.response.rect));
+        }
+        for (name, rect) in rects {
+            self.rects.note(name, rect);
+        }
+        if take_over {
+            if let Some((d, _)) = self.start.warn.take().and_then(|w| w.locked) {
+                self.doc_open(&d, true);
+            }
+        } else if ok {
+            self.start.warn = None;
         }
     }
 
@@ -181,6 +331,7 @@ impl StudioApp {
                 self.mark_saved();
                 self.note_recent();
                 self.notice(tr("msg.saved").to_owned());
+                self.spawn_thumbnail();
                 if let Some(r) = self.recovered_from.take() {
                     let _ = std::fs::remove_dir_all(r);
                 }
@@ -248,14 +399,31 @@ impl StudioApp {
         }
     }
 
-    /// Autosave do projeto sem pasta (a cada quadro; a cópia roda noutra thread).
+    /// Autosave do projeto sem pasta e cópia periódica do documento do projeto com pasta (a cada quadro; as cópias rodam
+    /// noutra thread). Também recolhe o aviso do arquivo de pincéis, se houver.
     pub(crate) fn autosave_tick(&mut self) {
-        let needed = self.core.path.is_none() && self.doc_dirty();
+        let dirty = self.doc_dirty();
+        let needed = self.core.path.is_none() && dirty;
         if self.core.path.is_some() && self.autosave.wrote {
             self.autosave.discard();
         }
         if let Some(e) = self.autosave.tick(needed, &self.core.project, &self.core.blobs) {
             self.doc_error("autosave", e);
+        }
+        // só com a trava (aberto só para leitura não grava na pasta de outro processo)
+        let folder = self.core.path.clone().filter(|_| dirty && self.core.lock().is_some());
+        if let Some(e) = self.autosave.tick_folder(folder.as_deref(), &self.core.project) {
+            self.doc_error("cópia de segurança", e);
+        }
+        if let Some(w) = self.ed.brushes.take_warning() {
+            self.push_warnings(OpenWarnings { lines: vec![w], ..Default::default() });
+        }
+    }
+
+    /// Miniatura do projeto depois de salvar (pelo menu ou pela bridge), noutra thread.
+    pub(crate) fn spawn_thumbnail(&mut self) {
+        if let Some(dir) = self.core.path.clone() {
+            self.autosave.spawn_thumbnail(&self.core.project, &self.core.blobs, &dir);
         }
     }
 
@@ -543,6 +711,8 @@ impl StudioApp {
 
     /// Janela "Alterações não salvas" (Salvar / Descartar / Cancelar) para Novo, Abrir e Sair.
     pub(crate) fn confirm_window(&mut self, ctx: &egui::Context) {
+        // a janela de avisos da abertura também é uma decisão sobre o documento: desenhada daqui, a cada quadro
+        self.open_warnings_window(ctx);
         let Some(pending) = self.confirm else { return };
         let mut choice: Option<u8> = None;
         let text = tr("confirm.text").replace("{name}", self.doc_name());
@@ -593,9 +763,13 @@ impl StudioApp {
 
     /// Fechar a janela com alterações pendentes pergunta antes (a janela só fecha de verdade com `quit_confirmed`).
     pub(crate) fn handle_close_request(&mut self, ctx: &egui::Context) {
-        if ctx.input(|i| i.viewport().close_requested()) && self.doc_dirty() && !self.quit_confirmed {
+        let requested = ctx.input(|i| i.viewport().close_requested());
+        if requested && self.doc_dirty() && !self.quit_confirmed {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.confirm = Some(Pending::Quit);
+        } else if requested {
+            // fechamento limpo: a trava "aberto em outro lugar" sai (o diário já tem o que não foi salvo)
+            self.core.release_lock();
         }
         if self.ctx_close {
             self.ctx_close = false;

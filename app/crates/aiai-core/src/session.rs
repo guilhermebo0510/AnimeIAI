@@ -61,6 +61,9 @@ pub struct CoreSession {
     pub path: Option<std::path::PathBuf>,
     /// Ações que saíram do histórico (limite do undo, redo descartado) desde a última coleta de blobs.
     dropped_since_gc: usize,
+    /// Trava "aberto em outro lugar" da pasta (`None` = sem pasta, ou aberta só para leitura porque outro processo vivo
+    /// tem a trava: o Salvar nessa pasta recusa).
+    lock: Option<crate::lock::ProjectLock>,
 }
 
 /// Coleta os blobs órfãos depois de tantas ações saírem do histórico (sem isso a memória só crescia).
@@ -85,6 +88,7 @@ impl CoreSession {
             change_counter: 0,
             path: None,
             dropped_since_gc: 0,
+            lock: None,
         }
     }
 
@@ -107,6 +111,23 @@ impl CoreSession {
 
     pub fn wal_mut(&mut self) -> Option<&mut Wal> {
         self.wal.as_mut()
+    }
+
+    pub fn lock(&self) -> Option<&crate::lock::ProjectLock> {
+        self.lock.as_ref()
+    }
+
+    pub fn set_lock(&mut self, lock: Option<crate::lock::ProjectLock>) {
+        self.lock = lock;
+    }
+
+    pub fn take_lock(&mut self) -> Option<crate::lock::ProjectLock> {
+        self.lock.take()
+    }
+
+    /// Fechamento limpo: solta a trava da pasta (o `project.lock` desta abertura sai do disco).
+    pub fn release_lock(&mut self) {
+        self.lock = None;
     }
 
     pub fn apply(&mut self, command: Command) -> CoreResult<Outcome> {
@@ -243,9 +264,10 @@ impl CoreSession {
 
     /// Troca o projeto inteiro (abrir/novo). Histórico e log recomeçam.
     pub fn replace_project(&mut self, project: Project, blobs: BlobStore) {
-        // o WAL e a pasta pertencem ao projeto anterior
+        // o WAL, a pasta e a trava pertencem ao projeto anterior
         self.wal = None;
         self.path = None;
+        self.lock = None;
         self.project = project;
         self.blobs = blobs;
         self.undo.clear();
@@ -259,6 +281,8 @@ impl CoreSession {
     pub fn adopt_document(&mut self, mut other: CoreSession) {
         self.wal = other.wal.take();
         self.path = other.path.take();
+        // a trava antiga só apaga o arquivo se ainda for dela (reabrir a mesma pasta grava token novo)
+        self.lock = other.lock.take();
         self.project = other.project;
         self.blobs = other.blobs;
         self.undo = other.undo;

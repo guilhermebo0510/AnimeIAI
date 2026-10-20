@@ -336,3 +336,191 @@ fn blobs_dropped_from_history_are_collected_but_planned_ones_survive() {
     assert!(s.blobs.contains(&pending), "referenciado pelo documento fica");
     assert_eq!(s.blobs.len(), 2, "só os dois tiles do documento");
 }
+
+// ------------------------------------------------------------------------------------------ robustez da pasta (S24 P0)
+
+fn fresh_dir(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("aiai-core-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
+/// Projeto salvo com dois tiles; devolve (sessão, cel, camada, bytes do tile 1, hash do tile 1).
+fn saved_with_tiles(dir: &std::path::Path) -> (CoreSession, Id, Id, Vec<u8>, BlobHash) {
+    let mut s = CoreSession::for_tests("robusto");
+    let (_ep, _cut, layer, cel) = build_basic(&mut s);
+    let b0 = s.blobs.put(vec![1; 3000]);
+    let bytes1 = vec![2; 5000];
+    let b1 = s.blobs.put(bytes1.clone());
+    s.apply(Command::SetTiles { cel: cel.clone(), tiles: vec![TileEdit { x: 0, y: 0, blob: Some(b0) }, TileEdit { x: 1, y: 0, blob: Some(b1.clone()) }] }).unwrap();
+    persist::save(&mut s, dir).unwrap();
+    (s, cel, layer, bytes1, b1)
+}
+
+fn rename(id: &Id, name: &str) -> Command {
+    Command::SetProps { id: id.clone(), name: Some(name.into()), data: serde_json::Value::Null }
+}
+
+#[test]
+fn truncated_blob_opens_with_report_keeps_reference_and_is_repaired() {
+    let dir = fresh_dir("blob-trunc");
+    let (s, cel, layer, bytes1, b1) = saved_with_tiles(&dir);
+    drop(s);
+    // queda de energia antiga: o renomear chegou ao disco, metade dos dados não
+    let path = persist::blob_path(&dir, &b1);
+    std::fs::write(&path, &bytes1[..2000]).unwrap();
+    let json_before = std::fs::read_to_string(dir.join(persist::PROJECT_FILE)).unwrap();
+
+    let (mut s2, rep) = persist::open(&dir).expect("blob truncado não impede abrir");
+    assert_eq!(rep.damaged_blobs.len(), 1, "{rep:?}");
+    let d = &rep.damaged_blobs[0];
+    assert_eq!(d.hash, b1);
+    assert!(d.problem.contains("2000 bytes"), "{}", d.problem);
+    assert!(d.used_by.iter().any(|u| u.contains("camada \"A\"") && u.contains("tile (1, 0)")), "{:?}", d.used_by);
+    assert!(s2.blobs.is_missing(&b1) && !s2.blobs.contains(&b1));
+    // Salvar não exige o conteúdo danificado, mantém a referência e não toca no arquivo ruim
+    persist::save(&mut s2, &dir).unwrap();
+    assert_eq!(std::fs::read_to_string(dir.join(persist::PROJECT_FILE)).unwrap(), json_before, "a referência continua no documento");
+    assert_eq!(std::fs::metadata(&path).unwrap().len(), 2000);
+    // desfazer de um comando que tira o tile danificado o devolve (referência herdada é aceita)
+    s2.apply(Command::SetTiles { cel: cel.clone(), tiles: vec![TileEdit { x: 1, y: 0, blob: None }] }).unwrap();
+    s2.undo().unwrap();
+
+    // o mesmo conteúdo volta (repintado/importado de novo): o arquivo ruim de mesmo nome é regravado, não "confiado"
+    assert_eq!(s2.blobs.put(bytes1.clone()), b1);
+    s2.apply(rename(&layer, "A2")).unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), bytes1, "o diário regravou o blob ruim");
+    drop(s2);
+    let (_s3, rep3) = persist::open(&dir).unwrap();
+    assert!(rep3.damaged_blobs.is_empty(), "{rep3:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn truncated_last_wal_line_is_reported_skipped_and_new_commands_survive() {
+    let dir = fresh_dir("wal-trunc");
+    let (mut s, _cel, layer, _, _) = saved_with_tiles(&dir);
+    s.apply(rename(&layer, "B")).unwrap();
+    s.apply(rename(&layer, "C")).unwrap();
+    drop(s);
+    // queda no meio da escrita: meia linha sem quebra no fim
+    let wal = dir.join(persist::WAL_FILE);
+    let mut f = std::fs::OpenOptions::new().append(true).open(&wal).unwrap();
+    std::io::Write::write_all(&mut f, b"{\"seq\":9,\"revision\":99,\"op\":\"app").unwrap();
+    drop(f);
+
+    let (mut s2, rep) = persist::open(&dir).expect("linha truncada não impede abrir");
+    assert_eq!(rep.replayed, 2, "{rep:?}");
+    assert!(rep.wal_truncated_at.is_some() && rep.wal_tail_only && rep.wal_lines_skipped == 1, "{rep:?}");
+    let copy = rep.wal_backup.clone().expect("cópia do diário original");
+    assert!(std::fs::read_to_string(&copy).unwrap().ends_with("\"op\":\"app"), "a cópia guarda a linha ruim");
+    assert!(std::fs::read(&wal).unwrap().ends_with(b"\n"), "o diário termina na última linha boa");
+    assert_eq!(s2.project.node(&layer).unwrap().name, "C");
+    // comando novo depois da recuperação não gruda na linha ruim: a próxima abertura recupera os 3
+    s2.apply(rename(&layer, "D")).unwrap();
+    drop(s2);
+    let (s3, rep3) = persist::open(&dir).unwrap();
+    assert_eq!((rep3.replayed, rep3.wal_truncated_at), (3, None), "{rep3:?}");
+    assert_eq!(s3.project.node(&layer).unwrap().name, "D");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Pid de um processo vivo que não é este (filho que espera enquanto o teste roda).
+fn live_child_pid() -> u32 {
+    let mut c = if cfg!(windows) {
+        let mut c = std::process::Command::new("cmd");
+        c.args(["/C", "ping -n 30 127.0.0.1 >NUL"]);
+        c
+    } else {
+        let mut c = std::process::Command::new("sleep");
+        c.arg("30");
+        c
+    };
+    let child = c.stdout(std::process::Stdio::null()).spawn().expect("processo filho");
+    let pid = child.id();
+    std::mem::forget(child);
+    pid
+}
+
+#[test]
+fn project_lock_live_opens_read_only_stale_is_replaced_and_clean_close_removes_it() {
+    let dir = fresh_dir("lock");
+    let (s, _cel, layer, _, _) = saved_with_tiles(&dir);
+    let lock_path = dir.join(aiai_core::lock::LOCK_FILE);
+    assert!(lock_path.is_file(), "salvar trava a pasta");
+    drop(s);
+    assert!(!lock_path.exists(), "fechar limpo solta a trava");
+
+    // outro processo vivo com o projeto aberto
+    let other = aiai_core::lock::LockInfo { pid: live_child_pid(), host: aiai_core::lock::host_name(), started_ms: u64::MAX / 4, exe: "aiai-mcp.exe".into(), token: "outro".into() };
+    std::fs::write(&lock_path, serde_json::to_string(&other).unwrap()).unwrap();
+    let wal_before = std::fs::read(dir.join(persist::WAL_FILE)).unwrap();
+    let (mut ro, rep) = persist::open(&dir).unwrap();
+    assert_eq!(rep.locked_by.as_ref().map(|i| i.pid), Some(other.pid));
+    assert!(rep.read_only() && ro.lock().is_none() && ro.wal_mut().is_none(), "só leitura: sem trava nem diário");
+    ro.apply(rename(&layer, "X")).unwrap();
+    assert_eq!(std::fs::read(dir.join(persist::WAL_FILE)).unwrap(), wal_before, "o diário do outro não é tocado");
+    let err = persist::save(&mut ro, &dir).unwrap_err();
+    assert!(matches!(err, CoreError::Locked(_)), "{err}");
+    assert!(err.to_string().contains("aiai-mcp.exe"), "{err}");
+    drop(ro);
+    assert!(lock_path.is_file(), "a trava do outro continua");
+
+    // assumir
+    let (mut mine, rep) = persist::open_with(&dir, true).unwrap();
+    assert_eq!(rep.replaced_lock.as_ref().map(|i| i.token.as_str()), Some("outro"));
+    persist::save(&mut mine, &dir).unwrap();
+    drop(mine);
+
+    // trava velha (processo que caiu): substituída sem perguntar
+    let dead = aiai_core::lock::LockInfo { pid: 0x7fff_fff1, token: "velho".into(), ..other };
+    std::fs::write(&lock_path, serde_json::to_string(&dead).unwrap()).unwrap();
+    let (s4, rep) = persist::open(&dir).unwrap();
+    assert!(!rep.read_only() && rep.replaced_lock.as_ref().is_some_and(|i| i.token == "velho"), "{rep:?}");
+    assert!(s4.lock().is_some());
+    drop(s4);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn open_keeps_three_rotating_document_backups_without_blobs() {
+    let dir = fresh_dir("backup");
+    let (mut s, _cel, layer, _, _) = saved_with_tiles(&dir);
+    for name in ["B", "C", "D", "E"] {
+        s.apply(rename(&layer, name)).unwrap();
+        persist::save(&mut s, &dir).unwrap();
+        let (s2, rep) = persist::open(&dir).unwrap();
+        assert!(rep.backup.is_some(), "documento novo = cópia nova");
+        s = s2;
+    }
+    let (s2, rep) = persist::open(&dir).unwrap();
+    assert!(rep.backup.is_none(), "igual à última: não repete");
+    drop(s2);
+    let list = persist::backups(&dir, "open");
+    assert_eq!(list.len(), persist::BACKUP_KEEP);
+    assert_eq!(std::fs::read(&list[0]).unwrap(), std::fs::read(dir.join(persist::PROJECT_FILE)).unwrap(), "1 = mais nova");
+    assert!(std::fs::read_to_string(&list[2]).unwrap().contains("\"C\""), "as mais velhas saem da fila");
+    // cópia periódica do documento em memória
+    s.apply(rename(&layer, "F")).unwrap();
+    let auto = persist::backup_document(&dir, &s.project).unwrap().expect("cópia");
+    assert!(std::fs::read_to_string(&auto).unwrap().contains("\"F\""));
+    assert!(persist::backup_document(&dir, &s.project).unwrap().is_none(), "sem mudança, sem cópia nova");
+    drop(s);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn corrupt_settings_file_gets_one_backup_copy_before_overwrite() {
+    // o caso do brushes.json: ilegível -> cópia ao lado antes de qualquer gravação; abrir de novo não acumula cópias
+    let dir = fresh_dir("corrupt");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("brushes.json");
+    std::fs::write(&path, b"[{\"name\": \"Nuvem\", \"size\": 3").unwrap();
+    let c1 = persist::keep_corrupt_copy(&path).unwrap();
+    assert!(c1.file_name().unwrap().to_string_lossy().starts_with("brushes.json.corrupt-"), "{c1:?}");
+    assert_eq!(std::fs::read(&c1).unwrap(), std::fs::read(&path).unwrap());
+    assert_eq!(persist::keep_corrupt_copy(&path).unwrap(), c1, "mesma cópia");
+    persist::write_file_atomic(&path, b"[]").unwrap();
+    assert_eq!(std::fs::read(&c1).unwrap(), b"[{\"name\": \"Nuvem\", \"size\": 3", "a cópia sobrevive à regravação");
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -526,7 +526,7 @@ impl Command {
             Command::SetTiles { cel, tiles } => {
                 for t in tiles {
                     if let Some(h) = &t.blob {
-                        if !ctx.blobs.contains(h) {
+                        if !ctx.blobs.known(h) {
                             return Err(CoreError::MissingBlob(h.0.clone()));
                         }
                     }
@@ -561,7 +561,7 @@ impl Command {
                         return Err(CoreError::invalid("fill.id", "id não resolvido"));
                     }
                     if let Some(h) = &f.mask {
-                        if !ctx.blobs.contains(h) {
+                        if !ctx.blobs.known(h) {
                             return Err(CoreError::MissingBlob(h.0.clone()));
                         }
                     }
@@ -637,14 +637,14 @@ fn check_blobs_in_data(data: &NodeKind, blobs: &BlobStore) -> CoreResult<()> {
     match data {
         NodeKind::Cel(c) => {
             for h in c.tiles.iter().map(|t| &t.blob).chain(c.fills.iter().filter_map(|f| f.mask.as_ref())).chain(c.image.iter()) {
-                if !blobs.contains(h) {
+                if !blobs.known(h) {
                     missing = Some(h.clone());
                 }
             }
         }
         NodeKind::Asset(a) => {
             if let Some(h) = &a.blob {
-                if !blobs.contains(h) {
+                if !blobs.known(h) {
                     missing = Some(h.clone());
                 }
             }

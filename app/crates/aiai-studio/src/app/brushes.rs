@@ -35,6 +35,14 @@ pub(crate) struct BrushLibrary {
     /// `%APPDATA%\AnimeIAI\brush_assets\<hash>.aim`; também em memória (execuções sem sessão não gravam).
     assets_dir: Option<PathBuf>,
     mem_assets: std::collections::HashMap<aiai_core::BlobHash, Vec<u8>>,
+    /// Entradas de `brushes.json` que não deu para entender (versão nova do app, edição à mão): voltam ao arquivo no
+    /// próximo salvar, nunca são descartadas.
+    kept_raw: Vec<serde_json::Value>,
+    /// O arquivo existe mas não pôde ser lido/entendido e ainda não tem cópia guardada: salvar só sobrescreve depois de
+    /// guardar a cópia (`brushes.json.corrupt-<data>`).
+    unsafe_to_overwrite: Option<String>,
+    /// Aviso para o usuário (a UI lê uma vez e mostra na janela de avisos).
+    warning: Option<String>,
 }
 
 impl Default for BrushLibrary {
@@ -50,25 +58,70 @@ pub(crate) fn default_path() -> Option<PathBuf> {
 
 impl BrushLibrary {
     pub(crate) fn factory() -> Self {
-        BrushLibrary { items: BrushPreset::defaults().into_iter().map(|preset| LibBrush { preset, user: false }).collect(), path: None, version: 1, assets_dir: None, mem_assets: Default::default() }
+        BrushLibrary {
+            items: BrushPreset::defaults().into_iter().map(|preset| LibBrush { preset, user: false }).collect(),
+            path: None,
+            version: 1,
+            assets_dir: None,
+            mem_assets: Default::default(),
+            kept_raw: Vec::new(),
+            unsafe_to_overwrite: None,
+            warning: None,
+        }
     }
 
-    /// Fábrica + os do usuário do arquivo (ausente = nenhum; ilegível = registrado, o app segue com os de fábrica).
+    /// Fábrica + os do usuário do arquivo. Ausente = nenhum. Entrada inválida = pulada (as boas ficam; a ruim volta ao
+    /// arquivo ao salvar). Arquivo ilegível ou que não é uma lista = cópia `brushes.json.corrupt-<data>` antes de
+    /// qualquer gravação por cima, e aviso ao usuário; o app segue com os de fábrica.
     pub(crate) fn load(path: Option<PathBuf>) -> Self {
         let mut lib = Self::factory();
         if let Some(p) = &path {
-            match std::fs::read_to_string(p) {
-                Ok(text) => match serde_json::from_str::<Vec<BrushPreset>>(&text) {
-                    Ok(v) => lib.items.extend(v.into_iter().filter(|b| b.validate().is_ok()).map(|preset| LibBrush { preset, user: true })),
-                    Err(e) => tracing::warn!("pincéis do usuário ilegíveis em {}: {e}", p.display()),
+            match std::fs::read(p) {
+                Ok(bytes) => match parse_user_brushes(&bytes) {
+                    Ok((good, bad, errs)) => {
+                        lib.items.extend(good.into_iter().map(|preset| LibBrush { preset, user: true }));
+                        if !bad.is_empty() {
+                            tracing::warn!("pincéis inválidos em {}: {}", p.display(), errs.join("; "));
+                            lib.warning = Some(crate::i18n::tr("msg.brushes_skipped").replace("{n}", &bad.len().to_string()).replace("{err}", &errs.join("; ")));
+                            lib.kept_raw = bad;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("pincéis do usuário ilegíveis em {}: {e}", p.display());
+                        lib.quarantine(p, &e);
+                    }
                 },
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => tracing::warn!("pincéis do usuário: {}: {e}", p.display()),
+                Err(e) => {
+                    // ilegível agora (antivírus, permissão): sem os pincéis dele, não pode ser sobrescrito às cegas
+                    tracing::warn!("pincéis do usuário: {}: {e}", p.display());
+                    lib.unsafe_to_overwrite = Some(e.to_string());
+                    lib.warning = Some(crate::i18n::tr("msg.brushes_unreadable").replace("{path}", &p.display().to_string()).replace("{err}", &e.to_string()));
+                }
             }
         }
         lib.assets_dir = path.as_ref().and_then(|p| p.parent().map(|d| d.join("brush_assets")));
         lib.path = path;
         lib
+    }
+
+    /// Arquivo que não é uma lista de pincéis: guarda a cópia; sem cópia, salvar fica bloqueado.
+    fn quarantine(&mut self, p: &std::path::Path, err: &str) {
+        match aiai_core::persist::keep_corrupt_copy(p) {
+            Ok(copy) => {
+                self.unsafe_to_overwrite = None;
+                self.warning = Some(crate::i18n::tr("msg.brushes_corrupt").replace("{err}", err).replace("{path}", &copy.display().to_string()));
+            }
+            Err(e) => {
+                self.unsafe_to_overwrite = Some(format!("{err}; cópia falhou: {e}"));
+                self.warning = Some(crate::i18n::tr("msg.brushes_unreadable").replace("{path}", &p.display().to_string()).replace("{err}", &format!("{err}; {e}")));
+            }
+        }
+    }
+
+    /// Aviso pendente sobre o arquivo de pincéis (uma vez).
+    pub(crate) fn take_warning(&mut self) -> Option<String> {
+        self.warning.take()
     }
 
     /// Guarda a imagem (máscara "AIM1") de uma ponta/textura; devolve o hash que o preset referencia.
@@ -163,17 +216,60 @@ impl BrushLibrary {
         Ok(())
     }
 
-    fn save(&self) -> Result<(), String> {
-        let Some(p) = &self.path else { return Ok(()) };
-        let user: Vec<&BrushPreset> = self.items.iter().filter(|b| b.user).map(|b| &b.preset).collect();
-        let text = serde_json::to_string_pretty(&user).map_err(|e| e.to_string())?;
+    /// Antes de sobrescrever um `brushes.json` que não pôde ser lido na abertura: tenta ler de novo (erro passageiro =
+    /// os pincéis dele entram na biblioteca); continua ruim = guarda a cópia; nem isso = recusa salvar.
+    fn make_safe_to_overwrite(&mut self, p: &std::path::Path) -> Result<(), String> {
+        let Some(why) = self.unsafe_to_overwrite.clone() else { return Ok(()) };
+        match std::fs::read(p) {
+            Ok(bytes) => match parse_user_brushes(&bytes) {
+                Ok((good, bad, _)) => {
+                    self.items.extend(good.into_iter().map(|preset| LibBrush { preset, user: true }));
+                    self.kept_raw.extend(bad);
+                    self.unsafe_to_overwrite = None;
+                }
+                Err(e) => self.quarantine(p, &e),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => self.unsafe_to_overwrite = None,
+            Err(e) => return Err(format!("{}: {} ({why}; {e})", crate::i18n::tr("msg.brushes_not_saved"), p.display())),
+        }
+        match &self.unsafe_to_overwrite {
+            Some(why) => Err(format!("{}: {} ({why})", crate::i18n::tr("msg.brushes_not_saved"), p.display())),
+            None => Ok(()),
+        }
+    }
+
+    fn save(&mut self) -> Result<(), String> {
+        let Some(p) = self.path.clone() else { return Ok(()) };
+        self.make_safe_to_overwrite(&p)?;
+        let mut all = Vec::new();
+        for b in self.items.iter().filter(|b| b.user) {
+            all.push(serde_json::to_value(&b.preset).map_err(|e| e.to_string())?);
+        }
+        all.extend(self.kept_raw.iter().cloned());
+        let text = serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?;
         if let Some(d) = p.parent() {
             std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
         }
-        let tmp = p.with_extension("json.tmp");
-        std::fs::write(&tmp, text).map_err(|e| format!("{}: {e}", tmp.display()))?;
-        std::fs::rename(&tmp, p).map_err(|e| format!("{}: {e}", p.display()))
+        aiai_core::persist::write_file_atomic(&p, text.as_bytes()).map_err(|e| format!("{}: {e}", p.display()))
     }
+}
+
+/// Lista de pincéis do `brushes.json`, entrada por entrada: (válidos, entradas inválidas cruas, motivos). Erro só se o
+/// arquivo inteiro não é uma lista JSON.
+fn parse_user_brushes(bytes: &[u8]) -> Result<(Vec<BrushPreset>, Vec<serde_json::Value>, Vec<String>), String> {
+    let list: Vec<serde_json::Value> = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    let (mut good, mut bad, mut errs) = (Vec::new(), Vec::new(), Vec::new());
+    for (i, v) in list.into_iter().enumerate() {
+        let name = v.get("name").and_then(|n| n.as_str()).map(|n| format!("\"{n}\"")).unwrap_or_else(|| format!("nº {}", i + 1));
+        match serde_json::from_value::<BrushPreset>(v.clone()).map_err(|e| e.to_string()).and_then(|p| p.validate().map(|_| p)) {
+            Ok(p) => good.push(p),
+            Err(e) => {
+                errs.push(format!("{name}: {e}"));
+                bad.push(v);
+            }
+        }
+    }
+    Ok((good, bad, errs))
 }
 
 /// Categoria do pincel (sem categoria = "meus").
@@ -208,6 +304,44 @@ mod tests {
         assert_eq!(lib.items.len(), n0 + 1);
         lib.remove_user(n0).unwrap();
         assert_eq!(BrushLibrary::load(Some(path)).items.len(), n0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn corrupt_brushes_file_is_backed_up_before_save_and_invalid_entries_survive() {
+        let dir = std::env::temp_dir().join(format!("aiai-brushes-bad-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("brushes.json");
+        let garbage = b"[{\"name\": \"Nuvem\", \"size\": 3".to_vec();
+        std::fs::write(&path, &garbage).unwrap();
+        let mut lib = BrushLibrary::load(Some(path.clone()));
+        let n0 = lib.items.len();
+        assert!(lib.take_warning().is_some_and(|w| w.contains("brushes.json.corrupt-")), "o usuário é avisado com o caminho da cópia");
+        let copies = || std::fs::read_dir(&dir).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with("brushes.json.corrupt-")).map(|e| e.path()).collect::<Vec<_>>();
+        assert_eq!(copies().len(), 1);
+        assert_eq!(std::fs::read(&path).unwrap(), garbage, "abrir não mexe no original");
+        // reabrir não acumula cópias
+        let _ = BrushLibrary::load(Some(path.clone()));
+        assert_eq!(copies().len(), 1);
+        // salvar sobrescreve só agora, com a cópia guardada
+        let p = lib.get(0).unwrap().clone();
+        lib.add_user(p, "Novo", "meus").unwrap();
+        assert_eq!(std::fs::read(&copies()[0]).unwrap(), garbage);
+        assert_eq!(BrushLibrary::load(Some(path.clone())).items.len(), n0 + 1);
+
+        // por entrada: a válida entra, a inválida é pulada com aviso e volta ao arquivo no próximo salvar
+        let good = serde_json::to_value(lib.get(0).unwrap()).unwrap();
+        let bad = serde_json::json!({ "name": "Do futuro", "tip": { "Hexagono": {} } });
+        std::fs::write(&path, serde_json::to_string(&serde_json::json!([good, bad])).unwrap()).unwrap();
+        let mut lib = BrushLibrary::load(Some(path.clone()));
+        assert_eq!(lib.items.len(), n0 + 1, "a válida fica");
+        assert!(lib.take_warning().is_some_and(|w| w.contains("Do futuro")));
+        let p = lib.get(0).unwrap().clone();
+        lib.add_user(p, "Outro", "meus").unwrap();
+        let saved: Vec<serde_json::Value> = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved.len(), 3);
+        assert!(saved.contains(&bad), "a entrada inválida não é descartada");
         let _ = std::fs::remove_dir_all(dir);
     }
 }
