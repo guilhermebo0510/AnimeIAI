@@ -75,3 +75,27 @@ O plano junta os backlogs delas em ondas. Itens grandes dependem de spikes medid
 3. IndexTTS: licença sem uso comercial declarado; Style-Bert-VITS2 é AGPL (sidecar HTTP).
 4. Aceitar `.vrm` de terceiros (cada modelo tem a sua licença; o app mostra e respeita o `meta`).
 5. Prévia 3D por software primeiro ou já em wgpu (a pesquisa 3D recomenda o renderer do ANIGO offscreen depois do spike).
+
+## Estado ao fim da rodada (2026-10-20)
+
+Tudo commitado em master, sem push. HEAD compila e todos os testes passam: 40 conjuntos em core, paint, tools, render, fx, audio, assets, bridge, mcp e studio, incluindo o `tests/suite.rs` integrado.
+
+| Frente | Commit | Ficou para depois (de cada relatório) |
+|---|---|---|
+| Seleção e transformação: caixa de seleção, Ctrl+T, Ctrl+A/D, Manter proporção, seleção limita pincel e borracha | 3a6c235, 8316477 | o balde ainda não respeita a seleção; inclinar, distorcer e perspectiva na UI |
+| Painel Camadas: escolha múltipla, arrastar para pasta, agrupar, Delete, aviso do recorte, papel do cel | 401c9ea | — |
+| Salvamento robusto: fsync, abrir tolerante, trava, backups, miniatura, avisos ao abrir | eeadec5 | formato de arquivo único `.aiaiproj` em SQLite (formatos P1) |
+| Fundação dos workspaces: perfis, layouts salvos e nomeados, fábrica, Exibir > Painéis, Biblioteca e Modelagem | 8ab0b9a | contextos do keymap; busca em Exibir > Painéis |
+| Texto: camada, ferramenta T, painel, `aiai_text_layer` | cac97dc | tategaki completo (GSUB/rubi), shaping |
+| Formato de pincel `.aiaibrush`/`.aiaibrushes` e biblioteca em Documentos | 9e51ae8, e1444bc | exportar a biblioteca inteira; vigiar a pasta |
+| Animação: mesa de luz, K/B/I, linha do tempo compacta, Genga/Douga, Cena, Referências do personagem | 27a1e09 | folha de exposição vertical; inserir intervalos |
+| Áudio: motor (efeitos, rack, análise, medidores) e workspace (Forma de onda, Efeitos, Medidores, Multipista, Voz sintética) | 843ee6b, a2d28f6, 3904dba | envelope de volume; instalador do TTS de alta qualidade |
+| Réguas de perspectiva (U) | 27cd5fe | olho de peixe; régua a partir da câmera 3D |
+| Pasta do personagem (materiais) | 7e5aba0 | miniaturas na árvore; comparar A/B |
+| Produção: Lista, Miniaturas, Grande, Quadro, Gráficos, Gargalos, análise por IA | d1d34fb | Cronograma; caminho crítico |
+| Edição v2 estilo Premiere | 8c624e9 | importar vídeo externo; reprodução em tempo real |
+| Composição estilo After Effects | 0680c5d | parenting com herança; máscaras; Escopos |
+| Camada 3D de referência (spike: 4,8 ms/quadro 1080p, 64 MB) | 6ea984e | VRM; texturas; gerar linhas do modelo |
+| Biblioteca de recursos (`aiai-assets`) | 62aa0c0 | coleções/favoritos; cache de miniaturas em disco |
+| Modelagem v1 e poses (manequim, IK) | df4da70 | seleção por caixa; UV e escultura |
+| Entrega: fila v2, destinos, entregáveis, pôster, verificação final, formatos | f6ce0d7 | envio direto a plataformas |
