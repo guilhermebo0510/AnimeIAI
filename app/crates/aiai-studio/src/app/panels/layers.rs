@@ -3,7 +3,7 @@
 //! cels da camada ativa (número, papel; novo e duplicar). Tudo por comandos: cada ajuste é um passo de desfazer.
 
 use super::commit_on_release;
-use crate::app::commands::{self as cmds, BLEND_MODES, LayerRow, NodeId, blend_key};
+use crate::app::commands::{self as cmds, BLEND_MODES, LayerDrop, LayerRow, NodeId, blend_key};
 use crate::app::ui_kit::{Env, body_ui, dim_label, paint_icon};
 use crate::i18n::tr;
 use crate::icons::IconId;
@@ -52,6 +52,12 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
     };
     let active = env.ed.active_layer(env.core);
     let rows = cmds::layer_rows(&env.core.project, &cut);
+    env.ed.layer_sel.retain(|id| rows.iter().any(|r| &r.id == id));
+    // as escolhidas (de cima para baixo), com a ativa
+    let chosen: Vec<NodeId> = rows.iter().filter(|r| Some(&r.id) == active.as_ref() || env.ed.layer_sel.contains(&r.id)).map(|r| r.id.clone()).collect();
+    // Delete com o mouse no painel apaga as escolhidas (no canvas, Delete é do Editar pontos)
+    let del_key = ui.rect_contains_pointer(body) && !ui.ctx().egui_wants_keyboard_input() && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete));
+    let group_key = ui.rect_contains_pointer(body) && !ui.ctx().egui_wants_keyboard_input() && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::G));
 
     // ---- barra de ações
     ui.horizontal(|ui| {
@@ -92,36 +98,52 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
             }
         }
         let del = env.icon_button(ui, IconId::Trash, "layers.delete", false, has, "layers:delete");
-        if del.clicked() {
-            if let Some(a) = &active {
-                let next = rows.iter().position(|r| &r.id == a).and_then(|i| rows.get(i + 1).or_else(|| i.checked_sub(1).and_then(|j| rows.get(j)))).map(|r| r.id.clone());
-                match cmds::delete_node(env.core, a) {
-                    Ok(()) => {
-                        env.ed.layer = next;
-                        env.ed.cel_number = None;
-                    }
-                    Err(e) => env.ed.notify(e),
+        if (del.clicked() || del_key) && !chosen.is_empty() {
+            // a próxima ativa: a primeira linha abaixo que não sai
+            let last = rows.iter().rposition(|r| chosen.contains(&r.id)).unwrap_or(0);
+            let next = rows.iter().skip(last + 1).chain(rows.iter().take(last).rev()).find(|r| !chosen.contains(&r.id) && !chosen.iter().any(|c| env.core.project.subtree(c).contains(&r.id))).map(|r| r.id.clone());
+            match cmds::delete_layers(env.core, &chosen) {
+                Ok(()) => {
+                    env.ed.layer = next;
+                    env.ed.layer_sel.clear();
+                    env.ed.cel_number = None;
                 }
+                Err(e) => env.ed.notify(e),
+            }
+        }
+        // agrupar: pasta nova no lugar da de cima, com as escolhidas dentro (Ctrl+G)
+        let grp = env.icon_button(ui, IconId::LayerGroup, "layers.group", false, has, "layers:group");
+        if (grp.clicked() || group_key) && !chosen.is_empty() {
+            match cmds::add_layer(env.core, &cut, LayerType::Group, chosen.first()) {
+                Ok(g) => {
+                    // a pasta nasce acima da de cima (ou dentro dela, se a de cima for pasta: aí entra ao lado)
+                    if let Err(e) = cmds::move_layers(env.core, &chosen, &LayerDrop::Into(g.clone())) {
+                        env.ed.notify(e);
+                    }
+                    env.ed.layer = Some(g);
+                    env.ed.layer_sel.clear();
+                }
+                Err(e) => env.ed.notify(e),
             }
         }
         // mover para pasta: lista as pastas do corte
         let groups: Vec<(NodeId, String)> = rows.iter().filter(|r| cmds::layer_data(&env.core.project, &r.id).is_some_and(|l| l.kind == LayerType::Group)).map(|r| (r.id.clone(), env.core.project.node(&r.id).map(|n| n.name.clone()).unwrap_or_default())).collect();
-        let into = env.icon_button(ui, IconId::LayerGroup, "layers.move_to_group", false, has && !groups.is_empty(), "layers:to_group");
+        let into = env.icon_button(ui, IconId::ChevronRight, "layers.move_to_group", false, has && !groups.is_empty(), "layers:to_group");
         egui::Popup::menu(&into).show(|ui| {
             if ui.button(tr("layers.to_cut")).clicked() {
-                if let Some(a) = &active {
-                    if let Err(e) = cmds::move_layer_to(env.core, a, &cut) {
-                        env.ed.notify(e);
-                    }
+                let mut res = Ok(());
+                for a in &chosen {
+                    res = res.and(cmds::move_layer_to(env.core, a, &cut));
+                }
+                if let Err(e) = res {
+                    env.ed.notify(e);
                 }
                 ui.close();
             }
             for (gid, name) in &groups {
-                if Some(gid) != active.as_ref() && ui.button(name).clicked() {
-                    if let Some(a) = &active {
-                        if let Err(e) = cmds::move_layer_to(env.core, a, gid) {
-                            env.ed.notify(e);
-                        }
+                if !chosen.contains(gid) && ui.button(name).clicked() {
+                    if let Err(e) = cmds::move_layers(env.core, &chosen, &LayerDrop::Into(gid.clone())) {
+                        env.ed.notify(e);
                     }
                     ui.close();
                 }
@@ -139,9 +161,11 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
             if rows.is_empty() {
                 ui.label(egui::RichText::new(tr("panel.layers.empty")).color(t.text_dim));
             }
+            let mut rects = Vec::with_capacity(rows.len());
             for (i, row) in rows.iter().enumerate() {
-                layer_row(env, ui, i, row, active.as_ref());
+                rects.push(layer_row(env, ui, i, row, active.as_ref(), &rows, &chosen));
             }
+            drag_and_drop(env, ui, &rows, &rects);
         });
         ui.add_space(2.0);
         ui.separator();
@@ -167,23 +191,36 @@ pub(crate) fn kind_id(k: LayerType) -> &'static str {
     }
 }
 
-fn layer_row(env: &mut Env, ui: &mut Ui, i: usize, row: &LayerRow, active: Option<&NodeId>) {
+fn layer_row(env: &mut Env, ui: &mut Ui, i: usize, row: &LayerRow, active: Option<&NodeId>, rows: &[LayerRow], chosen: &[NodeId]) -> Rect {
     let t = env.t;
-    let Some(node) = env.core.project.node(&row.id) else { return };
-    let Some(l) = cmds::layer_data(&env.core.project, &row.id).cloned() else { return };
-    let name = node.name.clone();
     let h = 26.0;
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), h), Sense::click());
+    let Some(node) = env.core.project.node(&row.id) else { return Rect::NOTHING };
+    let Some(l) = cmds::layer_data(&env.core.project, &row.id).cloned() else { return Rect::NOTHING };
+    let name = node.name.clone();
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), h), Sense::click_and_drag());
     env.note(format!("layers:row:{i}"), rect);
     let is_active = active == Some(&row.id);
+    let is_chosen = chosen.contains(&row.id);
     let p = ui.painter();
     if is_active {
         p.rect_filled(rect, 4.0, t.accent_dim);
         p.rect_filled(Rect::from_min_size(rect.left_top() + egui::vec2(0.0, 3.0), egui::vec2(3.0, h - 6.0)), 1.5, t.accent);
+    } else if is_chosen {
+        p.rect_filled(rect, 4.0, t.accent_dim.gamma_multiply(0.6));
     } else if resp.hovered() {
         p.rect_filled(rect, 4.0, t.bg_hover);
     }
-    let indent = 8.0 + row.depth as f32 * 14.0;
+    // camada recortada na de baixo: seta dobrada e nome recuado (como no Photoshop)
+    let clip_in = if l.clip_to_below { 12.0 } else { 0.0 };
+    let indent = 8.0 + row.depth as f32 * 14.0 + clip_in;
+    if l.clip_to_below {
+        let x = rect.left() + indent - 8.0;
+        let (a, b, c) = (egui::pos2(x, rect.top() + 6.0), egui::pos2(x, rect.center().y + 3.0), egui::pos2(x + 6.0, rect.center().y + 3.0));
+        p.line_segment([a, b], Stroke::new(1.3, t.text_dim));
+        p.line_segment([b, c], Stroke::new(1.3, t.text_dim));
+        p.line_segment([c, c + egui::vec2(-3.0, -3.0)], Stroke::new(1.3, t.text_dim));
+        p.line_segment([c, c + egui::vec2(-3.0, 3.0)], Stroke::new(1.3, t.text_dim));
+    }
     let ink = if l.visible { t.text } else { t.text_dim.gamma_multiply(0.7) };
     let icon_rect = Rect::from_center_size(egui::pos2(rect.left() + indent + 8.0, rect.center().y), egui::vec2(15.0, 15.0));
     paint_icon(env.icons, p, kind_icon(l.kind), icon_rect, if is_active { t.accent } else { t.text_dim }, false);
@@ -250,10 +287,90 @@ fn layer_row(env: &mut Env, ui: &mut Ui, i: usize, row: &LayerRow, active: Optio
         env.ed.layer = Some(row.id.clone());
         env.ed.rename = Some((row.id.clone(), name));
     } else if resp.clicked() {
-        if env.ed.layer.as_ref() != Some(&row.id) {
-            env.ed.cel_number = None;
+        let m = ui.input(|i| i.modifiers);
+        if m.command {
+            // Ctrl+clique: soma ou tira da escolha (a ativa continua)
+            if is_active {
+                // tirar a ativa: a próxima escolhida assume
+                if let Some(n) = env.ed.layer_sel.first().cloned() {
+                    env.ed.layer_sel.retain(|x| x != &n);
+                    env.ed.layer = Some(n);
+                }
+            } else if let Some(k) = env.ed.layer_sel.iter().position(|x| x == &row.id) {
+                env.ed.layer_sel.remove(k);
+            } else {
+                env.ed.layer_sel.push(row.id.clone());
+            }
+        } else if m.shift {
+            // Shift+clique: do ativo até aqui
+            let a = active.and_then(|a| rows.iter().position(|r| &r.id == a)).unwrap_or(i);
+            let (lo, hi) = (a.min(i), a.max(i));
+            env.ed.layer_sel = rows[lo..=hi].iter().map(|r| r.id.clone()).collect();
+            env.ed.layer = Some(row.id.clone());
+        } else {
+            if env.ed.layer.as_ref() != Some(&row.id) {
+                env.ed.cel_number = None;
+            }
+            env.ed.layer_sel.clear();
+            env.ed.layer = Some(row.id.clone());
         }
-        env.ed.layer = Some(row.id.clone());
+    }
+    if resp.drag_started() {
+        // arrasta as escolhidas se a linha é uma delas; senão, só ela
+        let ids: Vec<NodeId> = if is_chosen { chosen.to_vec() } else { vec![row.id.clone()] };
+        env.ed.layer_drag = Some(ids);
+    }
+    rect
+}
+
+/// Onde a camada arrastada cai: no terço de cima de uma linha = acima dela; no de baixo = abaixo; no meio de uma pasta
+/// = dentro dela. Desenha a marca e, ao soltar, move todas (um passo de desfazer).
+fn drag_and_drop(env: &mut Env, ui: &mut Ui, rows: &[LayerRow], rects: &[Rect]) {
+    let Some(dragging) = env.ed.layer_drag.clone() else { return };
+    let t = env.t;
+    let pos = ui.input(|i| i.pointer.interact_pos());
+    let released = ui.input(|i| i.pointer.any_released());
+    let target = pos.and_then(|p| {
+        let k = rects.iter().position(|r| r.y_range().contains(p.y) && p.x >= r.left() - 20.0 && p.x <= r.right() + 20.0)?;
+        let r = rects[k];
+        let id = rows[k].id.clone();
+        let group = cmds::layer_data(&env.core.project, &id).is_some_and(|l| l.kind == LayerType::Group);
+        let f = (p.y - r.top()) / r.height().max(1.0);
+        Some((k, if group && (0.3..0.7).contains(&f) { LayerDrop::Into(id) } else if f < 0.5 { LayerDrop::Above(id) } else { LayerDrop::Below(id) }))
+    });
+    let valid = |d: &LayerDrop| match d {
+        LayerDrop::Above(a) | LayerDrop::Below(a) | LayerDrop::Into(a) => !dragging.contains(a),
+    };
+    if let Some((k, d)) = &target {
+        if valid(d) {
+            let r = rects[*k];
+            let p = ui.painter();
+            match d {
+                LayerDrop::Into(_) => {
+                    p.rect_stroke(r.shrink(1.0), 4.0, Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
+                }
+                LayerDrop::Above(_) => {
+                    p.hline(r.x_range(), r.top(), Stroke::new(2.0, t.accent));
+                }
+                LayerDrop::Below(_) => {
+                    p.hline(r.x_range(), r.bottom(), Stroke::new(2.0, t.accent));
+                }
+            }
+        }
+        if let Some(pp) = pos {
+            // etiqueta com quantas camadas vão
+            let txt = if dragging.len() > 1 { format!("{} {}", dragging.len(), tr("layers.n_layers")) } else { env.core.project.node(&dragging[0]).map(|n| n.name.clone()).unwrap_or_default() };
+            ui.painter().text(pp + egui::vec2(14.0, 0.0), Align2::LEFT_CENTER, txt, FontId::proportional(12.0), t.accent);
+        }
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    }
+    if released {
+        env.ed.layer_drag = None;
+        if let Some((_, d)) = target.filter(|(_, d)| valid(d)) {
+            if let Err(e) = cmds::move_layers(env.core, &dragging, &d) {
+                env.ed.notify(e);
+            }
+        }
     }
 }
 
@@ -294,10 +411,30 @@ fn layer_settings(env: &mut Env, ui: &mut Ui, cut: &NodeId, layer: &NodeId, rows
             }
         }
         let mut clip = l.clip_to_below;
-        if ui.checkbox(&mut clip, tr("layers.clip.short")).on_hover_text(tr("layers.clip")).changed() {
-            let _ = cmds::set_layer_props(env.core, layer, json!({ "clip_to_below": clip }));
+        let r = ui.checkbox(&mut clip, tr("layers.clip.short"));
+        env.note("layers:clip", r.rect);
+        if r.on_hover_text(tr("layers.clip")).changed() {
+            if let Err(e) = cmds::set_layer_props(env.core, layer, json!({ "clip_to_below": clip })) {
+                env.ed.notify(e);
+            }
         }
     });
+    // com recorte: a camada só aparece onde a de baixo tem pintura; avisa quando a de baixo não mostra nada
+    if l.clip_to_below {
+        let below = rows.iter().position(|r| &r.id == layer).and_then(|i| {
+            let depth = rows[i].depth;
+            rows.iter().skip(i + 1).take_while(|r| r.depth >= depth).find(|r| r.depth == depth)
+        });
+        let why = match below.and_then(|b| cmds::layer_data(&env.core.project, &b.id).map(|d| (b, d))) {
+            None => Some(tr("layers.clip.none_below")),
+            Some((_, d)) if !d.visible => Some(tr("layers.clip.below_hidden")),
+            Some((b, d)) if d.kind.holds_cels() && env.ed.cut.as_ref().and_then(|c| cmds::exposed_number(&env.core.project, c, &b.id, env.ed.frame)).is_none() => Some(tr("layers.clip.below_empty")),
+            _ => None,
+        };
+        if let Some(w) = why {
+            ui.label(egui::RichText::new(w).size(11.5).color(t.st_retake));
+        }
+    }
     if l.kind == LayerType::Fill {
         ui.horizontal(|ui| {
             dim_label(ui, &t, tr("layers.line_refs"));
@@ -384,28 +521,39 @@ fn cel_list(env: &mut Env, ui: &mut Ui, layer: &NodeId) {
         } else if resp.hovered() {
             p.rect_filled(rect, 4.0, t.bg_hover);
         }
-        p.text(egui::pos2(rect.left() + 10.0, rect.center().y), Align2::LEFT_CENTER, format!("{} {n}", tr("layers.cel")), FontId::proportional(13.0), t.text);
+        let name_r = p.text(egui::pos2(rect.left() + 10.0, rect.center().y), Align2::LEFT_CENTER, format!("{} {n}", tr("layers.cel")), FontId::proportional(13.0), t.text);
         if exposed == Some(n) {
-            let dot = egui::pos2(rect.left() + 66.0, rect.center().y);
+            let dot = egui::pos2(name_r.right() + 8.0, rect.center().y);
             p.circle_filled(dot, 3.0, t.accent);
             ui.interact(Rect::from_center_size(dot, egui::vec2(12.0, 12.0)), ui.id().with(("cel_exposed", n)), Sense::hover()).on_hover_text(tr("layers.cel_exposed"));
         }
-        // papel do cel
-        let role_rect = Rect::from_min_max(egui::pos2(rect.right() - 108.0, rect.top() + 2.0), egui::pos2(rect.right() - 4.0, rect.bottom() - 2.0));
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(role_rect));
+        // papel do cel: botão pequeno dentro da linha (à direita, sem fundo próprio), menu ao clicar
+        let label = tr(cmds::cel_role_key(role));
+        let g = ui.painter().layout_no_wrap(label.to_owned(), FontId::proportional(11.5), t.text_dim);
+        let role_rect = Rect::from_min_max(egui::pos2(rect.right() - g.size().x - 24.0, rect.top() + 3.0), egui::pos2(rect.right() - 4.0, rect.bottom() - 3.0));
+        let rr = ui.interact(role_rect, ui.id().with(("cel_role", n)), Sense::click());
+        env.note(format!("cels:role:{n}"), role_rect);
+        if rr.hovered() {
+            ui.painter().rect_filled(role_rect, 3.0, t.bg_hover);
+        }
+        ui.painter().galley(egui::pos2(role_rect.left() + 5.0, role_rect.center().y - g.size().y / 2.0), g, t.text_dim);
+        // seta do menu (desenhada: a fonte não tem o caractere)
+        let c = egui::pos2(role_rect.right() - 8.0, role_rect.center().y);
+        ui.painter().add(egui::Shape::convex_polygon(vec![c + egui::vec2(-3.5, -1.5), c + egui::vec2(3.5, -1.5), c + egui::vec2(0.0, 2.5)], t.text_dim, Stroke::NONE));
         let mut new_role = role;
-        egui::ComboBox::from_id_salt(("cel_role", n))
-            .width(role_rect.width() - 8.0)
-            .selected_text(egui::RichText::new(tr(cmds::cel_role_key(role))).size(11.5))
-            .show_ui(&mut child, |ui| {
-                for r in [CelRole::Key, CelRole::Breakdown, CelRole::Inbetween] {
-                    ui.selectable_value(&mut new_role, r, tr(cmds::cel_role_key(r)));
+        egui::Popup::menu(&rr).show(|ui| {
+            for r in [CelRole::Key, CelRole::Breakdown, CelRole::Inbetween] {
+                if ui.selectable_label(role == r, tr(cmds::cel_role_key(r))).clicked() {
+                    new_role = r;
+                    ui.close();
                 }
-            })
-            .response
-            .on_hover_text(tr("layers.cel_role.tip"));
+            }
+        });
+        rr.on_hover_text(tr("layers.cel_role.tip"));
         if new_role != role {
-            let _ = cmds::set_cel_role(env.core, &id, new_role);
+            if let Err(e) = cmds::set_cel_role(env.core, &id, new_role) {
+                env.ed.notify(e);
+            }
         }
         if resp.clicked() {
             env.ed.cel_number = Some(n);

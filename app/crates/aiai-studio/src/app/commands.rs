@@ -430,6 +430,58 @@ pub(crate) fn move_layer(core: &mut CoreSession, layer: &NodeId, delta: i32) -> 
     Ok(true)
 }
 
+/// Onde soltar camadas arrastadas: em cima/embaixo de uma camada (no mesmo pai) ou dentro de uma pasta (no topo).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum LayerDrop {
+    Above(NodeId),
+    Below(NodeId),
+    Into(NodeId),
+}
+
+/// Move várias camadas (lista de cima para baixo) para o lugar `drop`, mantendo a ordem entre elas: um passo de desfazer.
+pub(crate) fn move_layers(core: &mut CoreSession, layers: &[NodeId], drop: &LayerDrop) -> Result<(), String> {
+    let p = &core.project;
+    let (parent, anchor) = match drop {
+        LayerDrop::Into(g) => (g.clone(), None),
+        LayerDrop::Above(a) | LayerDrop::Below(a) => (p.node(a).and_then(|n| n.parent.clone()).ok_or("camada sem pai")?, Some(a.clone())),
+    };
+    // uma pasta não entra nela mesma nem numa de suas filhas
+    if layers.iter().any(|l| p.subtree(l).contains(&parent)) {
+        return Err(crate::i18n::tr("layers.err.into_self").to_owned());
+    }
+    if anchor.as_ref().is_some_and(|a| layers.contains(a)) {
+        return Ok(());
+    }
+    // simula a lista de filhos do destino (índice 0 = embaixo) para calcular cada MoveNode na ordem em que roda
+    let mut sim: Vec<NodeId> = p.node(&parent).map(|n| n.children.clone()).unwrap_or_default();
+    let mut cmds = Vec::new();
+    // de baixo para cima: cada uma entra logo acima da anterior
+    let mut prev: Option<NodeId> = None;
+    for l in layers.iter().rev() {
+        sim.retain(|c| c != l);
+        let idx = match (&prev, drop, &anchor) {
+            (Some(pv), _, _) => sim.iter().position(|c| c == pv).map(|i| i + 1).unwrap_or(sim.len()),
+            (None, LayerDrop::Into(_), _) => sim.len(),
+            (None, LayerDrop::Above(_), Some(a)) => sim.iter().position(|c| c == a).map(|i| i + 1).unwrap_or(sim.len()),
+            (None, LayerDrop::Below(_), Some(a)) => sim.iter().position(|c| c == a).unwrap_or(0),
+            _ => sim.len(),
+        };
+        sim.insert(idx.min(sim.len()), l.clone());
+        cmds.push(Command::MoveNode { id: l.clone(), parent: Some(parent.clone()), index: Some(idx) });
+        prev = Some(l.clone());
+    }
+    run(core, Command::Batch { commands: cmds, label: Some(format!("Mover {} camada(s)", layers.len())) }).map(|_| ())
+}
+
+/// Apaga várias camadas num passo de desfazer.
+pub(crate) fn delete_layers(core: &mut CoreSession, layers: &[NodeId]) -> Result<(), String> {
+    // não apaga a filha de uma pasta que também vai sair (a pasta leva junto)
+    let p = &core.project;
+    let keep: Vec<NodeId> = layers.iter().filter(|l| !layers.iter().any(|o| o != *l && p.subtree(o).contains(l))).cloned().collect();
+    let cmds = keep.iter().map(|l| Command::DeleteNode { id: l.clone() }).collect();
+    run(core, Command::Batch { commands: cmds, label: Some(format!("Apagar {} camada(s)", keep.len())) }).map(|_| ())
+}
+
 /// Move a camada para dentro de uma pasta (no topo) ou, com `None`, de volta para o corte.
 pub(crate) fn move_layer_to(core: &mut CoreSession, layer: &NodeId, new_parent: &NodeId) -> Result<(), String> {
     run(core, Command::MoveNode { id: layer.clone(), parent: Some(new_parent.clone()), index: None }).map(|_| ())

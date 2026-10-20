@@ -659,6 +659,10 @@ pub(crate) struct Editor {
     pub subview: super::panels::subview::SubViewState,
     /// Traço escolhido para editar pontos (Mover em "Editar pontos").
     pub node_stroke: Option<aiai_core::Id>,
+    /// Camadas escolhidas além da ativa (Ctrl/Shift+clique no painel Camadas): apagar, agrupar e arrastar valem para todas.
+    pub layer_sel: Vec<aiai_core::Id>,
+    /// Arrasto de camadas no painel: as que vão (em ordem de cima para baixo).
+    pub layer_drag: Option<Vec<aiai_core::Id>>,
     /// Ponto escolhido no traço (índice; o painel mostra e edita posição, largura e canto dele).
     pub node_sel: Option<usize>,
     /// Campo numérico do Editar pontos em edição (chave, valor): grava ao soltar/sair do campo (um passo de desfazer).
@@ -773,6 +777,8 @@ impl Default for Editor {
             color_seen: Rgba::BLACK,
             subview: Default::default(),
             node_stroke: None,
+            layer_sel: Vec::new(),
+            layer_drag: None,
             node_sel: None,
             node_field: None,
             shift: false,
