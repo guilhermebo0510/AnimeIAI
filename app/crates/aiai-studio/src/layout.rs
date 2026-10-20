@@ -23,6 +23,16 @@ pub enum PanelKind {
     Preview,
     Media,
     Mixer,
+    /// Áudio: editor de forma de onda/espectrograma de um clipe (edição não destrutiva com histórico).
+    Waveform,
+    /// Áudio: rack de efeitos (até 16 posições) com prévia em tempo real e aplicar.
+    EffectsRack,
+    /// Áudio: medidores de loudness (LUFS momentâneo/curto/integrado, LRA, true peak) com alvos.
+    Meters,
+    /// Áudio: multipista do corte (cabeçalho de faixa, clipes com forma de onda, fades, rótulos).
+    Multitrack,
+    /// Áudio: voz sintética (motor, hardware, controles por fala, takes).
+    Tts,
     Presets,
     Queue,
     Tasks,
@@ -131,7 +141,7 @@ use WorkspaceId as W;
 const DRAWING_WS: &[WorkspaceId] = &[W::Personagens, W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Composicao];
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 33] = [
+    pub const ALL: [PanelKind; 38] = [
         PanelKind::Canvas,
         PanelKind::Layers,
         PanelKind::Properties,
@@ -147,6 +157,11 @@ impl PanelKind {
         PanelKind::Preview,
         PanelKind::Media,
         PanelKind::Mixer,
+        PanelKind::Waveform,
+        PanelKind::EffectsRack,
+        PanelKind::Meters,
+        PanelKind::Multitrack,
+        PanelKind::Tts,
         PanelKind::Presets,
         PanelKind::Queue,
         PanelKind::Tasks,
@@ -194,6 +209,11 @@ impl PanelKind {
             PanelKind::Preview => "panel.preview.title",
             PanelKind::Media => "panel.media.title",
             PanelKind::Mixer => "panel.mixer.title",
+            PanelKind::Waveform => "panel.waveform.title",
+            PanelKind::EffectsRack => "panel.rack.title",
+            PanelKind::Meters => "panel.loudness.title",
+            PanelKind::Multitrack => "panel.multitrack.title",
+            PanelKind::Tts => "panel.tts.title",
             PanelKind::Presets => "panel.presets.title",
             PanelKind::Queue => "panel.queue.title",
             PanelKind::Tasks => "panel.tasks.title",
@@ -233,6 +253,11 @@ impl PanelKind {
             PanelKind::Preview => "panel.preview.empty",
             PanelKind::Media => "panel.media.empty",
             PanelKind::Mixer => "panel.mixer.empty",
+            PanelKind::Waveform => "panel.waveform.empty",
+            PanelKind::EffectsRack => "panel.rack.empty",
+            PanelKind::Meters => "panel.loudness.empty",
+            PanelKind::Multitrack => "panel.multitrack.empty",
+            PanelKind::Tts => "panel.tts.empty",
             PanelKind::Presets => "panel.presets.empty",
             PanelKind::Queue => "panel.queue.empty",
             PanelKind::Tasks => "panel.tasks.empty",
@@ -274,6 +299,11 @@ impl PanelKind {
             PanelKind::Preview => (C::SoundEdit, Center, &[W::Audio, W::Edicao], false),
             PanelKind::Media => (C::SoundEdit, Left, &[W::Audio, W::Edicao], false),
             PanelKind::Mixer => (C::SoundEdit, Right, &[W::Audio], false),
+            PanelKind::Waveform => (C::SoundEdit, Center, &[W::Audio], false),
+            PanelKind::EffectsRack => (C::SoundEdit, Right, &[W::Audio], false),
+            PanelKind::Meters => (C::SoundEdit, Right, &[W::Audio], false),
+            PanelKind::Multitrack => (C::SoundEdit, Bottom, &[W::Audio], false),
+            PanelKind::Tts => (C::SoundEdit, Right, &[W::Audio, W::Roteiro], false),
             PanelKind::Presets => (C::Delivery, Left, &[W::Entrega], false),
             PanelKind::Queue => (C::Delivery, Center, &[W::Entrega], false),
             PanelKind::Tasks => (C::Management, Center, &[W::Producao], false),
@@ -350,6 +380,8 @@ pub fn factory_rev(ws: WorkspaceId) -> u32 {
         W::Cenario | W::Pintura | W::Composicao | W::Biblioteca | W::Modelagem => 2,
         // S24: painel Texto (legendas) em aba com as Propriedades
         W::Edicao => 2,
+        // S24: Forma de onda, Efeitos, Medidores, Multipista e Voz sintética
+        W::Audio => 2,
         // S24: Produção com Gráficos, Gargalos e Análise por IA ao lado do painel principal
         W::Producao => 2,
         _ => 1,
@@ -421,9 +453,16 @@ fn default_node(ws: WorkspaceId) -> Node {
         // em construção: o painel central diz o que vem; paletas e referências já são recursos
         W::Biblioteca => Row(vec![(0.24, Pane(P::Palette)), (0.50, Pane(P::Library)), (0.26, Pane(P::SubView))]),
         W::Modelagem => Row(vec![(0.18, Pane(P::Characters)), (0.56, Pane(P::Modeling)), (0.26, Pane(P::SubView))]),
+        // nível Audition (S24 11): cortes, forma de onda grande, monitor (imagem do corte) sobre os medidores e o rack/voz
+        // na altura toda à direita; multipista embaixo com o Mixer e a linha do tempo em abas
         W::Audio => Col(vec![
-            (0.55, Row(vec![(0.22, Pane(P::Media)), (0.50, Pane(P::Preview)), (0.28, Pane(P::Mixer))])),
-            (0.45, Pane(P::Timeline)),
+            (0.56, Row(vec![
+                (0.14, Pane(P::Media)),
+                (0.42, Pane(P::Waveform)),
+                (0.19, Col(vec![(0.45, Pane(P::Preview)), (0.55, Pane(P::Meters))])),
+                (0.25, TabsOf(&[P::EffectsRack, P::Tts])),
+            ])),
+            (0.44, TabsOf(&[P::Multitrack, P::Mixer, P::Timeline])),
         ]),
         W::Edicao => Col(vec![
             (0.55, Row(vec![(0.22, Pane(P::Media)), (0.50, Pane(P::Preview)), (0.28, TabsOf(&[P::Properties, P::Text]))])),
@@ -1063,7 +1102,7 @@ mod tests {
             (W::Composicao, 2, 0xe373fff7d0e1aa31),
             (W::Biblioteca, 2, 0xf001e10a1c6ff92d),
             (W::Modelagem, 2, 0xcccad1946cd12fc3),
-            (W::Audio, 1, 0x3c28e5ca28ea9c2e),
+            (W::Audio, 2, 0xb370ba9cf04cb8ac),
             (W::Edicao, 2, 0x391a9dc3fd389b14),
             (W::Entrega, 1, 0x6989668e53aa64aa),
             (W::Producao, 2, 0x9b17b578f72810dc),

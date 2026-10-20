@@ -198,6 +198,9 @@ impl StudioApp {
         }
         // som ao vivo mudo nas execuções de teste/captura (AIAI_AUDIO=1 liga mesmo assim)
         app.ed.live = audio_out::AudioOut::new(cli_no_autosave);
+        // workspace Áudio: mesma regra de som; predefinições de rack só com sessão
+        app.ed.audio_ws.player.muted = cli_no_autosave && !std::env::var("AIAI_AUDIO").is_ok_and(|v| v == "1");
+        app.ed.audio_ws.user_files = !app.cli.no_session;
         if !cli_no_autosave {
             if let Some(root) = autosave::recovery_root() {
                 app.recoveries = autosave::leftovers(&root, app.autosave.dir.as_deref());
@@ -1115,6 +1118,7 @@ impl StudioApp {
         self.ed.pressure_curve = (self.prefs.pen_pressure_min, self.prefs.pen_pressure_gamma);
         self.autosave_tick();
         panels::timeline::tick(&self.core, &mut self.ed, &ctx);
+        panels::audio_ws::tick(&mut self.core, &mut self.ed, &ctx);
         panels::char_folder::tick(&self.core, &mut self.ed, self.ws);
         {
             // som ao vivo acompanha a reprodução e o cabeçote
@@ -1173,6 +1177,7 @@ impl eframe::App for StudioApp {
             if let Some(rs) = frame.wgpu_render_state() {
                 let info = rs.adapter.get_info();
                 self.gpu_name = Some(info.name.clone());
+                self.ed.audio_ws.hw.set_gpu(&info.name, &format!("{:?}", info.device_type), &format!("{:?}", info.backend), &info.driver);
                 tracing::info!("GPU: {} ({:?}, {:?})", info.name, info.device_type, info.backend);
             }
         }
@@ -1288,6 +1293,11 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::Media if self.env.ws == WorkspaceId::Audio => panels::audio::media(&mut self.env, ui, body),
             PanelKind::Preview if self.env.ws == WorkspaceId::Audio => panels::audio::monitor(&mut self.env, ui, body),
             PanelKind::Mixer => panels::audio::mixer(&mut self.env, ui, body),
+            PanelKind::Waveform => panels::audio_ws::wave::show(&mut self.env, ui, body),
+            PanelKind::EffectsRack => panels::audio_ws::rack::show(&mut self.env, ui, body),
+            PanelKind::Meters => panels::audio_ws::meters::show(&mut self.env, ui, body),
+            PanelKind::Multitrack => panels::audio_ws::multitrack::show(&mut self.env, ui, body),
+            PanelKind::Tts => panels::audio_ws::tts::show(&mut self.env, ui, body),
             PanelKind::Navigator => panels::navigator::show(&mut self.env, ui, body),
             PanelKind::SubView => panels::subview::show(&mut self.env, ui, body),
             PanelKind::Brushes => panels::brushes::show(&mut self.env, ui, body),

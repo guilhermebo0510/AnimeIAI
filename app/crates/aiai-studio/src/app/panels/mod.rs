@@ -2,6 +2,7 @@
 //! painel com o `Env` (documento, estado do editor, ícones) e só altera o documento por comandos (`commands`).
 
 pub(crate) mod audio;
+pub(crate) mod audio_ws;
 pub(crate) mod board;
 pub(crate) mod brush_maker;
 pub(crate) mod brushes;

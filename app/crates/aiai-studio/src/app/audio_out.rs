@@ -84,6 +84,13 @@ impl AudioOut {
         self.last_cut = cut.cloned();
     }
 
+    /// Outra reprodução (a multipista do workspace Áudio) move o cabeçote: acompanha sem tocar o trecho de scrub.
+    pub(crate) fn follow_silently(&mut self, cut: Option<&Id>, frame: u32) {
+        self.last_frame = frame;
+        self.last_cut = cut.cloned();
+        self.last_playing = false;
+    }
+
     fn play_range(&mut self, core: &CoreSession, cut: &Id, t0: f64, t1: f64) {
         let Some(mix) = self.mix_for(core, cut) else { return };
         let rate = mix.rate as f64;
