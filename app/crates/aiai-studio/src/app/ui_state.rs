@@ -293,7 +293,7 @@ impl StudioApp {
     /// `UI_ACTION {action, ...}`: set_workspace {workspace}, select_tool {tool}, toggle_panel {panel, visible?},
     /// open_panel {panel} (insere o painel do catálogo que não está no layout), layout {op: list|save|apply|delete|reset, name?},
     /// set_theme {theme: light|dark}, set_language {language: pt|en}, open_dialog/close_dialog {dialog: about|prefs|start, tab?: general|keys|folders|performance},
-    /// set_window_size {width, height, maximized?} (pontos lógicos),
+    /// set_window_size {width, height, maximized?} (pontos lógicos), library_import {files} (abre a janela de importar da Biblioteca),
     /// select_layer {layer}, select_cut {cut}, set_frame {frame}, set_color {color}, fit_view.
     /// Apelidos aceitos: set_tool = select_tool; open_panel = toggle_panel com visible=true.
     pub(crate) fn bridge_ui_action(&mut self, ctx: &egui::Context, params: &Value) -> BridgeResult {
@@ -314,6 +314,7 @@ impl StudioApp {
             "set_window_size" => Some(&["width", "height", "maximized"]),
             "set_language" => Some(&["language", "lang", "value"]),
             "open_dialog" | "close_dialog" => Some(&["dialog", "value", "tab"]),
+            "library_import" => Some(&["files"]),
             _ => None,
         };
         if let Some(keys) = keys {
@@ -452,6 +453,15 @@ impl StudioApp {
                     other => return Err(BridgeError::invalid_params(format!("diálogo desconhecido: {other:?} (about|prefs|start)"))),
                 }
                 json!({ "about": self.about_open, "prefs": self.prefs_open, "start": self.start.open })
+            }
+            "library_import" => {
+                // abre a janela de importar da Biblioteca com estes arquivos (o diálogo de arquivos do sistema não se automatiza)
+                let files: Vec<std::path::PathBuf> = m.get("files").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(std::path::PathBuf::from).collect()).unwrap_or_default();
+                if files.is_empty() {
+                    return Err(BridgeError::invalid_params("library_import exige 'files' (lista de caminhos absolutos)"));
+                }
+                self.ed.library.begin_import(files.clone());
+                json!({ "files": files.len() })
             }
             other => {
                 return Err(BridgeError::invalid_params(format!(

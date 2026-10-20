@@ -63,6 +63,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
 
     let resp = ui.interact(rect, ui.id().with("canvas_area"), Sense::click_and_drag());
     super::comp_viewer::drop_target(env, ui, &resp);
+    super::library::drop_target(env, ui, &resp);
     let view_before = env.ed.view;
     handle_input(env, ui, rect, &resp, ppp);
     if env.ed.view != view_before {

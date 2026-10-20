@@ -112,6 +112,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "aiai-assets"
+version = "0.1.0"
+dependencies = [
+ "aiai-3d-model",
+ "aiai-core",
+ "aiai-paint",
+ "blake3",
+ "image",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "aiai-audio"
 version = "0.1.0"
 dependencies = [
@@ -129,6 +142,7 @@ version = "0.1.0"
 dependencies = [
  "aiai-3d-model",
  "aiai-anim",
+ "aiai-assets",
  "aiai-audio",
  "aiai-core",
  "aiai-fx",
@@ -188,6 +202,7 @@ dependencies = [
 name = "aiai-mcp"
 version = "0.1.0"
 dependencies = [
+ "aiai-assets",
  "aiai-bridge",
  "aiai-core",
  "aiai-paint",
@@ -267,6 +282,7 @@ dependencies = [
  "aiai-3d-core",
  "aiai-3d-model",
  "aiai-3d-render",
+ "aiai-assets",
  "aiai-audio",
  "aiai-bridge",
  "aiai-core",
@@ -302,6 +318,7 @@ dependencies = [
  "ab_glyph",
  "aiai-3d-model",
  "aiai-anim",
+ "aiai-assets",
  "aiai-audio",
  "aiai-core",
  "aiai-fx",

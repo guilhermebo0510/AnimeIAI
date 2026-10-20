@@ -232,6 +232,14 @@ fn palette_picker(env: &mut Env, ui: &mut Ui) {
             }
         }
     });
+    // guardar a paleta (por exemplo a de settei de um personagem) na biblioteca para outros projetos
+    if let Some(pal) = env.ed.palette.clone().filter(|p| cmds::palette_data(&env.core.project, p).is_some_and(|d| !d.colors.is_empty())) {
+        let b = ui.small_button(tr("lib.save_palette"));
+        env.note("colors:save_to_library", b.rect);
+        if b.on_hover_text(tr("lib.save_palette.tip")).clicked() {
+            crate::app::library::save_from_project(env, "palette", &pal);
+        }
+    }
 }
 
 fn swatches(env: &mut Env, ui: &mut Ui, pal: &NodeId) {

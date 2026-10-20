@@ -18,6 +18,7 @@ pub(crate) mod edit_timeline;
 pub(crate) mod effect_controls;
 pub(crate) mod effects_browser;
 pub(crate) mod layers;
+pub(crate) mod library;
 pub(crate) mod light_table;
 pub(crate) mod navigator;
 pub(crate) mod outline;

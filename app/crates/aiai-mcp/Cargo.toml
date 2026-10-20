@@ -21,6 +21,7 @@ aiai-core = { workspace = true }
 aiai-bridge = { workspace = true }
 aiai-paint = { workspace = true }
 aiai-tools = { workspace = true }
+aiai-assets = { path = "../aiai-assets" }
 schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

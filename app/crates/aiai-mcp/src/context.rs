@@ -50,6 +50,8 @@ impl Ctx {
     /// `project`: pasta de `--project`; senão `AIAI_HEADLESS_PROJECT`.
     pub fn from_env(project: Option<PathBuf>) -> Ctx {
         let project = project.or_else(|| std::env::var_os("AIAI_HEADLESS_PROJECT").filter(|v| !v.is_empty()).map(PathBuf::from));
+        // o MCP e a CLI usam a biblioteca do usuário em `Documentos/AnimeIAI` (os testes montam o `Ctx` sem isto)
+        aiai_assets::enable_user_folders(true);
         Ctx::new(BridgeClient::from_env(), Sandbox::from_env(), project)
     }
 
@@ -79,6 +81,7 @@ impl Ctx {
             "BGM" => &["soundfont"],
             "EXPORT_VIDEO" => &["srt"],
             "LOUDNESS" | "AUDIO_ANALYZE" | "IMPORT_AUDIO" | "IMPORT_IMAGE" | "EDIT_CAPTIONS" => &["path"],
+            "LIBRARY" => &["path"],
             _ => &[],
         };
         for key in read_keys {

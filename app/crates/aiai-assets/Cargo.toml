@@ -1,0 +1,15 @@
+[package]
+name = "aiai-assets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Biblioteca de recursos do AnimeIAI: envelope de manifesto comum (pincel, modelo 3D, material, textura, paleta, pose), pastas em Documentos/AnimeIAI, índice em memória reconstruído da pasta, importação (glb/gltf/obj, imagens, .gpl/.ase, .aiaibrush) e gravação de metadados"
+
+[dependencies]
+aiai-core = { workspace = true }
+aiai-paint = { workspace = true }
+aiai-3d-model = { path = "../aiai-3d-model" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+blake3 = { workspace = true }
+image = { workspace = true }

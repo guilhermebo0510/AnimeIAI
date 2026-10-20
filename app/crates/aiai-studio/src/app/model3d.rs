@@ -869,6 +869,12 @@ pub(crate) fn import_dialog(env: &mut Env, cut: &NodeId) {
     }
 }
 
+/// Pede um quadro do modelo à GPU sem esperar (prévia da Biblioteca, fora do documento); `None` = sem serviço GPU (a
+/// prévia cai para o rasterizador CPU). A resposta é RGBA 8 bits pré-multiplicado, `w`×`h`.
+pub(crate) fn preview_request(hash: BlobHash, model: Arc<Model>, state: Model3dState, w: u32, h: u32) -> Option<crossbeam_channel::Receiver<Result<Vec<u8>, String>>> {
+    GPU.get()?.request(hash, model, state, w, h)
+}
+
 /// Adaptador do serviço GPU da camada 3D (para a barra de status/telemetria); `None` = rasterizador CPU.
 #[allow(dead_code)]
 pub(crate) fn gpu_name() -> Option<String> {

@@ -56,8 +56,10 @@ pub enum PanelKind {
     SubView,
     /// Pincéis por categoria e propriedades da ferramenta.
     Brushes,
-    /// Biblioteca (em construção): diz o que o workspace vai ter.
+    /// Biblioteca de recursos: árvore de tipos e etiquetas, busca e grade de miniaturas (modelos 3D, materiais, texturas, paletas, poses, pincéis).
     Library,
+    /// Prévia do recurso da Biblioteca: turntable 3D, teste de repetição 3×3, amostras da paleta; ações e metadados.
+    LibraryPreview,
     /// Modelagem 3D (em construção): diz o que o workspace vai ter.
     Modeling,
     /// Texto: fonte, tamanho, cor, alinhamento, contorno e sombra da camada de texto.
@@ -153,9 +155,11 @@ pub struct PanelMeta {
 
 use WorkspaceId as W;
 const DRAWING_WS: &[WorkspaceId] = &[W::Personagens, W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Composicao];
+/// A Biblioteca vale em todo workspace (Exibir > Painéis); estes a sugerem.
+const LIBRARY_WS: &[WorkspaceId] = &[W::Biblioteca, W::Modelagem, W::Personagens, W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Composicao];
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 45] = [
+    pub const ALL: [PanelKind; 46] = [
         PanelKind::Canvas,
         PanelKind::Layers,
         PanelKind::Properties,
@@ -191,6 +195,7 @@ impl PanelKind {
         PanelKind::SubView,
         PanelKind::Brushes,
         PanelKind::Library,
+        PanelKind::LibraryPreview,
         PanelKind::Modeling,
         PanelKind::Text,
         PanelKind::LightTable,
@@ -250,6 +255,7 @@ impl PanelKind {
             PanelKind::SubView => "panel.subview.title",
             PanelKind::Brushes => "panel.brushes.title",
             PanelKind::Library => "panel.library.title",
+            PanelKind::LibraryPreview => "panel.library_preview.title",
             PanelKind::Modeling => "panel.modeling.title",
             PanelKind::Text => "panel.text.title",
             PanelKind::LightTable => "panel.light_table.title",
@@ -301,6 +307,7 @@ impl PanelKind {
             PanelKind::SubView => "panel.subview.empty",
             PanelKind::Brushes => "panel.brushes.empty",
             PanelKind::Library => "panel.library.empty",
+            PanelKind::LibraryPreview => "panel.library_preview.empty",
             PanelKind::Modeling => "panel.modeling.empty",
             PanelKind::Text => "panel.text.empty",
             PanelKind::LightTable => "panel.light_table.empty",
@@ -353,7 +360,8 @@ impl PanelKind {
             PanelKind::Project => (C::General, Left, DRAWING_WS, false),
             PanelKind::SubView => (C::Reference, Left, &[W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Biblioteca, W::Modelagem], false),
             PanelKind::Brushes => (C::Drawing, Left, &[W::Personagens, W::Layout, W::Cenario, W::Animacao, W::Pintura], false),
-            PanelKind::Library => (C::Resources, Center, &[W::Biblioteca], false),
+            PanelKind::Library => (C::Resources, Bottom, LIBRARY_WS, false),
+            PanelKind::LibraryPreview => (C::Resources, Right, LIBRARY_WS, false),
             PanelKind::Modeling => (C::Resources, Center, &[W::Modelagem], false),
             PanelKind::Text => (C::Drawing, Right, &[W::Layout, W::Cenario, W::Animacao, W::Composicao, W::Edicao], false),
             PanelKind::LightTable => (C::Drawing, Right, &[W::Animacao, W::Pintura], false),
@@ -368,9 +376,9 @@ impl PanelKind {
         PanelMeta { key: self.key(), title_key: self.title_key(), category, dock_hint, workspaces, needs_canvas }
     }
 
-    /// Painel que ainda não tem conteúdo: só explica o que vem (Biblioteca, Modelagem).
+    /// Painel que ainda não tem conteúdo: só explica o que vem (Modelagem).
     pub fn is_planned(self) -> bool {
-        matches!(self, PanelKind::Library | PanelKind::Modeling)
+        matches!(self, PanelKind::Modeling)
     }
 }
 
@@ -419,7 +427,9 @@ pub fn factory_rev(ws: WorkspaceId) -> u32 {
         // S24: fábricas novas (cada etapa de desenho com a sua cara) e os workspaces novos
         // S24: Réguas (perspectiva) em aba com os pincéis
         W::Layout => 3,
-        W::Cenario | W::Pintura | W::Biblioteca | W::Modelagem => 2,
+        W::Cenario | W::Pintura | W::Modelagem => 2,
+        // S24 2.7–2.8: Biblioteca de verdade (árvore e grade, prévia e metadados) com as Cores para editar paletas
+        W::Biblioteca => 3,
         // S24 3.1–3.5: viewer no centro, Linha do tempo da composição embaixo, Efeitos e predefinições e Controles de
         // efeito à direita
         W::Composicao => 3,
@@ -497,8 +507,8 @@ fn default_node(ws: WorkspaceId) -> Node {
             ])),
             (0.38, TabsOf(&[P::CompTimeline, P::Timeline])),
         ]),
-        // em construção: o painel central diz o que vem; paletas e referências já são recursos
-        W::Biblioteca => Row(vec![(0.24, Pane(P::Palette)), (0.50, Pane(P::Library)), (0.26, Pane(P::SubView))]),
+        // biblioteca de recursos: a árvore e a grade grandes, a prévia com os metadados ao lado e as Cores (paletas) à direita
+        W::Biblioteca => Row(vec![(0.50, Pane(P::Library)), (0.27, Pane(P::LibraryPreview)), (0.23, Pane(P::Palette))]),
         W::Modelagem => Row(vec![(0.18, Pane(P::Characters)), (0.56, Pane(P::Modeling)), (0.26, Pane(P::SubView))]),
         // nível Audition (S24 11): cortes, forma de onda grande, monitor (imagem do corte) sobre os medidores e o rack/voz
         // na altura toda à direita; multipista embaixo com o Mixer e a linha do tempo em abas
@@ -1154,7 +1164,7 @@ mod tests {
             (W::Animacao, 3, 0x5d54281aba1d2f5c),
             (W::Pintura, 2, 0xfc53133a1f95cbd3),
             (W::Composicao, 3, 0x25b2c7d156032ce4),
-            (W::Biblioteca, 2, 0xf001e10a1c6ff92d),
+            (W::Biblioteca, 3, 0x1a430bf82b451dc2),
             (W::Modelagem, 2, 0xcccad1946cd12fc3),
             (W::Audio, 2, 0xb370ba9cf04cb8ac),
             (W::Edicao, 3, 0x3d752f0083dbd76d),

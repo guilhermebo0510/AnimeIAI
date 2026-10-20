@@ -18,6 +18,7 @@ aiai-media = { workspace = true }
 aiai-paint = { workspace = true }
 aiai-render = { workspace = true }
 aiai-tools = { workspace = true }
+aiai-assets = { path = "../aiai-assets" }
 base64 = { workspace = true }
 schemars = { workspace = true }
 image = { workspace = true }

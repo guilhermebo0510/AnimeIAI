@@ -22,6 +22,7 @@ mod prefs_ui;
 mod start;
 mod editor;
 mod input_queue;
+mod library;
 mod live;
 mod model3d;
 mod move_live;
@@ -193,6 +194,8 @@ impl StudioApp {
         app.fit_tool_to_workspace();
         // pincéis de fábrica + os .aiaibrush da pasta do usuário (sem sessão: só os de fábrica, nada é lido nem gravado)
         app.ed.brushes = brushes::BrushLibrary::open(!app.cli.no_session, &app.prefs.brush_author);
+        // biblioteca de recursos em Documentos\AnimeIAI (com --no-session nada é lido nem gravado, salvo AIAI_LIBRARY_DIR)
+        aiai_assets::enable_user_folders(!app.cli.no_session);
         if let Some(dir) = app.cli.project.clone() {
             app.doc_open_path(std::path::Path::new(&dir));
         } else {
@@ -1146,7 +1149,12 @@ impl StudioApp {
         // arquivos soltos na janela: imagem → referência, WAV → clipe no cabeçote
         let dropped: Vec<std::path::PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().map(|f| f.path().to_path_buf()).filter(|p| !p.as_os_str().is_empty()).collect());
         for p in dropped {
-            self.import_file(&p);
+            // soltar sobre o painel da Biblioteca importa para ela (a janela de importar pede licença e fonte)
+            if self.ed.library.accepts_drop(&ctx) {
+                self.ed.library.begin_import(vec![p]);
+            } else {
+                self.import_file(&p);
+            }
         }
         self.doc_shortcuts(&ctx);
         self.handle_close_request(&ctx);
@@ -1346,7 +1354,9 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::ProdCharts => panels::prod_charts::show(&mut self.env, ui, body),
             PanelKind::ProdBottleneck => panels::prod_manage::bottleneck(&mut self.env, ui, body),
             PanelKind::ProdAi => panels::prod_manage::ai(&mut self.env, ui, body),
-            PanelKind::Library | PanelKind::Modeling => planned_panel(&mut self.env, ui, body, kind),
+            PanelKind::Library => panels::library::show(&mut self.env, ui, body),
+            PanelKind::LibraryPreview => panels::library::preview(&mut self.env, ui, body),
+            PanelKind::Modeling => planned_panel(&mut self.env, ui, body, kind),
         }
         ui.painter().rect_stroke(rect, CARD_RADIUS, Stroke::new(1.0, self.t.border), StrokeKind::Inside);
         resp

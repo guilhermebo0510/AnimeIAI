@@ -680,6 +680,8 @@ pub(crate) struct Editor {
     /// Biblioteca de pincéis (fábrica + usuário) e estado do painel Pincéis.
     pub brushes: super::brushes::BrushLibrary,
     pub brush_panel: super::panels::brushes::BrushPanelState,
+    /// Biblioteca de recursos (painéis Biblioteca e Prévia do recurso).
+    pub library: super::library::LibraryState,
     /// Painel a trazer para a frente no próximo quadro (aba do layout).
     pub want_panel: Option<crate::layout::PanelKind>,
     /// Som ao vivo (reprodução e scrub da mixagem do corte).
@@ -811,6 +813,7 @@ impl Default for Editor {
             alt: false,
             brushes: Default::default(),
             brush_panel: Default::default(),
+            library: Default::default(),
             want_panel: None,
             live: super::audio_out::AudioOut::new(false),
             keys: crate::keymap::Keymap::default(),

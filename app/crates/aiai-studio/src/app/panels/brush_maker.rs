@@ -137,6 +137,11 @@ pub(crate) fn pick_import(env: &mut Env, ctx: &egui::Context) {
         .add_filter(tr("brushes.import.filter"), &["aiaibrush", "aiaibrushes", "abr", "brush", "brushset", "bundle", "gbr", "gih", "png", "jpg", "jpeg", "webp", "sut"])
         .pick_files()
         .unwrap_or_default();
+    import_files(env, ctx, files);
+}
+
+/// Lê os arquivos de pincel e abre a janela de importar (a Biblioteca entrega os pincéis que chegam a ela por aqui).
+pub(crate) fn import_files(env: &mut Env, ctx: &egui::Context, files: Vec<std::path::PathBuf>) {
     if files.is_empty() {
         return;
     }
@@ -296,6 +301,11 @@ fn category_field(ui: &mut egui::Ui, id: &str, cat: &mut String, choices: &[Stri
 
 /// Janelas abertas do criador e do importador (chamado pelo painel a cada quadro).
 pub(crate) fn windows(env: &mut Env, ctx: &egui::Context) {
+    // mais de um painel pode chamar (Pincéis e Biblioteca no mesmo workspace): as janelas são desenhadas uma vez por passada
+    static LAST_PASS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+    if LAST_PASS.swap(ctx.cumulative_pass_nr(), std::sync::atomic::Ordering::Relaxed) == ctx.cumulative_pass_nr() {
+        return;
+    }
     maker_window(env, ctx);
     importer_window(env, ctx);
     export_window(env, ctx);
