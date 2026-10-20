@@ -24,6 +24,8 @@ pub mod preprod;
 pub mod preview;
 pub mod text_layer;
 pub mod production;
+pub mod production_history;
+pub mod production_stats;
 pub mod transform;
 
 pub use context::{ToolError, ToolResult};

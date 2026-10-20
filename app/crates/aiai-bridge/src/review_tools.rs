@@ -10,6 +10,7 @@ use crate::protocol::BridgeError;
 use aiai_core::{CoreSession, Id, LayerType, NodeKind, Stage, StageStatus};
 use aiai_tools::draw::CurveSpec;
 use aiai_tools::production::{self, CorrectionRequest, RetakeRequest};
+use aiai_tools::{production_history as history, production_stats as stats};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -48,6 +49,60 @@ pub enum ProductionRequest {
         #[serde(default)]
         out: Option<String>,
     },
+    /// Muda a mesma etapa de vários cortes num passo de undo.
+    SetStages { cuts: Vec<Id>, stage: Stage, status: StageStatus },
+    /// Prazo (`AAAA-MM-DD`), responsável e peso de vários cortes num passo de undo; texto vazio (ou peso <= 0) limpa o campo.
+    SetMeta {
+        cuts: Vec<Id>,
+        #[serde(default)]
+        due: Option<String>,
+        #[serde(default)]
+        assignee: Option<String>,
+        #[serde(default)]
+        weight: Option<f32>,
+    },
+    /// Histórico de status (índice derivado do log, guardado em `producao-historico.ndjson` na pasta do projeto): os
+    /// eventos mais novos primeiro (`limit` padrão 100), de um corte com `cut`.
+    History {
+        #[serde(default)]
+        cut: Option<Id>,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+    /// Estatísticas da gestão (contagens por etapa/estado, matriz cena × etapa, fluxo cumulativo, burndown, vazão, tempos,
+    /// taxa de retake, previsão) e os fluxos por etapa; `stuck_days` (padrão 3) define "travado".
+    Stats {
+        #[serde(default)]
+        stuck_days: Option<f64>,
+    },
+    /// Análise determinística de gargalos: fila, vazão e espera por etapa e os achados (gargalo, ociosa, travados, atrasados, retakes).
+    Bottlenecks {
+        #[serde(default)]
+        stuck_days: Option<f64>,
+    },
+    /// Pacote de dados para um agente analisar (estatísticas, achados, últimos eventos, notas, roteiro da análise). Com
+    /// `out` (absoluto) grava o JSON. Nunca muda o projeto: devolva a análise com `note_add` (`ai: true`).
+    AnalysisPackage {
+        #[serde(default)]
+        out: Option<String>,
+        #[serde(default)]
+        stuck_days: Option<f64>,
+    },
+    /// Os números dos gráficos em CSV (com `out` grava o arquivo).
+    StatsCsv {
+        #[serde(default)]
+        out: Option<String>,
+    },
+    /// Anexa uma nota de gestão com carimbo de hora (livre ou de um corte). `ai: true` marca "gerada por IA".
+    NoteAdd {
+        text: String,
+        #[serde(default)]
+        cut: Option<Id>,
+        #[serde(default)]
+        ai: bool,
+    },
+    NoteList,
+    NoteDelete { note: Id },
 }
 
 /// `CORRECTION`: correção desenhada em vermelho numa camada de guia do corte (não renderiza) + nota no documento "Produção".
@@ -179,7 +234,106 @@ fn production_action(session: &mut CoreSession, params: &Value) -> Result<Value,
                 None => Ok(json!({ "markdown": md })),
             }
         }
+        ProductionRequest::SetStages { cuts, stage, status } => match production::set_stage_many(p, &cuts, stage, status).map_err(tool_error)? {
+            Some(cmd) => apply(session, params, cmd),
+            None => Ok(json!({ "changed": 0, "note": "todos os cortes já estavam nesse estado" })),
+        },
+        ProductionRequest::SetMeta { cuts, due, assignee, weight } => {
+            let cmd = production::set_cut_meta(p, &cuts, &production::CutMetaPatch { due, assignee, weight }).map_err(tool_error)?;
+            apply(session, params, cmd)
+        }
+        ProductionRequest::History { cut, limit } => {
+            let (idx, warn) = history::index_for_session(session);
+            let events: Vec<&history::StatusEvent> = idx.events.iter().rev().filter(|e| cut.as_ref().is_none_or(|c| &e.cut == c)).take(limit.unwrap_or(100).min(2000)).collect();
+            let mut v = json!({ "total": idx.events.len(), "last_revision": idx.last_rev, "events": events });
+            if let Some(w) = warn {
+                v["warning"] = json!(w);
+            }
+            Ok(v)
+        }
+        ProductionRequest::Stats { stuck_days } => {
+            let (a, warn) = analysis(session, stuck_days);
+            let mut v = serde_json::to_value(&a).map_err(|e| BridgeError::failed(e.to_string()))?;
+            if let Some(w) = warn {
+                v["warning"] = json!(w);
+            }
+            Ok(v)
+        }
+        ProductionRequest::Bottlenecks { stuck_days } => {
+            let (a, warn) = analysis(session, stuck_days);
+            let mut v = json!({
+                "flows": a.flows,
+                "findings": a.findings.iter().map(|f| json!({ "finding": f, "text": f.text_pt() })).collect::<Vec<_>>(),
+            });
+            if let Some(w) = warn {
+                v["warning"] = json!(w);
+            }
+            Ok(v)
+        }
+        ProductionRequest::AnalysisPackage { out, stuck_days } => {
+            let (idx, warn) = history::index_for_session(session);
+            let rows = production::cut_table(p);
+            let doc = production::production_read(p).map_err(tool_error)?;
+            let mut cfg = stats::StatsConfig::new(session.clock.now_ms());
+            if let Some(d) = stuck_days {
+                cfg.stuck_days = d.max(0.0);
+            }
+            let pkg = stats::analysis_package(&p.name, &rows, &idx.events, &doc.notes, &cfg);
+            let mut v = json!({ "package": pkg });
+            if let Some(o) = out {
+                let path = check_abs(&o)?;
+                ensure_parent(&path)?;
+                let text = serde_json::to_string_pretty(&v["package"]).map_err(|e| BridgeError::failed(e.to_string()))?;
+                std::fs::write(&path, text.as_bytes()).map_err(|e| BridgeError::failed(format!("gravar {}: {e}", path.display())))?;
+                v["path"] = json!(path.display().to_string());
+            }
+            if let Some(w) = warn {
+                v["warning"] = json!(w);
+            }
+            Ok(v)
+        }
+        ProductionRequest::StatsCsv { out } => {
+            let (a, _) = analysis(session, None);
+            let csv = stats::stats_csv(&a);
+            match out {
+                Some(o) => {
+                    let path = check_abs(&o)?;
+                    ensure_parent(&path)?;
+                    std::fs::write(&path, csv.as_bytes()).map_err(|e| BridgeError::failed(format!("gravar {}: {e}", path.display())))?;
+                    Ok(json!({ "path": path.display().to_string(), "bytes": csv.len() }))
+                }
+                None => Ok(json!({ "csv": csv })),
+            }
+        }
+        ProductionRequest::NoteAdd { text, cut, ai } => {
+            let author = params.get("author").and_then(Value::as_str).unwrap_or(crate::core_ops::DEFAULT_AUTHOR).to_owned();
+            let now = session.clock.now_ms();
+            let (id, cmd) = production::note_add(&session.project, &mut session.ids, now, &author, &text, cut, ai).map_err(tool_error)?;
+            let mut v = apply(session, params, cmd)?;
+            v["note"] = json!(id);
+            v["t_ms"] = json!(now);
+            Ok(v)
+        }
+        ProductionRequest::NoteList => {
+            let doc = production::production_read(p).map_err(tool_error)?;
+            Ok(json!({ "notes": doc.notes }))
+        }
+        ProductionRequest::NoteDelete { note } => {
+            let cmd = production::note_delete(&session.project, &mut session.ids, &note).map_err(tool_error)?;
+            apply(session, params, cmd)
+        }
     }
+}
+
+/// Análise (estatísticas + fluxos + achados) com o histórico da sessão; o aviso é o do índice (arquivo ruim/falha ao gravar).
+fn analysis(session: &CoreSession, stuck_days: Option<f64>) -> (stats::Analysis, Option<String>) {
+    let (idx, warn) = history::index_for_session(session);
+    let rows = production::cut_table(&session.project);
+    let mut cfg = stats::StatsConfig::new(session.clock.now_ms());
+    if let Some(d) = stuck_days {
+        cfg.stuck_days = d.max(0.0);
+    }
+    (stats::analyze(&rows, &idx.events, &cfg), warn)
 }
 
 fn correction(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {

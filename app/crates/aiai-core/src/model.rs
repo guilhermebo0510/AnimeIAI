@@ -317,6 +317,15 @@ pub struct CutData {
     /// workspace Animação, o padrão da mesa de luz e trava os cels-chave contra edição acidental no douga.
     #[serde(default, skip_serializing_if = "CutPhase::is_genga")]
     pub phase: CutPhase,
+    /// Gestão (workspace Produção), tudo opcional: prazo do corte em `AAAA-MM-DD`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub due: Option<String>,
+    /// Gestão: responsável pelo corte (nome livre).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assignee: Option<String>,
+    /// Gestão: peso/dificuldade do corte (esforço estimado, 1 = corte médio).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weight: Option<f32>,
 }
 
 /// Fase da animação de um corte.
@@ -390,12 +399,27 @@ impl CutData {
             camera: CameraData::default(),
             audio: Vec::new(),
             phase: CutPhase::Genga,
+            due: None,
+            assignee: None,
+            weight: None,
         }
     }
 
     fn validate(&self) -> Result<(), String> {
         if self.duration == 0 || self.duration > 24 * 60 * 30 {
             return Err(format!("duração do corte fora do intervalo: {}", self.duration));
+        }
+        if let Some(w) = self.weight {
+            if !(w.is_finite() && w > 0.0 && w <= 1000.0) {
+                return Err(format!("peso do corte fora do intervalo (0..1000]: {w}"));
+            }
+        }
+        if let Some(d) = &self.due {
+            let b = d.as_bytes();
+            let shape = b.len() == 10 && b[4] == b'-' && b[7] == b'-' && b.iter().enumerate().all(|(i, c)| i == 4 || i == 7 || c.is_ascii_digit());
+            if !shape {
+                return Err(format!("prazo do corte deve ser AAAA-MM-DD: {d}"));
+            }
         }
         if let Some([w, h]) = self.canvas {
             if w == 0 || h == 0 || w > 16384 || h > 16384 {

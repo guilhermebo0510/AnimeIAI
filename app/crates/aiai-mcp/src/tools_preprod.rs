@@ -46,6 +46,13 @@ const PRODUCTION_DESC: &str = r##"Estado da produção (S19). `op`:
 - lint_cut {cut} → lint de TODAS as camadas de preenchimento em todos os quadros expostos (regiões sem cor; clean = true se nenhuma). Use antes de exportar.
 - provenance {id, history?} → quem criou/mudou o nó (+ últimas entradas do log que o tocam)
 - report {out?: .md} → relatório de produção em Markdown (progresso, bloqueios, correções, retakes, lint)
+Gestão (S24; prazo/responsável/peso opcionais por corte):
+- set_stages {cuts:[...], stage, status} → a mesma etapa em vários cortes (um passo de undo)
+- set_meta {cuts:[...], due?:"AAAA-MM-DD", assignee?, weight?} → vazio/<=0 limpa o campo (um passo de undo)
+- history {cut?, limit?} → eventos de status {corte, etapa, de, para, t_ms, autor} (índice do log, gravado em producao-historico.ndjson)
+- stats {stuck_days?} / bottlenecks {stuck_days?} → contagens por etapa, matriz cena×etapa, fluxo cumulativo, burndown, vazão semanal, tempo por etapa, taxa de retake; fila/vazão/espera por etapa e achados (gargalo, ociosa, travados, atrasados, retakes)
+- analysis_package {out?, stuck_days?} → pacote de dados para a análise por IA (com o roteiro do que devolver). NUNCA mude o projeto por causa da análise: devolva o texto com note_add {text, cut?, ai:true}
+- stats_csv {out?} → os números dos gráficos em CSV; note_add {text, cut?, ai?} / note_list / note_delete {note} → notas de gestão com carimbo de hora
 Exemplo: {"op":"lint_cut","cut":"<corte>"}"##;
 
 const CORRECTION_DESC: &str = r##"Correção de revisão: traços em VERMELHO numa camada de guia "correção" do corte (não aparece no render final) + nota no documento "Produção". `op`:

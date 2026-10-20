@@ -27,6 +27,12 @@ pub enum PanelKind {
     Queue,
     Tasks,
     Episodes,
+    /// Produção: gráficos (barras por etapa, rosca, matriz cena × etapa, burndown, fluxo cumulativo, vazão, tempos, retake).
+    ProdCharts,
+    /// Produção: gargalos (fila, vazão e espera por etapa, travados, atrasados; cada achado filtra a Lista).
+    ProdBottleneck,
+    /// Produção: análise por IA opcional (pacote de dados para o agente e notas com carimbo de hora).
+    ProdAi,
     Project,
     /// Sub View: imagens de referência do disco com conta-gotas.
     SubView,
@@ -121,7 +127,7 @@ use WorkspaceId as W;
 const DRAWING_WS: &[WorkspaceId] = &[W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Composicao];
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 28] = [
+    pub const ALL: [PanelKind; 31] = [
         PanelKind::Canvas,
         PanelKind::Layers,
         PanelKind::Properties,
@@ -141,6 +147,9 @@ impl PanelKind {
         PanelKind::Queue,
         PanelKind::Tasks,
         PanelKind::Episodes,
+        PanelKind::ProdCharts,
+        PanelKind::ProdBottleneck,
+        PanelKind::ProdAi,
         PanelKind::Project,
         PanelKind::SubView,
         PanelKind::Brushes,
@@ -183,6 +192,9 @@ impl PanelKind {
             PanelKind::Queue => "panel.queue.title",
             PanelKind::Tasks => "panel.tasks.title",
             PanelKind::Episodes => "panel.episodes.title",
+            PanelKind::ProdCharts => "panel.prod_charts.title",
+            PanelKind::ProdBottleneck => "panel.prod_bottleneck.title",
+            PanelKind::ProdAi => "panel.prod_ai.title",
             PanelKind::Project => "panel.project.title",
             PanelKind::SubView => "panel.subview.title",
             PanelKind::Brushes => "panel.brushes.title",
@@ -217,6 +229,9 @@ impl PanelKind {
             PanelKind::Queue => "panel.queue.empty",
             PanelKind::Tasks => "panel.tasks.empty",
             PanelKind::Episodes => "panel.episodes.empty",
+            PanelKind::ProdCharts => "panel.prod_charts.empty",
+            PanelKind::ProdBottleneck => "panel.prod_bottleneck.empty",
+            PanelKind::ProdAi => "panel.prod_ai.empty",
             PanelKind::Project => "panel.project.empty",
             PanelKind::SubView => "panel.subview.empty",
             PanelKind::Brushes => "panel.brushes.empty",
@@ -253,6 +268,9 @@ impl PanelKind {
             PanelKind::Queue => (C::Delivery, Center, &[W::Entrega], false),
             PanelKind::Tasks => (C::Management, Center, &[W::Producao], false),
             PanelKind::Episodes => (C::Management, Left, &[W::Producao], false),
+            PanelKind::ProdCharts => (C::Management, Center, &[W::Producao], false),
+            PanelKind::ProdBottleneck => (C::Management, Right, &[W::Producao], false),
+            PanelKind::ProdAi => (C::Management, Right, &[W::Producao], false),
             PanelKind::Project => (C::General, Left, DRAWING_WS, false),
             PanelKind::SubView => (C::Reference, Left, &[W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Biblioteca, W::Modelagem], false),
             PanelKind::Brushes => (C::Drawing, Left, &[W::Layout, W::Cenario, W::Animacao, W::Pintura], false),
@@ -316,6 +334,8 @@ pub fn factory_rev(ws: WorkspaceId) -> u32 {
         W::Layout | W::Cenario | W::Pintura | W::Composicao | W::Biblioteca | W::Modelagem => 2,
         // S24: painel Texto (legendas) em aba com as Propriedades
         W::Edicao => 2,
+        // S24: Produção com Gráficos, Gargalos e Análise por IA ao lado do painel principal
+        W::Producao => 2,
         _ => 1,
     }
 }
@@ -392,7 +412,13 @@ fn default_node(ws: WorkspaceId) -> Node {
             (0.45, Pane(P::Timeline)),
         ]),
         W::Entrega => Row(vec![(0.24, Pane(P::Presets)), (0.46, Pane(P::Queue)), (0.30, Pane(P::Properties))]),
-        W::Producao => Row(vec![(0.22, Pane(P::Episodes)), (0.52, Pane(P::Tasks)), (0.26, Pane(P::Properties))]),
+        // gestão (S24 14): episódios/cenas à esquerda; o painel principal (Lista, Miniaturas, Grande, Quadro) com os
+        // Gráficos em aba grande ao lado; à direita o detalhe do corte e, embaixo, Gargalos e a Análise por IA (opcional)
+        W::Producao => Row(vec![
+            (0.17, Pane(P::Episodes)),
+            (0.55, TabsOf(&[P::Tasks, P::ProdCharts])),
+            (0.28, Col(vec![(0.45, Pane(P::Properties)), (0.55, TabsOf(&[P::ProdBottleneck, P::ProdAi]))])),
+        ]),
     }
 }
 
@@ -1022,7 +1048,7 @@ mod tests {
             (W::Audio, 1, 0x3c28e5ca28ea9c2e),
             (W::Edicao, 2, 0x391a9dc3fd389b14),
             (W::Entrega, 1, 0x6989668e53aa64aa),
-            (W::Producao, 1, 0xf4dfe50f3b37db6f),
+            (W::Producao, 2, 0x9b17b578f72810dc),
         ];
         let mut report = String::new();
         let mut changed = Vec::new();

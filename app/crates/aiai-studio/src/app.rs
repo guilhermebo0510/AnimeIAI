@@ -1307,6 +1307,9 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::Board => panels::board::show(&mut self.env, ui, body),
             PanelKind::Episodes => panels::production::episodes(&mut self.env, ui, body),
             PanelKind::Tasks => panels::production::tasks(&mut self.env, ui, body),
+            PanelKind::ProdCharts => panels::prod_charts::show(&mut self.env, ui, body),
+            PanelKind::ProdBottleneck => panels::prod_manage::bottleneck(&mut self.env, ui, body),
+            PanelKind::ProdAi => panels::prod_manage::ai(&mut self.env, ui, body),
             PanelKind::Library | PanelKind::Modeling => planned_panel(&mut self.env, ui, body, kind),
         }
         ui.painter().rect_stroke(rect, CARD_RADIUS, Stroke::new(1.0, self.t.border), StrokeKind::Inside);

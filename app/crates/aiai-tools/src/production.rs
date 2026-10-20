@@ -107,6 +107,24 @@ pub struct ProductionDoc {
     pub corrections: Vec<Correction>,
     #[serde(default)]
     pub retakes: Vec<Retake>,
+    /// Notas da gestão (do usuário ou do agente), com carimbo de hora; a análise por IA devolve as dela aqui.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<ProdNote>,
+}
+
+/// Nota de gestão do documento "Produção": livre ou ligada a um corte; `ai` marca o que veio da análise de um agente.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ProdNote {
+    pub id: Id,
+    /// Instante da nota (ms desde a época Unix).
+    pub t_ms: u64,
+    pub author: String,
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cut: Option<Id>,
+    /// Gerada por IA (nunca aplica mudanças: é só texto para a gestão ler).
+    #[serde(default)]
+    pub ai: bool,
 }
 
 fn prod_schema() -> String {
@@ -115,7 +133,7 @@ fn prod_schema() -> String {
 
 impl Default for ProductionDoc {
     fn default() -> Self {
-        ProductionDoc { schema: prod_schema(), corrections: Vec::new(), retakes: Vec::new() }
+        ProductionDoc { schema: prod_schema(), corrections: Vec::new(), retakes: Vec::new(), notes: Vec::new() }
     }
 }
 
@@ -161,6 +179,16 @@ pub struct CutRow {
     /// Retakes do corte (todos) e os ainda abertos.
     pub retakes: usize,
     pub open_retakes: usize,
+    /// Gestão: prazo (`AAAA-MM-DD`), responsável e peso do corte (opcionais).
+    #[serde(default)]
+    pub due: Option<String>,
+    #[serde(default)]
+    pub assignee: Option<String>,
+    #[serde(default)]
+    pub weight: Option<f32>,
+    /// Notas do corte (campo `notes` do `CutData`).
+    #[serde(default)]
+    pub notes: String,
     /// PNG do quadro 0 (só em [`cut_table_with_thumbs`]).
     pub thumbnail: Option<BlobHash>,
 }
@@ -193,6 +221,10 @@ pub fn cut_table(p: &Project) -> Vec<CutRow> {
                     open_corrections: prod.corrections.iter().filter(|c| &c.cut == cid && !c.resolved).count(),
                     retakes: rts.len(),
                     open_retakes: rts.iter().filter(|r| !r.resolved).count(),
+                    due: cd.due.clone(),
+                    assignee: cd.assignee.clone(),
+                    weight: cd.weight,
+                    notes: cd.notes.clone(),
                     thumbnail: None,
                 });
             }
@@ -230,6 +262,94 @@ pub fn set_stage(p: &Project, cut: &Id, stage: Stage, status: StageStatus) -> To
     let st = serde_json::to_value(status).map_err(|e| ToolError::Invalid(e.to_string()))?;
     let key = s.as_str().ok_or_else(|| ToolError::Invalid("etapa".into()))?.to_string();
     Ok(Command::SetProps { id: cut.clone(), name: None, data: json!({ "stages": { key: st } }) })
+}
+
+/// Muda a mesma etapa de vários cortes num único comando (um passo de undo). Cortes já no estado pedido são pulados.
+pub fn set_stage_many(p: &Project, cuts: &[Id], stage: Stage, status: StageStatus) -> ToolResult<Option<Command>> {
+    let mut cmds = Vec::new();
+    for c in cuts {
+        let cd = cut_data(p, c)?;
+        if cd.stages.get(&stage).copied().unwrap_or_default() != status {
+            cmds.push(set_stage(p, c, stage, status)?);
+        }
+    }
+    Ok(match cmds.len() {
+        0 => None,
+        1 => cmds.pop(),
+        n => Some(Command::Batch { commands: cmds, label: Some(format!("Etapa {} → {} em {n} cortes", stage_label(stage), status_label(status))) }),
+    })
+}
+
+/// Pedido de mudança de gestão (prazo, responsável, peso) em vários cortes. Texto vazio (ou peso <= 0) limpa o campo;
+/// `None` deixa como está.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct CutMetaPatch {
+    #[serde(default)]
+    pub due: Option<String>,
+    #[serde(default)]
+    pub assignee: Option<String>,
+    #[serde(default)]
+    pub weight: Option<f32>,
+}
+
+/// Comando que aplica `patch` a todos os `cuts` (um passo de undo).
+pub fn set_cut_meta(p: &Project, cuts: &[Id], patch: &CutMetaPatch) -> ToolResult<Command> {
+    let mut data = serde_json::Map::new();
+    if let Some(d) = &patch.due {
+        let d = d.trim();
+        if !d.is_empty() && crate::production_history::parse_date(d).is_none() {
+            return Err(ToolError::Invalid(format!("prazo deve ser AAAA-MM-DD: {d}")));
+        }
+        data.insert("due".into(), if d.is_empty() { serde_json::Value::Null } else { json!(d) });
+    }
+    if let Some(a) = &patch.assignee {
+        let a = a.trim();
+        data.insert("assignee".into(), if a.is_empty() { serde_json::Value::Null } else { json!(a) });
+    }
+    if let Some(w) = patch.weight {
+        if w.is_nan() || w > 1000.0 {
+            return Err(ToolError::Invalid(format!("peso fora do intervalo: {w}")));
+        }
+        data.insert("weight".into(), if w <= 0.0 { serde_json::Value::Null } else { json!(w) });
+    }
+    if data.is_empty() {
+        return Err(ToolError::Invalid("nada a mudar: informe due, assignee e/ou weight".into()));
+    }
+    let mut cmds = Vec::new();
+    for c in cuts {
+        cut_data(p, c)?;
+        cmds.push(Command::SetProps { id: c.clone(), name: None, data: serde_json::Value::Object(data.clone()) });
+    }
+    if cmds.is_empty() {
+        return Err(ToolError::Invalid("nenhum corte informado".into()));
+    }
+    Ok(if cmds.len() == 1 { cmds.remove(0) } else { Command::Batch { label: Some(format!("Gestão de {} cortes", cmds.len())), commands: cmds } })
+}
+
+/// Anexa uma nota de gestão ao documento "Produção" (cria o documento se preciso).
+pub fn note_add(p: &Project, idgen: &mut IdGen, now_ms: u64, author: &str, text: &str, cut: Option<Id>, ai: bool) -> ToolResult<(Id, Command)> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err(ToolError::Invalid("nota vazia".into()));
+    }
+    if let Some(c) = &cut {
+        cut_data(p, c)?;
+    }
+    let mut doc = production_read(p)?;
+    let id = idgen.next();
+    doc.notes.push(ProdNote { id: id.clone(), t_ms: now_ms, author: author.to_owned(), text: text.to_owned(), cut, ai });
+    Ok((id, commit_production(p, idgen, &doc)?))
+}
+
+/// Remove uma nota de gestão.
+pub fn note_delete(p: &Project, idgen: &mut IdGen, note: &Id) -> ToolResult<Command> {
+    let mut doc = production_read(p)?;
+    let before = doc.notes.len();
+    doc.notes.retain(|n| &n.id != note);
+    if doc.notes.len() == before {
+        return Err(ToolError::NotFound(note.to_string()));
+    }
+    commit_production(p, idgen, &doc)
 }
 
 // ================================================================ estados automáticos

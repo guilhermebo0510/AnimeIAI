@@ -1312,6 +1312,82 @@ fn review_cut_table_stages_lint_corrections_and_retakes() {
     assert_eq!(act_err(&mut s, "RETAKE", json!({"op": "compare", "retake": "nao-existe"})).code, code::INVALID_PARAMS);
 }
 
+#[test]
+fn production_management_history_meta_notes_and_the_ai_package() {
+    const DAY: u64 = 86_400_000;
+    let (mut s, cut, _line, _fill, _bg) = tool_doc();
+    let dir = tempfile::tempdir().unwrap();
+    // etapas em dias diferentes: o histórico guarda de/para, autor e hora
+    s.clock = aiai_core::Clock::Fixed(10 * DAY);
+    act(&mut s, "PRODUCTION", json!({"op": "set_stage", "cut": cut, "stage": "layout", "status": "in_progress"}));
+    s.clock = aiai_core::Clock::Fixed(12 * DAY);
+    act(&mut s, "PRODUCTION", json!({"op": "set_stage", "cut": cut, "stage": "layout", "status": "approved", "author": "ana"}));
+    s.clock = aiai_core::Clock::Fixed(13 * DAY);
+    let o = act(&mut s, "PRODUCTION", json!({"op": "set_stages", "cuts": [cut], "stage": "genga", "status": "review"}));
+    assert!(o["revision"].as_u64().is_some(), "{o}");
+    // o mesmo estado de novo não gera passo nem evento
+    let same = act(&mut s, "PRODUCTION", json!({"op": "set_stages", "cuts": [cut], "stage": "genga", "status": "review"}));
+    assert_eq!(same["changed"], 0, "{same}");
+    let h = act(&mut s, "PRODUCTION", json!({"op": "history"}));
+    let ev = h["events"].as_array().unwrap();
+    let stage_events: Vec<&Value> = ev.iter().filter(|e| e["stage"].is_string()).collect();
+    assert_eq!(stage_events.len(), 3, "{h}");
+    // mais novo primeiro
+    assert_eq!((stage_events[0]["stage"].as_str(), stage_events[0]["to"].as_str()), (Some("genga"), Some("review")));
+    assert_eq!((stage_events[1]["from"].as_str(), stage_events[1]["to"].as_str(), stage_events[1]["author"].as_str()), (Some("in_progress"), Some("approved"), Some("ana")));
+    assert_eq!(stage_events[2]["t_ms"].as_u64(), Some(10 * DAY));
+    assert_eq!(act(&mut s, "PRODUCTION", json!({"op": "history", "limit": 1}))["events"].as_array().unwrap().len(), 1);
+
+    // prazo, responsável e peso (um passo de undo); texto vazio limpa
+    act(&mut s, "PRODUCTION", json!({"op": "set_meta", "cuts": [cut], "due": "2026-10-30", "assignee": "Ana", "weight": 2.5}));
+    let row = &act(&mut s, "PRODUCTION", json!({"op": "cut_table"}))["cuts"][0];
+    assert_eq!((row["due"].as_str(), row["assignee"].as_str(), row["weight"].as_f64()), (Some("2026-10-30"), Some("Ana"), Some(2.5)), "{row}");
+    assert_eq!(act_err(&mut s, "PRODUCTION", json!({"op": "set_meta", "cuts": [cut], "due": "30/10/2026"})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut s, "PRODUCTION", json!({"op": "set_meta", "cuts": [cut]})).code, code::INVALID_PARAMS);
+    act(&mut s, "UNDO", json!({}));
+    let row = &act(&mut s, "PRODUCTION", json!({"op": "cut_table"}))["cuts"][0];
+    assert!(row["due"].is_null() && row["assignee"].is_null() && row["weight"].is_null(), "{row}");
+    act(&mut s, "REDO", json!({}));
+    act(&mut s, "PRODUCTION", json!({"op": "set_meta", "cuts": [cut], "assignee": ""}));
+    assert!(act(&mut s, "PRODUCTION", json!({"op": "cut_table"}))["cuts"][0]["assignee"].is_null());
+
+    // estatísticas e gargalos
+    s.clock = aiai_core::Clock::Fixed(20 * DAY);
+    let st = act(&mut s, "PRODUCTION", json!({"op": "stats"}));
+    assert_eq!(st["stats"]["stages"].as_array().unwrap().len(), 8);
+    assert_eq!(st["stats"]["has_history"], true);
+    assert_eq!(st["stats"]["total_cuts"], 1);
+    let bn = act(&mut s, "PRODUCTION", json!({"op": "bottlenecks", "stuck_days": 3}));
+    assert_eq!(bn["flows"].as_array().unwrap().len(), 8);
+    // Genga em revisão há 7 dias (> 3): travado
+    assert!(bn["findings"].as_array().unwrap().iter().any(|f| f["finding"]["kind"] == "stuck"), "{bn}");
+
+    // notas com carimbo; a IA devolve texto, nunca muda o projeto
+    let rev_before = act(&mut s, "QUERY", json!({"query": {"kind": "project"}}))["revision"].clone();
+    let pkg_file = dir.path().join("saida").join("analise.json");
+    let p = act(&mut s, "PRODUCTION", json!({"op": "analysis_package", "out": pkg_file.display().to_string()}));
+    assert_eq!(p["package"]["versao_pacote"], 1);
+    assert_eq!(act(&mut s, "QUERY", json!({"query": {"kind": "project"}}))["revision"], rev_before, "o pacote não muda o projeto");
+    let on_disk: Value = serde_json::from_str(&std::fs::read_to_string(&pkg_file).unwrap()).unwrap();
+    assert_eq!(on_disk["cortes"], 1);
+    let n = act(&mut s, "PRODUCTION", json!({"op": "note_add", "text": "Douga está parada", "ai": true, "author": "agent:claude", "cut": cut}));
+    assert_eq!(n["t_ms"].as_u64(), Some(20 * DAY));
+    let list = act(&mut s, "PRODUCTION", json!({"op": "note_list"}));
+    assert_eq!((list["notes"][0]["ai"].clone(), list["notes"][0]["author"].as_str()), (json!(true), Some("agent:claude")));
+    // as notas entram no pacote seguinte
+    let p2 = act(&mut s, "PRODUCTION", json!({"op": "analysis_package"}));
+    assert_eq!(p2["package"]["notas"][0]["texto"], "Douga está parada");
+    assert_eq!(act_err(&mut s, "PRODUCTION", json!({"op": "note_add", "text": "  "})).code, code::INVALID_PARAMS);
+    act(&mut s, "PRODUCTION", json!({"op": "note_delete", "note": n["note"]}));
+    assert!(act(&mut s, "PRODUCTION", json!({"op": "note_list"}))["notes"].as_array().unwrap().is_empty());
+
+    // CSV e chaves desconhecidas
+    let csv = act(&mut s, "PRODUCTION", json!({"op": "stats_csv"}));
+    assert!(csv["csv"].as_str().unwrap().contains("semana_inicio"));
+    assert_eq!(act_err(&mut s, "PRODUCTION", json!({"op": "history", "bogus": 1})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut s, "PRODUCTION", json!({"op": "analysis_package", "out": "relativo.json"})).code, code::INVALID_PARAMS);
+}
+
 /// Coluna média dos pixels escuros (traço vertical) de uma imagem.
 fn dark_column(img: &image::RgbaImage) -> f32 {
     let (mut sum, mut n) = (0.0f32, 0.0f32);
