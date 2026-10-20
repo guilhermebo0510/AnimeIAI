@@ -63,9 +63,10 @@ fn main() -> eframe::Result {
     if let Some(pid) = cli.wait_pid {
         aiai_studio::gpu_mem::wait_for_exit(pid, std::time::Duration::from_secs(15));
     }
-    // execuções interativas se reabrem sozinhas se a GPU se perder; as de automação (bridge, captura) não
+    // execuções do usuário se reabrem sozinhas se a GPU se perder, inclusive com a bridge ligada (o app do dia a dia
+    // roda com ela para o MCP); as de automação (testes com --no-session, captura) não
     let args: Vec<String> = std::env::args().skip(1).collect();
-    aiai_studio::gpu_mem::set_relaunch(&args, !cli.bridge && cli.screenshot.is_none(), cli.wait_pid.is_some());
+    aiai_studio::gpu_mem::set_relaunch(&args, !cli.no_session && cli.screenshot.is_none(), cli.wait_pid.is_some());
     let (w, h) = cli.size.unwrap_or((1440.0, 900.0));
     let mut wgpu_setup = egui_wgpu::WgpuSetupCreateNew::without_display_handle();
     // Teste da resiliência de VRAM sem esgotar a placa de verdade (que é dividida com outros programas): o wgpu trata o
