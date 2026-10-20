@@ -37,6 +37,7 @@ aiai-audio = { workspace = true }
 aiai-3d-core = { path = "../aiai-3d-core" }
 aiai-3d-render = { path = "../aiai-3d-render" }
 aiai-3d-model = { path = "../aiai-3d-model" }
+aiai-3d-edit = { path = "../aiai-3d-edit" }
 aiai-assets = { path = "../aiai-assets" }
 glam = { workspace = true }
 pollster = "1"

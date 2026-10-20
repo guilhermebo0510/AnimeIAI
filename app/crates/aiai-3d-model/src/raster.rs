@@ -381,7 +381,7 @@ pub(crate) mod tests {
             normals.extend([n; 4]);
             indices.extend([b, b + 1, b + 2, b, b + 2, b + 3]);
         }
-        let mut m = Model { parts: vec![Part { name: "cubo".into(), positions, normals, indices, color: [0.8, 0.2, 0.1, 1.0], material: "m".into() }], info: ModelInfo::default() };
+        let mut m = Model { parts: vec![Part { name: "cubo".into(), positions, normals, indices, color: [0.8, 0.2, 0.1, 1.0], material: "m".into() }], info: ModelInfo::default(), skin: None };
         m.refresh_info();
         m
     }
@@ -395,6 +395,7 @@ pub(crate) mod tests {
             outline_px: 2.0,
             outline_color: [0.0, 0.0, 0.0],
             color: None,
+            pose: None,
         }
     }
 

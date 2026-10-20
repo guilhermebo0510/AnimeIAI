@@ -60,8 +60,14 @@ pub enum PanelKind {
     Library,
     /// Prévia do recurso da Biblioteca: turntable 3D, teste de repetição 3×3, amostras da paleta; ações e metadados.
     LibraryPreview,
-    /// Modelagem 3D (em construção): diz o que o workspace vai ter.
+    /// Modelagem: viewport 3D (renderer cel com contorno, modos Objeto/Edição, operadores, navegação).
     Modeling,
+    /// Modelagem: objetos do documento (adicionar primitivas, abrir, salvar, enviar ao Layout).
+    ModelOutliner,
+    /// Modelagem: propriedades do objeto ativo (transformação, cor toon, sombreamento, malha).
+    ModelProps,
+    /// Modelagem: pilha de modificadores (espelho, subdivisão, array).
+    ModelModifiers,
     /// Texto: fonte, tamanho, cor, alinhamento, contorno e sombra da camada de texto.
     Text,
     /// Mesa de luz (papel cebola): desenhos vizinhos por baixo do atual no canvas.
@@ -159,7 +165,7 @@ const DRAWING_WS: &[WorkspaceId] = &[W::Personagens, W::Layout, W::Cenario, W::A
 const LIBRARY_WS: &[WorkspaceId] = &[W::Biblioteca, W::Modelagem, W::Personagens, W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Composicao];
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 46] = [
+    pub const ALL: [PanelKind; 49] = [
         PanelKind::Canvas,
         PanelKind::Layers,
         PanelKind::Properties,
@@ -197,6 +203,9 @@ impl PanelKind {
         PanelKind::Library,
         PanelKind::LibraryPreview,
         PanelKind::Modeling,
+        PanelKind::ModelOutliner,
+        PanelKind::ModelProps,
+        PanelKind::ModelModifiers,
         PanelKind::Text,
         PanelKind::LightTable,
         PanelKind::SceneInfo,
@@ -257,6 +266,9 @@ impl PanelKind {
             PanelKind::Library => "panel.library.title",
             PanelKind::LibraryPreview => "panel.library_preview.title",
             PanelKind::Modeling => "panel.modeling.title",
+            PanelKind::ModelOutliner => "panel.model_outliner.title",
+            PanelKind::ModelProps => "panel.model_props.title",
+            PanelKind::ModelModifiers => "panel.model_modifiers.title",
             PanelKind::Text => "panel.text.title",
             PanelKind::LightTable => "panel.light_table.title",
             PanelKind::SceneInfo => "panel.scene_info.title",
@@ -309,6 +321,9 @@ impl PanelKind {
             PanelKind::Library => "panel.library.empty",
             PanelKind::LibraryPreview => "panel.library_preview.empty",
             PanelKind::Modeling => "panel.modeling.empty",
+            PanelKind::ModelOutliner => "panel.model_outliner.empty",
+            PanelKind::ModelProps => "panel.model_props.empty",
+            PanelKind::ModelModifiers => "panel.model_modifiers.empty",
             PanelKind::Text => "panel.text.empty",
             PanelKind::LightTable => "panel.light_table.empty",
             PanelKind::SceneInfo => "panel.scene_info.empty",
@@ -363,6 +378,9 @@ impl PanelKind {
             PanelKind::Library => (C::Resources, Bottom, LIBRARY_WS, false),
             PanelKind::LibraryPreview => (C::Resources, Right, LIBRARY_WS, false),
             PanelKind::Modeling => (C::Resources, Center, &[W::Modelagem], false),
+            PanelKind::ModelOutliner => (C::Resources, Left, &[W::Modelagem], false),
+            PanelKind::ModelProps => (C::Resources, Right, &[W::Modelagem], false),
+            PanelKind::ModelModifiers => (C::Resources, Right, &[W::Modelagem], false),
             PanelKind::Text => (C::Drawing, Right, &[W::Layout, W::Cenario, W::Animacao, W::Composicao, W::Edicao], false),
             PanelKind::LightTable => (C::Drawing, Right, &[W::Animacao, W::Pintura], false),
             PanelKind::SceneInfo => (C::PreProduction, Left, &[W::Storyboard, W::Layout, W::Cenario, W::Animacao, W::Pintura], false),
@@ -378,7 +396,8 @@ impl PanelKind {
 
     /// Painel que ainda não tem conteúdo: só explica o que vem (Modelagem).
     pub fn is_planned(self) -> bool {
-        matches!(self, PanelKind::Modeling)
+        // S24 3D (fase 12): a Modelagem ganhou o viewport; nenhum painel está em construção agora
+        false
     }
 }
 
@@ -427,7 +446,10 @@ pub fn factory_rev(ws: WorkspaceId) -> u32 {
         // S24: fábricas novas (cada etapa de desenho com a sua cara) e os workspaces novos
         // S24: Réguas (perspectiva) em aba com os pincéis
         W::Layout => 3,
-        W::Cenario | W::Pintura | W::Modelagem => 2,
+        W::Cenario | W::Pintura => 2,
+        // S24 3D (fase 12): viewport 3D no centro, Objetos e Biblioteca à esquerda, Propriedades do objeto e
+        // Modificadores à direita
+        W::Modelagem => 3,
         // S24 2.7–2.8: Biblioteca de verdade (árvore e grade, prévia e metadados) com as Cores para editar paletas
         W::Biblioteca => 3,
         // S24 3.1–3.5: viewer no centro, Linha do tempo da composição embaixo, Efeitos e predefinições e Controles de
@@ -509,7 +531,13 @@ fn default_node(ws: WorkspaceId) -> Node {
         ]),
         // biblioteca de recursos: a árvore e a grade grandes, a prévia com os metadados ao lado e as Cores (paletas) à direita
         W::Biblioteca => Row(vec![(0.50, Pane(P::Library)), (0.27, Pane(P::LibraryPreview)), (0.23, Pane(P::Palette))]),
-        W::Modelagem => Row(vec![(0.18, Pane(P::Characters)), (0.56, Pane(P::Modeling)), (0.26, Pane(P::SubView))]),
+        // modelagem de adereços (S24 3D, fase 12): objetos em cima à esquerda com as referências embaixo, o viewport 3D
+        // grande no centro e, à direita, as propriedades do objeto sobre a pilha de modificadores
+        W::Modelagem => Row(vec![
+            (0.19, Col(vec![(0.58, Pane(P::ModelOutliner)), (0.42, Pane(P::SubView))])),
+            (0.55, Pane(P::Modeling)),
+            (0.26, Col(vec![(0.58, Pane(P::ModelProps)), (0.42, Pane(P::ModelModifiers))])),
+        ]),
         // nível Audition (S24 11): cortes, forma de onda grande, monitor (imagem do corte) sobre os medidores e o rack/voz
         // na altura toda à direita; multipista embaixo com o Mixer e a linha do tempo em abas
         W::Audio => Col(vec![
@@ -1165,7 +1193,7 @@ mod tests {
             (W::Pintura, 2, 0xfc53133a1f95cbd3),
             (W::Composicao, 3, 0x25b2c7d156032ce4),
             (W::Biblioteca, 3, 0x1a430bf82b451dc2),
-            (W::Modelagem, 2, 0xcccad1946cd12fc3),
+            (W::Modelagem, 3, 0x575fe9a79c6ad671),
             (W::Audio, 2, 0xb370ba9cf04cb8ac),
             (W::Edicao, 3, 0x3d752f0083dbd76d),
             (W::Entrega, 1, 0x6989668e53aa64aa),

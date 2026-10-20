@@ -1,12 +1,14 @@
 //! Importação de modelos 3D para o [`Model`] normalizado: glTF 2.0 (`.gltf` com buffers externos ou data-URI, `.glb`),
 //! vários nós e várias malhas, com as transformações dos nós aplicadas; e OBJ (com `.mtl` para a cor `Kd`).
 //!
-//! Na v1: pele (skin), animações e morphs são ignorados com aviso (o modelo aparece na pose de repouso); texturas não são
-//! lidas (cor base do material); VRM é recusado com "em breve" (a permissão de uso do VRM precisa ser mostrada e
-//! guardada antes, ver `S24-pesquisa/3d.md` b.4). Erros nunca são silenciosos: arquivo ruim vira [`ImportError`].
+//! A pele (skin) do glTF é lida (S24 3D, fase 9): o esqueleto da primeira pele e os pesos `JOINTS_0`/`WEIGHTS_0` vão para
+//! [`Skin`], com a malha já levada à pose de repouso, e o modelo fica posável por nome de osso (skinning na CPU,
+//! [`crate::pose`]). Animações e morphs são ignorados com aviso; texturas não são lidas (cor base do material); VRM é
+//! recusado com "em breve" (a permissão de uso do VRM precisa ser mostrada e guardada antes, ver `S24-pesquisa/3d.md`
+//! b.4). Erros nunca são silenciosos: arquivo ruim vira [`ImportError`].
 
 use crate::gltf::{self, GltfError, ParsedGltf};
-use crate::model::{LicenseInfo, Model, ModelInfo, Part, smooth_normals};
+use crate::model::{LicenseInfo, Model, ModelInfo, Part, PartSkin, Skin, SkinBone, smooth_normals};
 use base64::Engine;
 use glam::{Mat3, Mat4, Quat, Vec3};
 use serde_json::Value;
@@ -88,7 +90,18 @@ pub fn import_bytes(bytes: &[u8], ext: &str, file_name: &str, resolver: &dyn Fn(
 
 /// Limites e contagens finais.
 fn finish(mut model: Model) -> Result<Model, ImportError> {
+    if let Some(skin) = model.skin.as_mut() {
+        let keep: Vec<bool> = model.parts.iter().map(|p| p.triangles() > 0).collect();
+        let mut i = 0;
+        skin.parts.retain(|_| {
+            i += 1;
+            keep[i - 1]
+        });
+    }
     model.parts.retain(|p| p.triangles() > 0);
+    if let Some(skin) = &model.skin {
+        skin.validate(&model.parts).map_err(|e| ImportError(format!("pele inválida: {e}")))?;
+    }
     model.refresh_info();
     if model.parts.is_empty() {
         return err("o arquivo não tem nenhuma malha de triângulos");
@@ -223,9 +236,36 @@ fn from_gltf_json(json: Value, bin: Option<Vec<u8>>, resolver: &dyn Fn(&str) -> 
             (0..nodes.len()).filter(|i| !child[*i]).collect()
         }
     };
-    if json.get("skins").and_then(Value::as_array).is_some_and(|a| !a.is_empty()) {
-        warnings.push("pele (skin) ignorada na v1: o modelo aparece na pose de repouso".into());
+    // transformação global de cada nó (a pele precisa das juntas, que podem estar fora do caminho das malhas)
+    let mut globals = vec![Mat4::IDENTITY; nodes.len()];
+    let mut parent_of: Vec<Option<usize>> = vec![None; nodes.len()];
+    {
+        let mut st: Vec<(usize, Mat4)> = roots.iter().rev().map(|r| (*r, Mat4::IDENTITY)).collect();
+        let mut seen = vec![false; nodes.len()];
+        while let Some((ni, parent)) = st.pop() {
+            let Some(node) = nodes.get(ni) else { continue };
+            if std::mem::replace(&mut seen[ni], true) {
+                continue;
+            }
+            globals[ni] = parent * node_local(node);
+            for c in node.get("children").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_u64) {
+                if (c as usize) < nodes.len() {
+                    parent_of[c as usize] = Some(ni);
+                    st.push((c as usize, globals[ni]));
+                }
+            }
+        }
     }
+    let skin_setup = match json.get("skins").and_then(Value::as_array).filter(|a| !a.is_empty()) {
+        Some(skins) => {
+            if skins.len() > 1 {
+                warnings.push(format!("{} peles no arquivo: só a primeira é usada para posar", skins.len()));
+            }
+            Some(skin_setup(&parsed, &skins[0], &globals, &parent_of)?)
+        }
+        None => None,
+    };
+    let mut part_skins: Vec<PartSkin> = Vec::new();
     if json.get("animations").and_then(Value::as_array).is_some_and(|a| !a.is_empty()) {
         warnings.push("animações do arquivo ignoradas (anime pela camada: transformação e câmera por chaves)".into());
     }
@@ -243,9 +283,16 @@ fn from_gltf_json(json: Value, bin: Option<Vec<u8>>, resolver: &dyn Fn(&str) -> 
             let mesh = &json["meshes"][mi as usize];
             let mesh_name = mesh.get("name").and_then(Value::as_str).or_else(|| node.get("name").and_then(Value::as_str)).map(String::from).unwrap_or_else(|| format!("malha {mi}"));
             let prims = mesh.get("primitives").and_then(Value::as_array).cloned().unwrap_or_default();
+            // malha com pele (a da primeira pele): vértices no espaço de bind, levados ao repouso pelas juntas
+            let skinned = node.get("skin").and_then(Value::as_u64) == Some(0);
+            let sk = skin_setup.as_ref().filter(|_| skinned);
             for (pi, prim) in prims.iter().enumerate() {
-                match primitive_part(&parsed, prim, &world, &mesh_name, pi, prims.len(), &mut warnings)? {
-                    Some(p) => parts.push(p),
+                match primitive_part(&parsed, prim, &world, &mesh_name, pi, prims.len(), &mut warnings, sk)? {
+                    Some((p, ps)) => {
+                        let ps = ps.unwrap_or_else(|| rigid_part_skin(skin_setup.as_ref(), ni, &parent_of, p.positions.len()));
+                        parts.push(p);
+                        part_skins.push(ps);
+                    }
                     None => continue,
                 }
                 let tris: usize = parts.iter().map(Part::triangles).sum();
@@ -268,10 +315,110 @@ fn from_gltf_json(json: Value, bin: Option<Vec<u8>>, resolver: &dyn Fn(&str) -> 
         }
         info.warnings = a.get("warnings").and_then(|w| serde_json::from_value::<Vec<String>>(w.clone()).ok()).unwrap_or_default();
     }
-    Ok(Model { parts, info })
+    let skin = skin_setup.map(|s| Skin { bones: s.bones, parts: part_skins });
+    Ok(Model { parts, info, skin })
 }
 
-fn primitive_part(parsed: &ParsedGltf, prim: &Value, world: &Mat4, mesh_name: &str, pi: usize, n: usize, warnings: &mut Vec<String>) -> Result<Option<Part>, ImportError> {
+/// Esqueleto de uma pele do glTF: ossos (juntas em ordem de pai antes de filho, com o repouso global), o mapa junta da
+/// pele → osso e a matriz de cada junta no repouso (global × inversa de bind), que leva o vértice do bind ao repouso.
+struct SkinSetup {
+    bones: Vec<SkinBone>,
+    /// Junta k da pele → índice do osso.
+    bone_of_joint: Vec<usize>,
+    /// Nó → índice do osso (só os nós que são juntas).
+    bone_of_node: std::collections::HashMap<usize, usize>,
+    joint_mats: Vec<Mat4>,
+}
+
+fn skin_setup(parsed: &ParsedGltf, skin: &Value, globals: &[Mat4], parent_of: &[Option<usize>]) -> Result<SkinSetup, ImportError> {
+    let joints: Vec<usize> = skin.get("joints").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).map(|x| x as usize).collect()).unwrap_or_default();
+    if joints.is_empty() || joints.iter().any(|&j| j >= globals.len()) {
+        return err("pele com juntas ausentes ou fora da lista de nós");
+    }
+    if joints.len() > u16::MAX as usize {
+        return err("pele com juntas demais");
+    }
+    let ibm: Vec<Mat4> = match skin.get("inverseBindMatrices").and_then(Value::as_u64) {
+        Some(a) => {
+            let v = gltf::read_accessor_f32(parsed, a as usize)?;
+            if v.len() < joints.len() * 16 {
+                return err("pele: inverseBindMatrices menor que o número de juntas");
+            }
+            v.chunks_exact(16).take(joints.len()).map(|c| Mat4::from_cols_slice(c)).collect()
+        }
+        None => vec![Mat4::IDENTITY; joints.len()],
+    };
+    let joint_set: std::collections::HashSet<usize> = joints.iter().copied().collect();
+    // pai = o ancestral mais próximo que também é junta
+    let joint_parent = |j: usize| -> Option<usize> {
+        let mut cur = parent_of[j];
+        let mut guard = 0;
+        while let Some(c) = cur {
+            if joint_set.contains(&c) {
+                return Some(c);
+            }
+            cur = parent_of[c];
+            guard += 1;
+            if guard > 100_000 {
+                break;
+            }
+        }
+        None
+    };
+    let depth = |j: usize| -> usize {
+        let mut d = 0;
+        let mut cur = joint_parent(j);
+        while let Some(c) = cur {
+            d += 1;
+            cur = joint_parent(c);
+            if d > 10_000 {
+                break;
+            }
+        }
+        d
+    };
+    let mut order: Vec<usize> = (0..joints.len()).collect();
+    order.sort_by_key(|&k| depth(joints[k]));
+    let mut bone_of_node = std::collections::HashMap::new();
+    let mut bone_of_joint = vec![0usize; joints.len()];
+    let mut bones = Vec::with_capacity(joints.len());
+    for &k in &order {
+        let node = joints[k];
+        let (_, rot, pos) = globals[node].to_scale_rotation_translation();
+        let name = parsed.json["nodes"][node].get("name").and_then(Value::as_str).map(String::from).unwrap_or_else(|| format!("osso {node}"));
+        let parent = joint_parent(node).and_then(|p| bone_of_node.get(&p).copied());
+        bone_of_joint[k] = bones.len();
+        bone_of_node.insert(node, bones.len());
+        bones.push(SkinBone { name, parent, rest_pos: pos.to_array(), rest_rot: rot.normalize().to_array() });
+    }
+    let joint_mats = joints.iter().zip(&ibm).map(|(&j, m)| globals[j] * *m).collect();
+    Ok(SkinSetup { bones, bone_of_joint, bone_of_node, joint_mats })
+}
+
+/// Parte sem pele num modelo com pele: segue a junta ancestral mais próxima do nó (ou fica parada, peso 0).
+fn rigid_part_skin(setup: Option<&SkinSetup>, node: usize, parent_of: &[Option<usize>], n: usize) -> PartSkin {
+    let Some(s) = setup else { return PartSkin::default() };
+    let mut cur = Some(node);
+    while let Some(c) = cur {
+        if let Some(&b) = s.bone_of_node.get(&c) {
+            return PartSkin { joints: vec![[b as u16, 0, 0, 0]; n], weights: vec![[1.0, 0.0, 0.0, 0.0]; n] };
+        }
+        cur = parent_of[c];
+    }
+    PartSkin { joints: vec![[0; 4]; n], weights: vec![[0.0; 4]; n] }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn primitive_part(
+    parsed: &ParsedGltf,
+    prim: &Value,
+    world: &Mat4,
+    mesh_name: &str,
+    pi: usize,
+    n: usize,
+    warnings: &mut Vec<String>,
+    skin: Option<&SkinSetup>,
+) -> Result<Option<(Part, Option<PartSkin>)>, ImportError> {
     let mode = prim.get("mode").and_then(Value::as_u64).unwrap_or(4);
     if !matches!(mode, 4..=6) {
         warnings.push(format!("{mesh_name}: primitiva {pi} com modo {mode} (pontos/linhas) pulada"));
@@ -315,20 +462,76 @@ fn primitive_part(parsed: &ParsedGltf, prim: &Value, world: &Mat4, mesh_name: &s
             }
         }
     }
+    // pele: pesos por vértice e a matriz de repouso de cada vértice (soma ponderada das juntas)
+    let mut part_skin = None;
+    let mut vert_mats: Option<Vec<Mat4>> = None;
+    if let Some(sk) = skin {
+        let ji = prim.pointer("/attributes/JOINTS_0").and_then(Value::as_u64);
+        let wi = prim.pointer("/attributes/WEIGHTS_0").and_then(Value::as_u64);
+        if let (Some(ji), Some(wi)) = (ji, wi) {
+            let jv = gltf::read_accessor_f32(parsed, ji as usize)?;
+            let wv = gltf::read_accessor_f32(parsed, wi as usize)?;
+            if jv.len() != count * 4 || wv.len() != count * 4 {
+                return err(format!("{mesh_name}: JOINTS_0/WEIGHTS_0 sem 4 valores por vértice"));
+            }
+            let mut joints = Vec::with_capacity(count);
+            let mut weights = Vec::with_capacity(count);
+            let mut mats = Vec::with_capacity(count);
+            for v in 0..count {
+                let mut j4 = [0u16; 4];
+                let mut w4 = [0f32; 4];
+                let mut m = Mat4::ZERO;
+                let mut sum = 0.0;
+                for k in 0..4 {
+                    let jk = jv[v * 4 + k] as usize;
+                    let wk = wv[v * 4 + k].max(0.0);
+                    if wk <= 0.0 {
+                        continue;
+                    }
+                    if jk >= sk.bone_of_joint.len() {
+                        return err(format!("{mesh_name}: junta {jk} fora da pele"));
+                    }
+                    j4[k] = sk.bone_of_joint[jk] as u16;
+                    w4[k] = wk;
+                    m += sk.joint_mats[jk] * wk;
+                    sum += wk;
+                }
+                if sum > 1e-6 {
+                    for w in &mut w4 {
+                        *w /= sum;
+                    }
+                    m *= 1.0 / sum;
+                } else {
+                    m = Mat4::IDENTITY;
+                }
+                joints.push(j4);
+                weights.push(w4);
+                mats.push(m);
+            }
+            part_skin = Some(PartSkin { joints, weights });
+            vert_mats = Some(mats);
+        } else {
+            warnings.push(format!("{mesh_name}: malha com pele sem JOINTS_0/WEIGHTS_0 (fica parada)"));
+        }
+    }
     let normal_m = Mat3::from_mat4(*world).inverse().transpose();
-    let positions: Vec<[f32; 3]> = pos.chunks_exact(3).map(|p| world.transform_point3(Vec3::new(p[0], p[1], p[2])).to_array()).collect();
-    if world.determinant() < 0.0 {
+    let positions: Vec<[f32; 3]> = match &vert_mats {
+        Some(ms) => pos.chunks_exact(3).zip(ms).map(|(p, m)| m.transform_point3(Vec3::new(p[0], p[1], p[2])).to_array()).collect(),
+        None => pos.chunks_exact(3).map(|p| world.transform_point3(Vec3::new(p[0], p[1], p[2])).to_array()).collect(),
+    };
+    if vert_mats.is_none() && world.determinant() < 0.0 {
         for t in indices.chunks_exact_mut(3) {
             t.swap(1, 2);
         }
     }
-    let normals = match nor {
-        Some(v) => v.chunks_exact(3).map(|q| (normal_m * Vec3::new(q[0], q[1], q[2])).normalize_or(Vec3::Y).to_array()).collect(),
-        None => smooth_normals(&positions, &indices),
+    let normals = match (nor, &vert_mats) {
+        (Some(v), Some(ms)) => v.chunks_exact(3).zip(ms).map(|(q, m)| (Mat3::from_mat4(*m) * Vec3::new(q[0], q[1], q[2])).normalize_or(Vec3::Y).to_array()).collect(),
+        (Some(v), None) => v.chunks_exact(3).map(|q| (normal_m * Vec3::new(q[0], q[1], q[2])).normalize_or(Vec3::Y).to_array()).collect(),
+        (None, _) => smooth_normals(&positions, &indices),
     };
     let (color, material) = material_of(&parsed.json, prim.get("material").and_then(Value::as_u64));
     let name = if n > 1 { format!("{mesh_name}.{pi}") } else { mesh_name.to_string() };
-    Ok(Some(Part { name, positions, normals, indices, color, material }))
+    Ok(Some((Part { name, positions, normals, indices, color, material }, part_skin)))
 }
 
 // ------------------------------------------------------------------------------------------------------------- OBJ
@@ -486,7 +689,7 @@ fn from_obj(bytes: &[u8], resolver: &dyn Fn(&str) -> Option<Vec<u8>>) -> Result<
             Part { name, positions: b.positions, normals, indices: b.indices, color, material: b.material }
         })
         .collect();
-    Ok(Model { parts, info: ModelInfo { format: "obj".into(), license, warnings, ..Default::default() } })
+    Ok(Model { parts, info: ModelInfo { format: "obj".into(), license, warnings, ..Default::default() }, skin: None })
 }
 
 #[cfg(test)]

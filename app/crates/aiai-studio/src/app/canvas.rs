@@ -602,6 +602,8 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
                     ToolId::Ruler => env.ed.gesture = super::rulers::press(env, c, &xf),
                     // as da Composição agem pelo viewer (`comp_viewer::press`)
                     ToolId::Hand | ToolId::Points | ToolId::Text | ToolId::Rotate | ToolId::Anchor | ToolId::Camera | ToolId::Model3d => {}
+                    // as da Modelagem agem no viewport 3D (não há canvas lá)
+                    _ => {}
                 }
             }
         }

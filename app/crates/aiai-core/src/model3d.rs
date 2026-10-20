@@ -10,6 +10,7 @@ use crate::blob::BlobHash;
 use crate::keys::KeyTracks;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Versão do esquema de `params.model3d`.
 pub const MODEL3D_VERSION: u32 = 1;
@@ -22,8 +23,12 @@ pub const MAX_FOV_DEG: f32 = 150.0;
 pub const MIN_DISTANCE: f32 = 1e-3;
 pub const MAX_OUTLINE_PX: f32 = 64.0;
 
+/// Propriedade das chaves de pose (S24 3D, fase 8): o valor de cada chave é o índice da pose em `pose.keyed`; entre
+/// duas chaves a pose é misturada (slerp por osso) com o easing do trecho (`hold` segura a pose até a próxima chave).
+pub const POSE_KEY: &str = "m3d.pose";
+
 /// Propriedades animáveis (chaves do `KeyTracks` da camada). Fora desta lista, um nome começado por `m3d.` é erro.
-pub const KEY_PROPS: [&str; 16] = [
+pub const KEY_PROPS: [&str; 17] = [
     "m3d.pos.x",
     "m3d.pos.y",
     "m3d.pos.z",
@@ -40,6 +45,7 @@ pub const KEY_PROPS: [&str; 16] = [
     "m3d.cam.target.x",
     "m3d.cam.target.y",
     "m3d.cam.target.z",
+    POSE_KEY,
 ];
 
 /// Transformação do modelo no mundo: posição (m), rotação em graus (Euler X→Y→Z, eixos do mundo) e escala por eixo.
@@ -158,6 +164,198 @@ impl Default for Render3d {
     }
 }
 
+/// Pose de um modelo com esqueleto (Manequim ou modelo importado com pele): por nome de osso, a rotação **delta** sobre o
+/// repouso (quatérnio `[x, y, z, w]`, lida nos eixos do mundo quando os pais estão em repouso, a convenção do Posing do
+/// ANIGO) e o deslocamento do osso raiz (quadril) em metros. Osso ausente = repouso. Nomes que o esqueleto não tem são
+/// ignorados ao aplicar (a mesma pose serve para esqueletos com os mesmos nomes humanoides).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
+pub struct Pose3d {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub rotations: BTreeMap<String, [f32; 4]>,
+    #[serde(default, skip_serializing_if = "is_zero3")]
+    pub hips: [f32; 3],
+}
+
+fn is_zero3(v: &[f32; 3]) -> bool {
+    v.iter().all(|c| c.abs() <= 1e-7)
+}
+
+/// Limite do deslocamento do quadril (m).
+pub const MAX_HIPS: f32 = 50.0;
+
+/// Quatérnio normalizado com `w >= 0` (q e -q são a mesma rotação); `None` se não finito ou nulo.
+pub fn quat_canonical(q: [f32; 4]) -> Option<[f32; 4]> {
+    let l = q.iter().map(|c| c * c).sum::<f32>().sqrt();
+    if !l.is_finite() || l < 1e-6 {
+        return None;
+    }
+    let s = if q[3] < 0.0 { -1.0 / l } else { 1.0 / l };
+    Some(q.map(|c| c * s))
+}
+
+fn quat_is_identity(q: [f32; 4]) -> bool {
+    (q[3].abs() - 1.0).abs() <= 1e-6 && q[0].abs() <= 1e-6 && q[1].abs() <= 1e-6 && q[2].abs() <= 1e-6
+}
+
+/// Slerp pelo caminho curto entre dois quatérnios unitários.
+pub fn quat_slerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+    let mut dot: f32 = (0..4).map(|i| a[i] * b[i]).sum();
+    let b = if dot < 0.0 {
+        dot = -dot;
+        b.map(|c| -c)
+    } else {
+        b
+    };
+    let (wa, wb) = if dot > 0.9995 {
+        (1.0 - t, t)
+    } else {
+        let th = dot.clamp(-1.0, 1.0).acos();
+        let s = th.sin();
+        (((1.0 - t) * th).sin() / s, (t * th).sin() / s)
+    };
+    let q = [0, 1, 2, 3].map(|i| a[i] * wa + b[i] * wb);
+    quat_canonical(q).unwrap_or([0.0, 0.0, 0.0, 1.0])
+}
+
+impl Pose3d {
+    /// Rotação delta do osso (identidade se ausente).
+    pub fn rotation(&self, bone: &str) -> [f32; 4] {
+        self.rotations.get(bone).copied().and_then(quat_canonical).unwrap_or([0.0, 0.0, 0.0, 1.0])
+    }
+
+    /// Define a rotação delta (identidade remove a entrada). Normaliza.
+    pub fn set_rotation(&mut self, bone: &str, q: [f32; 4]) {
+        match quat_canonical(q) {
+            Some(q) if !quat_is_identity(q) => {
+                self.rotations.insert(bone.to_string(), q);
+            }
+            _ => {
+                self.rotations.remove(bone);
+            }
+        }
+    }
+
+    pub fn is_rest(&self) -> bool {
+        self.rotations.is_empty() && is_zero3(&self.hips)
+    }
+
+    /// Mistura `a → b` em `t` (slerp por osso, lerp do quadril).
+    pub fn blend(a: &Pose3d, b: &Pose3d, t: f32) -> Pose3d {
+        // nas pontas, a pose exata (sem o ruído da renormalização): o "hold" devolve a própria pose da chave
+        if t <= 0.0 {
+            return a.clone();
+        }
+        if t >= 1.0 {
+            return b.clone();
+        }
+        let mut out = Pose3d::default();
+        let names: std::collections::BTreeSet<&String> = a.rotations.keys().chain(b.rotations.keys()).collect();
+        for n in names {
+            out.set_rotation(n, quat_slerp(a.rotation(n), b.rotation(n), t));
+        }
+        out.hips = [0, 1, 2].map(|i| a.hips[i] + (b.hips[i] - a.hips[i]) * t);
+        out
+    }
+
+    /// Espelha esquerda ↔ direita (nomes `left*`/`right*`, como no VRM): `q' = (x, -y, -z, w)`, quadril com `x → -x`.
+    pub fn mirrored(&self) -> Pose3d {
+        let mut out = Pose3d::default();
+        for (n, q) in &self.rotations {
+            out.set_rotation(&mirror_bone_name(n), [q[0], -q[1], -q[2], q[3]]);
+        }
+        out.hips = [-self.hips[0], self.hips[1], self.hips[2]];
+        out
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        for (n, q) in &self.rotations {
+            if n.is_empty() || n.len() > 128 {
+                return Err("pose: nome de osso vazio ou longo demais".into());
+            }
+            if q.iter().any(|c| !c.is_finite()) {
+                return Err(format!("pose: rotação não finita em '{n}'"));
+            }
+            let l2: f32 = q.iter().map(|c| c * c).sum();
+            if !(0.25..=4.0).contains(&l2) {
+                return Err(format!("pose: quatérnio de '{n}' não é unitário (|q|² = {l2})"));
+            }
+        }
+        if self.hips.iter().any(|c| !c.is_finite() || c.abs() > MAX_HIPS) {
+            return Err(format!("pose: quadril fora de ±{MAX_HIPS} m"));
+        }
+        Ok(())
+    }
+}
+
+/// Nome do osso do outro lado (`leftHand` ↔ `rightHand`, `tw_leftUpperArm` ↔ `tw_rightUpperArm`, `bust_L` ↔ `bust_R`);
+/// ossos do centro voltam iguais.
+pub fn mirror_bone_name(n: &str) -> String {
+    for (a, b) in [("left", "right"), ("right", "left"), ("Left", "Right"), ("Right", "Left")] {
+        if let Some(rest) = n.strip_prefix(a) {
+            return format!("{b}{rest}");
+        }
+        if let Some(i) = n.find(a) {
+            let before = &n[..i];
+            if before.ends_with('_') || before.ends_with(':') || before.ends_with('.') {
+                return format!("{before}{b}{}", &n[i + a.len()..]);
+            }
+        }
+    }
+    if let Some(s) = n.strip_suffix("_L") {
+        return format!("{s}_R");
+    }
+    if let Some(s) = n.strip_suffix("_R") {
+        return format!("{s}_L");
+    }
+    n.to_string()
+}
+
+/// Pose da camada: a pose-base (sem chaves) e as poses guardadas pelas chaves `m3d.pose` (o valor da chave é o índice).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
+pub struct PoseParams {
+    #[serde(default)]
+    pub base: Pose3d,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keyed: Vec<Pose3d>,
+}
+
+impl PoseParams {
+    /// Pose no quadro: sem chaves `m3d.pose`, a base; com chaves, a mistura das poses das duas chaves vizinhas com o
+    /// easing do trecho (índice inválido = base).
+    pub fn eval(&self, keys: &KeyTracks, frame: f32) -> Pose3d {
+        let Some(k) = keys.0.get(POSE_KEY).filter(|k| !k.is_empty()) else { return self.base.clone() };
+        let pose_at = |v: f32| -> Option<&Pose3d> {
+            let i = v.round();
+            (i >= 0.0 && (i as usize) < self.keyed.len()).then(|| &self.keyed[i as usize])
+        };
+        let one = |v: f32| pose_at(v).cloned().unwrap_or_else(|| self.base.clone());
+        let (first, last) = (&k[0], &k[k.len() - 1]);
+        if frame <= first.frame as f32 {
+            return one(first.value);
+        }
+        if frame >= last.frame as f32 {
+            return one(last.value);
+        }
+        let Some(i) = k.windows(2).position(|w| frame >= w[0].frame as f32 && frame < w[1].frame as f32) else { return one(last.value) };
+        let (a, b) = (&k[i], &k[i + 1]);
+        let t = a.ease.apply((frame - a.frame as f32) / (b.frame - a.frame) as f32);
+        match (pose_at(a.value), pose_at(b.value)) {
+            (Some(pa), Some(pb)) => Pose3d::blend(pa, pb, t),
+            _ => one(a.value),
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        self.base.validate()?;
+        for p in &self.keyed {
+            p.validate()?;
+        }
+        Ok(())
+    }
+}
+
 /// `params.model3d` de uma camada `model3d`. Chave desconhecida é erro.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -174,6 +372,9 @@ pub struct Model3dParams {
     pub camera: OrbitCam3d,
     #[serde(default)]
     pub render: Render3d,
+    /// Pose (só para modelos com esqueleto: o Manequim e modelos importados com pele). `None` = sem pose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pose: Option<PoseParams>,
 }
 
 fn version() -> u32 {
@@ -192,6 +393,9 @@ pub struct Model3dState {
     pub outline_color: [f32; 3],
     /// sRGB 0..1.
     pub color: Option<[f32; 3]>,
+    /// Pose avaliada no quadro (fora da serialização quando não há: a chave do cache das camadas sem pose não muda).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pose: Option<Pose3d>,
 }
 
 /// "#rrggbb" → sRGB 0..1.
@@ -253,6 +457,9 @@ impl Model3dParams {
         if let Some(c) = &r.color {
             parse_hex_rgb(c).map_err(|e| format!("params.model3d.render.color: {e}"))?;
         }
+        if let Some(p) = &self.pose {
+            p.validate().map_err(|e| format!("params.model3d.{e}"))?;
+        }
         Ok(())
     }
 
@@ -282,6 +489,7 @@ impl Model3dParams {
             outline_px: r.outline_px,
             outline_color: parse_hex_rgb(&r.outline_color).unwrap_or([0.1, 0.1, 0.12]),
             color: r.color.as_deref().and_then(|c| parse_hex_rgb(c).ok()),
+            pose: self.pose.as_ref().map(|p| p.eval(keys, frame)),
         }
     }
 
@@ -348,6 +556,7 @@ mod tests {
             transform: Transform3d::default(),
             camera: OrbitCam3d::default(),
             render: Render3d::default(),
+            pose: None,
         }
     }
 
@@ -398,6 +607,68 @@ mod tests {
         assert_eq!(s.camera.pitch_deg, p.camera.pitch_deg);
         assert_eq!(state_prop(&s, "m3d.pos.x"), Some(s.transform.pos[0]));
         validate_keys(&keys).unwrap();
+    }
+
+    fn q_axis(axis: [f32; 3], deg: f32) -> [f32; 4] {
+        let h = deg.to_radians() * 0.5;
+        [axis[0] * h.sin(), axis[1] * h.sin(), axis[2] * h.sin(), h.cos()]
+    }
+
+    #[test]
+    fn pose_keys_blend_between_poses_and_hold_holds() {
+        let mut p = sample();
+        let mut a = Pose3d::default();
+        a.set_rotation("leftUpperArm", q_axis([0.0, 0.0, 1.0], -80.0));
+        let mut b = Pose3d::default();
+        b.hips = [0.0, -0.4, 0.0];
+        p.pose = Some(PoseParams { base: Pose3d::default(), keyed: vec![a.clone(), b.clone()] });
+        p.validate().unwrap();
+        let mut keys = KeyTracks::default();
+        // sem chaves: a base (repouso)
+        assert!(p.eval(&keys, 3.0).pose.unwrap().is_rest());
+        keys.set_key(POSE_KEY, 0, 0.0);
+        keys.set_key(POSE_KEY, 10, 1.0);
+        validate_keys(&keys).unwrap();
+        let mid = p.eval(&keys, 5.0).pose.unwrap();
+        // metade do caminho: -40° em volta de Z
+        let q = mid.rotation("leftUpperArm");
+        let ang = 2.0 * q[3].clamp(-1.0, 1.0).acos().to_degrees();
+        assert!((ang - 40.0).abs() < 0.05, "{ang}");
+        assert!((mid.hips[1] + 0.2).abs() < 1e-5);
+        assert_eq!(p.eval(&keys, 12.0).pose.unwrap(), b, "depois da última chave, a última pose");
+        // hold: segura a primeira até a segunda chave
+        keys.set_ease(POSE_KEY, Some(&[0]), crate::keys::Ease::Hold);
+        assert_eq!(p.eval(&keys, 9.0).pose.unwrap(), a);
+        // índice inválido cai na base, sem pânico
+        keys.set_key(POSE_KEY, 20, 7.0);
+        assert!(p.eval(&keys, 25.0).pose.unwrap().is_rest());
+        // serde: a camada sem pose não grava a chave `pose`, e o estado sem pose também não (cache estável)
+        let none = sample();
+        assert!(serde_json::to_value(&none).unwrap().get("pose").is_none());
+        assert!(serde_json::to_value(none.eval(&KeyTracks::default(), 0.0)).unwrap().get("pose").is_none());
+        let back: Model3dParams = serde_json::from_value(serde_json::to_value(&p).unwrap()).unwrap();
+        assert_eq!(back, p);
+    }
+
+    #[test]
+    fn pose_mirror_and_validation() {
+        let mut a = Pose3d::default();
+        a.set_rotation("leftUpperArm", q_axis([0.0, 0.0, 1.0], -70.0));
+        a.hips = [0.1, 0.0, 0.0];
+        let m = a.mirrored();
+        assert!(m.rotations.contains_key("rightUpperArm") && !m.rotations.contains_key("leftUpperArm"));
+        assert_eq!(m.hips, [-0.1, 0.0, 0.0]);
+        assert_eq!(m.mirrored(), a);
+        assert_eq!(mirror_bone_name("tw_leftLowerArm"), "tw_rightLowerArm");
+        assert_eq!(mirror_bone_name("bust_L"), "bust_R");
+        assert_eq!(mirror_bone_name("spine"), "spine");
+        let mut bad = Pose3d::default();
+        bad.rotations.insert("head".into(), [0.0, 0.0, 0.0, 9.0]);
+        assert!(bad.validate().is_err());
+        // identidade não fica guardada
+        let mut z = Pose3d::default();
+        z.set_rotation("head", [0.0, 0.0, 0.0, -1.0]);
+        assert!(z.is_rest());
     }
 
     #[test]

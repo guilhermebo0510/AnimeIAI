@@ -21,6 +21,7 @@ pub mod guide;
 pub mod import;
 pub mod library;
 pub mod model3d;
+pub mod modeling;
 pub mod paint;
 pub mod points;
 pub mod preprod;

@@ -15,6 +15,8 @@ Commit do ANIGO: `bc5e83af1267eec28cc13c1777204b6ac1a6940f` (cópia de 2026-10-2
 `import.rs` (glTF de vários nós e malhas, OBJ + MTL, limites, VRM recusado "em breve"), `model.rs`, `glb.rs` (GLB
 normalizado determinístico), `gizmo_apply.rs` (arrasto → `Transform3d` com pivô fixo), `raster.rs` (rasterizador CPU de
 reserva: toon/flat/wire/silhouette + contorno), `scene.rs` (cena do renderer cel, com compensação da exposição e do ACES
-do shader), ponte câmera da camada ⇄ `OrbitCamera` em `camera.rs`.
+do shader), ponte câmera da camada ⇄ `OrbitCamera` em `camera.rs`; `pose.rs` (pose por nome de osso, skinning na CPU, anel e IK de
+dois ossos no estilo do `solve_limb` do `anigo-ik`, poses prontas) e `mannequin.rs` (o corpo do `aiai-3d-charbase` com
+esqueleto e pesos). A pele do glTF é lida em `import.rs` e escrita em `glb.rs`.
 
 Sem dependências novas: o crate `gltf` NÃO foi adicionado (o parser do ANIGO já cobre o necessário).

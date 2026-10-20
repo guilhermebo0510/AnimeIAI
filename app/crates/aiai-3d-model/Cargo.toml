@@ -8,6 +8,7 @@ description = "Modelos 3D de referência do AnimeIAI: importação glTF/GLB/OBJ 
 [dependencies]
 aiai-core = { workspace = true }
 aiai-3d-core = { path = "../aiai-3d-core" }
+aiai-3d-charbase = { path = "../aiai-3d-charbase" }
 glam = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -41,6 +41,13 @@ pub enum IconId {
     Snap,
     /// Camada 3D: cubo com a órbita da câmera.
     ToolModel3d,
+    /// Modelagem: selecionar, escalar, extrude, inset, loop cut, bevel.
+    ToolMSelect,
+    ToolMScale,
+    ToolMExtrude,
+    ToolMInset,
+    ToolMLoopCut,
+    ToolMBevel,
     ZoomOut,
     Eye,
     EyeOff,
@@ -103,7 +110,7 @@ pub enum IconId {
 }
 
 impl IconId {
-    pub const ALL: [IconId; 77] = [
+    pub const ALL: [IconId; 83] = [
         IconId::WsRoteiro,
         IconId::WsPersonagens,
         IconId::WsStoryboard,
@@ -132,6 +139,12 @@ impl IconId {
         IconId::ToolRuler,
         IconId::Snap,
         IconId::ToolModel3d,
+        IconId::ToolMSelect,
+        IconId::ToolMScale,
+        IconId::ToolMExtrude,
+        IconId::ToolMInset,
+        IconId::ToolMLoopCut,
+        IconId::ToolMBevel,
         IconId::ZoomOut,
         IconId::Eye,
         IconId::EyeOff,
@@ -218,6 +231,12 @@ impl IconId {
             IconId::ToolRuler => include_str!("../assets/icons/tool-ruler.svg"),
             IconId::Snap => include_str!("../assets/icons/snap.svg"),
             IconId::ToolModel3d => include_str!("../assets/icons/tool-model3d.svg"),
+            IconId::ToolMSelect => include_str!("../assets/icons/tool-m-select.svg"),
+            IconId::ToolMScale => include_str!("../assets/icons/tool-m-scale.svg"),
+            IconId::ToolMExtrude => include_str!("../assets/icons/tool-m-extrude.svg"),
+            IconId::ToolMInset => include_str!("../assets/icons/tool-m-inset.svg"),
+            IconId::ToolMLoopCut => include_str!("../assets/icons/tool-m-loopcut.svg"),
+            IconId::ToolMBevel => include_str!("../assets/icons/tool-m-bevel.svg"),
             IconId::ZoomOut => include_str!("../assets/icons/zoom-out.svg"),
             IconId::Eye => include_str!("../assets/icons/eye.svg"),
             IconId::EyeOff => include_str!("../assets/icons/eye-off.svg"),

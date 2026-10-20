@@ -1,0 +1,10 @@
+[package]
+name = "aiai-3d-charbase"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+description = "Base de personagem anime posável vendorizada do ANIGO (anigo-charbase, subconjunto): malha, esqueleto humanoide e pesos de skin do Manequim"
+
+[dependencies]
+glam = { workspace = true }
+serde = { workspace = true }

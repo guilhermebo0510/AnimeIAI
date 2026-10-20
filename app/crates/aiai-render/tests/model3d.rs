@@ -26,7 +26,7 @@ fn cube() -> Model {
         normals.extend([n; 4]);
         indices.extend([b, b + 1, b + 2, b, b + 2, b + 3]);
     }
-    let mut m = Model { parts: vec![Part { name: "cubo".into(), positions, normals, indices, color: [0.7, 0.3, 0.2, 1.0], material: "m".into() }], info: ModelInfo::default() };
+    let mut m = Model { parts: vec![Part { name: "cubo".into(), positions, normals, indices, color: [0.7, 0.3, 0.2, 1.0], material: "m".into() }], info: ModelInfo::default(), skin: None };
     m.refresh_info();
     m
 }
@@ -53,6 +53,7 @@ fn setup(reference: bool) -> (CoreSession, Id, Id) {
         transform: Transform3d::default(),
         camera: OrbitCam3d { target: [0.0; 3], yaw_deg: 30.0, pitch_deg: 20.0, distance: 3.0, fov_deg: 40.0 },
         render: Render3d { mode: RenderMode3d::Toon, reference, ..Render3d::default() },
+        pose: None,
     };
     let mut ld = LayerData::new(LayerType::Model3d);
     ld.params = json!({ "model3d": p });

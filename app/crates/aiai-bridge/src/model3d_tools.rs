@@ -32,9 +32,31 @@ fn merge(mut v: Value, extra: Value) -> Value {
 
 fn model3d_action(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
     let r: Model3dRequest = request(params, "MODEL3D")?;
-    let op = r.op.ok_or_else(|| BridgeError::invalid_params("MODEL3D: falta `op` (import | list | transform | camera | mode)"))?;
+    let op = r.op.ok_or_else(|| BridgeError::invalid_params("MODEL3D: falta `op` (import | list | transform | camera | mode | mannequin | pose | poses)"))?;
     match op {
         Model3dOp::List => Ok(model3d::list(&session.project)),
+        Model3dOp::Poses => model3d::poses_json(&session.project, &session.blobs, r.layer.as_ref(), r.frame.unwrap_or(0)).map_err(tool_error),
+        Model3dOp::Mannequin => {
+            let out = model3d::create_mannequin(&session.project, &mut session.ids, &mut session.blobs, r.cut.as_ref(), r.name.as_deref()).map_err(tool_error)?;
+            let cmd = out.batch("Manequim 3D");
+            let v = apply(session, params, cmd)?;
+            let state = out.layer.as_ref().map(|l| model3d::state_json(&session.project, l, 0));
+            Ok(merge(v, json!({ "asset": out.asset, "layer": out.layer, "info": out.info, "layer_state": state })))
+        }
+        Model3dOp::Pose => {
+            let layer = r.layer.clone().ok_or_else(|| BridgeError::invalid_params("MODEL3D: falta `layer` (camada 3D com esqueleto)"))?;
+            let frame = r.frame.unwrap_or(0);
+            let cmd = model3d::pose_edit(&session.project, &session.blobs, &r).map_err(tool_error)?;
+            let after = |s: &CoreSession| model3d::poses_json(&s.project, &s.blobs, Some(&layer), frame).unwrap_or_else(|e| json!({ "error": e.to_string() }));
+            match cmd {
+                Some(cmd) => {
+                    let v = apply(session, params, cmd)?;
+                    let extra = after(session);
+                    Ok(merge(v, extra))
+                }
+                None => Ok(merge(json!({ "changed": false }), after(session))),
+            }
+        }
         Model3dOp::Import => {
             if let Some(p) = &r.path {
                 let path = std::path::Path::new(p);

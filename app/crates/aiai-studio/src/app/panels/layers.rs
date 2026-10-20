@@ -91,6 +91,15 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
                 ui.close();
                 crate::app::model3d::import_dialog(env, &cut);
             }
+            // manequim posável (S24 3D, fase 8): corpo anime com esqueleto, em pé, pronto para posar
+            let tex = env.icons.texture(ui.ctx(), IconId::LayerModel3d, 16.0);
+            let img = egui::Image::new((tex, egui::vec2(16.0, 16.0))).tint(t.text_dim);
+            let item = ui.add(egui::Button::image_and_text(img, tr("layers.add.mannequin")));
+            env.note("layers:add.mannequin", item.rect);
+            if item.clicked() {
+                ui.close();
+                crate::app::model3d::add_mannequin(env, &cut);
+            }
         });
         let has = active.is_some();
         let up = env.icon_button(ui, IconId::ArrowUp, "layers.up", false, has, "layers:up");

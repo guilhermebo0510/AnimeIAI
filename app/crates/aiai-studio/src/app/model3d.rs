@@ -2,15 +2,21 @@
 //! vendorizado do ANIGO, numa thread própria, no device do egui), a ferramenta 3D no canvas (gizmo mover/girar/escalar,
 //! órbita/pan/dolly da câmera da camada, um passo de undo por gesto, prévia reduzida ao vivo durante o arrasto), a seção
 //! 3D das Propriedades e a importação (menu "+" das Camadas e arrastar arquivo para o canvas).
+//!
+//! Pose (S24 3D, fases 8–9): no modo Pose da ferramenta 3D (tecla 4) as juntas do esqueleto (Manequim ou modelo com pele)
+//! aparecem no canvas; clicar escolhe o osso, os anéis giram o osso em volta da junta (Shift: 15°) e arrastar mão/pé faz
+//! IK de dois ossos. Cada gesto é um passo de undo (chave `m3d.pose` onde a pose já é animada). Poses prontas, espelhar,
+//! repouso e as poses do usuário (`Documentos\AnimeIAI\Poses\*.aiaipose`, nada com `--no-session`) ficam nas Propriedades.
 
 use super::commands::{self as cmds, NodeId};
 use super::ui_kit::{Env, dim_label, section};
 use crate::i18n::tr;
 use crate::workspace::ToolId;
 use aiai_3d_model::camera::{CamView, layer_from_orbit, orbit_from_layer};
-use aiai_3d_model::gizmo::{Axis3, GizmoDrag, GizmoMode, Handle, hit_test};
+use aiai_3d_model::gizmo::{Axis3, DragDelta, GizmoDrag, GizmoFrame, GizmoMode, Handle, hit_test};
+use aiai_3d_model::pose as mpose;
 use aiai_3d_model::{Model, gizmo_apply, raster};
-use aiai_core::model3d::{Model3dParams, Model3dState, RenderMode3d, hex_rgb, parse_hex_rgb};
+use aiai_core::model3d::{Model3dParams, Model3dState, POSE_KEY, Pose3d, RenderMode3d, hex_rgb, parse_hex_rgb};
 use aiai_core::*;
 use aiai_render::raster3d::{Layer3dJob, Layer3dRaster};
 use egui::{Color32, Pos2, Rect, Shape, Stroke, TextureHandle, TextureOptions, Ui, Vec2};
@@ -110,8 +116,10 @@ impl Layer3dRaster for GpuRaster {
     }
 
     fn render(&self, job: &Layer3dJob) -> Result<Vec<[f32; 4]>, String> {
-        let model = aiai_3d_model::load_model(job.blobs, job.model_hash)?;
-        let rx = self.request(job.model_hash.clone(), model, job.state.clone(), job.width, job.height).ok_or("serviço 3D da GPU parado")?;
+        // pose: malha posada na CPU (skinning) e cena própria por pose (a chave inclui a pose)
+        let model = aiai_3d_model::load_posed(job.blobs, job.model_hash, job.state.pose.as_ref())?;
+        let key = mpose::posed_key(job.model_hash, job.state.pose.as_ref());
+        let rx = self.request(key, model, job.state.clone(), job.width, job.height).ok_or("serviço 3D da GPU parado")?;
         let rgba = rx.recv_timeout(Duration::from_secs(30)).map_err(|_| "o render 3D na GPU não respondeu em 30 s".to_string())??;
         if rgba.len() != (job.width * job.height * 4) as usize {
             return Err(format!("render 3D na GPU devolveu {} bytes para {}x{}", rgba.len(), job.width, job.height));
@@ -128,6 +136,10 @@ enum DragKind {
     Orbit,
     Pan,
     Dolly,
+    /// Pose: anel de rotação de um osso.
+    PoseRing,
+    /// Pose: IK de mão/pé (a junta segue o cursor num plano de frente para a câmera).
+    PoseIk,
 }
 
 struct Drag {
@@ -142,6 +154,10 @@ struct Drag {
     scale: f32,
     gizmo: Option<GizmoDrag>,
     last_screen: Pos2,
+    /// Pose: osso arrastado, pose do começo e plano do IK (ponto, normal) no mundo.
+    bone: Option<usize>,
+    start_pose: Pose3d,
+    ik_plane: Option<(glam::Vec3, glam::Vec3)>,
 }
 
 /// Imagens do corte sem a camada 3D (o que fica abaixo e acima), para a prévia do arrasto não mostrar o modelo duas vezes.
@@ -168,6 +184,22 @@ pub(crate) struct M3dState {
     live_size: (u32, u32),
     /// Depois de soltar: a prévia fica até o render do documento novo chegar.
     hold: Option<(u64, Instant)>,
+    /// Pose: osso escolhido (nome) e IK desligado (padrão: ligado nas mãos e pés).
+    pub pose_bone: Option<String>,
+    pub no_ik: bool,
+    hover_joint: Option<usize>,
+    /// Poses do usuário em `Documentos\AnimeIAI\Poses` (lidas ao abrir a seção) e o nome da próxima a salvar.
+    pub user_files: bool,
+    user_poses: Option<Vec<UserPose>>,
+    pose_name: String,
+}
+
+/// Pose guardada pelo usuário (arquivo `.aiaipose`, o envelope de recurso da Biblioteca com a pose no `payload`).
+#[derive(Clone)]
+struct UserPose {
+    name: String,
+    path: std::path::PathBuf,
+    pose: Pose3d,
 }
 
 /// Modo do gizmo (mover/girar/escalar).
@@ -177,13 +209,15 @@ pub(crate) enum GizmoModeUi {
     Translate,
     Rotate,
     Scale,
+    /// Posar o esqueleto (juntas, anéis por osso, IK de mãos e pés).
+    Pose,
 }
 
 impl GizmoModeUi {
     fn gizmo(self) -> GizmoMode {
         match self {
             GizmoModeUi::Translate => GizmoMode::Translate,
-            GizmoModeUi::Rotate => GizmoMode::Rotate,
+            GizmoModeUi::Rotate | GizmoModeUi::Pose => GizmoMode::Rotate,
             GizmoModeUi::Scale => GizmoMode::Scale,
         }
     }
@@ -278,6 +312,33 @@ pub(crate) fn press(env: &mut Env, xf: &super::editor::Xf, pos: Pos2, mods: egui
         return true;
     }
     let lp = to_layer(c.place, xf.to_canvas(pos)) * scale;
+    // pose: anel do osso escolhido, clique numa junta (escolhe; mão/pé com IK começa o arrasto) ou cai na órbita
+    if tool == ToolId::Model3d && env.ed.m3d.mode == GizmoModeUi::Pose && !mods.alt && !mods.shift && !mods.command {
+        if let Some(pv) = pose_view(env, &c) {
+            let sel = env.ed.m3d.pose_bone.as_deref().and_then(|n| pv.skin().index(n));
+            let base = Drag { layer: c.layer.clone(), cut: c.cut.clone(), frame: c.frame, kind: DragKind::PoseRing, start: c.state.clone(), cur: c.state.clone(), pivot: c.pivot, view: c.view, scale, gizmo: None, last_screen: pos, bone: None, start_pose: pv.pose.clone(), ik_plane: None };
+            if let Some(b) = sel {
+                let f = GizmoFrame::new(pv.world[b], glam::Quat::IDENTITY, &c.view);
+                if let Some(h) = hit_test(GizmoMode::Rotate, &f, &c.view, lp) {
+                    if let Some(g) = GizmoDrag::begin(GizmoMode::Rotate, h, f, &c.view, lp) {
+                        env.ed.m3d.drag = Some(Drag { gizmo: Some(g), bone: Some(b), ..base });
+                        env.ed.m3d.hold = None;
+                        return true;
+                    }
+                }
+            }
+            if let Some(b) = pv.pick(&c.view, lp) {
+                let name = pv.skin().bones[b].name.clone();
+                let ik = !env.ed.m3d.no_ik && mpose::IK_ENDS.contains(&name.as_str());
+                env.ed.m3d.pose_bone = Some(name);
+                if ik {
+                    env.ed.m3d.drag = Some(Drag { kind: DragKind::PoseIk, bone: Some(b), ik_plane: Some((pv.world[b], c.view.forward)), ..base });
+                    env.ed.m3d.hold = None;
+                }
+                return true;
+            }
+        }
+    }
     let mode = env.ed.m3d.mode.gizmo();
     let mut kind = if mods.alt {
         DragKind::Orbit
@@ -298,7 +359,7 @@ pub(crate) fn press(env: &mut Env, xf: &super::editor::Xf, pos: Pos2, mods: egui
             }
         }
     }
-    env.ed.m3d.drag = Some(Drag { layer: c.layer, cut: c.cut, frame: c.frame, kind, start: c.state.clone(), cur: c.state, pivot: c.pivot, view: c.view, scale, gizmo, last_screen: pos });
+    env.ed.m3d.drag = Some(Drag { layer: c.layer, cut: c.cut, frame: c.frame, kind, start: c.state.clone(), cur: c.state, pivot: c.pivot, view: c.view, scale, gizmo, last_screen: pos, bone: None, start_pose: Pose3d::default(), ik_plane: None });
     env.ed.m3d.hold = None;
     true
 }
@@ -339,6 +400,32 @@ pub(crate) fn drag(env: &mut Env, xf: &super::editor::Xf, pos: Pos2) {
             }
             d.cur.camera = layer_from_orbit(&cam);
         }
+        DragKind::PoseRing | DragKind::PoseIk => {
+            let (Some(skin), Some(b)) = (model.skin.as_ref(), d.bone) else { return };
+            let lp = to_layer(place, xf.to_canvas(pos)) * d.scale;
+            if d.kind == DragKind::PoseRing {
+                if let Some(DragDelta::Rotate { axis, angle }) = d.gizmo.as_mut().and_then(|g| g.update(&d.view, lp)) {
+                    let a = if shift {
+                        let step = gizmo_apply::ROTATE_SNAP_DEG.to_radians();
+                        (angle / step).round() * step
+                    } else {
+                        angle
+                    };
+                    // eixo do mundo → espaço do modelo (a camada pode estar girada)
+                    let local = aiai_3d_model::camera::rotation_quat(d.cur.transform.rot_deg).inverse() * axis;
+                    let w = glam::Quat::from_axis_angle(local.normalize_or(glam::Vec3::Y), a);
+                    d.cur.pose = Some(mpose::rotate_bone_world(skin, &d.start_pose, b, w));
+                }
+            } else if let Some((o, n)) = d.ik_plane {
+                let (ro, rd) = d.view.ray(lp);
+                if let Some(p) = aiai_3d_model::gizmo::ray_plane(ro, rd, o, n) {
+                    let t = aiai_3d_model::camera::model_matrix(&d.cur.transform).inverse().transform_point3(p);
+                    if let Some(np) = mpose::solve_ik(skin, &d.start_pose, b, t) {
+                        d.cur.pose = Some(np);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -348,10 +435,17 @@ pub(crate) fn release(env: &mut Env) {
     if d.cur == d.start {
         return;
     }
-    match aiai_tools::model3d::state_command(&env.core.project, &d.layer, d.frame, &d.cur, false) {
+    let posing = matches!(d.kind, DragKind::PoseRing | DragKind::PoseIk);
+    let cmd = if posing {
+        aiai_tools::model3d::pose_command(&env.core.project, &d.layer, d.frame, d.cur.pose.as_ref().unwrap_or(&Pose3d::default()), false)
+    } else {
+        aiai_tools::model3d::state_command(&env.core.project, &d.layer, d.frame, &d.cur, false)
+    };
+    match cmd {
         Ok(Some(cmd)) => {
             let label = match d.kind {
                 DragKind::Gizmo => "Camada 3D: transformar",
+                DragKind::PoseRing | DragKind::PoseIk => "Camada 3D: pose",
                 _ => "Camada 3D: câmera",
             };
             let cmd = Command::Batch { commands: vec![cmd], label: Some(label.into()) };
@@ -456,13 +550,13 @@ fn pump(env: &mut Env, ctx: &egui::Context) {
     if env.ed.m3d.live_pending.is_some() || env.ed.m3d.live_state.as_ref() == Some(&d.cur) {
         return;
     }
-    let Ok(model) = aiai_3d_model::load_model(&env.core.blobs, &d.cur.model_hash) else { return };
+    let Ok(model) = aiai_3d_model::load_posed(&env.core.blobs, &d.cur.model_hash, d.cur.pose.as_ref()) else { return };
     let (cw, ch) = cmds::canvas_size(&env.core.project, &d.cut);
     let r = ((cw as f32 * ch as f32 / 550_000.0).sqrt().ceil() as u32).max(1);
     let size = (cw.div_ceil(r).max(1), ch.div_ceil(r).max(1));
     let st = d.cur.clone();
     let rx = match GPU.get() {
-        Some(g) => g.request(st.model_hash.clone(), model, st.clone(), size.0, size.1),
+        Some(g) => g.request(mpose::posed_key(&st.model_hash, st.pose.as_ref()), model, st.clone(), size.0, size.1),
         None => {
             let (tx, rx) = crossbeam_channel::bounded(1);
             let (m2, s2, c2) = (model, st.clone(), ctx.clone());
@@ -562,6 +656,10 @@ pub(crate) fn paint(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &sup
     if c.cut != *cut {
         return;
     }
+    if env.ed.m3d.mode == GizmoModeUi::Pose {
+        paint_pose(env, painter, rect, xf, &c, scale);
+        return;
+    }
     let mode = env.ed.m3d.mode.gizmo();
     let f = gizmo_apply::frame_for(mode, &c.state.transform, c.pivot, &c.view);
     let scr = |w: glam::Vec3| -> Option<Pos2> { c.view.project(w).map(|(p, _)| xf.to_screen(to_canvas(c.place, p / scale))) };
@@ -615,11 +713,133 @@ pub(crate) fn paint(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &sup
         GizmoModeUi::Translate => "m3d.mode.translate",
         GizmoModeUi::Rotate => "m3d.mode.rotate",
         GizmoModeUi::Scale => "m3d.mode.scale",
+        GizmoModeUi::Pose => "m3d.mode.pose",
     }), tr("m3d.hint"));
+    hint_box(painter, rect, &hint, t.text);
+}
+
+fn hint_box(painter: &egui::Painter, rect: Rect, hint: &str, ink: Color32) {
     let pos = rect.left_bottom() + egui::vec2(10.0, -26.0);
-    let galley = painter.layout_no_wrap(hint, egui::FontId::proportional(11.5), t.text);
+    let galley = painter.layout_no_wrap(hint.to_owned(), egui::FontId::proportional(11.5), ink);
     painter.rect_filled(Rect::from_min_size(pos - egui::vec2(4.0, 2.0), galley.size() + egui::vec2(8.0, 4.0)), 3.0, Color32::from_black_alpha(140));
-    painter.galley(pos, galley, t.text);
+    painter.galley(pos, galley, ink);
+}
+
+// ======================================================================================================= pose
+
+/// Esqueleto da camada ativa no quadro: modelo (com pele), pose avaliada, juntas posáveis no mundo e projetadas.
+struct PoseView {
+    model: Arc<Model>,
+    pose: Pose3d,
+    /// Posição de mundo de cada osso (todos), já com a transformação da camada.
+    world: Vec<glam::Vec3>,
+    bones: Vec<usize>,
+}
+
+impl PoseView {
+    fn skin(&self) -> &aiai_3d_model::Skin {
+        self.model.skin.as_ref().expect("PoseView só existe com pele")
+    }
+
+    /// Junta posável mais perto do cursor (px da visão), dentro de 10 px.
+    fn pick(&self, view: &CamView, lp: glam::Vec2) -> Option<usize> {
+        let mut best: Option<(f32, usize)> = None;
+        for &b in &self.bones {
+            if let Some((p, _)) = view.project(self.world[b]) {
+                let d = p.distance(lp);
+                if d <= 10.0 && best.is_none_or(|(bd, _)| d < bd) {
+                    best = Some((d, b));
+                }
+            }
+        }
+        best.map(|(_, b)| b)
+    }
+
+    /// Pai posável mais próximo (sobe a cadeia até achar um osso da lista).
+    fn shown_parent(&self, b: usize) -> Option<usize> {
+        let skin = self.skin();
+        let mut cur = skin.bones[b].parent;
+        while let Some(p) = cur {
+            if self.bones.contains(&p) {
+                return Some(p);
+            }
+            cur = skin.bones[p].parent;
+        }
+        None
+    }
+}
+
+fn pose_view(env: &Env, c: &Ctx3) -> Option<PoseView> {
+    let model = aiai_3d_model::load_model(&env.core.blobs, &c.state.model_hash).ok()?;
+    let skin = model.skin.as_ref()?;
+    let pose = c.state.pose.clone().unwrap_or_default();
+    let g = mpose::globals(skin, &pose);
+    let mm = aiai_3d_model::camera::model_matrix(&c.state.transform);
+    let world = g.iter().map(|x| mm.transform_point3(x.pos)).collect();
+    let bones = mpose::pose_bones(skin);
+    Some(PoseView { model, pose, world, bones })
+}
+
+/// Juntas, ossos e os anéis do osso escolhido (modo Pose).
+fn paint_pose(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &super::editor::Xf, c: &Ctx3, scale: f32) {
+    let t = env.t;
+    let Some(pv) = pose_view(env, c) else {
+        hint_box(painter, rect, tr("m3d.pose.no_skin"), t.text);
+        return;
+    };
+    let scr = |w: glam::Vec3| -> Option<Pos2> { c.view.project(w).map(|(p, _)| xf.to_screen(to_canvas(c.place, p / scale))) };
+    let cursor_lp = env.ed.cursor.filter(|p| rect.contains(*p)).map(|p| to_layer(c.place, xf.to_canvas(p)) * scale);
+    let dragging = env.ed.m3d.drag.is_some();
+    if !dragging {
+        env.ed.m3d.hover_joint = cursor_lp.and_then(|lp| pv.pick(&c.view, lp));
+    }
+    let sel = env.ed.m3d.pose_bone.as_deref().and_then(|n| pv.skin().index(n));
+    // ossos (linhas da junta ao pai posável)
+    for &b in &pv.bones {
+        let Some(parent) = pv.shown_parent(b) else { continue };
+        if let (Some(a), Some(bp)) = (scr(pv.world[b]), scr(pv.world[parent])) {
+            painter.line_segment([bp, a], Stroke::new(3.0, Color32::from_black_alpha(120)));
+            painter.line_segment([bp, a], Stroke::new(1.5, Color32::from_rgb(140, 220, 255)));
+        }
+    }
+    for &b in &pv.bones {
+        let Some(p) = scr(pv.world[b]) else { continue };
+        let ik_end = !env.ed.m3d.no_ik && mpose::IK_ENDS.contains(&pv.skin().bones[b].name.as_str());
+        let (r, fill) = if Some(b) == sel {
+            (6.5, Color32::from_rgb(255, 214, 64))
+        } else if Some(b) == env.ed.m3d.hover_joint {
+            (5.5, Color32::WHITE)
+        } else if ik_end {
+            (5.0, Color32::from_rgb(255, 150, 90))
+        } else {
+            (4.0, Color32::from_rgb(140, 220, 255))
+        };
+        painter.circle(p, r, fill, Stroke::new(1.3, Color32::from_black_alpha(170)));
+    }
+    // anéis do osso escolhido
+    if let Some(b) = sel {
+        let f = GizmoFrame::new(pv.world[b], glam::Quat::IDENTITY, &c.view);
+        if !dragging {
+            env.ed.m3d.hover = cursor_lp.and_then(|lp| hit_test(GizmoMode::Rotate, &f, &c.view, lp));
+        }
+        let active = env.ed.m3d.drag.as_ref().and_then(|d| d.gizmo.map(|g| g.handle)).or(env.ed.m3d.hover);
+        for a in Axis3::ALL {
+            let pts: Vec<Pos2> = f.ring_points(a, 72).into_iter().filter_map(scr).collect();
+            if pts.len() > 2 {
+                let col = if active == Some(Handle::Ring(a)) { Color32::from_rgb(255, 214, 64) } else { AXIS_COLORS[a.index()] };
+                painter.add(Shape::line(pts.clone(), Stroke::new(3.5, Color32::from_black_alpha(110))));
+                painter.add(Shape::line(pts, Stroke::new(2.0, col)));
+            }
+        }
+        if let Some(p) = scr(pv.world[b]) {
+            let name = &pv.skin().bones[b].name;
+            let galley = painter.layout_no_wrap(name.clone(), egui::FontId::proportional(11.0), t.text);
+            let at = p + egui::vec2(10.0, -18.0);
+            painter.rect_filled(Rect::from_min_size(at - egui::vec2(3.0, 1.0), galley.size() + egui::vec2(6.0, 2.0)), 3.0, Color32::from_black_alpha(150));
+            painter.galley(at, galley, t.text);
+        }
+    }
+    hint_box(painter, rect, &format!("{} — {}", tr("m3d.mode.pose"), tr("m3d.pose.hint")), t.text);
 }
 
 /// Atalhos da ferramenta 3D: Esc cancela o arrasto; com a ferramenta ativa, 1/2/3 = mover/girar/escalar.
@@ -641,6 +861,9 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
             if i.key_pressed(egui::Key::Num3) && i.modifiers.is_none() {
                 env.ed.m3d.mode = GizmoModeUi::Scale;
             }
+            if i.key_pressed(egui::Key::Num4) && i.modifiers.is_none() {
+                env.ed.m3d.mode = GizmoModeUi::Pose;
+            }
         });
     }
 }
@@ -651,7 +874,7 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
 pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
     let t = env.t;
     ui.horizontal_wrapped(|ui| {
-        for (m, key) in [(GizmoModeUi::Translate, "m3d.mode.translate"), (GizmoModeUi::Rotate, "m3d.mode.rotate"), (GizmoModeUi::Scale, "m3d.mode.scale")] {
+        for (m, key) in [(GizmoModeUi::Translate, "m3d.mode.translate"), (GizmoModeUi::Rotate, "m3d.mode.rotate"), (GizmoModeUi::Scale, "m3d.mode.scale"), (GizmoModeUi::Pose, "m3d.mode.pose")] {
             let r = ui.selectable_label(env.ed.m3d.mode == m, tr(key));
             env.note(format!("m3d:mode.{}", key.rsplit('.').next().unwrap_or("")), r.rect);
             if r.clicked() {
@@ -715,6 +938,8 @@ pub(crate) fn properties(env: &mut Env, ui: &mut Ui) {
             }
         }
     });
+    // pose logo no alto (Manequim e modelos com pele): é o que se mexe a todo momento
+    pose_properties(env, ui, &layer, &l, &p, frame);
     // aparência
     let mut mode = p.render.mode;
     ui.horizontal(|ui| {
@@ -816,6 +1041,212 @@ pub(crate) fn properties(env: &mut Env, ui: &mut Ui) {
             }
         }
     });
+}
+
+/// Seção Pose das Propriedades (camada com esqueleto): poses prontas, espelhar, repouso, chave, IK, o osso escolhido e as
+/// poses do usuário.
+fn pose_properties(env: &mut Env, ui: &mut Ui, layer: &NodeId, l: &LayerData, p: &Model3dParams, frame: u32) {
+    let Ok(model) = aiai_3d_model::load_model(&env.core.blobs, &p.model_hash) else { return };
+    let Some(skin) = model.skin.as_ref() else { return };
+    let t = env.t;
+    let cur = p.pose.as_ref().map(|pp| pp.eval(&l.keys, frame as f32)).unwrap_or_default();
+    section(ui, &t, "m3d.pose.section");
+    let pose = |env: &mut Env, extra: serde_json::Value| {
+        let mut req = json!({ "op": "pose", "layer": layer, "frame": frame });
+        if let (Some(o), Some(e)) = (req.as_object_mut(), extra.as_object()) {
+            o.extend(e.clone());
+        }
+        run_model3d(env, req);
+    };
+    ui.horizontal_wrapped(|ui| {
+        for k in mpose::PRESETS {
+            let r = ui.button(tr(&format!("m3d.pose.preset.{k}")));
+            env.note(format!("m3d:pose.{k}"), r.rect);
+            if r.clicked() {
+                pose(env, json!({ "preset": k }));
+            }
+        }
+    });
+    ui.horizontal_wrapped(|ui| {
+        let r = ui.button(tr("m3d.pose.mirror"));
+        env.note("m3d:pose.mirror", r.rect);
+        if r.clicked() {
+            pose(env, json!({ "mirror": true }));
+        }
+        let r = ui.button(tr("m3d.pose.key")).on_hover_text(tr("m3d.pose.key.tip"));
+        env.note("m3d:pose.key", r.rect);
+        if r.clicked() {
+            pose(env, json!({ "key": true }));
+        }
+        let mut ik = !env.ed.m3d.no_ik;
+        let r = ui.checkbox(&mut ik, tr("m3d.pose.ik")).on_hover_text(tr("m3d.pose.ik.tip"));
+        env.note("m3d:pose.ik", r.rect);
+        env.ed.m3d.no_ik = !ik;
+    });
+    let keyed = l.keys.frames(POSE_KEY);
+    if !keyed.is_empty() {
+        dim_label(ui, &t, &format!("{}: {}", tr("m3d.pose.keys"), keyed.iter().map(|f| (f + 1).to_string()).collect::<Vec<_>>().join(", ")));
+    }
+    // osso escolhido: rotação (delta sobre o repouso, graus nos eixos do mundo)
+    match env.ed.m3d.pose_bone.clone().filter(|n| skin.index(n).is_some()) {
+        Some(name) => {
+            let e = aiai_3d_model::camera::rotation_deg(glam::Quat::from_array(cur.rotation(&name)));
+            ui.horizontal(|ui| {
+                dim_label(ui, &t, &format!("{} {name}", tr("m3d.pose.bone")));
+                for axis in 0..3 {
+                    if let Some(x) = super::panels::commit_on_release(ui, egui::Id::new(("m3d_bone", layer, &name, axis)), e[axis], |ui, x| ui.add(egui::DragValue::new(x).speed(0.5).max_decimals(1).suffix("°"))) {
+                        let mut ne = e;
+                        ne[axis] = x;
+                        pose(env, json!({ "bones": { name.clone(): ne } }));
+                    }
+                }
+                let r = ui.small_button(tr("m3d.pose.bone_reset"));
+                if r.clicked() {
+                    pose(env, json!({ "bones": { name.clone(): [0.0, 0.0, 0.0] } }));
+                }
+            });
+        }
+        None => dim_label(ui, &t, tr("m3d.pose.pick_bone")),
+    }
+    // poses do usuário
+    if !env.ed.m3d.user_files {
+        dim_label(ui, &t, tr("m3d.pose.no_session"));
+        return;
+    }
+    if env.ed.m3d.user_poses.is_none() {
+        env.ed.m3d.user_poses = Some(list_user_poses());
+    }
+    ui.horizontal(|ui| {
+        let r = ui.add(egui::TextEdit::singleline(&mut env.ed.m3d.pose_name).hint_text(tr("m3d.pose.name")).desired_width(140.0));
+        env.note("m3d:pose.name", r.rect);
+        let s = ui.button(tr("m3d.pose.save"));
+        env.note("m3d:pose.save", s.rect);
+        if s.clicked() {
+            let name = env.ed.m3d.pose_name.trim().to_owned();
+            let name = if name.is_empty() { format!("{} {}", tr("m3d.pose.section"), frame + 1) } else { name };
+            match save_user_pose(&name, &cur) {
+                Ok(path) => {
+                    env.ed.notify(format!("{}: {}", tr("m3d.pose.saved"), path.display()));
+                    env.ed.m3d.user_poses = None;
+                    env.ed.m3d.pose_name.clear();
+                }
+                Err(e) => env.ed.notify(e),
+            }
+        }
+    });
+    let list = env.ed.m3d.user_poses.clone().unwrap_or_default();
+    if list.is_empty() {
+        dim_label(ui, &t, tr("m3d.pose.none_saved"));
+    }
+    for (i, up) in list.iter().enumerate() {
+        ui.horizontal(|ui| {
+            ui.label(&up.name);
+            let a = ui.small_button(tr("m3d.pose.apply"));
+            env.note(format!("m3d:pose.user.{i}"), a.rect);
+            if a.clicked() {
+                pose(env, json!({ "pose": up.pose }));
+            }
+            if ui.small_button(tr("m3d.pose.trash")).on_hover_text(tr("m3d.pose.trash.tip")).clicked() {
+                match trash_user_pose(&up.path) {
+                    Ok(()) => env.ed.m3d.user_poses = None,
+                    Err(e) => env.ed.notify(e),
+                }
+            }
+        });
+    }
+}
+
+// ------------------------------------------------------------------------------------------------- poses do usuário
+
+fn poses_dir() -> Option<std::path::PathBuf> {
+    aiai_paint::userdirs::animeiai_dir().map(|d| d.join("Poses"))
+}
+
+/// Pose de um arquivo: envelope de recurso (`payload.pose` ou o próprio `payload`) ou a pose crua.
+fn pose_of_json(v: &serde_json::Value) -> Option<(Option<String>, Pose3d)> {
+    let name = v.get("name").and_then(|n| n.as_str()).map(str::to_owned);
+    let body = v.get("payload").map(|p| p.get("pose").unwrap_or(p)).unwrap_or(v);
+    let pose: Pose3d = serde_json::from_value(body.clone()).ok()?;
+    pose.validate().ok()?;
+    Some((name, pose))
+}
+
+fn list_user_poses() -> Vec<UserPose> {
+    let Some(dir) = poses_dir() else { return Vec::new() };
+    let Ok(rd) = std::fs::read_dir(&dir) else { return Vec::new() };
+    let mut out: Vec<UserPose> = rd
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && p.extension().is_some_and(|x| x.eq_ignore_ascii_case("aiaipose") || x.eq_ignore_ascii_case("json")))
+        .filter(|p| std::fs::metadata(p).map(|m| m.len() < 1 << 20).unwrap_or(false))
+        .filter_map(|path| {
+            let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).ok()?).ok()?;
+            let (name, pose) = pose_of_json(&v)?;
+            let name = name.unwrap_or_else(|| path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default());
+            Some(UserPose { name, path, pose })
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out
+}
+
+/// Grava a pose como `.aiaipose` (o envelope de recurso que a Biblioteca indexa; a pose vai em `payload.pose`).
+fn save_user_pose(name: &str, pose: &Pose3d) -> Result<std::path::PathBuf, String> {
+    let dir = poses_dir().ok_or_else(|| tr("m3d.pose.no_docs").to_owned())?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let stem: String = name.chars().map(|c| if c.is_alphanumeric() || c == ' ' || c == '-' || c == '_' { c } else { '_' }).collect::<String>().trim().to_owned();
+    let stem = if stem.is_empty() { "pose".to_owned() } else { stem };
+    let path = dir.join(format!("{stem}.aiaipose"));
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let id = format!("pose-{}", &BlobHash::of(format!("{stem}{now}").as_bytes()).0[..16]);
+    let doc = json!({
+        "format": "animeiai-asset",
+        "format_version": 1,
+        "min_reader": 1,
+        "kind": "pose",
+        "id": id,
+        "name": name,
+        "description": "pose do Manequim (camada 3D do AnimeIAI)",
+        "app_version": format!("AnimeIAI {}", env!("CARGO_PKG_VERSION")),
+        "tags": ["pose", "manequim"],
+        "payload": { "pose": pose, "rig": "humanoide VRM" },
+    });
+    let bytes = serde_json::to_vec_pretty(&doc).map_err(|e| e.to_string())?;
+    let tmp = path.with_extension("aiaipose.tmp");
+    std::fs::write(&tmp, bytes).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(path)
+}
+
+/// Manda a pose para `Poses\_Lixeira` (a mesma lixeira da Biblioteca; nada é apagado de vez).
+fn trash_user_pose(path: &std::path::Path) -> Result<(), String> {
+    let dir = path.parent().ok_or("pose sem pasta")?.join("_Lixeira");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let name = path.file_name().ok_or("pose sem nome")?;
+    let mut dest = dir.join(name);
+    let mut n = 1;
+    while dest.exists() {
+        dest = dir.join(format!("{} ({n}).aiaipose", path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()));
+        n += 1;
+    }
+    std::fs::rename(path, &dest).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Cria o Manequim posável no corte (camada 3D em pé, no topo) e escolhe a camada, já no modo Pose.
+pub(crate) fn add_mannequin(env: &mut Env, cut: &NodeId) {
+    match super::actions::run(env.core, "MODEL3D", json!({ "op": "mannequin", "cut": cut })) {
+        Ok(v) => {
+            if let Some(l) = v.get("layer").and_then(|x| x.as_str()) {
+                env.ed.layer = Some(Id(l.to_string()));
+                env.ed.cel_number = None;
+            }
+            env.ed.show_reference = true;
+            env.ed.m3d.mode = GizmoModeUi::Pose;
+            *env.tool = ToolId::Model3d;
+            env.ed.notify(tr("m3d.mannequin.added"));
+        }
+        Err(e) => env.ed.notify(e),
+    }
 }
 
 /// Chave em todas as propriedades (transformação e câmera) no quadro, com os valores atuais.

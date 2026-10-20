@@ -66,6 +66,7 @@ impl Ctx {
             "RENDER" | "SCREENSHOT" | "MIX_CUT" | "EXPORT_VIDEO" | "ANIMATIC" | "STORYBOARD" | "SCRIPT" | "PRODUCTION" | "RETAKE" | "RENDER_SHEET" | "EDIT_PREVIEW" | "EDIT_MIX" | "EDIT_CAPTIONS" | "EXPORT_PSD" | "EXPORT_XDTS" | "EXPORT_SVG" => &["out"],
             "EXPORT_OTIO" => &["out", "media_dir"],
             "COMPARE" => &["out_dir", "out_diff"],
+            "MODELING" => &["path"],
             _ => &[],
         };
         for key in write_keys {

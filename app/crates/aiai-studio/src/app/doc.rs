@@ -660,6 +660,12 @@ impl StudioApp {
     // ------------------------------------------------------------------------------------------ editar
 
     pub(crate) fn doc_undo(&mut self) {
+        // na Modelagem, desfazer é o do documento de modelagem (o projeto muda só ao salvar/enviar)
+        if self.ws == crate::workspace::WorkspaceId::Modelagem {
+            let ok = self.ed.modeling.undo();
+            self.notice(crate::i18n::tr(if ok { "mdl.undone" } else { "mdl.nothing_undo" }).to_owned());
+            return;
+        }
         let prev = std::mem::replace(&mut self.core.author, AUTHOR.into());
         let r = self.core.undo();
         self.core.author = prev;
@@ -670,6 +676,11 @@ impl StudioApp {
     }
 
     pub(crate) fn doc_redo(&mut self) {
+        if self.ws == crate::workspace::WorkspaceId::Modelagem {
+            let ok = self.ed.modeling.redo();
+            self.notice(crate::i18n::tr(if ok { "mdl.redone" } else { "mdl.nothing_redo" }).to_owned());
+            return;
+        }
         let prev = std::mem::replace(&mut self.core.author, AUTHOR.into());
         let r = self.core.redo();
         self.core.author = prev;

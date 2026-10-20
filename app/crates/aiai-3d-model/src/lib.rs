@@ -9,12 +9,14 @@ pub mod gizmo_apply;
 pub mod glb;
 pub mod gltf;
 pub mod import;
+pub mod mannequin;
 pub mod model;
+pub mod pose;
 pub mod raster;
 pub mod scene;
 
 pub use import::{EXTENSIONS, ImportError, MAX_TRIANGLES, import_bytes, import_path};
-pub use model::{LicenseInfo, Model, ModelInfo, Part};
+pub use model::{LicenseInfo, Model, ModelInfo, Part, PartSkin, Skin, SkinBone};
 
 use aiai_core::{BlobHash, BlobStore};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -46,4 +48,10 @@ pub fn load_model(blobs: &BlobStore, hash: &BlobHash) -> Result<Arc<Model>, Stri
         }
     }
     Ok(m)
+}
+
+/// Modelo do blob na pose do estado (skinning na CPU, com cache); sem pose ou sem pele, o modelo como está.
+pub fn load_posed(blobs: &BlobStore, hash: &BlobHash, pose: Option<&aiai_core::model3d::Pose3d>) -> Result<Arc<Model>, String> {
+    let m = load_model(blobs, hash)?;
+    Ok(pose::posed(hash, &m, pose))
 }

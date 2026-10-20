@@ -1,0 +1,14 @@
+[package]
+name = "aiai-3d-edit"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+description = "Modelagem do AnimeIAI: subconjunto vendorizado do anigo-modeling (EditMesh n-gon, primitivas, extrude, inset, loop cut, bevel, merge/dissolve, transformações, espelho, array, subdivisão) e o documento de modelagem (objetos, modificadores, material toon, histórico) que vira GLB"
+
+[dependencies]
+aiai-core = { workspace = true }
+aiai-3d-model = { path = "../aiai-3d-model" }
+glam = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

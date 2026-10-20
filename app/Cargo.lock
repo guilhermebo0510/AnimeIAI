@@ -58,6 +58,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "aiai-3d-charbase"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "serde",
+]
+
+[[package]]
 name = "aiai-3d-core"
 version = "0.1.0"
 dependencies = [
@@ -70,9 +78,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "aiai-3d-edit"
+version = "0.1.0"
+dependencies = [
+ "aiai-3d-model",
+ "aiai-core",
+ "glam",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "aiai-3d-model"
 version = "0.1.0"
 dependencies = [
+ "aiai-3d-charbase",
  "aiai-3d-core",
  "aiai-core",
  "base64",
@@ -280,6 +301,7 @@ name = "aiai-studio"
 version = "0.1.0"
 dependencies = [
  "aiai-3d-core",
+ "aiai-3d-edit",
  "aiai-3d-model",
  "aiai-3d-render",
  "aiai-assets",
@@ -316,6 +338,7 @@ name = "aiai-tools"
 version = "0.1.0"
 dependencies = [
  "ab_glyph",
+ "aiai-3d-edit",
  "aiai-3d-model",
  "aiai-anim",
  "aiai-assets",

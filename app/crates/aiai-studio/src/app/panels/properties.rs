@@ -667,6 +667,8 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
                 }));
             }
         }
+        // Modelagem: as opções ficam no cabeçalho do viewport 3D
+        _ => {}
     }
 }
 

@@ -13,6 +13,7 @@
 //! * [`audio_tools`] — edição e análise de áudio (S24): AUDIO_EDIT, AUDIO_ANALYZE;
 //! * [`ruler_tools`] — réguas editáveis da camada de guia (S24): RULER;
 //! * [`model3d_tools`] — camada 3D de referência (S24): MODEL3D;
+//! * [`modeling_tools`] — modelagem por comando (S24): MODELING;
 //! * [`library_tools`] — biblioteca de recursos (S24): LIBRARY;
 //! * [`preprod_tools`] — pré-produção (S16): SCRIPT, BEATS, STORYBOARD, ANIMATIC, CUTS_FROM_STORYBOARD;
 //! * [`satsuei_tools`] — satsuei, câmera e cor tipados (S13/S15): EFFECTS, GRADE, CAMERA, LAYER_MOTION;
@@ -33,6 +34,7 @@ pub mod host;
 pub mod http;
 pub mod library_tools;
 pub mod model3d_tools;
+pub mod modeling_tools;
 pub mod params_check;
 pub mod preprod_tools;
 pub mod preview_tools;

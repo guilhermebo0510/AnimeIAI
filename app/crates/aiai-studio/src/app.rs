@@ -25,6 +25,7 @@ mod input_queue;
 mod library;
 mod live;
 mod model3d;
+mod modeling;
 mod move_live;
 mod nodes;
 mod panels;
@@ -208,6 +209,8 @@ impl StudioApp {
         app.ed.audio_ws.player.muted = cli_no_autosave && !std::env::var("AIAI_AUDIO").is_ok_and(|v| v == "1");
         app.ed.audio_ws.user_files = !app.cli.no_session;
         app.ed.comp.user_files = !app.cli.no_session;
+        app.ed.m3d.user_files = !app.cli.no_session;
+        app.ed.modeling.user_files = !app.cli.no_session;
         if !cli_no_autosave {
             if let Some(root) = autosave::recovery_root() {
                 app.recoveries = autosave::leftovers(&root, app.autosave.dir.as_deref());
@@ -955,14 +958,14 @@ impl StudioApp {
                             let ink = if selected || resp.hovered() { t.text } else { t.text_dim };
                             self.icons.paint(p, tool.icon(), rect.shrink(7.0), ink);
                             // dica com o atalho em uso (Preferências > Atalhos)
-                            let key = crate::keymap::Action::for_tool(tool).and_then(|a| self.ed.keys.get(a)).map(|c| c.label()).or(tool.comp_key().map(str::to_owned));
+                            let key = crate::keymap::Action::for_tool(tool).and_then(|a| self.ed.keys.get(a)).map(|c| c.label()).or(tool.comp_key().map(str::to_owned)).or(tool.modeling_key().map(str::to_owned));
                             let tip = match key {
                                 Some(k) => format!("{} ({k})", tr(tool.title_key())),
                                 None => tr(tool.title_key()).to_owned(),
                             };
                             if resp.on_hover_text(tip).clicked() {
                                 // clicar na ferramenta (mesmo a que já está em uso) mostra o painel dela
-                                if !matches!(tool, ToolId::Move | ToolId::Hand | ToolId::Zoom | ToolId::Eyedropper) && tool.comp_key().is_none() {
+                                if !matches!(tool, ToolId::Move | ToolId::Hand | ToolId::Zoom | ToolId::Eyedropper) && tool.comp_key().is_none() && !tool.is_modeling() {
                                     self.ed.want_panel = Some(PanelKind::Brushes);
                                 }
                                 self.tool = tool;
@@ -982,7 +985,7 @@ impl StudioApp {
         let Some(tree) = self.trees.get_mut(&ws) else { return };
         // ferramenta com itens (caneta, pincel, borracha, balde, seleção, editar pontos) escolhida agora (clique ou
         // atalho): o painel Ferramenta vem para a frente
-        if self.last_tool.is_some_and(|(t, w)| t != self.tool && w == ws) && !matches!(self.tool, crate::workspace::ToolId::Move | crate::workspace::ToolId::Hand | crate::workspace::ToolId::Zoom | crate::workspace::ToolId::Eyedropper) && self.tool.comp_key().is_none() {
+        if self.last_tool.is_some_and(|(t, w)| t != self.tool && w == ws) && !matches!(self.tool, crate::workspace::ToolId::Move | crate::workspace::ToolId::Hand | crate::workspace::ToolId::Zoom | crate::workspace::ToolId::Eyedropper) && self.tool.comp_key().is_none() && !self.tool.is_modeling() {
             self.ed.want_panel = Some(PanelKind::Brushes);
         }
         self.last_tool = Some((self.tool, ws));
@@ -1163,7 +1166,8 @@ impl StudioApp {
         self.menu_bar(ui);
         self.workspace_bar(ui);
         self.status_bar(ui);
-        if self.ws.profile().canvas {
+        // a Modelagem não tem canvas, mas tem a prateleira do viewport 3D
+        if !self.ws.profile().tools.is_empty() {
             self.tool_shelf(ui);
         }
         self.workspace_ui(ui);
@@ -1236,23 +1240,6 @@ fn workspace_key_label(i: usize) -> Option<String> {
         9 => Some("Alt+0".to_owned()),
         _ => None,
     }
-}
-
-/// Painel em construção (Biblioteca, Modelagem): o título e o que vem, sem botões que não fazem nada.
-fn planned_panel(env: &mut ui_kit::Env, ui: &mut egui::Ui, body: Rect, kind: PanelKind) {
-    let t = env.t;
-    let mut child = ui_kit::body_ui(ui, body, 14.0);
-    child.vertical_centered(|ui| {
-        ui.add_space((body.height() * 0.18).min(120.0));
-        let (r, _) = ui.allocate_exact_size(egui::vec2(40.0, 40.0), Sense::hover());
-        let icon = if kind == PanelKind::Modeling { IconId::WsModelagem } else { IconId::WsBiblioteca };
-        env.icons.paint(ui.painter(), icon, r, t.text_dim);
-        ui.add_space(8.0);
-        ui.label(RichText::new(tr(kind.title_key())).size(15.0).strong().color(t.text));
-        ui.add_space(6.0);
-        ui.set_max_width(body.width().min(520.0) - 28.0);
-        ui.label(RichText::new(tr(kind.empty_key())).size(12.5).color(t.text_dim));
-    });
 }
 
 struct DockBehavior<'a> {
@@ -1356,7 +1343,10 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::ProdAi => panels::prod_manage::ai(&mut self.env, ui, body),
             PanelKind::Library => panels::library::show(&mut self.env, ui, body),
             PanelKind::LibraryPreview => panels::library::preview(&mut self.env, ui, body),
-            PanelKind::Modeling => planned_panel(&mut self.env, ui, body, kind),
+            PanelKind::Modeling => modeling::viewport(&mut self.env, ui, body),
+            PanelKind::ModelOutliner => panels::modeling::outliner(&mut self.env, ui, body),
+            PanelKind::ModelProps => panels::modeling::properties(&mut self.env, ui, body),
+            PanelKind::ModelModifiers => panels::modeling::modifiers(&mut self.env, ui, body),
         }
         ui.painter().rect_stroke(rect, CARD_RADIUS, Stroke::new(1.0, self.t.border), StrokeKind::Inside);
         resp

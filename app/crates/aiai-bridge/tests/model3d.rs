@@ -109,3 +109,68 @@ fn model3d_import_render_edit_and_undo() {
     let l = act(&mut s, "MODEL3D", json!({"op": "list"}));
     assert!(l["models"].as_array().unwrap().is_empty() && l["layers"].as_array().unwrap().is_empty(), "{l}");
 }
+
+/// Manequim e pose (S24 3D, fases 8–9) e modelagem por comando (fase 12) pela bridge: MODEL3D mannequin/pose/poses,
+/// MODELING new/extrude/scale_faces/merge/material/send/info, export num arquivo, erros -32602 e undo.
+#[test]
+fn mannequin_pose_and_modeling_through_the_bridge() {
+    let mut s = CoreSession::for_tests("mdl");
+    act(&mut s, "NEW_PROJECT", json!({"name": "mdl", "settings": {"width": 160, "height": 90}}));
+    let ep = made(&mut s, "EP", None, json!({"type": "episode", "number": 1}));
+    let sc = made(&mut s, "S", Some(&ep), json!({"type": "scene", "number": 1}));
+    let cut = made(&mut s, "C1", Some(&sc), json!({"type": "cut", "number": 1, "duration": 12}));
+
+    // manequim em pé, pose pronta com chave, poses lista as juntas
+    let o = act(&mut s, "MODEL3D", json!({"op": "mannequin", "cut": cut}));
+    let layer = o["layer"].as_str().unwrap().to_string();
+    assert!(o["info"]["bones"].as_u64().unwrap() >= 55);
+    let stand = act(&mut s, "RENDER", json!({"cut": cut, "include_reference": true, "camera": false, "inline": true}));
+    let p = act(&mut s, "MODEL3D", json!({"op": "pose", "layer": layer, "frame": 0, "key": true, "preset": "run"}));
+    assert_eq!(p["pose_key_frames"], json!([0]));
+    let run = act(&mut s, "RENDER", json!({"cut": cut, "include_reference": true, "camera": false, "inline": true}));
+    assert_ne!(stand["png_base64"], run["png_base64"], "a pose muda o desenho");
+    let l = act(&mut s, "MODEL3D", json!({"op": "poses", "layer": layer}));
+    assert!(l["presets"].as_array().unwrap().iter().any(|x| x == "sit"));
+    assert!(l["joints"].as_array().unwrap().iter().any(|j| j["bone"] == "rightHand"));
+    for bad in [json!({"op": "pose", "layer": layer, "preset": "voar"}), json!({"op": "pose", "layer": layer, "bones": {"asa": [0, 0, 0]}}), json!({"op": "pose", "layer": layer, "rumo": 1})] {
+        let e = handle_core_action(&mut s, "MODEL3D", &bad).unwrap().unwrap_err();
+        assert_eq!(e.code, code::INVALID_PARAMS, "{bad}: {}", e.message);
+    }
+
+    // casa por comandos
+    let n = act(&mut s, "MODELING", json!({"op": "new", "name": "Casa", "primitive": "cube", "pos": [0.0, 0.5, 0.0]}));
+    let asset = n["asset"].as_str().unwrap().to_string();
+    act(&mut s, "MODELING", json!({"op": "extrude", "asset": asset, "faces": "top", "distance": 0.6}));
+    act(&mut s, "MODELING", json!({"op": "scale_faces", "asset": asset, "faces": "top", "factor": [0.0, 1.0, 1.0]}));
+    let m = act(&mut s, "MODELING", json!({"op": "merge_by_distance", "asset": asset}));
+    assert_eq!(m["result"]["merged"], 2);
+    act(&mut s, "MODELING", json!({"op": "material", "asset": asset, "color": "#c86448"}));
+    let info = act(&mut s, "MODELING", json!({"op": "info", "asset": asset}));
+    assert_eq!(info["objects"][0]["verts"], 10);
+    let sent = act(&mut s, "MODELING", json!({"op": "send", "asset": asset, "cut": cut}));
+    assert!(sent["layer"].is_string());
+    let list = act(&mut s, "MODELING", json!({"op": "list"}));
+    assert_eq!(list["models"].as_array().unwrap().len(), 1);
+    let dir = std::env::temp_dir().join(format!("aiai_bridge_mdl_{}", std::process::id()));
+    let out = dir.join("casa.glb");
+    let e = act(&mut s, "MODELING", json!({"op": "export", "asset": asset, "path": out.display().to_string()}));
+    let back = aiai_3d_model::glb::read_glb(&std::fs::read(&out).unwrap()).unwrap();
+    assert_eq!(e["bytes"].as_u64().unwrap() as usize, std::fs::read(&out).unwrap().len());
+    assert_eq!(back.parts.len(), 1);
+    for bad in [
+        json!({"op": "extrude", "asset": asset, "faces": "diagonal", "distance": 1.0}),
+        json!({"op": "extrude", "asset": asset}),
+        json!({"op": "new", "name": "x", "primitive": "dodecaedro"}),
+        json!({"op": "export", "asset": asset, "path": "relativo.glb"}),
+        json!({"op": "info", "asset": layer}),
+    ] {
+        let e = handle_core_action(&mut s, "MODELING", &bad).unwrap().unwrap_err();
+        assert_eq!(e.code, code::INVALID_PARAMS, "{bad}: {}", e.message);
+    }
+    // undo: send, material, merge, scale, extrude, new
+    for _ in 0..6 {
+        act(&mut s, "UNDO", json!({}));
+    }
+    assert!(act(&mut s, "MODELING", json!({"op": "list"}))["models"].as_array().unwrap().is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}

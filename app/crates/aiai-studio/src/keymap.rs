@@ -236,6 +236,8 @@ impl Action {
             T::Ruler => Action::ToolRuler,
             T::Model3d => Action::ToolModel3d,
             T::Rotate | T::Anchor | T::Camera => return None,
+            // Modelagem: as teclas do Blender, só no viewport 3D (fora do mapa de atalhos)
+            _ => return None,
         })
     }
 }

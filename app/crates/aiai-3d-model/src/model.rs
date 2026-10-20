@@ -82,12 +82,74 @@ pub struct ModelInfo {
     /// Avisos da importação (pele/animação ignoradas, primitiva não triangular pulada...).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    /// Ossos do esqueleto (0 = modelo rígido, sem pose).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub bones: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
+/// Osso do esqueleto do modelo: nome, pai e o repouso no espaço do modelo (posição da junta e rotação global).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SkinBone {
+    pub name: String,
+    pub parent: Option<usize>,
+    pub rest_pos: [f32; 3],
+    /// Rotação global de repouso `[x, y, z, w]` (identidade no Manequim).
+    pub rest_rot: [f32; 4],
+}
+
+/// Influências de uma parte: até 4 ossos por vértice (índices em [`Skin::bones`]) e os pesos (somam 1).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PartSkin {
+    pub joints: Vec<[u16; 4]>,
+    pub weights: Vec<[f32; 4]>,
+}
+
+/// Pele do modelo (S24 3D, fase 8): esqueleto em ordem de pai antes de filho e as influências por parte (mesma ordem
+/// de [`Model::parts`]). As posições das partes estão no repouso; a pose deforma por skinning linear na CPU
+/// ([`crate::pose`]).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Skin {
+    pub bones: Vec<SkinBone>,
+    pub parts: Vec<PartSkin>,
+}
+
+impl Skin {
+    pub fn index(&self, name: &str) -> Option<usize> {
+        self.bones.iter().position(|b| b.name == name)
+    }
+
+    /// Esqueleto bem formado: pais antes dos filhos, influências com o tamanho das partes e índices válidos.
+    pub fn validate(&self, parts: &[Part]) -> Result<(), String> {
+        for (i, b) in self.bones.iter().enumerate() {
+            if b.parent.is_some_and(|p| p >= i) {
+                return Err(format!("osso '{}' vem antes do pai", b.name));
+            }
+        }
+        if self.parts.len() != parts.len() {
+            return Err(format!("pele com {} partes para {} partes do modelo", self.parts.len(), parts.len()));
+        }
+        for (ps, p) in self.parts.iter().zip(parts) {
+            if ps.joints.len() != p.positions.len() || ps.weights.len() != p.positions.len() {
+                return Err(format!("parte '{}': influências fora do tamanho", p.name));
+            }
+            if ps.joints.iter().flatten().any(|&j| j as usize >= self.bones.len()) {
+                return Err(format!("parte '{}': osso inexistente nas influências", p.name));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Model {
     pub parts: Vec<Part>,
     pub info: ModelInfo,
+    /// Esqueleto e pesos (Manequim, modelos importados com pele). `None` = modelo rígido.
+    pub skin: Option<Skin>,
 }
 
 impl Model {
@@ -118,6 +180,7 @@ impl Model {
         self.info.parts = self.parts.len();
         self.info.materials = mats.len();
         self.info.bbox = [lo, hi];
+        self.info.bones = self.skin.as_ref().map(|s| s.bones.len()).unwrap_or(0);
     }
 
     pub fn center(&self) -> [f32; 3] {

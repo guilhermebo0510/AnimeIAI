@@ -34,7 +34,7 @@ impl Layer3dRaster for CpuRaster {
     }
 
     fn render(&self, job: &Layer3dJob) -> Result<Vec<[f32; 4]>, String> {
-        let model = aiai_3d_model::load_model(job.blobs, job.model_hash)?;
+        let model = aiai_3d_model::load_posed(job.blobs, job.model_hash, job.state.pose.as_ref())?;
         Ok(aiai_3d_model::raster::render_cpu(&model, job.state, job.width, job.height))
     }
 }

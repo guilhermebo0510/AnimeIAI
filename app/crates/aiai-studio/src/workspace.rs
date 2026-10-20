@@ -20,7 +20,7 @@ pub enum WorkspaceId {
     /// `prefs.json` antigo com `"cor"` abre aqui.
     #[serde(alias = "cor")]
     Biblioteca,
-    /// Cena 3D simples e manequim como referência de desenho (esqueleto nesta sprint).
+    /// Modelagem 3D de adereços e blocagem como referência de desenho (viewport 3D próprio, sem canvas 2D).
     Modelagem,
     Audio,
     Edicao,
@@ -216,7 +216,14 @@ impl WorkspaceId {
             W::Composicao => WorkspaceProfile { tools: &[T::Move, T::Rotate, T::Anchor, T::Hand, T::Zoom, T::Camera], default_tool: T::Move, canvas: true, editor_keys: true },
             // sem canvas, mas com linha do tempo: quadros e reprodução pelas teclas do editor
             W::Storyboard | W::Audio | W::Edicao => WorkspaceProfile { tools: NO_TOOLS, default_tool: T::Move, canvas: false, editor_keys: true },
-            W::Roteiro | W::Biblioteca | W::Modelagem | W::Entrega | W::Producao => {
+            // viewport 3D próprio (sem canvas 2D): selecionar, mover/girar/escalar e os operadores do modo Edição
+            W::Modelagem => WorkspaceProfile {
+                tools: &[T::MSelect, T::MMove, T::MRotate, T::MScale, T::MExtrude, T::MInset, T::MLoopCut, T::MBevel],
+                default_tool: T::MSelect,
+                canvas: false,
+                editor_keys: false,
+            },
+            W::Roteiro | W::Biblioteca | W::Entrega | W::Producao => {
                 WorkspaceProfile { tools: NO_TOOLS, default_tool: T::Move, canvas: false, editor_keys: false }
             }
         }
@@ -250,6 +257,22 @@ pub enum ToolId {
     Anchor,
     /// Composição: arrasta o quadro da câmera do corte (C; Shift = zoom, Ctrl = rotação).
     Camera,
+    /// Modelagem: seleciona objeto ou vértice/aresta/face no viewport 3D.
+    MSelect,
+    /// Modelagem: arrastar move a seleção (G).
+    MMove,
+    /// Modelagem: arrastar gira a seleção (R).
+    MRotate,
+    /// Modelagem: arrastar escala a seleção (S).
+    MScale,
+    /// Modelagem: arrastar extruda as faces escolhidas (E).
+    MExtrude,
+    /// Modelagem: arrastar faz o inset das faces (I).
+    MInset,
+    /// Modelagem: clicar numa aresta corta o anel dela (Ctrl+R).
+    MLoopCut,
+    /// Modelagem: arrastar chanfra as arestas (Ctrl+B).
+    MBevel,
 }
 
 impl ToolId {
@@ -263,7 +286,26 @@ impl ToolId {
         }
     }
 
-    pub const ALL: [ToolId; 16] = [
+    /// Ferramentas do viewport da Modelagem (a tecla delas é a do Blender e vale só no viewport 3D).
+    pub fn is_modeling(self) -> bool {
+        matches!(self, ToolId::MSelect | ToolId::MMove | ToolId::MRotate | ToolId::MScale | ToolId::MExtrude | ToolId::MInset | ToolId::MLoopCut | ToolId::MBevel)
+    }
+
+    /// Tecla do operador da Modelagem (dica da prateleira).
+    pub fn modeling_key(self) -> Option<&'static str> {
+        match self {
+            ToolId::MMove => Some("G"),
+            ToolId::MRotate => Some("R"),
+            ToolId::MScale => Some("S"),
+            ToolId::MExtrude => Some("E"),
+            ToolId::MInset => Some("I"),
+            ToolId::MLoopCut => Some("Ctrl+R"),
+            ToolId::MBevel => Some("Ctrl+B"),
+            _ => None,
+        }
+    }
+
+    pub const ALL: [ToolId; 24] = [
         ToolId::Move,
         ToolId::Brush,
         ToolId::Pen,
@@ -280,6 +322,14 @@ impl ToolId {
         ToolId::Rotate,
         ToolId::Anchor,
         ToolId::Camera,
+        ToolId::MSelect,
+        ToolId::MMove,
+        ToolId::MRotate,
+        ToolId::MScale,
+        ToolId::MExtrude,
+        ToolId::MInset,
+        ToolId::MLoopCut,
+        ToolId::MBevel,
     ];
 
     /// Identificador estável (bridge/UI_ACTION): `move`, `brush`, `pen`...
@@ -309,6 +359,14 @@ impl ToolId {
             ToolId::Rotate => "tool.rotate",
             ToolId::Anchor => "tool.anchor",
             ToolId::Camera => "tool.camera",
+            ToolId::MSelect => "tool.m_select",
+            ToolId::MMove => "tool.m_move",
+            ToolId::MRotate => "tool.m_rotate",
+            ToolId::MScale => "tool.m_scale",
+            ToolId::MExtrude => "tool.m_extrude",
+            ToolId::MInset => "tool.m_inset",
+            ToolId::MLoopCut => "tool.m_loopcut",
+            ToolId::MBevel => "tool.m_bevel",
         }
     }
 
@@ -330,6 +388,14 @@ impl ToolId {
             ToolId::Rotate => IconId::ToolRotate,
             ToolId::Anchor => IconId::ToolAnchor,
             ToolId::Camera => IconId::ToolCamera,
+            ToolId::MSelect => IconId::ToolMSelect,
+            ToolId::MMove => IconId::ToolMove,
+            ToolId::MRotate => IconId::ToolRotate,
+            ToolId::MScale => IconId::ToolMScale,
+            ToolId::MExtrude => IconId::ToolMExtrude,
+            ToolId::MInset => IconId::ToolMInset,
+            ToolId::MLoopCut => IconId::ToolMLoopCut,
+            ToolId::MBevel => IconId::ToolMBevel,
         }
     }
 }
@@ -377,7 +443,11 @@ mod tests {
     fn profiles_give_each_drawing_stage_its_own_shelf() {
         for w in WorkspaceId::ALL {
             let p = w.profile();
-            assert_eq!(p.canvas, !p.tools.is_empty(), "{w:?}: canvas sem ferramentas ou ferramentas sem canvas");
+            // a Modelagem não tem canvas 2D, mas tem a prateleira do viewport 3D
+            assert_eq!(p.canvas || w == WorkspaceId::Modelagem, !p.tools.is_empty(), "{w:?}: canvas sem ferramentas ou ferramentas sem canvas");
+            if w == WorkspaceId::Modelagem {
+                assert!(p.allows(p.default_tool) && p.tools.iter().all(|t| t.is_modeling()), "{w:?}");
+            }
             if p.canvas {
                 assert!(p.allows(p.default_tool), "{w:?}: a ferramenta padrão não está na prateleira");
                 assert!(p.editor_keys, "{w:?}");
