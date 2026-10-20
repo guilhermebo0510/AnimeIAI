@@ -37,7 +37,7 @@ pub fn k_weight_coeffs(fs: f64) -> [BiquadCoeffs; 2] {
     [shelf, hp]
 }
 
-fn channel_weight(nch: usize, c: usize) -> f64 {
+pub(crate) fn channel_weight(nch: usize, c: usize) -> f64 {
     match (nch, c) {
         (6, 3) => 0.0,
         (6, 4) | (6, 5) => 1.41,
@@ -66,7 +66,7 @@ fn weighted_power(buf: &AudioBuf) -> Vec<f64> {
     z
 }
 
-fn to_lufs(mean_square: f64) -> f64 {
+pub(crate) fn to_lufs(mean_square: f64) -> f64 {
     if mean_square <= 0.0 { f64::NEG_INFINITY } else { -0.691 + 10.0 * mean_square.log10() }
 }
 
@@ -92,7 +92,7 @@ fn prefix_sums(z: &[f64]) -> Vec<f64> {
 }
 
 /// Loudness integrado (LUFS) com portas; `None` se não houver bloco acima de -70 LUFS.
-fn gated_integrated(blocks: &[f64]) -> Option<f64> {
+pub(crate) fn gated_integrated(blocks: &[f64]) -> Option<f64> {
     let abs_thr = 10f64.powf((-70.0 + 0.691) / 10.0);
     let above: Vec<f64> = blocks.iter().copied().filter(|&e| e > abs_thr).collect();
     if above.is_empty() {
@@ -107,7 +107,7 @@ fn gated_integrated(blocks: &[f64]) -> Option<f64> {
     Some(to_lufs(kept.iter().sum::<f64>() / kept.len() as f64))
 }
 
-fn lra_from_short_term(st: &[f64]) -> Option<f64> {
+pub(crate) fn lra_from_short_term(st: &[f64]) -> Option<f64> {
     let abs_thr = 10f64.powf((-70.0 + 0.691) / 10.0);
     let above: Vec<f64> = st.iter().copied().filter(|&e| e > abs_thr).collect();
     if above.is_empty() {
@@ -130,10 +130,10 @@ fn lra_from_short_term(st: &[f64]) -> Option<f64> {
 
 // ---------------------------------------------------------------- true peak
 
-const TP_PHASES: usize = 4;
-const TP_TAPS_PER_PHASE: usize = 24;
+pub(crate) const TP_PHASES: usize = 4;
+pub(crate) const TP_TAPS_PER_PHASE: usize = 24;
 
-fn tp_filter() -> &'static [[f64; TP_TAPS_PER_PHASE]; TP_PHASES] {
+pub(crate) fn tp_filter() -> &'static [[f64; TP_TAPS_PER_PHASE]; TP_PHASES] {
     use std::sync::OnceLock;
     static F: OnceLock<[[f64; TP_TAPS_PER_PHASE]; TP_PHASES]> = OnceLock::new();
     F.get_or_init(|| {
@@ -224,7 +224,7 @@ pub struct LoudnessReport {
     pub short_term_series: Vec<Option<f64>>,
 }
 
-fn opt(v: f64) -> Option<f64> {
+pub(crate) fn opt(v: f64) -> Option<f64> {
     if v.is_finite() { Some(v) } else { None }
 }
 

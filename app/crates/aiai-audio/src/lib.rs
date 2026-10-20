@@ -7,19 +7,28 @@
 //! * [`sfx`]: SFX procedurais determinísticos por semente; [`bgm`]: sequenciador com SoundFont (rustysynth) e síntese própria de reserva;
 //! * [`kokoro`]: Kokoro-82M (PT-BR/EN) por processo externo (`uv run --script`);
 //! * [`voicevox`]: cliente HTTP do VOICEVOX Engine (consulta de áudio, edição de moras, síntese, tempos);
-//! * [`lipsync`]: moras/energia → forma de boca por quadro.
+//! * [`lipsync`]: moras/energia → forma de boca por quadro;
+//! * edição (S24): [`edit`] (cortar/colar/fade/crossfade/remix/velocidade), [`fx`] (efeitos estilo Audacity e o rack),
+//!   [`steps`] (passos serializáveis para a bridge), [`analysis`] (pirâmide de forma de onda e espectrograma),
+//!   [`meters`] (LUFS/LRA/true peak em lote e em fluxo), [`fft`].
 
+pub mod analysis;
 pub mod bgm;
 pub mod buf;
 pub mod dsp;
+pub mod edit;
+pub mod fft;
+pub mod fx;
 pub mod http;
 pub mod kokoro;
 pub mod lipsync;
 pub mod loudness;
+pub mod meters;
 pub mod mixer;
 pub mod resample;
 pub mod rng;
 pub mod sfx;
+pub mod steps;
 pub mod timing;
 pub mod voicevox;
 pub mod wav;
