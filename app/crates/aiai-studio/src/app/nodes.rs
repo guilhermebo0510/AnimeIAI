@@ -342,6 +342,7 @@ pub(crate) fn start_live(env: &mut Env, ctx_ui: &egui::Context, t0: std::time::I
         erase_radius: 0.0,
         erase_mode: env.ed.opts.eraser_mode,
         hide: Some((c.cel.clone(), s.id.clone())),
+        clip: None,
     };
     env.ed.live_stroke.start(ctx_ui, spec, t0);
 }

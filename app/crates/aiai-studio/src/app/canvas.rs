@@ -573,7 +573,7 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
         Gesture::DragNode { .. } | Gesture::DragHandle { .. } => super::nodes::drag(env, c),
         Gesture::PolyCurve { .. } => {}
         Gesture::ScaleSel { handle, start_scale, start_offset, start_rotate } => {
-            let (shift, alt) = (env.ed.shift, env.ed.alt);
+            let (shift, alt) = (env.ed.shift != env.ed.opts.keep_aspect, env.ed.alt);
             if let Some(s) = env.ed.selection.as_mut() {
                 scale_drag(s, *handle, *start_scale, *start_offset, *start_rotate, c, shift, alt);
             }

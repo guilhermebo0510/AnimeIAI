@@ -502,6 +502,9 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
             let r = ui.checkbox(&mut env.ed.opts.move_pick, tr("opt.move_pick"));
             env.note("opt:move_pick", r.rect);
             r.on_hover_text(tr("opt.move_pick.tip"));
+            let r = ui.checkbox(&mut env.ed.opts.keep_aspect, tr("opt.keep_aspect"));
+            env.note("opt:keep_aspect", r.rect);
+            r.on_hover_text(tr("opt.keep_aspect.tip"));
             let n = env.ed.selection.as_ref().map(|s| s.strokes.len()).unwrap_or(0);
             if n > 0 && !compact {
                 dim_label(ui, &t, &format!("{} {n}", tr("opt.move_picked")));

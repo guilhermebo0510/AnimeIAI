@@ -482,6 +482,8 @@ pub(crate) struct ToolOptions {
     pub points_mode: PointsMode,
     /// Mover em camada vetorial: clicar num traço escolhe só ele (Shift soma); sem nada escolhido, leva a camada.
     pub move_pick: bool,
+    /// Transformação: cantos mantêm a proporção (Shift libera), como o Photoshop atual; desligado = livre (Shift trava).
+    pub keep_aspect: bool,
     /// Tolerância de cor da varinha (0..1).
     pub wand_tolerance: f32,
 }
@@ -511,6 +513,7 @@ impl Default for ToolOptions {
             select_mode: SelMode::Rect,
             points_mode: PointsMode::Move,
             move_pick: true,
+            keep_aspect: false,
             wand_tolerance: 0.12,
         }
     }

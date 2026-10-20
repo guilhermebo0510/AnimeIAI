@@ -390,6 +390,12 @@ pub(crate) fn stroke_preset(env: &Env, erase: bool) -> BrushPreset {
     }
 }
 
+/// Seleção que limita pincel e borracha raster: uma área de verdade (não "a camada inteira", não traços escolhidos),
+/// sem transformação pendente.
+pub(crate) fn paint_clip_shape(env: &Env) -> Option<aiai_paint::select::SelectShape> {
+    env.ed.selection.as_ref().filter(|s| !s.whole && s.strokes.is_empty() && s.is_identity()).and_then(|s| s.shape())
+}
+
 /// Semente do traço: a mesma no começo (prévia) e no commit, enquanto nada mais mudou no documento.
 fn stroke_seed(env: &Env) -> u64 {
     env.core.change_counter.wrapping_mul(2654435761)
@@ -418,6 +424,7 @@ pub(crate) fn start_live(env: &mut Env, ctx: &egui::Context, g: &StrokeGesture, 
     let frame = env.ed.frame;
     let cel = cmds::exposed_cel(&env.core.project, &cut, &g.layer, frame).and_then(|c| cmds::cel_data(&env.core.project, &c).cloned());
     let canvas = cmds::canvas_size(&env.core.project, &cut);
+    let cut2 = cut.clone();
     let spec = super::live::StartSpec {
         mode,
         project: Some(env.core.project.clone()),
@@ -438,6 +445,10 @@ pub(crate) fn start_live(env: &mut Env, ctx: &egui::Context, g: &StrokeGesture, 
         erase_radius: env.ed.opts.eraser_size / 2.0,
         erase_mode: env.ed.opts.eraser_mode,
         hide: None,
+        clip: match (paint_clip_shape(env), mode) {
+            (Some(sh), super::live::Mode::Brush | super::live::Mode::EraseRaster) => aiai_tools::paint::selection_mask(&env.core.project, &env.core.blobs, &cut2, &g.layer, frame, &sh).ok().map(std::sync::Arc::new),
+            _ => None,
+        },
     };
     env.ed.live_stroke.start(ctx, spec, g.t0);
 }
@@ -470,10 +481,11 @@ fn commit_brush(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Insta
     let opacity = preset.opacity;
     let seed = stroke_seed(env);
     let (cut, layer, frame, pref) = (t.cut.clone(), t.layer.clone(), t.frame, env.ed.cel_number);
+    let clip = paint_clip_shape(env);
     let ghost_pts: Vec<Vec2> = g.samples.iter().map(|s| g.to_canvas(s.p)).collect();
     let planned = cmds::plan_with_prep(env.core, &cut, &layer, frame, pref, vec![], |p, blobs| {
         let req = tpaint::PaintRequest { cut: cut.clone(), frame, layer: layer.clone(), preset, color, strokes: vec![tpaint::PaintStrokeSpec { points: pts, smooth: true }], seed };
-        tpaint::paint_command(p, blobs, &req).map_err(|e| e.to_string())
+        tpaint::paint_command_in(p, blobs, &req, clip.as_ref()).map_err(|e| e.to_string())
     });
     // com a prévia ao vivo na tela, ela mesma fica até o render chegar (o fantasma em polilinha "mudava" o traço)
     let ghost = if erase || env.ed.live_stroke.overlay.is_some() { None } else { Some((ghost_pts, Vec::new(), size, ghost_color(env, opacity.min(0.9)))) };

@@ -445,6 +445,8 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("brush.show_all", "Mostrar todos os ajustes", "Show all settings"),
     ("tc.points", "Pontos", "Points"),
     ("tool.search", "Buscar", "Search"),
+    ("opt.keep_aspect", "Manter proporção", "Keep proportions"),
+    ("opt.keep_aspect.tip", "Ligado: os cantos da transformação (Ctrl+T) mantêm a proporção e o Shift libera. Desligado: livre, e o Shift mantém a proporção", "On: transform corners (Ctrl+T) keep proportions and Shift frees them. Off: free, and Shift keeps proportions"),
     ("layers.group", "Agrupar camadas escolhidas numa pasta (Ctrl+G)", "Group the chosen layers in a folder (Ctrl+G)"),
     ("layers.n_layers", "camadas", "layers"),
     ("layers.err.into_self", "Uma pasta não pode entrar nela mesma", "A folder cannot go inside itself"),

@@ -212,12 +212,60 @@ mod spline_tests {
 }
 
 pub fn paint_command(p: &Project, blobs: &mut BlobStore, req: &PaintRequest) -> ToolResult<Command> {
+    paint_command_in(p, blobs, req, None)
+}
+
+/// Como [`paint_command`], limitado à seleção (`selection`, px do canvas): fora dela a camada não muda; na borda
+/// suave, mistura na proporção da cobertura (como o Photoshop e o Clip Studio).
+pub fn paint_command_in(p: &Project, blobs: &mut BlobStore, req: &PaintRequest, selection: Option<&aiai_paint::select::SelectShape>) -> ToolResult<Command> {
     req.preset.validate().map_err(ToolError::Invalid)?;
     let (node, cel, w, h) = raster_cel(p, &req.cut, &req.layer, req.frame)?;
     let color = resolve_color(p, &req.color)?;
     let preset = load_tip_mask(blobs, &req.preset)?;
-    let r = paint_on_cel(blobs, Some(cel), w, h, &preset, color, &req.strokes, req.seed, false)?;
+    let mut r = paint_on_cel(blobs, Some(cel), w, h, &preset, color, &req.strokes, req.seed, selection.is_some())?;
+    if let Some(shape) = selection {
+        let mask = selection_mask(p, blobs, &req.cut, &req.layer, req.frame, shape)?;
+        let place = crate::points::cel_placement(p, &req.cut, &req.layer, req.frame).ok();
+        clip_region(&mut r, &mask, place.as_ref());
+    }
     Ok(Command::SetTiles { cel: node.id.clone(), tiles: tiles_for_region_at(blobs, &r.after, r.origin, r.bounds) })
+}
+
+/// Cobertura 0..1 da seleção em px do canvas: (cobertura, largura, altura).
+pub fn selection_mask(p: &Project, blobs: &BlobStore, cut: &Id, layer: &Id, frame: u32, shape: &aiai_paint::select::SelectShape) -> ToolResult<(Vec<f32>, u32, u32)> {
+    use aiai_paint::select::SelectShape as S;
+    let (w, h) = canvas_size(p, cut_data(p, cut)?);
+    let reference = match shape {
+        S::Wand { .. } | S::ColorRange { .. } => Some(crate::transform::selection_reference(p, blobs, cut, layer, frame)?),
+        _ => None,
+    };
+    let sel = aiai_paint::select::Selection::from_shape(shape, w, h, reference.as_ref()).map_err(ToolError::Invalid)?;
+    Ok((sel.cov, w, h))
+}
+
+/// Mistura o recorte pintado com o de antes pela cobertura da seleção (fora dela, volta ao de antes). `place` leva
+/// px do cel para px do canvas (camada com movimento). Precisa de `r.before`.
+pub fn clip_region(r: &mut PaintedRegion, mask: &(Vec<f32>, u32, u32), place: Option<&aiai_paint::Affine>) {
+    let Some(before) = &r.before else { return };
+    let (cov, mw, mh) = (&mask.0, mask.1 as i64, mask.2 as i64);
+    let w = r.after.width as usize;
+    for y in 0..r.after.height as usize {
+        for x in 0..w {
+            let (cx, cy) = ((r.origin[0] + x as i32) as f32 + 0.5, (r.origin[1] + y as i32) as f32 + 0.5);
+            let (sx, sy) = match place {
+                Some(a) => a.apply(cx, cy),
+                None => (cx, cy),
+            };
+            let (ix, iy) = (sx.floor() as i64, sy.floor() as i64);
+            let k = if ix >= 0 && iy >= 0 && ix < mw && iy < mh { cov[(iy * mw + ix) as usize] } else { 0.0 };
+            if k >= 1.0 {
+                continue;
+            }
+            let i = y * w + x;
+            let (a, b) = (r.after.data[i], before.data[i]);
+            r.after.data[i] = [b[0] + (a[0] - b[0]) * k, b[1] + (a[1] - b[1]) * k, b[2] + (a[2] - b[2]) * k, b[3] + (a[3] - b[3]) * k];
+        }
+    }
 }
 
 /// Preset com a máscara da ponta de imagem carregada do blob (o motor não lê blobs).

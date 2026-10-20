@@ -56,6 +56,8 @@ pub(crate) struct StartSpec {
     pub erase_mode: EraseMode,
     /// Editar pontos: (cel, traço) que sai do quadro de baixo (o arrastado entra no lugar).
     pub hide: Option<(NodeId, Id)>,
+    /// Seleção que limita o pincel/borracha raster: cobertura em px do canvas (o commit usa a mesma).
+    pub clip: Option<Arc<(Vec<f32>, u32, u32)>>,
 }
 
 struct Req {
@@ -499,7 +501,10 @@ fn crop_of(r: &aiai_tools::paint::PaintedRegion) -> (usize, usize, usize, usize)
 }
 
 fn brush_overlay(spec: &StartSpec, req: &Req, above: Option<&Above>, inc: &mut Incremental) -> Option<Out> {
-    let r = inc.region(spec, req)?;
+    let mut r = inc.region(spec, req)?;
+    if let Some(m) = &spec.clip {
+        aiai_tools::paint::clip_region(&mut r, m, spec.fwd.as_ref());
+    }
     let before = r.before.as_ref()?;
     let (x0, y0, x1, y1) = crop_of(&r);
     if x0 >= x1 || y0 >= y1 {
@@ -621,7 +626,10 @@ fn erase_pixels(x0: i32, y0: i32, w: usize, h: usize, amount: impl Fn(usize, usi
 }
 
 fn raster_erase_overlay(spec: &StartSpec, req: &Req, u: &(u32, u32, Vec<[f32; 3]>), inc: &mut Incremental) -> Option<Out> {
-    let r = inc.region(spec, req)?;
+    let mut r = inc.region(spec, req)?;
+    if let Some(m) = &spec.clip {
+        aiai_tools::paint::clip_region(&mut r, m, spec.fwd.as_ref());
+    }
     let before = r.before.as_ref()?;
     let (x0, y0, x1, y1) = crop_of(&r);
     if x0 >= x1 || y0 >= y1 {
