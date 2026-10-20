@@ -1181,6 +1181,7 @@ pub fn bevel_verts(
 
 #[cfg(test)]
 mod tests {
+    use super::super::bisect::bisect;
     use super::super::extrude::test_util::*;
     use super::*;
     use crate::primitives;
@@ -1202,8 +1203,39 @@ mod tests {
         Topology::build(m).edges.iter().map(|e| e.verts).collect()
     }
 
-    // AnimeIAI: o poliedro de referência (cortado com o `bisect`, que não foi trazido) saiu deste teste; a faixa de
-    // volume e a forma fechada continuam conferidas.
+    fn polytope_volume_cube_chamfer(a: f32, w: f32) -> f32 {
+        // cubo [-a/2, a/2]^3 recortado por 12 planos de aresta e 8 planos de canto (via bisect)
+        let mut m = primitives::cube(a);
+        let h = a / 2.0;
+        let mut planes: Vec<(Vec3, f32)> = Vec::new();
+        for sx in [-1.0f32, 1.0] {
+            for sy in [-1.0f32, 1.0] {
+                planes.push((Vec3::new(sx, sy, 0.0), a - w)); // arestas ao longo de z
+                planes.push((Vec3::new(sx, 0.0, sy), a - w));
+                planes.push((Vec3::new(0.0, sx, sy), a - w));
+            }
+        }
+        // x + y = h + h - w  => normal (1,1,0)/sqrt2 com distância (a - w)/sqrt2
+        let mut vol_planes: Vec<(Vec3, Vec3)> = Vec::new();
+        for (n, c) in &planes {
+            let nn = n.normalize();
+            vol_planes.push((nn, nn * (c / n.length())));
+        }
+        for sx in [-1.0f32, 1.0] {
+            for sy in [-1.0f32, 1.0] {
+                for sz in [-1.0f32, 1.0] {
+                    let n = Vec3::new(sx, sy, sz);
+                    let corner_pt = Vec3::new(sx * (h - w), sy * (h - w), sz * h);
+                    let nn = n.normalize();
+                    vol_planes.push((nn, nn * nn.dot(corner_pt)));
+                }
+            }
+        }
+        for (n, p) in vol_planes {
+            bisect(&mut m, p, n, false, true, true, 1e-7).unwrap();
+        }
+        signed_volume(&m)
+    }
 
     #[test]
     fn cube_all_edges_chamfer_is_exact_closed_and_outward() {
@@ -1218,6 +1250,11 @@ mod tests {
         assert_outward_star(&m);
         let v = signed_volume(&m);
         assert!(v < 8.0 && v > 6.0, "{v}");
+        let reference = polytope_volume_cube_chamfer(2.0, 0.3);
+        assert!(
+            (v - reference).abs() < 1e-3,
+            "bevel {v} vs poliedro {reference}"
+        );
         for f in 0..m.face_count() as u32 {
             assert!(m.face_area(f) > 1e-4, "face {f} degenerada");
         }

@@ -47,6 +47,8 @@ static GPU: OnceLock<Arc<GpuRaster>> = OnceLock::new();
 /// Liga o serviço GPU no device do egui e o registra no compositor (o canvas, a bridge e o MCP com o app aberto passam a
 /// usá-lo). Sem sucesso, o compositor continua com o rasterizador CPU e o motivo vai para o log.
 pub(crate) fn install_gpu(rs: &egui_wgpu::RenderState) {
+    // viewport nativo da Modelagem (texturas registradas no egui, redesenhadas na GPU)
+    super::modeling::install_gpu(rs);
     if GPU.get().is_some() {
         return;
     }
@@ -78,7 +80,7 @@ static GPU_RELEASE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 const GPU_IDLE_RELEASE: std::time::Duration = std::time::Duration::from_secs(20);
 
 pub(crate) fn gpu_cached_bytes() -> u64 {
-    GPU_CACHED.load(std::sync::atomic::Ordering::Relaxed)
+    GPU_CACHED.load(std::sync::atomic::Ordering::Relaxed) + super::modeling::gpu_bytes()
 }
 
 pub(crate) fn gpu_release_cached() {

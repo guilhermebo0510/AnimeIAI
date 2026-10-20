@@ -51,6 +51,7 @@ impl StudioApp {
     pub(crate) fn set_shortcut(&mut self, a: Action, chord: Option<Chord>) {
         let lost = self.ed.keys.set(a, chord);
         self.prefs.shortcuts = self.ed.keys.to_overrides();
+        self.prefs.shortcuts.extend(self.ed.modeling.keys.to_overrides());
         self.mark_dirty();
         if let Some(o) = lost {
             let c = chord.map(|c| c.label()).unwrap_or_default();
@@ -60,7 +61,7 @@ impl StudioApp {
 
     pub(crate) fn reset_shortcuts(&mut self) {
         self.ed.keys = Keymap::default();
-        self.prefs.shortcuts.clear();
+        self.prefs.shortcuts = self.ed.modeling.keys.to_overrides();
         self.mark_dirty();
     }
 
@@ -270,6 +271,17 @@ impl StudioApp {
             let (txt, col) = if n == 0 { (tr("keys.no_conflicts").to_owned(), t.text_dim) } else { (tr("keys.conflicts").replace("{n}", &n.to_string()), t.st_retake) };
             ui.label(RichText::new(txt).color(col));
         });
+        // contexto Modelagem (perfil AnimeIAI ou Blender/ANIGO)
+        let mut msg = None;
+        let rects = &mut self.rects;
+        if super::modeling::keys::prefs_section(ui, &t, &mut self.ed.modeling.keys, &mut |n, r| rects.note(n, r), &mut msg) {
+            self.prefs.shortcuts = self.ed.keys.to_overrides();
+            self.prefs.shortcuts.extend(self.ed.modeling.keys.to_overrides());
+            self.mark_dirty();
+        }
+        if let Some(m) = msg {
+            self.notice(m);
+        }
     }
 
     fn prefs_folders(&mut self, ui: &mut egui::Ui, t: crate::theme::Tokens) {

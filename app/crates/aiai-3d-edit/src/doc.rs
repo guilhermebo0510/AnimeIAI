@@ -130,6 +130,59 @@ pub enum ModifierSpec {
         #[serde(default = "yes")]
         enabled: bool,
     },
+    /// Casca com espessura (`offset` -1..1: onde fica a superfície original), fechando as bordas.
+    Solidify {
+        thickness: f32,
+        #[serde(default = "minus_one")]
+        offset: f32,
+        #[serde(default = "yes")]
+        even: bool,
+        #[serde(default = "yes")]
+        rim: bool,
+        #[serde(default = "yes")]
+        enabled: bool,
+    },
+    /// Solda vértices mais próximos que `distance`.
+    Weld {
+        distance: f32,
+        #[serde(default = "yes")]
+        enabled: bool,
+    },
+    /// Separa as arestas mais agudas que `angle_deg` (e as marcadas como duras): quina dura no cel shading.
+    EdgeSplit {
+        angle_deg: f32,
+        #[serde(default = "yes")]
+        sharp: bool,
+        #[serde(default = "yes")]
+        enabled: bool,
+    },
+    /// Reduz as faces (colapso quádrico; `ratio` 0..1 das faces que ficam).
+    Decimate {
+        ratio: f32,
+        #[serde(default = "yes")]
+        enabled: bool,
+    },
+    /// Desloca os vértices pela normal (ou eixo `axis` 0/1/2) com ruído (`noise_scale` > 0) ou constante.
+    Displace {
+        strength: f32,
+        #[serde(default)]
+        noise_scale: f32,
+        #[serde(default)]
+        seed: u32,
+        #[serde(default)]
+        axis: Option<u32>,
+        #[serde(default = "yes")]
+        enabled: bool,
+    },
+    /// Triangula quads e n-gons.
+    Triangulate {
+        #[serde(default = "yes")]
+        enabled: bool,
+    },
+}
+
+fn minus_one() -> f32 {
+    -1.0
 }
 
 fn yes() -> bool {
@@ -137,11 +190,20 @@ fn yes() -> bool {
 }
 
 impl ModifierSpec {
+    /// Chaves na ordem do menu "Adicionar".
+    pub const KEYS: [&'static str; 9] = ["mirror", "subsurf", "array", "solidify", "weld", "edge_split", "decimate", "displace", "triangulate"];
+
     pub fn key(&self) -> &'static str {
         match self {
             ModifierSpec::Mirror { .. } => "mirror",
             ModifierSpec::Subsurf { .. } => "subsurf",
             ModifierSpec::Array { .. } => "array",
+            ModifierSpec::Solidify { .. } => "solidify",
+            ModifierSpec::Weld { .. } => "weld",
+            ModifierSpec::EdgeSplit { .. } => "edge_split",
+            ModifierSpec::Decimate { .. } => "decimate",
+            ModifierSpec::Displace { .. } => "displace",
+            ModifierSpec::Triangulate { .. } => "triangulate",
         }
     }
 
@@ -151,33 +213,84 @@ impl ModifierSpec {
             "mirror" => ModifierSpec::Mirror { axes: [true, false, false], merge: true, enabled: true },
             "subsurf" => ModifierSpec::Subsurf { levels: 1, enabled: true },
             "array" => ModifierSpec::Array { count: 3, offset: [1.1, 0.0, 0.0], enabled: true },
+            "solidify" => ModifierSpec::Solidify { thickness: 0.05, offset: -1.0, even: true, rim: true, enabled: true },
+            "weld" => ModifierSpec::Weld { distance: 0.001, enabled: true },
+            "edge_split" => ModifierSpec::EdgeSplit { angle_deg: 30.0, sharp: true, enabled: true },
+            "decimate" => ModifierSpec::Decimate { ratio: 0.5, enabled: true },
+            "displace" => ModifierSpec::Displace { strength: 0.1, noise_scale: 0.5, seed: 1, axis: None, enabled: true },
+            "triangulate" => ModifierSpec::Triangulate { enabled: true },
             _ => return None,
         })
     }
 
+    fn enabled_mut(&mut self) -> &mut bool {
+        match self {
+            ModifierSpec::Mirror { enabled, .. }
+            | ModifierSpec::Subsurf { enabled, .. }
+            | ModifierSpec::Array { enabled, .. }
+            | ModifierSpec::Solidify { enabled, .. }
+            | ModifierSpec::Weld { enabled, .. }
+            | ModifierSpec::EdgeSplit { enabled, .. }
+            | ModifierSpec::Decimate { enabled, .. }
+            | ModifierSpec::Displace { enabled, .. }
+            | ModifierSpec::Triangulate { enabled } => enabled,
+        }
+    }
+
     pub fn enabled(&self) -> bool {
         match self {
-            ModifierSpec::Mirror { enabled, .. } | ModifierSpec::Subsurf { enabled, .. } | ModifierSpec::Array { enabled, .. } => *enabled,
+            ModifierSpec::Mirror { enabled, .. }
+            | ModifierSpec::Subsurf { enabled, .. }
+            | ModifierSpec::Array { enabled, .. }
+            | ModifierSpec::Solidify { enabled, .. }
+            | ModifierSpec::Weld { enabled, .. }
+            | ModifierSpec::EdgeSplit { enabled, .. }
+            | ModifierSpec::Decimate { enabled, .. }
+            | ModifierSpec::Displace { enabled, .. }
+            | ModifierSpec::Triangulate { enabled } => *enabled,
         }
     }
 
     pub fn set_enabled(&mut self, on: bool) {
-        match self {
-            ModifierSpec::Mirror { enabled, .. } | ModifierSpec::Subsurf { enabled, .. } | ModifierSpec::Array { enabled, .. } => *enabled = on,
-        }
+        *self.enabled_mut() = on;
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        let fin = |x: f32, lim: f32| x.is_finite() && x.abs() <= lim;
         match self {
-            ModifierSpec::Mirror { .. } => Ok(()),
+            ModifierSpec::Mirror { .. } | ModifierSpec::Triangulate { .. } => Ok(()),
             ModifierSpec::Subsurf { levels, .. } if (1..=3).contains(levels) => Ok(()),
             ModifierSpec::Subsurf { levels, .. } => Err(format!("subdivisão: níveis {levels} fora de 1..3")),
             ModifierSpec::Array { count, offset, .. } => {
                 if !(1..=100).contains(count) {
                     return Err(format!("array: {count} cópias fora de 1..100"));
                 }
-                if !offset.iter().all(|x| x.is_finite() && x.abs() <= 100.0) {
+                if !offset.iter().all(|x| fin(*x, 100.0)) {
                     return Err("array: deslocamento inválido".into());
+                }
+                Ok(())
+            }
+            ModifierSpec::Solidify { thickness, offset, .. } => {
+                if !fin(*thickness, 100.0) || thickness.abs() < 1e-5 {
+                    return Err("solidify: espessura tem de ser diferente de zero e até ±100".into());
+                }
+                if !(offset.is_finite() && (-1.0..=1.0).contains(offset)) {
+                    return Err("solidify: deslocamento fora de -1..1".into());
+                }
+                Ok(())
+            }
+            ModifierSpec::Weld { distance, .. } if distance.is_finite() && (0.0..=10.0).contains(distance) => Ok(()),
+            ModifierSpec::Weld { .. } => Err("weld: distância fora de 0..10".into()),
+            ModifierSpec::EdgeSplit { angle_deg, .. } if angle_deg.is_finite() && (0.0..=180.0).contains(angle_deg) => Ok(()),
+            ModifierSpec::EdgeSplit { .. } => Err("edge split: ângulo fora de 0..180°".into()),
+            ModifierSpec::Decimate { ratio, .. } if ratio.is_finite() && *ratio > 0.0 && *ratio <= 1.0 => Ok(()),
+            ModifierSpec::Decimate { .. } => Err("decimate: proporção fora de (0, 1]".into()),
+            ModifierSpec::Displace { strength, noise_scale, axis, .. } => {
+                if !fin(*strength, 100.0) || !noise_scale.is_finite() || *noise_scale < 0.0 || *noise_scale > 1000.0 {
+                    return Err("displace: intensidade ou escala do ruído inválida".into());
+                }
+                if axis.is_some_and(|a| a > 2) {
+                    return Err("displace: eixo 0, 1 ou 2".into());
                 }
                 Ok(())
             }
@@ -185,10 +298,35 @@ impl ModifierSpec {
     }
 
     fn apply(&self, m: &EditMesh) -> ModelResult<EditMesh> {
+        use crate::modifiers::{decimate, displace, edge_split, solidify, weld};
         match self {
             ModifierSpec::Mirror { axes, merge, .. } => mirror::mirror(m, &mirror::MirrorParams { axes: *axes, merge: *merge, ..Default::default() }),
             ModifierSpec::Subsurf { levels, .. } => subdiv::catmull_clark(m, &subdiv::SubdivParams { levels: (*levels).min(3), ..Default::default() }),
             ModifierSpec::Array { count, offset, .. } => array::array(m, &array::ArrayParams { count: (*count).clamp(1, 100), relative_offset: Vec3::from(*offset), ..Default::default() }),
+            ModifierSpec::Solidify { thickness, offset, even, rim, .. } => {
+                solidify::solidify(m, &solidify::SolidifyParams { thickness: *thickness, offset: *offset, even_thickness: *even, rim_fill: *rim, ..Default::default() })
+            }
+            ModifierSpec::Weld { distance, .. } => weld::weld(m, *distance, false),
+            ModifierSpec::EdgeSplit { angle_deg, sharp, .. } => edge_split::edge_split(m, Some(angle_deg.to_radians()), *sharp),
+            ModifierSpec::Decimate { ratio, .. } => decimate::decimate(m, &decimate::DecimateSettings::Collapse { ratio: *ratio, params: Default::default() }),
+            ModifierSpec::Displace { strength, noise_scale, seed, axis, .. } => {
+                let direction = match axis {
+                    Some(0) => displace::DisplaceDirection::X,
+                    Some(1) => displace::DisplaceDirection::Y,
+                    Some(_) => displace::DisplaceDirection::Z,
+                    None => displace::DisplaceDirection::Normal,
+                };
+                let texture = if *noise_scale > 0.0 { displace::DisplaceSource::Noise { scale: *noise_scale, seed: *seed } } else { displace::DisplaceSource::Constant };
+                displace::displace(m, &displace::DisplaceParams { strength: *strength, direction, texture, ..Default::default() })
+            }
+            ModifierSpec::Triangulate { .. } => {
+                let mut out = m.clone();
+                let faces: Vec<u32> = (0..out.face_count() as u32).filter(|f| out.faces[*f as usize].corners.len() > 3).collect();
+                if !faces.is_empty() {
+                    crate::ops::triangulate::triangulate_faces(&mut out, &faces, crate::ops::triangulate::QuadMethod::Beauty, crate::ops::triangulate::NgonMethod::Beauty)?;
+                }
+                Ok(out)
+            }
         }
     }
 }
@@ -383,11 +521,25 @@ fn default_name(kind: Primitive) -> &'static str {
 
 /// Parte do modelo de um objeto avaliado: triângulos com vértices por canto (normal do sombreamento escolhido), no mundo.
 pub fn object_part(o: &Object3d, m: &EditMesh) -> Part {
-    let params = match o.shading {
+    part_with_matrix(o, m, o.matrix())
+}
+
+/// Como [`object_part`], no espaço do objeto (o viewport da Modelagem põe a transformação no nó da cena).
+pub fn object_part_local(o: &Object3d, m: &EditMesh) -> Part {
+    part_with_matrix(o, m, if o.matrix().determinant() < 0.0 { o.matrix() } else { Mat4::IDENTITY })
+}
+
+/// Normais do sombreamento escolhido.
+pub fn normal_params(s: Shading) -> NormalParams {
+    match s {
         Shading::Auto => NormalParams::default(),
         Shading::Flat => NormalParams { auto_smooth_angle: Some(0.0), use_custom: false, ..NormalParams::default() },
         Shading::Smooth => NormalParams { auto_smooth_angle: None, use_custom: false, ..NormalParams::default() },
-    };
+    }
+}
+
+fn part_with_matrix(o: &Object3d, m: &EditMesh, mat: Mat4) -> Part {
+    let params = normal_params(o.shading);
     let mut mesh = m.clone();
     if o.shading == Shading::Smooth {
         for f in &mut mesh.faces {
@@ -395,7 +547,6 @@ pub fn object_part(o: &Object3d, m: &EditMesh) -> Part {
         }
     }
     let cn = compute_corner_normals(&mesh, &params);
-    let mat = o.matrix();
     let nm = Mat3::from_mat4(mat).inverse().transpose();
     let flip = mat.determinant() < 0.0;
     let mut positions = Vec::new();
@@ -421,76 +572,8 @@ pub fn object_part(o: &Object3d, m: &EditMesh) -> Part {
     Part { name: o.name.clone(), positions, normals, indices, color: [lin[0], lin[1], lin[2], 1.0], material: o.name.clone() }
 }
 
-/// Triangula um polígono (índices locais 0..n): triângulo trivial, quad pela diagonal que preserva a orientação, n-gon por
-/// ear clipping no plano de Newell. Copiado do `convert.rs` do `anigo-modeling` (o resto do `convert.rs`, ponte com o
-/// `anigo_core::Mesh`, não foi trazido).
-pub fn triangulate_polygon(pts: &[Vec3]) -> Vec<[usize; 3]> {
-    let n = pts.len();
-    if n < 3 {
-        return Vec::new();
-    }
-    if n == 3 {
-        return vec![[0, 1, 2]];
-    }
-    let normal = crate::mesh::newell_normal(pts);
-    if normal == Vec3::ZERO {
-        return (1..n - 1).map(|i| [0, i, i + 1]).collect();
-    }
-    if n == 4 {
-        let ok = |a: usize, b: usize, c: usize| (pts[b] - pts[a]).cross(pts[c] - pts[a]).dot(normal) > 0.0;
-        let d02 = pts[0].distance_squared(pts[2]);
-        let d13 = pts[1].distance_squared(pts[3]);
-        let first_02 = d02 <= d13;
-        let tri_02 = ok(0, 1, 2) && ok(0, 2, 3);
-        let tri_13 = ok(1, 2, 3) && ok(1, 3, 0);
-        return match (first_02, tri_02, tri_13) {
-            (_, true, false) | (true, true, true) => vec![[0, 1, 2], [0, 2, 3]],
-            (_, false, true) | (false, true, true) => vec![[1, 2, 3], [1, 3, 0]],
-            _ => vec![[0, 1, 2], [0, 2, 3]],
-        };
-    }
-    let mut idx: Vec<usize> = (0..n).collect();
-    let mut out = Vec::with_capacity(n - 2);
-    let mut guard = 0;
-    while idx.len() > 3 && guard < n * n {
-        guard += 1;
-        let m = idx.len();
-        let mut clipped = false;
-        for k in 0..m {
-            let (ia, ib, ic) = (idx[(k + m - 1) % m], idx[k], idx[(k + 1) % m]);
-            let (a, b, c) = (pts[ia], pts[ib], pts[ic]);
-            if (b - a).cross(c - a).dot(normal) <= 1e-12 {
-                continue;
-            }
-            let inside = idx.iter().any(|&j| j != ia && j != ib && j != ic && point_in_triangle(pts[j], a, b, c, normal));
-            if inside {
-                continue;
-            }
-            out.push([ia, ib, ic]);
-            idx.remove(k);
-            clipped = true;
-            break;
-        }
-        if !clipped {
-            let first = idx[0];
-            for w in idx[1..].windows(2) {
-                out.push([first, w[0], w[1]]);
-            }
-            return out;
-        }
-    }
-    if idx.len() == 3 {
-        out.push([idx[0], idx[1], idx[2]]);
-    }
-    out
-}
-
-fn point_in_triangle(p: Vec3, a: Vec3, b: Vec3, c: Vec3, n: Vec3) -> bool {
-    let s0 = (b - a).cross(p - a).dot(n);
-    let s1 = (c - b).cross(p - b).dot(n);
-    let s2 = (a - c).cross(p - c).dot(n);
-    s0 >= 0.0 && s1 >= 0.0 && s2 >= 0.0
-}
+/// Triangulação de polígono do `convert.rs` do ANIGO (ear clipping no plano de Newell).
+pub use crate::convert::triangulate_polygon;
 
 // ------------------------------------------------------------------------------------------- operações de elementos
 
@@ -612,59 +695,11 @@ pub fn object_rotation(o: &Object3d) -> glam::Quat {
 
 // ---------------------------------------------------------------------------------------------------- histórico
 
-/// Desfazer/refazer por documento inteiro (teto de passos).
-#[derive(Debug, Clone, Default)]
-pub struct History {
-    undo: Vec<ModelDoc>,
-    redo: Vec<ModelDoc>,
-}
+/// Desfazer/refazer por documento inteiro, com rótulo por passo (o `History<T>` do ANIGO, ver `crate::history`).
+pub type History = crate::history::History<ModelDoc>;
 
 /// Passos guardados.
 pub const HISTORY_CAP: usize = 100;
-
-impl History {
-    /// Guarda o estado de ANTES de uma mudança (limpa o refazer).
-    pub fn push(&mut self, before: ModelDoc) {
-        self.undo.push(before);
-        if self.undo.len() > HISTORY_CAP {
-            self.undo.remove(0);
-        }
-        self.redo.clear();
-    }
-
-    pub fn undo(&mut self, cur: &mut ModelDoc) -> bool {
-        match self.undo.pop() {
-            Some(prev) => {
-                self.redo.push(std::mem::replace(cur, prev));
-                true
-            }
-            None => false,
-        }
-    }
-
-    pub fn redo(&mut self, cur: &mut ModelDoc) -> bool {
-        match self.redo.pop() {
-            Some(next) => {
-                self.undo.push(std::mem::replace(cur, next));
-                true
-            }
-            None => false,
-        }
-    }
-
-    pub fn can_undo(&self) -> bool {
-        !self.undo.is_empty()
-    }
-
-    pub fn can_redo(&self) -> bool {
-        !self.redo.is_empty()
-    }
-
-    pub fn clear(&mut self) {
-        self.undo.clear();
-        self.redo.clear();
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -820,16 +855,17 @@ mod tests {
     fn history_undoes_and_redoes_whole_documents() {
         let mut d = ModelDoc::new("h");
         let mut h = History::default();
-        h.push(d.clone());
+        h.record("cubo", &d);
         d.add_primitive(Primitive::Cube, 1.0, [0.0; 3], None).unwrap();
-        h.push(d.clone());
+        h.record("esfera", &d);
         d.add_primitive(Primitive::Sphere, 1.0, [0.0; 3], None).unwrap();
-        assert!(h.undo(&mut d));
+        assert_eq!(h.labels(), ["cubo", "esfera"]);
+        assert_eq!(h.undo(&mut d).as_deref(), Some("esfera"));
         assert_eq!(d.objects.len(), 1);
-        assert!(h.undo(&mut d));
+        assert!(h.undo(&mut d).is_some());
         assert_eq!(d.objects.len(), 0);
-        assert!(!h.undo(&mut d));
-        assert!(h.redo(&mut d));
+        assert!(h.undo(&mut d).is_none());
+        assert!(h.redo(&mut d).is_some());
         assert_eq!(d.objects.len(), 1);
     }
 }

@@ -42,6 +42,7 @@ aiai-3d-edit = { path = "../aiai-3d-edit" }
 aiai-assets = { path = "../aiai-assets" }
 glam = { workspace = true }
 pollster = "1"
+bytemuck = { workspace = true }
 # ícone da janela: o hwnd vem do eframe (CreationContext implementa HasWindowHandle); 0.6.2 já está no Cargo.lock
 raw-window-handle = "0.6"
 # dialogos nativos de abrir/salvar pasta de projeto (Arquivo > Abrir/Salvar como)

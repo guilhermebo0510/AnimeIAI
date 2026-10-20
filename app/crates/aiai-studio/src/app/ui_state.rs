@@ -278,6 +278,7 @@ impl StudioApp {
             "timeline": { "cell_w": ed.tl_cell_w, "scroll": [round(ed.tl_scroll.x), round(ed.tl_scroll.y)], "header_w": ed.anim.tl.header_w, "ruler_h": ed.anim.tl.ruler_h, "row_h": ed.anim.tl.row_h, "density": if ed.anim.density(self.ws) == super::anim::Density::Compact { "compact" } else { "normal" } },
             "anim": { "onion": ed.anim.onion.on, "onion_visible": ed.anim.onion_visible(), "onion_renders": ed.anim.onion_renders, "phase": ed.cut.as_ref().map(|c| if super::anim::cut_phase(&self.core.project, c) == aiai_core::CutPhase::Douga { "douga" } else { "genga" }), "layout_variant": format!("{:?}", self.layouts.variant(crate::workspace::WorkspaceId::Animacao)) },
             "render": render,
+            "modeling": super::modeling::state_json(&ed.modeling),
         })
     }
 

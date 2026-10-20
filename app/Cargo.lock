@@ -81,6 +81,7 @@ dependencies = [
 name = "aiai-3d-edit"
 version = "0.1.0"
 dependencies = [
+ "aiai-3d-core",
  "aiai-3d-model",
  "aiai-core",
  "glam",
@@ -315,6 +316,7 @@ dependencies = [
  "aiai-tools",
  "anyhow",
  "base64",
+ "bytemuck",
  "crossbeam-channel",
  "eframe",
  "egui",

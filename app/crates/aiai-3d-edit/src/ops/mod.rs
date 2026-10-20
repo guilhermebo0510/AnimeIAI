@@ -20,11 +20,20 @@ pub struct OpOutput {
 }
 
 pub mod bevel;
+pub mod bisect;
+pub mod bridge;
+pub mod catalog;
 pub mod delete;
 pub mod dissolve;
 pub mod extrude;
+pub mod fill;
+pub mod flip;
 pub mod inset;
 pub mod loops;
 pub mod merge;
+pub mod misc;
+pub mod slide;
 pub mod smooth;
+pub mod spin;
 pub mod transform;
+pub mod triangulate;

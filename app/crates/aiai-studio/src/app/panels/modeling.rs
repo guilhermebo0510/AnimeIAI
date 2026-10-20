@@ -1,12 +1,15 @@
-//! Painéis da Modelagem (S24 3D, fase 12): Objetos (o documento, adicionar primitivas, abrir um modelo editável do
-//! projeto, salvar e enviar), Propriedades do objeto (nome, transformação, cor toon, sombreamento, malha) e
-//! Modificadores (pilha espelho/subdivisão/array com ligar, subir, descer e tirar). Toda mudança passa pelo histórico da
-//! Modelagem (Ctrl+Z).
+//! Painéis da Modelagem (S24 3D): Objetos (o documento, adicionar primitivas, abrir um modelo editável do projeto,
+//! salvar e enviar), Propriedades (no modo Edição, os Operadores do ANIGO e o "Ajustar última operação"; nome,
+//! transformação, cor toon, sombreamento, malha) e Modificadores (a pilha com os 9 tipos vendorizados do ANIGO: espelho,
+//! subdivisão, array, espessura, soldar, separar arestas, reduzir, deslocar e triangular). Toda mudança passa pelo
+//! histórico da Modelagem (Ctrl+Z).
 
+use crate::app::modeling::keys::MAction;
 use crate::app::modeling::{self as mdl, EditMode};
 use crate::app::ui_kit::{Env, body_ui, dim_label, section};
 use crate::i18n::tr;
 use aiai_3d_edit::doc::{ModifierSpec, Primitive, Shading};
+use aiai_3d_edit::ops::catalog::{OpKind, OpParams};
 use aiai_core::model3d::hex_rgb;
 use egui::{Color32, Rect, RichText, Ui};
 
@@ -99,6 +102,7 @@ pub(crate) fn outliner(env: &mut Env, ui: &mut Ui, body: Rect) {
                     if ms.active != Some(i) {
                         ms.active = Some(i);
                         ms.sel.clear();
+                        ms.touch();
                     }
                 }
             });
@@ -116,7 +120,10 @@ pub(crate) fn outliner(env: &mut Env, ui: &mut Ui, body: Rect) {
                         Ok(d.objects.len() - 1)
                     });
                     match r {
-                        Ok(i) => env.ed.modeling.active = Some(i),
+                        Ok(i) => {
+                            env.ed.modeling.active = Some(i);
+                            env.ed.modeling.touch();
+                        }
                         Err(e) => env.ed.notify(e),
                     }
                 }
@@ -130,6 +137,7 @@ pub(crate) fn outliner(env: &mut Env, ui: &mut Ui, body: Rect) {
                     });
                     ms.active = None;
                     ms.mode = EditMode::Object;
+                    ms.touch();
                 }
             });
         }
@@ -168,6 +176,10 @@ pub(crate) fn properties(env: &mut Env, ui: &mut Ui, body: Rect) {
         return;
     };
     egui::ScrollArea::vertical().id_salt("mdl_props").show(ui, |ui| {
+        if env.ed.modeling.mode == EditMode::Edit {
+            operators(env, ui);
+            adjust_last(env, ui);
+        }
         let o = env.ed.modeling.doc.objects[a].clone();
         section(ui, &t, "mdl.object");
         ui.horizontal(|ui| {
@@ -215,6 +227,7 @@ pub(crate) fn properties(env: &mut Env, ui: &mut Ui, body: Rect) {
             // um passo de desfazer quando o seletor fecha (não a cada arrasto dentro dele)
             if r.changed() {
                 env.ed.modeling.doc.objects[a].color = rgb(c);
+                env.ed.modeling.touch();
                 let key = egui::Id::new(("mdl_color_before", a));
                 if ui.data(|dm| dm.get_temp::<[f32; 3]>(key)).is_none() {
                     ui.data_mut(|dm| dm.insert_temp(key, o.color));
@@ -293,7 +306,7 @@ pub(crate) fn modifiers(env: &mut Env, ui: &mut Ui, body: Rect) {
     egui::ScrollArea::vertical().id_salt("mdl_mods").show(ui, |ui| {
         ui.horizontal_wrapped(|ui| {
             dim_label(ui, &t, tr("mdl.mod.add"));
-            for k in ["mirror", "subsurf", "array"] {
+            for k in ModifierSpec::KEYS {
                 let r = ui.button(tr(&format!("mdl.mod.{k}")));
                 env.note(format!("mdl:mod_add.{k}"), r.rect);
                 if r.clicked() {
@@ -387,6 +400,11 @@ pub(crate) fn modifiers(env: &mut Env, ui: &mut Ui, body: Rect) {
                             }
                         });
                     }
+                    other => {
+                        if let Some(nm) = modifier_params(ui, &t, a, i, &other) {
+                            changed = Some(nm);
+                        }
+                    }
                 }
                 if let Some(nm) = changed {
                     let r = env.ed.modeling.edit(|d| {
@@ -402,4 +420,251 @@ pub(crate) fn modifiers(env: &mut Env, ui: &mut Ui, body: Rect) {
             });
         }
     });
+}
+
+/// Campos dos modificadores vendorizados do ANIGO (espessura, soldar, separar arestas, reduzir, deslocar, triangular).
+fn modifier_params(ui: &mut Ui, t: &crate::theme::Tokens, a: usize, i: usize, m: &ModifierSpec) -> Option<ModifierSpec> {
+    let mut out = None;
+    let num = |ui: &mut Ui, key: &str, salt: &str, v: f32, speed: f64, lo: f32, hi: f32| -> Option<f32> {
+        ui.horizontal(|ui| {
+            dim_label(ui, t, tr(key));
+            crate::app::panels::commit_on_release(ui, egui::Id::new(("mdl_mod_f", a, i, salt.to_owned())), v, |ui, x| ui.add(egui::DragValue::new(x).speed(speed).range(lo..=hi).max_decimals(3)))
+        })
+        .inner
+    };
+    match m.clone() {
+        ModifierSpec::Solidify { thickness, offset, even, rim, enabled } => {
+            if let Some(v) = num(ui, "mdl.mod.thickness", "th", thickness, 0.002, -10.0, 10.0).filter(|v| v.abs() >= 1e-4) {
+                out = Some(ModifierSpec::Solidify { thickness: v, offset, even, rim, enabled });
+            }
+            if let Some(v) = num(ui, "mdl.mod.shell_offset", "off", offset, 0.02, -1.0, 1.0) {
+                out = Some(ModifierSpec::Solidify { thickness, offset: v, even, rim, enabled });
+            }
+            ui.horizontal(|ui| {
+                let (mut e, mut r) = (even, rim);
+                let c1 = ui.checkbox(&mut e, tr("mdl.mod.even")).changed();
+                let c2 = ui.checkbox(&mut r, tr("mdl.mod.rim")).changed();
+                if c1 || c2 {
+                    out = Some(ModifierSpec::Solidify { thickness, offset, even: e, rim: r, enabled });
+                }
+            });
+        }
+        ModifierSpec::Weld { distance, enabled } => {
+            if let Some(v) = num(ui, "mdl.mod.distance", "d", distance, 0.0005, 0.0, 10.0) {
+                out = Some(ModifierSpec::Weld { distance: v, enabled });
+            }
+        }
+        ModifierSpec::EdgeSplit { angle_deg, sharp, enabled } => {
+            if let Some(v) = num(ui, "mdl.mod.angle", "ang", angle_deg, 0.5, 0.0, 180.0) {
+                out = Some(ModifierSpec::EdgeSplit { angle_deg: v, sharp, enabled });
+            }
+            let mut s = sharp;
+            if ui.checkbox(&mut s, tr("mdl.mod.sharp")).changed() {
+                out = Some(ModifierSpec::EdgeSplit { angle_deg, sharp: s, enabled });
+            }
+        }
+        ModifierSpec::Decimate { ratio, enabled } => {
+            if let Some(v) = num(ui, "mdl.mod.ratio", "r", ratio, 0.01, 0.01, 1.0) {
+                out = Some(ModifierSpec::Decimate { ratio: v, enabled });
+            }
+        }
+        ModifierSpec::Displace { strength, noise_scale, seed, axis, enabled } => {
+            if let Some(v) = num(ui, "mdl.mod.strength", "s", strength, 0.005, -10.0, 10.0) {
+                out = Some(ModifierSpec::Displace { strength: v, noise_scale, seed, axis, enabled });
+            }
+            if let Some(v) = num(ui, "mdl.mod.noise_scale", "n", noise_scale, 0.01, 0.0, 100.0) {
+                out = Some(ModifierSpec::Displace { strength, noise_scale: v, seed, axis, enabled });
+            }
+            ui.horizontal(|ui| {
+                dim_label(ui, t, tr("mdl.mod.direction"));
+                for (val, label) in [(None, tr("mdl.mod.normal")), (Some(0), "X"), (Some(1), "Y"), (Some(2), "Z")] {
+                    if ui.selectable_label(axis == val, label).clicked() && axis != val {
+                        out = Some(ModifierSpec::Displace { strength, noise_scale, seed, axis: val, enabled });
+                    }
+                }
+            });
+            ui.horizontal(|ui| {
+                dim_label(ui, t, tr("mdl.mod.seed"));
+                if let Some(v) = crate::app::panels::commit_on_release(ui, egui::Id::new(("mdl_mod_seed", a, i)), seed, |ui, x| ui.add(egui::DragValue::new(x).range(0..=9999))) {
+                    out = Some(ModifierSpec::Displace { strength, noise_scale, seed: v, axis, enabled });
+                }
+            });
+        }
+        _ => {}
+    }
+    out
+}
+
+/// Grupos de operadores (a ordem e os grupos do Inspector do ANIGO) com a ação de atalho, quando há.
+const OP_GROUPS: &[(&str, &[(OpKind, Option<MAction>)])] = &[
+    (
+        "mdl.ops.geometry",
+        &[
+            (OpKind::Extrude, Some(MAction::Extrude)),
+            (OpKind::ExtrudeIndividual, None),
+            (OpKind::Inset, Some(MAction::Inset)),
+            (OpKind::InsetIndividual, None),
+            (OpKind::Bevel, Some(MAction::Bevel)),
+            (OpKind::LoopCut, Some(MAction::LoopCut)),
+            (OpKind::Bisect, Some(MAction::Bisect)),
+            (OpKind::Bridge, None),
+            (OpKind::Subdivide, None),
+            (OpKind::Poke, None),
+        ],
+    ),
+    (
+        "mdl.ops.remove",
+        &[
+            (OpKind::DeleteVerts, Some(MAction::Delete)),
+            (OpKind::DeleteEdges, None),
+            (OpKind::DeleteFaces, None),
+            (OpKind::DeleteOnlyFaces, None),
+            (OpKind::MergeCenter, Some(MAction::Merge)),
+            (OpKind::MergeByDistance, Some(MAction::MergeNear)),
+            (OpKind::DissolveVerts, Some(MAction::Dissolve)),
+            (OpKind::DissolveEdges, None),
+            (OpKind::DissolveFaces, None),
+            (OpKind::LimitedDissolve, None),
+            (OpKind::FillHole, Some(MAction::FillHole)),
+            (OpKind::GridFill, None),
+        ],
+    ),
+    (
+        "mdl.ops.faces",
+        &[
+            (OpKind::Triangulate, Some(MAction::Triangulate)),
+            (OpKind::TrisToQuads, None),
+            (OpKind::FlipNormals, None),
+            (OpKind::RecalcOutside, Some(MAction::RecalcNormals)),
+            (OpKind::HideSelected, Some(MAction::Hide)),
+            (OpKind::RevealAll, Some(MAction::Reveal)),
+        ],
+    ),
+    ("mdl.ops.verts", &[(OpKind::Smooth, None), (OpKind::Relax, None)]),
+    ("mdl.ops.edge_attrs", &[(OpKind::MarkSharp, None), (OpKind::ClearSharp, None), (OpKind::MarkSeam, None), (OpKind::ClearSeam, None), (OpKind::SetCrease, None)]),
+];
+
+/// Seção Operadores (modo Edição): um botão por operador do catálogo, com a tecla na dica.
+fn operators(env: &mut Env, ui: &mut Ui) {
+    let t = env.t;
+    section(ui, &t, "mdl.ops.title");
+    let keys = env.ed.modeling.keys.clone();
+    for (title, ops) in OP_GROUPS {
+        ui.label(RichText::new(tr(title)).color(t.text_dim).size(11.5));
+        ui.horizontal_wrapped(|ui| {
+            for (k, act) in ops.iter() {
+                let label = tr(&mdl::op_label_key(*k)).to_owned();
+                let tip = match act.map(|a| keys.label(a)).filter(|s| !s.is_empty()) {
+                    Some(key) => format!("{label} ({key})"),
+                    None => label.clone(),
+                };
+                let r = ui.small_button(label).on_hover_text(tip);
+                env.note(format!("mdl:op.{}", k.key()), r.rect);
+                if r.clicked() {
+                    mdl::run(env, *k);
+                }
+            }
+        });
+    }
+}
+
+/// Painel "Ajustar última operação" (Redo Panel): mudar um parâmetro refaz a operação.
+fn adjust_last(env: &mut Env, ui: &mut Ui) {
+    let t = env.t;
+    let Some(last) = env.ed.modeling.last_op_valid() else { return };
+    let kind = last.kind;
+    if !kind.has_params() {
+        return;
+    }
+    let mut p: OpParams = last.params.clone();
+    let mut changed = false;
+    ui.add_space(4.0);
+    let title = ui.label(RichText::new(format!("{}: {}", tr("mdl.ops.adjust"), tr(&mdl::op_label_key(kind)))).strong().color(t.accent));
+    env.note("mdl:adjust", title.rect);
+    let mut dv = |ui: &mut Ui, key: &str, v: &mut f32, speed: f64| {
+        ui.horizontal(|ui| {
+            dim_label(ui, &t, tr(key));
+            let r = ui.add(egui::DragValue::new(v).speed(speed).max_decimals(3));
+            changed |= r.changed();
+        });
+    };
+    match kind {
+        OpKind::Extrude => dv(ui, "mdl.p.distance", &mut p.distance, 0.01),
+        OpKind::Inset | OpKind::InsetIndividual => {
+            dv(ui, "mdl.p.thickness", &mut p.thickness, 0.005);
+            dv(ui, "mdl.p.depth", &mut p.depth, 0.005);
+        }
+        OpKind::Bevel => dv(ui, "mdl.p.width", &mut p.width, 0.005),
+        OpKind::MergeByDistance => dv(ui, "mdl.p.merge_distance", &mut p.merge_distance, 0.0005),
+        OpKind::LimitedDissolve => dv(ui, "mdl.p.angle", &mut p.dissolve_angle_deg, 0.5),
+        OpKind::Smooth | OpKind::Relax => dv(ui, "mdl.p.factor", &mut p.factor, 0.01),
+        OpKind::Subdivide => dv(ui, "mdl.p.smoothness", &mut p.subdiv_smooth, 0.01),
+        OpKind::Poke => dv(ui, "mdl.p.offset", &mut p.poke_offset, 0.01),
+        OpKind::Bisect => dv(ui, "mdl.p.plane_offset", &mut p.plane_offset, 0.01),
+        _ => {}
+    }
+    drop(dv);
+    match kind {
+        OpKind::Inset => {
+            changed |= ui.checkbox(&mut p.outset, tr("mdl.p.outset")).changed();
+            changed |= ui.checkbox(&mut p.even, tr("mdl.p.even")).changed();
+        }
+        OpKind::Bevel => {
+            ui.horizontal(|ui| {
+                dim_label(ui, &t, tr("mdl.p.segments"));
+                changed |= ui.add(egui::DragValue::new(&mut p.segments).range(1..=32)).changed();
+            });
+            ui.horizontal(|ui| {
+                dim_label(ui, &t, tr("mdl.p.profile"));
+                changed |= ui.add(egui::Slider::new(&mut p.profile, 0.0..=1.0)).changed();
+            });
+        }
+        OpKind::LoopCut => {
+            ui.horizontal(|ui| {
+                dim_label(ui, &t, tr("mdl.p.cuts"));
+                let r = ui.add(egui::DragValue::new(&mut p.cuts).range(1..=64));
+                env.note("mdl:adjust.cuts", r.rect);
+                changed |= r.changed();
+            });
+            ui.horizontal(|ui| {
+                dim_label(ui, &t, tr("mdl.p.slide"));
+                changed |= ui.add(egui::Slider::new(&mut p.slide, -0.95..=0.95)).changed();
+            });
+        }
+        OpKind::Smooth | OpKind::Relax => {
+            ui.horizontal(|ui| {
+                dim_label(ui, &t, tr("mdl.p.iterations"));
+                changed |= ui.add(egui::DragValue::new(&mut p.iterations).range(1..=100)).changed();
+            });
+            changed |= ui.checkbox(&mut p.lock_boundary, tr("mdl.p.lock_boundary")).changed();
+        }
+        OpKind::Subdivide => {
+            ui.horizontal(|ui| {
+                dim_label(ui, &t, tr("mdl.p.cuts"));
+                changed |= ui.add(egui::DragValue::new(&mut p.subdiv_cuts).range(1..=16)).changed();
+            });
+        }
+        OpKind::SetCrease => {
+            ui.horizontal(|ui| {
+                dim_label(ui, &t, tr("mdl.p.crease"));
+                changed |= ui.add(egui::Slider::new(&mut p.crease, 0.0..=1.0)).changed();
+            });
+        }
+        OpKind::Bisect => {
+            ui.horizontal(|ui| {
+                for (i, n) in ["X", "Y", "Z"].iter().enumerate() {
+                    changed |= ui.selectable_value(&mut p.plane_axis, i, *n).changed();
+                }
+            });
+            changed |= ui.checkbox(&mut p.clear_inner, tr("mdl.p.clear_inner")).changed();
+            changed |= ui.checkbox(&mut p.clear_outer, tr("mdl.p.clear_outer")).changed();
+            changed |= ui.checkbox(&mut p.fill, tr("mdl.p.fill")).changed();
+        }
+        _ => {}
+    }
+    if changed {
+        if let Err(e) = env.ed.modeling.redo_last_with(p) {
+            env.ed.notify(e);
+        }
+    }
 }

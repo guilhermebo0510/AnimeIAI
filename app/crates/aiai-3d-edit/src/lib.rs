@@ -1,10 +1,12 @@
-//! Modelagem do AnimeIAI (S24 3D, fase 12): subconjunto vendorizado do `anigo-modeling` (malha editável n-gon, primitivas,
-//! operadores do modo Edição e modificadores; procedência em `VENDOR.md`) e o documento da Modelagem ([`doc`]): objetos,
+//! Modelagem do AnimeIAI (S24 3D, fase 12): o motor vendorizado do `anigo-modeling` (malha editável n-gon, primitivas,
+//! os operadores do modo Edição com o catálogo da interface, os modificadores e o histórico; procedência em `VENDOR.md`) e o documento da Modelagem ([`doc`]): objetos,
 //! modificadores, material toon, histórico e a conversão para o modelo normalizado (GLB) da camada 3D e da biblioteca.
 //! Rust puro, sem GPU: tudo testável.
 
+pub mod convert;
 pub mod doc;
 pub mod error;
+pub mod history;
 pub mod mesh;
 pub mod modifiers;
 pub mod normals;

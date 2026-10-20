@@ -41,6 +41,9 @@ pub enum ModelingOp {
     MergeByDistance,
     /// Acrescenta (`add`) ou tira (`remove`) um modificador.
     Modifier,
+    /// Um operador do modo Edição do catálogo do ANIGO (`operator`: bevel, loop_cut, bisect, bridge, fill_hole,
+    /// triangulate, smooth, subdivide...) sobre `faces`/`edges`, com `params` (os do "Ajustar última operação").
+    Operator,
     /// Cor toon e sombreamento do objeto.
     Material,
     /// Apaga um objeto.
@@ -156,6 +159,15 @@ pub struct ModelingRequest {
     /// export: caminho absoluto do .glb.
     #[serde(default)]
     pub path: Option<String>,
+    /// operator: chave do operador (`extrude`, `inset`, `bevel`, `loop_cut`, `bisect`, `bridge`, `fill_hole`, `grid_fill`,
+    /// `triangulate`, `tris_to_quads`, `smooth`, `relax`, `subdivide`, `poke`, `merge_center`, `dissolve_edges`,
+    /// `limited_dissolve`, `flip_normals`, `recalc_outside`, `mark_sharp`, `mark_seam`, `set_crease`...).
+    #[serde(default)]
+    pub operator: Option<String>,
+    /// operator: parâmetros (`thickness`, `width`, `segments`, `profile`, `cuts`, `slide`, `plane_axis`, `plane_offset`,
+    /// `fill`, `factor`, `iterations`, `merge_distance`, `dissolve_angle_deg`, `subdiv_cuts`, `crease`...).
+    #[serde(default)]
+    pub params: Option<serde_json::Map<String, Value>>,
 }
 
 /// Documento de um ativo 3D editável (com `params.modeling`).
@@ -359,7 +371,7 @@ pub fn apply_op(d: &mut ModelDoc, r: &ModelingRequest) -> ToolResult<Value> {
                 o.modifiers.remove(k);
             }
             if let Some(a) = &r.add {
-                let mut m = ModifierSpec::new(a).ok_or_else(|| inv(format!("modificador '{a}' desconhecido (mirror, subsurf, array)")))?;
+                let mut m = ModifierSpec::new(a).ok_or_else(|| inv(format!("modificador '{a}' desconhecido ({})", ModifierSpec::KEYS.join(", "))))?;
                 match &mut m {
                     ModifierSpec::Mirror { axes, .. } => {
                         if let Some(x) = r.axes {
@@ -379,12 +391,38 @@ pub fn apply_op(d: &mut ModelDoc, r: &ModelingRequest) -> ToolResult<Value> {
                             *offset = v;
                         }
                     }
+                    // os outros entram com os valores padrão (a interface ajusta)
+                    _ => {}
                 }
                 m.validate().map_err(inv)?;
                 o.modifiers.push(m);
             }
             o.evaluated().map_err(|e| inv(e.to_string()))?;
             Ok(json!({ "object": i, "modifiers": o.modifiers }))
+        }
+        ModelingOp::Operator => {
+            use aiai_3d_edit::ops::catalog::{OpKind, OpParams, apply_kind};
+            let i = object_index(d, r.object.as_deref())?;
+            let key = r.operator.as_deref().ok_or_else(|| inv("falta `operator`".into()))?;
+            let kind = OpKind::from_key(key).ok_or_else(|| inv(format!("operador '{key}' desconhecido ({})", OpKind::ALL.iter().map(|k| k.key()).collect::<Vec<_>>().join(", "))))?;
+            let mut params = OpParams::default();
+            if let Some(m) = &r.params {
+                params.apply_json(m).map_err(inv)?;
+            }
+            let m = &mut d.objects[i].mesh;
+            let mut sel = Selection::default();
+            if r.faces.is_some() {
+                sel = Selection::from_faces(m, faces_of(m, r.faces.as_ref())?);
+            }
+            match &r.edges {
+                None => {}
+                Some(EdgeSel::Named(n)) if n == "all" => sel = Selection::from_edges(doc::all_edges(m)),
+                Some(EdgeSel::Named(n)) => return Err(inv(format!("edges '{n}': use \"all\" ou [[a, b], ...]"))),
+                Some(EdgeSel::Pairs(v)) => sel = Selection::from_edges(v.iter().map(|[a, b]| aiai_3d_edit::edge_key(*a, *b))),
+            }
+            let out = apply_kind(kind, &params, m, &sel).map_err(|e| inv(format!("{key}: {e}")))?;
+            m.validate().map_err(|e| inv(e.to_string()))?;
+            Ok(json!({ "object": i, "operator": key, "faces": out.selection.faces, "face_count": m.face_count(), "vert_count": m.vert_count() }))
         }
         ModelingOp::Material => {
             let i = object_index(d, r.object.as_deref())?;
@@ -506,5 +544,26 @@ mod tests {
         assert!(apply_op(&mut d, &ModelingRequest { op: Some(ModelingOp::Modifier), add: Some("subsurf".into()), levels: Some(7), ..Default::default() }).is_err());
         let v = serde_json::json!({ "op": "extrude", "asset": "a", "lado": 1 });
         assert!(serde_json::from_value::<ModelingRequest>(v).is_err(), "chave desconhecida é erro");
+    }
+
+    #[test]
+    fn catalog_operators_and_new_modifiers_by_command() {
+        let mut d = ModelDoc::new("op");
+        apply_op(&mut d, &ModelingRequest { op: Some(ModelingOp::AddPrimitive), primitive: Some("cube".into()), ..Default::default() }).unwrap();
+        let params = serde_json::json!({ "width": 0.1, "segments": 3 }).as_object().cloned();
+        let v = apply_op(&mut d, &ModelingRequest { op: Some(ModelingOp::Operator), operator: Some("bevel".into()), edges: Some(EdgeSel::Named("all".into())), params, ..Default::default() }).unwrap();
+        assert!(v["face_count"].as_u64().unwrap() > 6 + 12 * 2, "{v}");
+        let e = apply_op(&mut d, &ModelingRequest { op: Some(ModelingOp::Operator), operator: Some("nao_existe".into()), ..Default::default() }).unwrap_err();
+        assert!(e.to_string().contains("bridge"), "a mensagem lista os operadores: {e}");
+        let bad = serde_json::json!({ "segmentos": 3 }).as_object().cloned();
+        assert!(apply_op(&mut d, &ModelingRequest { op: Some(ModelingOp::Operator), operator: Some("bevel".into()), params: bad, ..Default::default() }).is_err());
+        for k in ["solidify", "weld", "edge_split", "decimate", "displace", "triangulate"] {
+            apply_op(&mut d, &ModelingRequest { op: Some(ModelingOp::Modifier), add: Some(k.into()), ..Default::default() }).unwrap();
+        }
+        assert_eq!(d.objects[0].modifiers.len(), 6);
+        d.objects[0].evaluated().unwrap();
+        // o documento com os modificadores novos volta igual do JSON
+        let back = ModelDoc::from_json(&serde_json::to_value(&d).unwrap()).unwrap();
+        assert_eq!(back, d);
     }
 }
