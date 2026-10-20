@@ -49,10 +49,11 @@ pub(crate) struct Request {
     pub key: MoveKey,
     pub project: Project,
     pub blobs: BlobStore,
-    /// `None` = a camada inteira.
-    pub selection: Option<aiai_paint::select::SelectShape>,
-    /// Traços escolhidos (camada vetorial): andam só eles (vale mais que `selection`).
-    pub strokes: Vec<Id>,
+    /// Raster: a área (cobertura em px do canvas); `None` = a camada inteira.
+    pub mask: Option<std::sync::Arc<aiai_paint::select::Selection>>,
+    /// Vetor: os traços que andam (os mesmos que o commit leva: escolhidos ou os que a área pega, decididos no canvas
+    /// em `selection::area_stroke_ids`); `None` = a camada inteira.
+    pub strokes: Option<Vec<Id>>,
 }
 
 impl MoveLive {
@@ -104,6 +105,11 @@ impl MoveLive {
         }
     }
 
+    /// As imagens desta chave ainda não estão prontas nem a caminho?
+    pub(crate) fn wants(&self, key: &MoveKey) -> bool {
+        self.key.as_ref() != Some(key) && !self.pending.as_ref().is_some_and(|(k, _)| k == key)
+    }
+
     /// Imagens prontas para esta chave?
     pub(crate) fn ready_for(&self, key: &MoveKey) -> bool {
         self.tex.is_some() && self.key.as_ref() == Some(key)
@@ -139,8 +145,8 @@ fn build(req: &Request) -> Result<Images, String> {
     let below_img = render(p, below)?;
     let above_img = render(p, above)?;
     let kind = all[pos].1.kind;
-    let (moving, stay) = match &req.selection {
-        _ if !req.strokes.is_empty() && kind == LayerType::Vector => {
+    let (moving, stay) = match (&req.strokes, &req.mask) {
+        (Some(ids), _) if kind == LayerType::Vector => {
             let cut = match p.node(&k.cut).map(|n| &n.data) {
                 Some(NodeKind::Cut(c)) => c,
                 _ => return Err("corte".into()),
@@ -149,55 +155,24 @@ fn build(req: &Request) -> Result<Images, String> {
             let split = |want: bool| -> Result<aiai_paint::Image, String> {
                 let mut q = p.clone();
                 if let Some(NodeKind::Cel(c)) = q.node_mut(&cel_id).map(|n| &mut n.data) {
-                    c.strokes.retain(|s| req.strokes.contains(&s.id) == want);
+                    c.strokes.retain(|s| ids.contains(&s.id) == want);
                 }
                 render(&q, solo.clone())
             };
             (split(true)?, Some(split(false)?))
         }
-        None => (render(p, solo)?, None),
-        Some(shape) => {
-            let cut = match p.node(&k.cut).map(|n| &n.data) {
-                Some(NodeKind::Cut(c)) => c,
-                _ => return Err("corte".into()),
-            };
-            let (w, h) = aiai_render::cut_canvas(p, cut);
-            let reference = if matches!(shape, aiai_paint::select::SelectShape::Wand { .. } | aiai_paint::select::SelectShape::ColorRange { .. }) {
-                Some(aiai_tools::transform::selection_reference(p, &req.blobs, &k.cut, &k.layer, k.frame).map_err(|e| e.to_string())?)
-            } else {
-                None
-            };
-            let sel = aiai_paint::select::Selection::from_shape(shape, w, h, reference.as_ref())?;
-            match kind {
-                LayerType::Vector => {
-                    // os traços que o comando leva (maioria dos pontos dentro) e os que ficam, cada grupo renderizado
-                    let cel_id = aiai_tools::context::exposed_cel(p, cut, &k.layer, k.frame).map(|n| n.id.clone()).ok_or("sem cel no quadro")?;
-                    let inside = |x: f32, y: f32| {
-                        let (ix, iy) = (x.floor() as i64, y.floor() as i64);
-                        ix >= 0 && iy >= 0 && ix < w as i64 && iy < h as i64 && sel.cov[(iy as u32 * w + ix as u32) as usize] >= 0.5
-                    };
-                    let split = |want_in: bool| -> Result<aiai_paint::Image, String> {
-                        let mut q = p.clone();
-                        if let Some(NodeKind::Cel(c)) = q.node_mut(&cel_id).map(|n| &mut n.data) {
-                            c.strokes.retain(|s| aiai_tools::transform::stroke_in_selection(s, inside) == want_in);
-                        }
-                        render(&q, solo.clone())
-                    };
-                    (split(true)?, Some(split(false)?))
-                }
-                _ => {
-                    let full = render(p, solo.clone())?;
-                    let (mut m, mut s) = (full.clone(), full);
-                    for (i, &c) in sel.cov.iter().enumerate().take(m.data.len()) {
-                        for ch in 0..4 {
-                            m.data[i][ch] *= c;
-                            s.data[i][ch] *= 1.0 - c;
-                        }
-                    }
-                    (m, Some(s))
+        (_, Some(sel)) if kind != LayerType::Vector => {
+            let full = render(p, solo.clone())?;
+            let (mut m, mut s) = (full.clone(), full);
+            for (i, &c) in sel.cov.iter().enumerate().take(m.data.len()) {
+                for ch in 0..4 {
+                    m.data[i][ch] *= c;
+                    s.data[i][ch] *= 1.0 - c;
                 }
             }
+            (m, Some(s))
         }
+        _ => (render(p, solo)?, None),
     };
     Ok(Images { below: to_color_image(&below_img), stay: stay.as_ref().map(to_color_image), moving: to_color_image(&moving), above: to_color_image(&above_img) })
 }

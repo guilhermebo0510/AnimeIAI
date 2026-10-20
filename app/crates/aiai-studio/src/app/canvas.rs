@@ -396,6 +396,10 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
         env.ed.cursor = Some(p);
     }
     let _ = resp;
+    // laço poligonal aberto e a ferramenta trocou: o laço sai (os cliques voltam para a ferramenta nova)
+    if *env.tool != ToolId::Lasso && matches!(env.ed.gesture, Gesture::PolyLasso { .. }) {
+        env.ed.gesture = Gesture::None;
+    }
     for (idx, ev) in events.iter().enumerate() {
         match ev {
             Event::Touch { force: Some(f), phase, .. } => {
@@ -417,6 +421,10 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
                     _ => None,
                 });
                 on_move(env, rect, ppp, *pos, pressure.unwrap_or(env.ed.pressure));
+            }
+            Event::PointerButton { pos, button, pressed: true, .. } if matches!(env.ed.gesture, Gesture::PolyLasso { .. }) && over_canvas(ui, rect, *pos) => {
+                let xf = env.ed.view.xf(rect, ppp);
+                super::selection::poly_click(env, xf.to_canvas(*pos), *button, xf.scale);
             }
             Event::PointerButton { pos, button, pressed: true, modifiers } if matches!(env.ed.gesture, Gesture::PolyCurve { .. }) && over_canvas(ui, rect, *pos) => {
                 // curva por cliques: clique põe ponto; duplo clique ou botão direito termina
@@ -543,7 +551,7 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
             } else if r_held {
                 let ctr = rect.center();
                 env.ed.gesture = Gesture::Rotate { last_angle: (pos - ctr).angle() };
-            } else if mods.alt && !matches!(tool, ToolId::Zoom | ToolId::Ruler) {
+            } else if mods.alt && !matches!(tool, ToolId::Zoom | ToolId::Ruler | ToolId::Lasso) {
                 tools::do_eyedrop(env, c);
                 env.ed.gesture = Gesture::Eyedrop;
             } else {
@@ -563,10 +571,8 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
                         tools::do_eyedrop(env, c);
                         env.ed.gesture = Gesture::Eyedrop;
                     }
-                    ToolId::Lasso if env.ed.opts.select_mode == SelMode::Wand => {
-                        tools::wand_select(env, c);
-                    }
-                    ToolId::Lasso => env.ed.gesture = Gesture::Select { start: c, pts: vec![c], mode: env.ed.opts.select_mode },
+                    // Seleção: retângulo/elipse/laço/laço poligonal/varinha/Selecionar traços (Shift soma, Alt subtrai)
+                    ToolId::Lasso => super::selection::press(env, c, mods, xf.scale),
                     ToolId::Move => {
                         // alças da seleção: cantos escalam, a de cima gira; fora delas, mover
                         let hit = env.ed.selection.as_ref().filter(|s| !s.whole).and_then(|s| {
@@ -582,16 +588,13 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
                                 None
                             }
                         });
-                        let mut boxpick = false;
-                        if hit.is_none() {
-                            // camada vetorial: clicar num traço escolhe só ele (Shift soma); arrastar fora de qualquer
-                            // traço desenha a caixa de seleção (como o Mover com seleção automática do Photoshop)
-                            boxpick = tools::move_pick(env, c, 6.0 / xf.scale.max(1e-3), mods.shift);
+                        // Mover só move: a seleção (área ou traços) ou, sem seleção, a camada inteira. Com "Seleção
+                        // automática" (desligada por padrão), o clique num traço escolhe esse traço antes de arrastar.
+                        if hit.is_none() && env.ed.opts.move_auto {
+                            super::selection::auto_pick(env, c, 6.0 / xf.scale.max(1e-3));
                         }
                         if let Some(g) = hit {
                             env.ed.gesture = g;
-                        } else if boxpick {
-                            env.ed.gesture = Gesture::BoxPick { start: c, cur: c, add: mods.shift };
                         } else if tools::begin_move(env) {
                             env.ed.gesture = Gesture::MoveSel { last: c };
                         }
@@ -648,8 +651,8 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
             env.ed.view.rotate_by(d);
         }
         Gesture::Stroke(g) => g.push(c, pressure),
-        Gesture::Select { start, pts, mode } => match mode {
-            SelMode::Lasso => {
+        Gesture::Select { start, pts, tool, .. } => match tool {
+            super::selection::SelTool::Lasso => {
                 if pts.last().is_none_or(|l| (*l - c).length() * xf.scale >= 2.0) {
                     pts.push(c);
                 }
@@ -676,7 +679,8 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
                 scale_drag(s, *handle, *start_scale, *start_offset, *start_rotate, c, shift, alt);
             }
         }
-        Gesture::BoxPick { cur, .. } => *cur = c,
+        Gesture::StrokePick { cur, .. } => *cur = c,
+        Gesture::PolyLasso { .. } => {}
         Gesture::RotateSel { start_angle, start_rot } => {
             if let Some(s) = env.ed.selection.as_mut() {
                 let d = c - (s.center() + s.offset);
@@ -723,23 +727,15 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
             let counter = env.core.change_counter;
             env.ed.live_stroke.release(Some(counter));
         }
-        Gesture::Select { start, mut pts, mode } => {
-            if mode != SelMode::Lasso {
+        Gesture::Select { start, mut pts, tool, op } => {
+            if tool != super::selection::SelTool::Lasso {
                 pts.truncate(1);
                 pts.push(c);
             }
-            tools::finish_select(env, mode, start, pts);
+            super::selection::finish_select(env, tool, start, pts, op, xf.scale);
         }
-        Gesture::BoxPick { start, add, .. } => {
-            // arrasto curto = clique fora: desfaz a escolha; caixa = os traços que ela toca
-            if (c - start).length() * xf_scale(env, rect, ppp) < 4.0 {
-                if !add {
-                    env.ed.selection = None;
-                }
-            } else {
-                tools::box_pick(env, start, c, add);
-            }
-        }
+        Gesture::StrokePick { start, op, .. } => super::selection::strokes_release(env, start, c, op, xf.scale),
+        g @ Gesture::PolyLasso { .. } => env.ed.gesture = g, // o laço poligonal continua até fechar
         Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } => {
             let key = tools::move_key(env);
             let ready = key.as_ref().is_some_and(|k| env.ed.move_live.ready_for(k));
@@ -1247,18 +1243,6 @@ fn paint_camera(env: &mut Env, painter: &egui::Painter, xf: &Xf, cd: &CutData, c
     }
 }
 
-fn two_tone(painter: &egui::Painter, pts: Vec<Pos2>, closed: bool) {
-    if pts.len() < 2 {
-        return;
-    }
-    let mut pts = pts;
-    if closed {
-        pts.push(pts[0]);
-    }
-    painter.add(Shape::line(pts.clone(), Stroke::new(2.0, Color32::from_black_alpha(190))));
-    painter.extend(Shape::dashed_line(&pts, Stroke::new(1.2, Color32::WHITE), 5.0, 4.0));
-}
-
 /// Cantos (transformados), alça de rotação e centro (transformado) da seleção, em coordenadas do canvas.
 /// Alças da transformação na caixa original (sem a transformação pendente): 0..4 cantos (sup-esq, sup-dir, inf-dir,
 /// inf-esq) e 4..8 meios dos lados (cima, direita, baixo, esquerda).
@@ -1283,35 +1267,6 @@ fn handles(s: &Selection) -> ([Vec2; 4], Vec2, Vec2) {
     (corners, knob, center)
 }
 
-fn selection_outline(sel_mode: SelMode, pts: &[Vec2], off: Vec2, xf: &Xf) -> Vec<Pos2> {
-    selection_outline_map(sel_mode, pts, |p| p + off, xf)
-}
-
-fn selection_outline_map(sel_mode: SelMode, pts: &[Vec2], map: impl Fn(Vec2) -> Vec2, xf: &Xf) -> Vec<Pos2> {
-    let to = |p: Vec2| xf.to_screen(map(p));
-    match sel_mode {
-        SelMode::Lasso => pts.iter().map(|p| to(*p)).collect(),
-        _ => {
-            let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-            for p in pts {
-                x0 = x0.min(p.x);
-                y0 = y0.min(p.y);
-                x1 = x1.max(p.x);
-                y1 = y1.max(p.y);
-            }
-            if sel_mode == SelMode::Rect || sel_mode == SelMode::Wand {
-                vec![to(Vec2::new(x0, y0)), to(Vec2::new(x1, y0)), to(Vec2::new(x1, y1)), to(Vec2::new(x0, y1))]
-            } else {
-                let (cx, cy, rx, ry) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0, (x1 - x0) / 2.0, (y1 - y0) / 2.0);
-                (0..64).map(|i| {
-                    let a = i as f32 / 64.0 * std::f32::consts::TAU;
-                    to(Vec2::new(cx + rx * a.cos(), cy + ry * a.sin()))
-                }).collect()
-            }
-        }
-    }
-}
-
 fn paint_selection(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId) {
     // traços escolhidos de outra camada (trocou a camada ativa): a escolha não vale mais
     let active = env.ed.active_layer(env.core);
@@ -1319,13 +1274,11 @@ fn paint_selection(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId
         env.ed.selection = None;
     }
     let Some(sel) = env.ed.selection.clone() else { return };
-    paint_picked_strokes(env, painter, xf, cut, &sel);
-    // varinha: o contorno é a caixa da região
-    let outline_pts: Vec<Vec2> = match (sel.mode, sel.rect_of()) {
-        (SelMode::Wand, Some(r)) => vec![Vec2::new(r[0], r[1]), Vec2::new(r[0] + r[2], r[1] + r[3])],
-        _ => sel.pts.clone(),
-    };
-    two_tone(painter, selection_outline_map(sel.mode, &outline_pts, |p| sel.map(p), xf), true);
+    super::selection::paint_strokes(env, painter, xf, cut, &sel, false);
+    // formigas: a forma de verdade (máscara da varinha/somas, laço, elipse, retângulo), com a transformação pendente
+    if !sel.whole {
+        super::selection::paint_outline(painter, xf, &sel);
+    }
     // alças do Mover (cantos: escala; círculo de cima: rotação)
     if *env.tool == ToolId::Points {
         return;
@@ -1349,23 +1302,8 @@ fn paint_selection(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId
     // ficaram prontas (com elas, o conteúdo de verdade já está andando na tela)
     let live_ready = tools::move_key(env).is_some_and(|k| env.ed.move_live.ready_for(&k));
     if !sel.is_identity() && !live_ready {
-        let Some(layer) = env.ed.layer.clone() else { return };
-        if cmds::layer_data(&env.core.project, &layer).is_none_or(|l| l.kind != LayerType::Vector) {
-            return;
-        }
-        let Some(cel) = cmds::exposed_cel(&env.core.project, cut, &layer, env.ed.frame) else { return };
-        let Some(cd) = cmds::cel_data(&env.core.project, &cel) else { return };
-        let accent = env.t.accent;
-        for s in &cd.strokes {
-            let inside = if sel.strokes.is_empty() { aiai_tools::transform::stroke_in_selection(s, |x, y| sel.contains(Vec2::new(x, y))) } else { sel.strokes.contains(&s.id) };
-            if !sel.whole && !inside {
-                continue;
-            }
-            let pts: Vec<Pos2> = s.points.iter().map(|p| xf.to_screen(sel.map(Vec2::new(p.x, p.y)))).collect();
-            if pts.len() >= 2 {
-                painter.add(Shape::line(pts, Stroke::new((s.width * sel.scale.x.abs().max(sel.scale.y.abs()) * xf.scale).max(1.0), accent.gamma_multiply(0.7))));
-            }
-        }
+        // os mesmos traços que o commit leva (decididos no canvas), pela curva desenhada, no lugar do canvas
+        super::selection::paint_strokes(env, painter, xf, cut, &sel, true);
     }
 }
 
@@ -1442,11 +1380,8 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
         painter.add(quad(ov.tex.id(), pts, uv));
     });
     let has_live = live.is_some();
-    if let Gesture::BoxPick { start, cur, .. } = env.ed.gesture {
-        let r = Rect::from_two_pos(xf.to_screen(start), xf.to_screen(cur));
-        painter.rect_filled(r, 0.0, env.t.accent.gamma_multiply(0.12));
-        let pts = vec![r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
-        two_tone(painter, pts, false);
+    if *env.tool == ToolId::Lasso {
+        super::selection::paint_gesture(env, painter, xf);
     }
     // pontos do Editar pontos por cima da prévia do traço
     if *env.tool == ToolId::Points {
@@ -1518,11 +1453,6 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
             for p in pts {
                 painter.circle(xf.to_screen(*p), 3.5, Color32::WHITE, Stroke::new(1.2, env.t.accent));
             }
-        }
-        Gesture::Select { pts, mode, start } => {
-            let o = selection_outline(*mode, pts, Vec2::ZERO, xf);
-            let _ = start;
-            two_tone(painter, o, *mode != SelMode::Lasso);
         }
         _ => {}
     }
@@ -1616,39 +1546,6 @@ mod tests {
         assert_eq!(touch_start_pressure(&before, 3), Some(0.35));
         assert_eq!(touch_start_pressure(&[Event::PointerMoved(Pos2::ZERO)], 0), None);
     }
-}
-
-/// Traços escolhidos com o Mover: contorno fino na cor de destaque, acompanhando o arrasto.
-fn paint_picked_strokes(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId, sel: &Selection) {
-    if sel.strokes.is_empty() {
-        return;
-    }
-    let Some(layer) = sel.strokes_layer.clone() else { return };
-    let Some(cel) = cmds::exposed_cel(&env.core.project, cut, &layer, env.ed.frame) else { return };
-    let fwd = cmds::layer_placement(&env.core.project, cut, &layer, env.ed.frame);
-    let Some(data) = cmds::cel_data(&env.core.project, &cel) else { return };
-    let accent = env.t.accent;
-    for s in data.strokes.iter().filter(|s| sel.strokes.contains(&s.id)) {
-        let pts: Vec<Pos2> = aiai_paint::sample_stroke(s)
-            .iter()
-            .step_by(2)
-            .map(|q| {
-                let (x, y) = match &fwd {
-                    Some(a) => a.apply(q.x, q.y),
-                    None => (q.x, q.y),
-                };
-                xf.to_screen(sel.map(Vec2::new(x, y)))
-            })
-            .collect();
-        if pts.len() >= 2 {
-            painter.add(egui::Shape::line(pts, Stroke::new(1.5, accent)));
-        }
-    }
-}
-
-/// Escala da tela (px de tela por px do canvas) para limiares de clique.
-fn xf_scale(env: &Env, rect: Rect, ppp: f32) -> f32 {
-    env.ed.view.xf(rect, ppp).scale
 }
 
 /// Arrasto de uma alça da transformação: a alça oposta fica parada (Alt = o centro); cantos escalam os dois eixos

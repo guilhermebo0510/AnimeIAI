@@ -5,7 +5,8 @@
 //! Escolher uma ferramenta traz este painel para a frente.
 
 use crate::app::brushes::{CATEGORIES, cat_label, cat_of};
-use crate::app::editor::{EraserTip, PenShape, PointsMode, SelMode};
+use crate::app::editor::{EraserTip, PenShape, PointsMode};
+use crate::app::selection::SelTool;
 use crate::app::ui_kit::{Env, body_ui, section};
 use crate::i18n::tr;
 use crate::workspace::ToolId;
@@ -60,7 +61,7 @@ enum Act {
     EraserBrush,
     EraserVector(EraseMode),
     Fill(u8),
-    Select(SelMode),
+    Select(SelTool),
     Points(PointsMode),
     Only,
 }
@@ -73,7 +74,7 @@ enum Thumb {
     Pen(PenShape),
     Erase(EraseMode),
     Fill(u8),
-    Select(SelMode),
+    Select(SelTool),
     Points(PointsMode),
     Icon(ToolId),
 }
@@ -409,7 +410,8 @@ fn items_for(env: &Env, tool: ToolId) -> Vec<Item> {
             v
         }
         ToolId::Fill => FILLS.iter().enumerate().map(|(i, (k, ..))| it(tr(k).to_owned(), "tc.fill", Act::Fill(i as u8), Thumb::Fill(i as u8))).collect(),
-        ToolId::Lasso => [(SelMode::Rect, "sel.rect"), (SelMode::Ellipse, "sel.ellipse"), (SelMode::Lasso, "sel.lasso"), (SelMode::Wand, "sel.wand")].into_iter().map(|(m, k)| it(tr(k).to_owned(), "tc.select", Act::Select(m), Thumb::Select(m))).collect(),
+        // Seleção: as áreas (retângulo, elipse, laço, laço poligonal, varinha) e os objetos (Selecionar traços)
+        ToolId::Lasso => SelTool::ALL.into_iter().map(|m| it(tr(m.label_key()).to_owned(), if m == SelTool::Strokes { "tc.select_objects" } else { "tc.select" }, Act::Select(m), Thumb::Select(m))).collect(),
         ToolId::Points => super::properties::POINTS_MODES.iter().map(|&m| it(tr(super::properties::points_mode_key(m)).to_owned(), "tc.points", Act::Points(m), Thumb::Points(m))).collect(),
         other => vec![it(tr(other.title_key()).to_owned(), "tc.tool", Act::Only, Thumb::Icon(other))],
     }
@@ -642,19 +644,36 @@ fn paint_thumb(env: &mut Env, p: &egui::Painter, cell: Rect, th: Thumb) {
         Thumb::Select(m) => {
             let dash = Stroke::new(1.2, t.text);
             match m {
-                SelMode::Rect => {
+                SelTool::Rect => {
                     let rr = Rect::from_min_max(at(0.25, 0.15), at(0.75, 0.85));
                     let pts = vec![rr.left_top(), rr.right_top(), rr.right_bottom(), rr.left_bottom(), rr.left_top()];
                     p.extend(egui::Shape::dashed_line(&pts, dash, 4.0, 3.0));
                 }
-                SelMode::Ellipse => {
+                SelTool::Ellipse => {
                     p.extend(egui::Shape::dashed_line(&ellipse(r.center()), dash, 4.0, 3.0));
                 }
-                SelMode::Lasso => {
+                SelTool::Polygon => {
+                    let pts: Vec<Pos2> = [(0.2, 0.75), (0.32, 0.18), (0.62, 0.32), (0.82, 0.15), (0.74, 0.82), (0.2, 0.75)].iter().map(|(x, y)| at(*x, *y)).collect();
+                    p.extend(egui::Shape::dashed_line(&pts, dash, 4.0, 3.0));
+                    for q in &pts[..5] {
+                        p.circle_filled(*q, 1.8, t.accent);
+                    }
+                }
+                SelTool::Strokes => {
+                    // dois traços; o de cima escolhido (destacado), com a seta do cursor
+                    let a: Vec<Pos2> = (0..=16).map(|k| { let f = k as f32 / 16.0; at(0.12 + 0.6 * f, 0.62 - 0.3 * (f * std::f32::consts::PI).sin()) }).collect();
+                    let b: Vec<Pos2> = (0..=16).map(|k| { let f = k as f32 / 16.0; at(0.15 + 0.6 * f, 0.85 - 0.12 * (f * std::f32::consts::PI).sin()) }).collect();
+                    p.add(egui::Shape::line(a.clone(), Stroke::new(3.2, t.accent.gamma_multiply(0.6))));
+                    p.add(egui::Shape::line(a, Stroke::new(1.4, ink.color)));
+                    p.add(egui::Shape::line(b, Stroke::new(1.4, ink.color)));
+                    let c = at(0.78, 0.3);
+                    p.add(egui::Shape::convex_polygon(vec![c, c + Vec2::new(0.0, 11.0), c + Vec2::new(3.0, 8.0), c + Vec2::new(7.5, 8.0)], t.text, Stroke::NONE));
+                }
+                SelTool::Lasso => {
                     let pts: Vec<Pos2> = [(0.2, 0.5), (0.35, 0.15), (0.6, 0.25), (0.8, 0.2), (0.75, 0.6), (0.55, 0.85), (0.3, 0.75), (0.2, 0.5)].iter().map(|(x, y)| at(*x, *y)).collect();
                     p.extend(egui::Shape::dashed_line(&pts, dash, 4.0, 3.0));
                 }
-                SelMode::Wand => {
+                SelTool::Wand => {
                     p.line_segment([at(0.25, 0.85), at(0.6, 0.35)], ink);
                     let c = at(0.66, 0.27);
                     for k in 0..4 {

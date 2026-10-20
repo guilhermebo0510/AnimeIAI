@@ -165,7 +165,7 @@ pub const ACTIONS: [(Action, &str, &str, Chord); 42] = [
     (Action::ToolPoints, "tool.points", "tool.points", Chord::plain(Key::A)),
     (Action::ToolEraser, "tool.eraser", "tool.eraser", Chord::plain(Key::E)),
     (Action::ToolFill, "tool.fill", "tool.fill", Chord::plain(Key::G)),
-    (Action::ToolLasso, "tool.lasso", "tool.lasso", Chord::plain(Key::L)),
+    (Action::ToolLasso, "tool.lasso", "tool.lasso", Chord::plain(Key::S)),
     (Action::ToolEyedropper, "tool.eyedropper", "tool.eyedropper", Chord::plain(Key::I)),
     (Action::ToolHand, "tool.hand", "tool.hand", Chord::plain(Key::H)),
     (Action::ToolZoom, "tool.zoom", "tool.zoom", Chord::plain(Key::Z)),

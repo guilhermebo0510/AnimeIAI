@@ -271,7 +271,7 @@ fn pts_field(env: &mut Env, ui: &mut Ui, key: &'static str, label: &str, cur: f3
     });
 }
 
-fn row(ui: &mut Ui, t: &crate::theme::Tokens, compact: bool, key: &str, add: impl FnOnce(&mut Ui)) {
+pub(crate) fn row(ui: &mut Ui, t: &crate::theme::Tokens, compact: bool, key: &str, add: impl FnOnce(&mut Ui)) {
     if compact {
         // Na barra do canvas (linha que quebra) combo e slider são blocos aninhados que o egui não leva para a linha de baixo
         // (e `available_width` num layout que quebra é a largura inteira, não o que sobrou na linha):
@@ -488,34 +488,14 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
                 dim_label(ui, &t, tr("opt.fill_hint"));
             }
         }
-        ToolId::Lasso => {
-            let o = &mut env.ed.opts;
-            if !panel {
-            row(ui, &t, compact, "opt.select_mode", |ui| {
-                let label = |m: SelMode| match m {
-                    SelMode::Rect => "sel.rect",
-                    SelMode::Lasso => "sel.lasso",
-                    SelMode::Ellipse => "sel.ellipse",
-                    SelMode::Wand => "sel.wand",
-                };
-                egui::ComboBox::from_id_salt(("sel_mode", compact)).width(110.0).selected_text(tr(label(o.select_mode))).show_ui(ui, |ui| {
-                    for m in [SelMode::Rect, SelMode::Lasso, SelMode::Ellipse, SelMode::Wand] {
-                        ui.selectable_value(&mut o.select_mode, m, tr(label(m)));
-                    }
-                });
-            });
-            }            if o.select_mode == SelMode::Wand {
-                row(ui, &t, compact, "opt.wand_tolerance", |ui| {
-                    ui.add(egui::Slider::new(&mut o.wand_tolerance, 0.0..=0.6).max_decimals(2)).on_hover_text(tr("opt.wand_tolerance"));
-                });
-            }
-        }
+        ToolId::Lasso => crate::app::selection::tool_options(env, ui, compact, panel),
         ToolId::Move => {
 
             // arrastar move e aplica ao soltar (Ctrl+Z desfaz): sem Aplicar/Enter
-            let r = ui.checkbox(&mut env.ed.opts.move_pick, tr("opt.move_pick"));
-            env.note("opt:move_pick", r.rect);
-            r.on_hover_text(tr("opt.move_pick.tip"));
+            // o Mover só move; "Seleção automática" (Photoshop) faz o clique num traço escolhê-lo antes de arrastar
+            let r = ui.checkbox(&mut env.ed.opts.move_auto, tr("opt.move_auto"));
+            env.note("opt:move_auto", r.rect);
+            r.on_hover_text(tr("opt.move_auto.tip"));
             let r = ui.checkbox(&mut env.ed.opts.keep_aspect, tr("opt.keep_aspect"));
             env.note("opt:keep_aspect", r.rect);
             r.on_hover_text(tr("opt.keep_aspect.tip"));

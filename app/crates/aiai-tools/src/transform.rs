@@ -38,6 +38,23 @@ fn unit2() -> [f32; 2] {
     [1.0, 1.0]
 }
 
+/// `Deform::Affine` (pivô na origem) que faz exatamente a matriz `m` = [a, b, tx, d, e, ty] (x' = a·x + b·y + tx):
+/// decomposição QR da parte linear em rotação · cisalhamento · escala. Serve para levar uma transformação feita no
+/// canvas para o espaço do cel de uma camada com movimento (P⁻¹·A·P não é só deslocar/escalar/girar).
+pub fn affine_deform(m: [f32; 6]) -> Deform {
+    let (a, b, d, e) = (m[0], m[1], m[3], m[4]);
+    let sx = a.hypot(d);
+    if sx < 1e-9 {
+        return Deform::Affine { translate: [m[2], m[5]], scale: [0.0, 0.0], rotate: 0.0, shear: [0.0, 0.0], pivot: [0.0, 0.0] };
+    }
+    let (c, s) = (a / sx, d / sx);
+    // Rᵀ·L = [[sx, u01], [0, sy]] com u01 = shear_x · sy
+    let u01 = c * b + s * e;
+    let sy = -s * b + c * e;
+    let shx = if sy.abs() > 1e-9 { u01 / sy } else { 0.0 };
+    Deform::Affine { translate: [m[2], m[5]], scale: [sx, sy], rotate: s.atan2(c).to_degrees(), shear: [shx, 0.0], pivot: [0.0, 0.0] }
+}
+
 impl Deform {
     fn affine_matrix(&self) -> Option<[f32; 6]> {
         match self {
@@ -150,12 +167,6 @@ pub fn selection_reference(p: &Project, blobs: &BlobStore, cut_id: &Id, layer_id
 
 pub fn transform_command(p: &Project, blobs: &mut BlobStore, req: &TransformRequest) -> ToolResult<Command> {
     let cut = cut_data(p, &req.cut)?;
-    let layer = layer_data(p, &req.layer)?;
-    if layer.locked {
-        return Err(ToolError::Invalid("camada travada".into()));
-    }
-    let node = exposed_cel(p, cut, &req.layer, req.frame).ok_or_else(|| ToolError::Invalid(format!("a camada não expõe cel no quadro {}", req.frame)))?;
-    let NodeKind::Cel(cel) = &node.data else { unreachable!() };
     let (w, h) = canvas_size(p, cut);
     let sel = match &req.selection {
         Some(shape) => {
@@ -164,6 +175,23 @@ pub fn transform_command(p: &Project, blobs: &mut BlobStore, req: &TransformRequ
         }
         None => None,
     };
+    transform_command_masked(p, blobs, req, sel.as_ref())
+}
+
+/// Como [`transform_command`], com a seleção já pronta como máscara de cobertura do tamanho do canvas, no espaço do
+/// cel (somar/subtrair/intersectar, varinha e suavizar não cabem numa `SelectShape`); `req.selection` é ignorada.
+pub fn transform_command_masked(p: &Project, blobs: &mut BlobStore, req: &TransformRequest, sel: Option<&Selection>) -> ToolResult<Command> {
+    let cut = cut_data(p, &req.cut)?;
+    let layer = layer_data(p, &req.layer)?;
+    if layer.locked {
+        return Err(ToolError::Invalid("camada travada".into()));
+    }
+    let node = exposed_cel(p, cut, &req.layer, req.frame).ok_or_else(|| ToolError::Invalid(format!("a camada não expõe cel no quadro {}", req.frame)))?;
+    let NodeKind::Cel(cel) = &node.data else { unreachable!() };
+    let (w, h) = canvas_size(p, cut);
+    if sel.is_some_and(|s| s.width != w || s.height != h) {
+        return Err(ToolError::Invalid("a máscara da seleção não tem o tamanho do canvas".into()));
+    }
     match layer.kind {
         LayerType::Vector => {
             let ws = if req.scale_width { req.deform.width_scale() } else { 1.0 };
@@ -172,7 +200,7 @@ pub fn transform_command(p: &Project, blobs: &mut BlobStore, req: &TransformRequ
                 if !req.strokes.is_empty() && !req.strokes.contains(&s.id) {
                     continue;
                 }
-                if let Some(sel) = &sel {
+                if let Some(sel) = sel {
                     let inside = |x: f32, y: f32| {
                         let (ix, iy) = (x.floor() as i64, y.floor() as i64);
                         ix >= 0 && iy >= 0 && ix < w as i64 && iy < h as i64 && sel.cov[(iy as u32 * w + ix as u32) as usize] >= 0.5
@@ -197,7 +225,7 @@ pub fn transform_command(p: &Project, blobs: &mut BlobStore, req: &TransformRequ
         }
         LayerType::Raster => {
             let src = cel_raster(blobs, cel, w, h)?;
-            let result = match &sel {
+            let result = match sel {
                 None => req.deform.image(&src)?,
                 Some(sel) => {
                     // flutuante = parte selecionada; base = o resto
@@ -273,4 +301,22 @@ pub fn repeat_command(p: &Project, req: &RepeatRequest) -> ToolResult<Command> {
         }
     }
     Ok(Command::InsertStrokes { cel: node.id.clone(), items })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn affine_deform_reproduces_any_matrix() {
+        let cases = [[1.0, 0.0, 5.0, 0.0, 1.0, -3.0], [2.0, 0.5, 1.0, -0.3, 0.7, 2.0], [-1.0, 0.0, 10.0, 0.0, 1.0, 0.0], [0.0, -1.0, 0.0, 1.0, 0.0, 0.0], [0.5, 0.0, 3.0, 0.0, -2.0, 1.0]];
+        for m in cases {
+            let d = affine_deform(m);
+            for (x, y) in [(0.0f32, 0.0f32), (10.0, 3.0), (-4.0, 7.0)] {
+                let (fx, fy) = d.forward(x, y).unwrap();
+                let (ex, ey) = (m[0] * x + m[1] * y + m[2], m[3] * x + m[4] * y + m[5]);
+                assert!((fx - ex).abs() < 1e-3 && (fy - ey).abs() < 1e-3, "{m:?} em ({x}, {y}): {fx}, {fy} != {ex}, {ey}");
+            }
+        }
+    }
 }

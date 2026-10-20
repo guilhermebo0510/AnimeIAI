@@ -31,6 +31,7 @@ mod nodes;
 mod panels;
 mod render_service;
 mod rulers;
+mod selection;
 mod text_tool;
 mod tools;
 mod ui_kit;

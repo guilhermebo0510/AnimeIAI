@@ -338,6 +338,8 @@ impl ToolId {
     }
 
     pub fn from_key(key: &str) -> Option<ToolId> {
+        // a ferramenta Seleção guarda a chave antiga "lasso" (bridge, layouts salvos); "select"/"selection" também valem
+        let key = if matches!(key, "select" | "selection") { "lasso" } else { key };
         Self::ALL.into_iter().find(|t| t.key() == key)
     }
 

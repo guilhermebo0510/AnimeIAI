@@ -273,8 +273,8 @@ pub(crate) enum SelMode {
     Rect,
     Lasso,
     Ellipse,
-    /// Varinha mágica: região contígua de cor parecida (pixels da camada ativa).
-    Wand,
+    /// Máscara (varinha mágica, somas/subtrações/interseções, borda suave): `Selection::mask`.
+    Mask,
 }
 
 /// Forma da caneta: à mão livre, ou formas de régua (linha, curva por cliques, retângulo, elipse).
@@ -286,16 +286,6 @@ pub(crate) enum PenShape {
     Curve,
     Rect,
     Ellipse,
-}
-
-/// Máscara da varinha (calculada pelo motor no clique) e a caixa dela.
-#[derive(Debug)]
-pub(crate) struct WandMask {
-    pub w: u32,
-    pub h: u32,
-    pub cov: Vec<f32>,
-    pub bbox: [f32; 4],
-    pub tolerance: f32,
 }
 
 /// Seleção atual (em pixels do desenho) e o deslocamento ainda não aplicado (Enter aplica, Esc cancela).
@@ -311,8 +301,8 @@ pub(crate) struct Selection {
     /// ainda não aplicadas.
     pub scale: Vec2,
     pub rotate: f32,
-    /// Varinha: máscara da região.
-    pub mask: Option<std::sync::Arc<WandMask>>,
+    /// Área como máscara (px do canvas, tamanho do canvas) com caixa e contorno.
+    pub mask: Option<std::sync::Arc<super::selection::SelMask>>,
     /// Seleção de objetos (camada vetorial): os traços escolhidos com o Mover; `pts` = caixa deles. O Mover leva só
     /// esses traços (inteiros), não o que estiver dentro da caixa.
     pub strokes: Vec<aiai_core::Id>,
@@ -367,7 +357,7 @@ impl Selection {
             SelMode::Rect => self.rect_of().map(|rect| SelectShape::Rect { rect }),
             SelMode::Ellipse => self.rect_of().map(|rect| SelectShape::Ellipse { rect }),
             SelMode::Lasso => (self.pts.len() >= 3).then(|| SelectShape::Lasso { points: self.pts.iter().map(|p| [p.x, p.y]).collect() }),
-            SelMode::Wand => self.pts.first().zip(self.mask.as_ref()).map(|(p, m)| SelectShape::Wand { seed: [p.x, p.y], tolerance: m.tolerance, gap: 0.0 }),
+            SelMode::Mask => None,
         }
     }
 
@@ -391,7 +381,7 @@ impl Selection {
                 dx * dx + dy * dy <= 1.0
             }),
             SelMode::Lasso => point_in_polygon(p, &self.pts),
-            SelMode::Wand => self.mask.as_ref().is_some_and(|m| {
+            SelMode::Mask => self.mask.as_ref().is_some_and(|m| {
                 let (x, y) = (p.x.floor() as i64, p.y.floor() as i64);
                 x >= 0 && y >= 0 && (x as u32) < m.w && (y as u32) < m.h && m.cov[(y as u32 * m.w + x as u32) as usize] >= 0.5
             }),
@@ -401,7 +391,13 @@ impl Selection {
     /// Aplica a transformação pendente às coordenadas (depois de um Enter). Com escala/rotação, retângulo, elipse e
     /// varinha viram laço (o contorno transformado).
     pub(crate) fn bake_offset(&mut self) {
-        if self.plain_scale() && self.rotate.abs() < 1e-3 && self.mask.is_none() {
+        if let Some(m) = self.mask.clone() {
+            // a máscara anda junto (o contorno de verdade, não a caixa)
+            match m.transformed(&self.affine()) {
+                Some(t) => self.mask = Some(std::sync::Arc::new(t)),
+                None => self.mask = None,
+            }
+        } else if self.plain_scale() && self.rotate.abs() < 1e-3 {
             for p in &mut self.pts {
                 *p += self.offset;
             }
@@ -500,14 +496,26 @@ pub(crate) struct ToolOptions {
     pub fill_expand: u32,
     /// Balde fecha as frestas em volta (regiões sem tinta de até `LEFTOVER_PX`) com a cor que as cerca.
     pub fill_close_leftovers: bool,
-    pub select_mode: SelMode,
+    /// Sub-ferramenta da Seleção (retângulo, elipse, laço, laço poligonal, varinha, Selecionar traços).
+    pub select_mode: super::selection::SelTool,
+    /// Operação da barra (nova/somar/subtrair/intersectar); Shift/Alt no clique trocam só naquele clique.
+    pub select_op: aiai_paint::select::SelectOp,
+    /// Borda suave das áreas novas (px; 0 = dura).
+    pub sel_feather: f32,
     pub points_mode: PointsMode,
-    /// Mover em camada vetorial: clicar num traço escolhe só ele (Shift soma); sem nada escolhido, leva a camada.
-    pub move_pick: bool,
+    /// Mover com "Seleção automática" (como o Photoshop; desligado por padrão): o clique num traço da camada vetorial
+    /// escolhe esse traço antes de arrastar.
+    pub move_auto: bool,
     /// Transformação: cantos mantêm a proporção (Shift libera), como o Photoshop atual; desligado = livre (Shift trava).
     pub keep_aspect: bool,
-    /// Tolerância de cor da varinha (0..1).
+    /// Tolerância da varinha (0..255, diferença máxima por canal).
     pub wand_tolerance: f32,
+    /// Varinha: só a região ligada ao clique (senão, todos os pixels parecidos).
+    pub wand_contiguous: bool,
+    /// Varinha: lê todas as camadas visíveis (senão, só a ativa).
+    pub wand_sample_all: bool,
+    /// Varinha: borda suavizada (sem serrilhado).
+    pub wand_antialias: bool,
 }
 
 impl Default for ToolOptions {
@@ -538,11 +546,16 @@ impl Default for ToolOptions {
             fill_gap: 3.0,
             fill_expand: 2,
             fill_close_leftovers: false,
-            select_mode: SelMode::Rect,
+            select_mode: super::selection::SelTool::Rect,
+            select_op: aiai_paint::select::SelectOp::Replace,
+            sel_feather: 0.0,
             points_mode: PointsMode::Move,
-            move_pick: true,
+            move_auto: false,
             keep_aspect: false,
-            wand_tolerance: 0.12,
+            wand_tolerance: 32.0,
+            wand_contiguous: true,
+            wand_sample_all: false,
+            wand_antialias: true,
         }
     }
 }
@@ -591,10 +604,13 @@ pub(crate) enum Gesture {
     Pan { last: Pos2, button: egui::PointerButton },
     Rotate { last_angle: f32 },
     Stroke(Box<StrokeGesture>),
-    Select { start: Vec2, pts: Vec<Vec2>, mode: SelMode },
+    /// Seleção em retângulo/elipse/laço sendo arrastada; `op` = nova/somar/subtrair/intersectar deste gesto.
+    Select { start: Vec2, pts: Vec<Vec2>, tool: super::selection::SelTool, op: aiai_paint::select::SelectOp },
+    /// Laço poligonal aberto: cada clique põe um vértice (fica entre cliques até fechar).
+    PolyLasso { pts: Vec<Vec2>, op: aiai_paint::select::SelectOp, last_click: std::time::Instant },
     MoveSel { last: Vec2 },
-    /// Mover em camada vetorial: caixa de seleção de traços (arrasto fora de qualquer traço); `add` = Shift.
-    BoxPick { start: Vec2, cur: Vec2, add: bool },
+    /// Selecionar traços: clique escolhe o traço; arrasto = caixa dos traços que ela toca.
+    StrokePick { start: Vec2, cur: Vec2, op: aiai_paint::select::SelectOp },
     /// Editar pontos: arrasto de um ponto de controle (posições no espaço do cel; `width` = muda a largura no ponto).
     DragNode { idx: usize, start: Vec2, cur: Vec2, width: bool, t0: std::time::Instant },
     /// Editar pontos: arrasto de uma ponta da alça do ponto `idx` (`side` = +1 a de saída, -1 a de chegada).
@@ -747,6 +763,8 @@ pub(crate) struct Editor {
     pub checker_dark: bool,
     pub gesture: Gesture,
     pub selection: Option<Selection>,
+    /// Último clique da varinha e cache dos traços que a área leva.
+    pub sel_state: super::selection::SelState,
     pub ghosts: Vec<Ghost>,
     pub playback: Playback,
     /// Retângulo da área do canvas no último quadro (para a bridge e para as contas de tela).
@@ -872,6 +890,7 @@ impl Default for Editor {
             checker_dark: true,
             gesture: Gesture::None,
             selection: None,
+            sel_state: Default::default(),
             ghosts: Vec::new(),
             playback: Playback::default(),
             canvas_rect: None,

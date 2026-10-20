@@ -447,9 +447,11 @@ fn brush_preset(env: &Env) -> BrushPreset {
 }
 
 /// Seleção que limita pincel e borracha raster: uma área de verdade (não "a camada inteira", não traços escolhidos),
-/// sem transformação pendente.
-pub(crate) fn paint_clip_shape(env: &Env) -> Option<aiai_paint::select::SelectShape> {
-    env.ed.selection.as_ref().filter(|s| !s.whole && s.strokes.is_empty() && s.is_identity()).and_then(|s| s.shape())
+/// sem transformação pendente, como cobertura em px do canvas `(cobertura, largura, altura)`.
+pub(crate) fn paint_clip_mask(env: &Env) -> Option<(Vec<f32>, u32, u32)> {
+    let sel = env.ed.selection.as_ref().filter(|s| s.is_identity())?;
+    let (w, h) = cmds::canvas_size(&env.core.project, env.ed.cut.as_ref()?);
+    super::selection::area_cov(sel, w, h).map(|c| (c.cov, w, h))
 }
 
 /// Semente do traço: a mesma no começo (prévia) e no commit, enquanto nada mais mudou no documento.
@@ -481,7 +483,6 @@ pub(crate) fn start_live(env: &mut Env, ctx: &egui::Context, g: &StrokeGesture, 
     let frame = env.ed.frame;
     let cel = cmds::exposed_cel(&env.core.project, &cut, &g.layer, frame).and_then(|c| cmds::cel_data(&env.core.project, &c).cloned());
     let canvas = cmds::canvas_size(&env.core.project, &cut);
-    let cut2 = cut.clone();
     let spec = super::live::StartSpec {
         mode,
         project: Some(env.core.project.clone()),
@@ -502,8 +503,8 @@ pub(crate) fn start_live(env: &mut Env, ctx: &egui::Context, g: &StrokeGesture, 
         erase_radius: env.ed.opts.eraser_size / 2.0,
         erase_mode: env.ed.opts.eraser_mode,
         hide: None,
-        clip: match (paint_clip_shape(env), mode) {
-            (Some(sh), super::live::Mode::Brush | super::live::Mode::EraseRaster) => aiai_tools::paint::selection_mask(&env.core.project, &env.core.blobs, &cut2, &g.layer, frame, &sh).ok().map(std::sync::Arc::new),
+        clip: match (paint_clip_mask(env), mode) {
+            (Some(m), super::live::Mode::Brush | super::live::Mode::EraseRaster) => Some(std::sync::Arc::new(m)),
             _ => None,
         },
     };
@@ -567,11 +568,11 @@ fn commit_brush(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Insta
     let opacity = preset.opacity;
     let seed = stroke_seed(env);
     let (cut, layer, frame, pref) = (t.cut.clone(), t.layer.clone(), t.frame, env.ed.cel_number);
-    let clip = paint_clip_shape(env);
+    let clip = paint_clip_mask(env);
     let ghost_pts: Vec<Vec2> = g.samples.iter().map(|s| g.to_canvas(s.p)).collect();
     let planned = cmds::plan_with_prep(env.core, &cut, &layer, frame, pref, vec![], |p, blobs| {
         let req = tpaint::PaintRequest { cut: cut.clone(), frame, layer: layer.clone(), preset, color, strokes: specs, seed };
-        tpaint::paint_command_in(p, blobs, &req, clip.as_ref()).map_err(|e| e.to_string())
+        tpaint::paint_command_masked(p, blobs, &req, clip.as_ref()).map_err(|e| e.to_string())
     });
     // com a prévia ao vivo na tela, ela mesma fica até o render chegar (o fantasma em polilinha "mudava" o traço)
     let ghost = if erase || env.ed.live_stroke.overlay.is_some() { None } else { Some((ghost_pts, Vec::new(), size, ghost_color(env, opacity.min(0.9)))) };
@@ -732,19 +733,7 @@ pub(crate) fn do_eyedrop(env: &mut Env, p: Vec2) {
 }
 
 // ------------------------------------------------------------------------------------------------ seleção e mover
-
-pub(crate) fn finish_select(env: &mut Env, mode: SelMode, start: Vec2, pts: Vec<Vec2>) {
-    let pts = match mode {
-        SelMode::Lasso => pts,
-        _ => {
-            let end = pts.last().copied().unwrap_or(start);
-            vec![start, end]
-        }
-    };
-    let sel = Selection::new(mode, pts, false);
-    // um clique sem arrastar limpa a seleção
-    env.ed.selection = sel.shape().filter(|_| sel.rect_of().is_some_and(|r| r[2] >= 2.0 && r[3] >= 2.0)).map(|_| sel);
-}
+// (a ferramenta Seleção, a varinha, Selecionar traços e o que uma área leva ficam em `selection.rs`)
 
 /// Prepara o gesto de mover: sem seleção, move o conteúdo todo da camada.
 pub(crate) fn begin_move(env: &mut Env) -> bool {
@@ -764,98 +753,59 @@ pub(crate) fn move_key(env: &mut Env) -> Option<super::move_live::MoveKey> {
     if !matches!(l.kind, LayerType::Vector | LayerType::Raster) || l.locked || !l.visible {
         return None;
     }
-    let sel = match env.ed.selection.as_ref().filter(|s| !s.whole) {
-        Some(s) => format!("{:?}{:?}", s.shape(), s.strokes),
-        None => "whole".to_owned(),
-    };
+    let sel = super::selection::move_sel_key(env.ed.selection.as_ref());
     Some(super::move_live::MoveKey { counter: env.core.change_counter, cut, frame: env.ed.frame, layer, sel, guides: env.ed.show_guides, reference: env.ed.show_reference })
 }
 
-/// Com o Mover ativo e parado, prepara as imagens do arrasto em segundo plano (o arrasto começa sem esperar).
+/// Com o Mover ativo e parado, prepara as imagens do arrasto em segundo plano (o arrasto começa sem esperar). Numa
+/// camada vetorial vão os ids dos traços que andam (os mesmos do commit); numa raster, a máscara da área.
 pub(crate) fn move_prefetch(env: &mut Env, ctx: &egui::Context) {
     if !matches!(env.ed.gesture, Gesture::None) {
         return;
     }
     let Some(key) = move_key(env) else { return };
-    let selection = env.ed.selection.as_ref().filter(|s| !s.whole).and_then(|s| s.shape());
-    let strokes = env.ed.selection.as_ref().map(|s| s.strokes.clone()).unwrap_or_default();
-    let (project, blobs) = (&env.core.project, &env.core.blobs);
-    env.ed.move_live.want(ctx, || super::move_live::Request { key: key.clone(), project: project.clone(), blobs: blobs.clone(), selection, strokes }, &key);
-}
-
-/// Varinha mágica: a região contígua de cor parecida em volta do clique, nos pixels da camada ativa.
-pub(crate) fn wand_select(env: &mut Env, p: Vec2) {
-    let Some(t) = target(env, &[LayerType::Vector, LayerType::Raster], "err.move_layer") else { return };
-    let (w, h) = cmds::canvas_size(&env.core.project, &t.cut);
-    let tolerance = env.ed.opts.wand_tolerance.clamp(0.0, 1.0);
-    let shape = aiai_paint::select::SelectShape::Wand { seed: [p.x, p.y], tolerance, gap: 0.0 };
-    let reference = match ttransform::selection_reference(&env.core.project, &env.core.blobs, &t.cut, &t.layer, t.frame) {
-        Ok(r) => r,
-        Err(e) => {
-            env.ed.notify(e.to_string());
-            return;
-        }
-    };
-    let sel = match aiai_paint::select::Selection::from_shape(&shape, w, h, Some(&reference)) {
-        Ok(s) => s,
-        Err(e) => {
-            env.ed.notify(e);
-            return;
-        }
-    };
-    let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0u32, 0u32);
-    for y in 0..h {
-        for x in 0..w {
-            if sel.cov[(y * w + x) as usize] >= 0.5 {
-                x0 = x0.min(x);
-                y0 = y0.min(y);
-                x1 = x1.max(x + 1);
-                y1 = y1.max(y + 1);
-            }
-        }
-    }
-    if x0 >= x1 {
-        env.ed.selection = None;
+    if !env.ed.move_live.wants(&key) {
         return;
     }
-    let mut s = Selection::new(SelMode::Wand, vec![p], false);
-    s.mask = Some(std::sync::Arc::new(WandMask { w, h, cov: sel.cov, bbox: [x0 as f32, y0 as f32, (x1 - x0) as f32, (y1 - y0) as f32], tolerance }));
-    env.ed.selection = Some(s);
+    let sel = env.ed.selection.clone().filter(|s| !s.whole);
+    let vector = cmds::layer_data(&env.core.project, &key.layer).is_some_and(|l| l.kind == LayerType::Vector);
+    let (w, h) = cmds::canvas_size(&env.core.project, &key.cut);
+    let (strokes, mask) = match &sel {
+        None => (None, None),
+        Some(s) if vector => (Some(if s.strokes.is_empty() { super::selection::area_stroke_ids(env, s).to_vec() } else { s.strokes.clone() }), None),
+        Some(s) => (None, super::selection::area_cov(s, w, h).map(std::sync::Arc::new)),
+    };
+    let (project, blobs) = (&env.core.project, &env.core.blobs);
+    env.ed.move_live.want(ctx, || super::move_live::Request { key: key.clone(), project: project.clone(), blobs: blobs.clone(), mask, strokes }, &key);
 }
 
 pub(crate) fn commit_move(env: &mut Env) {
     let released_at = Instant::now();
-    let Some(sel) = env.ed.selection.clone() else { return };
+    let Some(mut sel) = env.ed.selection.clone() else { return };
     if sel.is_identity() {
         return;
     }
     let plain = sel.plain_scale() && sel.rotate.abs() < 1e-3;
     let Some(t) = target(env, &[LayerType::Vector, LayerType::Raster], "err.move_layer") else { return };
-    let mut off = sel.offset;
     if t.kind == LayerType::Raster && plain {
-        off = Vec2::new(off.x.round(), off.y.round());
-        if off == Vec2::ZERO {
+        sel.offset = Vec2::new(sel.offset.x.round(), sel.offset.y.round());
+        if sel.offset == Vec2::ZERO {
             env.ed.selection.as_mut().map(|s| s.offset = Vec2::ZERO);
             return;
         }
     }
-    let c = sel.center();
-    let req = ttransform::TransformRequest {
-        cut: t.cut.clone(),
-        frame: t.frame,
-        layer: t.layer.clone(),
-        deform: ttransform::Deform::Affine { translate: [off.x, off.y], scale: [sel.scale.x, sel.scale.y], rotate: sel.rotate, shear: [0.0, 0.0], pivot: [c.x, c.y] },
-        selection: if sel.whole || !sel.strokes.is_empty() { None } else { sel.shape() },
-        scale_width: true,
-        strokes: sel.strokes.clone(),
-    };
-    let planned = ttransform::transform_command(&env.core.project, &mut env.core.blobs, &req).map_err(|e| e.to_string());
+    let off = sel.offset;
+    // o mesmo plano que o Mover ao vivo mostrou: traços (vetor) ou máscara (raster), levados ao espaço do cel
+    let planned = super::selection::plan_move(env, &sel, &t.cut, &t.layer, t.frame, t.kind).and_then(|plan| {
+        let req = ttransform::TransformRequest { cut: t.cut.clone(), frame: t.frame, layer: t.layer.clone(), deform: plan.deform, selection: None, scale_width: true, strokes: plan.strokes };
+        ttransform::transform_command_masked(&env.core.project, &mut env.core.blobs, &req, plan.mask.as_ref()).map_err(|e| e.to_string())
+    });
     let ok = planned.is_ok();
     commit(env, planned, released_at, "move", None);
     if ok {
         if !sel.strokes.is_empty() {
             // os mesmos traços continuam escolhidos, com a caixa refeita no lugar novo
-            select_strokes(env, sel.strokes.clone());
+            super::selection::select_strokes(env, sel.strokes.clone());
         } else if let Some(s) = env.ed.selection.as_mut() {
             if s.whole {
                 env.ed.selection = None;
@@ -864,169 +814,17 @@ pub(crate) fn commit_move(env: &mut Env) {
                 s.bake_offset();
             }
         }
-    }
-}
-
-/// Traço da camada vetorial ativa sob o ponto `c` (px do canvas), com tolerância `tol` (px do canvas).
-pub(crate) fn stroke_at(env: &mut Env, c: Vec2, tol: f32) -> Option<Id> {
-    let cut = env.ed.active_cut(env.core)?;
-    let layer = env.ed.active_layer(env.core)?;
-    let l = cmds::layer_data(&env.core.project, &layer)?;
-    if l.kind != LayerType::Vector || l.locked {
-        return None;
-    }
-    let cel = cmds::exposed_cel(&env.core.project, &cut, &layer, env.ed.frame)?;
-    let inv = cmds::layer_placement(&env.core.project, &cut, &layer, env.ed.frame).and_then(|a| a.inverse());
-    let p = match inv {
-        Some(a) => {
-            let (x, y) = a.apply(c.x, c.y);
-            Vec2::new(x, y)
+    } else {
+        // nada para mover (área vazia na camada vetorial, erro): a seleção volta ao lugar
+        if let Some(s) = env.ed.selection.as_mut() {
+            s.offset = Vec2::ZERO;
+            s.scale = Vec2::splat(1.0);
+            s.rotate = 0.0;
         }
-        None => c,
-    };
-    let data = cmds::cel_data(&env.core.project, &cel)?;
-    // o de cima ganha no empate (o último desenhado fica na frente)
-    data.strokes
-        .iter()
-        .rev()
-        .map(|s| (s.id.clone(), aiai_paint::sample_stroke(s).iter().map(|q| ((Vec2::new(q.x, q.y) - p).length() - q.r).max(0.0)).fold(f32::MAX, f32::min)))
-        .filter(|(_, d)| *d <= tol)
-        .min_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(id, _)| id)
-}
-
-/// Escolhe estes traços da camada ativa (seleção de objetos); lista vazia = sem seleção.
-pub(crate) fn select_strokes(env: &mut Env, ids: Vec<Id>) {
-    if ids.is_empty() {
-        env.ed.selection = None;
-        return;
-    }
-    let (Some(cut), Some(layer)) = (env.ed.active_cut(env.core), env.ed.active_layer(env.core)) else { return };
-    let Some(cel) = cmds::exposed_cel(&env.core.project, &cut, &layer, env.ed.frame) else { return };
-    let fwd = cmds::layer_placement(&env.core.project, &cut, &layer, env.ed.frame);
-    let Some(data) = cmds::cel_data(&env.core.project, &cel) else { return };
-    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-    for s in data.strokes.iter().filter(|s| ids.contains(&s.id)) {
-        for q in aiai_paint::sample_stroke(s) {
-            for (dx, dy) in [(-q.r, -q.r), (q.r, q.r), (-q.r, q.r), (q.r, -q.r)] {
-                let (x, y) = match &fwd {
-                    Some(a) => a.apply(q.x + dx, q.y + dy),
-                    None => (q.x + dx, q.y + dy),
-                };
-                x0 = x0.min(x);
-                y0 = y0.min(y);
-                x1 = x1.max(x);
-                y1 = y1.max(y);
-            }
+        if env.ed.selection.as_ref().is_some_and(|s| s.whole) {
+            env.ed.selection = None;
         }
     }
-    if x1 <= x0 || y1 <= y0 {
-        env.ed.selection = None;
-        return;
-    }
-    let mut sel = Selection::new(SelMode::Rect, vec![Vec2::new(x0, y0), Vec2::new(x1.max(x0 + 1.0), y1.max(y0 + 1.0))], false);
-    sel.strokes = ids;
-    sel.strokes_layer = Some(layer);
-    env.ed.selection = Some(sel);
-}
-
-/// Clique do Mover numa camada vetorial (antes de começar o arrasto): no traço = escolhe só ele (Shift soma ou
-/// tira); fora de qualquer traço e fora da caixa escolhida = desfaz a escolha (o arrasto leva a camada inteira).
-/// Devolve `true` quando o clique caiu fora de qualquer traço e fora da escolha: o arrasto vira caixa de seleção.
-pub(crate) fn move_pick(env: &mut Env, c: Vec2, tol: f32, shift: bool) -> bool {
-    if !env.ed.opts.move_pick {
-        return false;
-    }
-    let vector = env.ed.active_layer(env.core).and_then(|l| cmds::layer_data(&env.core.project, &l).map(|d| d.kind)) == Some(LayerType::Vector);
-    if !vector {
-        return false;
-    }
-    let cur: Vec<Id> = env.ed.selection.as_ref().map(|s| s.strokes.clone()).unwrap_or_default();
-    match stroke_at(env, c, tol) {
-        Some(id) => {
-            let next = if shift {
-                let mut v = cur.clone();
-                if let Some(i) = v.iter().position(|x| *x == id) {
-                    v.remove(i);
-                } else {
-                    v.push(id);
-                }
-                v
-            } else if cur.contains(&id) {
-                cur.clone()
-            } else {
-                vec![id]
-            };
-            if next != cur || env.ed.selection.as_ref().is_some_and(|s| s.strokes.is_empty()) {
-                select_strokes(env, next);
-            }
-            false
-        }
-        None => {
-            // dentro da caixa dos escolhidos: arrasta os escolhidos; fora: caixa de seleção
-            let inside = env.ed.selection.as_ref().is_some_and(|s| !s.whole && s.contains_mapped(c));
-            !inside
-        }
-    }
-}
-
-/// Caixa de seleção (px do canvas): escolhe os traços que ela toca (Shift soma aos já escolhidos).
-pub(crate) fn box_pick(env: &mut Env, a: Vec2, b: Vec2, add: bool) {
-    let (Some(cut), Some(layer)) = (env.ed.active_cut(env.core), env.ed.active_layer(env.core)) else { return };
-    let Some(cel) = cmds::exposed_cel(&env.core.project, &cut, &layer, env.ed.frame) else { return };
-    let fwd = cmds::layer_placement(&env.core.project, &cut, &layer, env.ed.frame);
-    let Some(data) = cmds::cel_data(&env.core.project, &cel) else { return };
-    let (x0, y0, x1, y1) = (a.x.min(b.x), a.y.min(b.y), a.x.max(b.x), a.y.max(b.y));
-    let mut ids: Vec<Id> = if add { env.ed.selection.as_ref().map(|s| s.strokes.clone()).unwrap_or_default() } else { Vec::new() };
-    for s in &data.strokes {
-        let touches = aiai_paint::sample_stroke(s).iter().any(|q| {
-            let (x, y) = match &fwd {
-                Some(m) => m.apply(q.x, q.y),
-                None => (q.x, q.y),
-            };
-            x >= x0 && x <= x1 && y >= y0 && y <= y1
-        });
-        if touches && !ids.contains(&s.id) {
-            ids.push(s.id.clone());
-        }
-    }
-    select_strokes(env, ids);
-}
-
-/// Ctrl+A: tudo da camada ativa (vetor: todos os traços; raster: a caixa do conteúdo).
-pub(crate) fn select_all(env: &mut Env) {
-    let (Some(cut), Some(layer)) = (env.ed.active_cut(env.core), env.ed.active_layer(env.core)) else { return };
-    let Some(l) = cmds::layer_data(&env.core.project, &layer).cloned() else { return };
-    match l.kind {
-        LayerType::Vector => {
-            let ids = cmds::exposed_cel(&env.core.project, &cut, &layer, env.ed.frame).and_then(|c| cmds::cel_data(&env.core.project, &c)).map(|d| d.strokes.iter().map(|s| s.id.clone()).collect()).unwrap_or_default();
-            select_strokes(env, ids);
-        }
-        LayerType::Raster => {
-            if let Some(r) = raster_content_box(env, &cut, &layer) {
-                env.ed.selection = Some(Selection::new(SelMode::Rect, vec![Vec2::new(r[0], r[1]), Vec2::new(r[0] + r[2], r[1] + r[3])], false));
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Caixa (x, y, w, h) do que a camada raster tem pintado no quadro, em px do canvas.
-fn raster_content_box(env: &Env, cut: &NodeId, layer: &NodeId) -> Option<[f32; 4]> {
-    let opts = aiai_render::RenderOptions { include_guides: false, include_reference: false, only_layers: Some(vec![layer.clone()]), background: None, camera: false, layer_motion: true };
-    let img = aiai_render::render_frame(&env.core.project, &env.core.blobs, cut, env.ed.frame, &opts).ok()?.image;
-    let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0u32, 0u32);
-    for y in 0..img.height {
-        for x in 0..img.width {
-            if img.data[(y * img.width + x) as usize][3] > 0.004 {
-                x0 = x0.min(x);
-                y0 = y0.min(y);
-                x1 = x1.max(x + 1);
-                y1 = y1.max(y + 1);
-            }
-        }
-    }
-    (x0 < x1).then(|| [x0 as f32, y0 as f32, (x1 - x0) as f32, (y1 - y0) as f32])
 }
 
 /// Ctrl+T: transformação livre no Mover: sobre a escolha atual, ou sobre tudo da camada quando não há escolha.
@@ -1034,7 +832,7 @@ pub(crate) fn free_transform(env: &mut Env) {
     *env.tool = ToolId::Move;
     if env.ed.selection.as_ref().is_none_or(|s| s.whole) {
         env.ed.selection = None;
-        select_all(env);
+        super::selection::select_all(env);
     }
 }
 
@@ -1122,11 +920,14 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
     }
     if ca {
         env.ed.selection = None;
-        select_all(env);
+        super::selection::select_all(env);
     }
     if cd {
         env.ed.selection = None;
+        env.ed.sel_state.wand = None;
     }
+    // Ctrl+Shift+I inverte; laço poligonal: Enter fecha, Backspace tira o último vértice
+    super::selection::shortcuts(ctx, env);
     super::rulers::shortcuts(ctx, env);
     super::model3d::shortcuts(ctx, env);
     let (tool_key, size_dir, enter, esc, step, home_end, fit, one) = ctx.input_mut(|i| {

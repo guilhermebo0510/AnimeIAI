@@ -218,15 +218,23 @@ pub fn paint_command(p: &Project, blobs: &mut BlobStore, req: &PaintRequest) -> 
 /// Como [`paint_command`], limitado à seleção (`selection`, px do canvas): fora dela a camada não muda; na borda
 /// suave, mistura na proporção da cobertura (como o Photoshop e o Clip Studio).
 pub fn paint_command_in(p: &Project, blobs: &mut BlobStore, req: &PaintRequest, selection: Option<&aiai_paint::select::SelectShape>) -> ToolResult<Command> {
+    let mask = match selection {
+        Some(shape) => Some(selection_mask(p, blobs, &req.cut, &req.layer, req.frame, shape)?),
+        None => None,
+    };
+    paint_command_masked(p, blobs, req, mask.as_ref())
+}
+
+/// Como [`paint_command_in`], com a seleção já como cobertura (px do canvas): `(cobertura, largura, altura)`.
+pub fn paint_command_masked(p: &Project, blobs: &mut BlobStore, req: &PaintRequest, mask: Option<&(Vec<f32>, u32, u32)>) -> ToolResult<Command> {
     req.preset.validate().map_err(ToolError::Invalid)?;
     let (node, cel, w, h) = raster_cel(p, &req.cut, &req.layer, req.frame)?;
     let color = resolve_color(p, &req.color)?;
     let preset = load_tip_mask(blobs, &req.preset)?;
-    let mut r = paint_on_cel(blobs, Some(cel), w, h, &preset, color, &req.strokes, req.seed, selection.is_some())?;
-    if let Some(shape) = selection {
-        let mask = selection_mask(p, blobs, &req.cut, &req.layer, req.frame, shape)?;
+    let mut r = paint_on_cel(blobs, Some(cel), w, h, &preset, color, &req.strokes, req.seed, mask.is_some())?;
+    if let Some(mask) = mask {
         let place = crate::points::cel_placement(p, &req.cut, &req.layer, req.frame).ok();
-        clip_region(&mut r, &mask, place.as_ref());
+        clip_region(&mut r, mask, place.as_ref());
     }
     Ok(Command::SetTiles { cel: node.id.clone(), tiles: tiles_for_region_at(blobs, &r.after, r.origin, r.bounds) })
 }

@@ -262,7 +262,8 @@ impl StudioApp {
             "latency": ed.latency.as_ref().map(lat),
             "latency_log": ed.latency_log.iter().map(lat).collect::<Vec<_>>(),
             "live": { "ms": ed.live_stroke.last_ms, "updates": ed.live_stroke.updates, "overlay": ed.live_stroke.overlay.is_some() },
-            "selection": ed.selection.as_ref().map(|s| json!({ "strokes": s.strokes.iter().map(|i| i.0.clone()).collect::<Vec<_>>(), "whole": s.whole, "offset": [round(s.offset.x), round(s.offset.y)], "rect": s.rect_of() })),
+            "selection": ed.selection.as_ref().map(|s| json!({ "mode": format!("{:?}", s.mode), "strokes": s.strokes.iter().map(|i| i.0.clone()).collect::<Vec<_>>(), "whole": s.whole, "offset": [round(s.offset.x), round(s.offset.y)], "rect": s.rect_of() })),
+            "select_tool": super::selection::state_json(ed),
             "gesture_active": !matches!(ed.gesture, super::editor::Gesture::None),
             "cursor_logical": ed.cursor.map(|c| json!([round(c.x), round(c.y)])),
             "ghosts": ed.ghosts.len(),
@@ -302,7 +303,7 @@ impl StudioApp {
         // chaves de cada sub-ação (com os apelidos que `text` aceita); sub-ação desconhecida dá o erro do `match` abaixo
         let keys: Option<&[&str]> = match action.as_str() {
             "set_workspace" => Some(&["workspace", "value"]),
-            "select_tool" | "set_tool" => Some(&["tool", "value"]),
+            "select_tool" | "set_tool" => Some(&["tool", "value", "mode"]),
             "select_layer" => Some(&["layer", "id", "value"]),
             "select_cut" => Some(&["cut", "id", "value"]),
             "set_frame" => Some(&["frame"]),
@@ -339,6 +340,12 @@ impl StudioApp {
                     return Err(BridgeError::invalid_params(format!("a ferramenta '{key}' não está na prateleira do workspace {}; nele: [{}]", self.ws.key(), list.join(", "))));
                 }
                 self.tool = t;
+                // Seleção: `mode` escolhe a sub-ferramenta (rect, ellipse, lasso, polygon, wand, strokes)
+                if let Some(mode) = text(&m, &["mode"]) {
+                    let st = super::selection::SelTool::ALL.into_iter().find(|s| s.id() == mode).filter(|_| t == ToolId::Lasso);
+                    let st = st.ok_or_else(|| BridgeError::invalid_params(format!("modo desconhecido para {key}: {mode}; válidos (Seleção): {}", super::selection::SelTool::ALL.map(|s| s.id()).join(", "))))?;
+                    self.ed.opts.select_mode = st;
+                }
                 json!({ "active_tool": self.tool.key() })
             }
             "select_layer" => {

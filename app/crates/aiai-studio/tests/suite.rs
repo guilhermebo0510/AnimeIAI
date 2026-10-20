@@ -435,6 +435,71 @@ fn editor_script(c: &Client) {
     c.input(json!([{"kind": "key", "key": "Escape"}, {"kind": "wait", "frames": 2}]));
     assert!(c.state()["editor"]["selection"].is_null(), "Esc limpa a seleção");
 
+    // Seleção (S) / Selecionar traços: o clique escolhe o traço, no vazio tira a seleção, a caixa pega o que toca. O Mover
+    // só move: apertar longe do traço escolhido ainda leva só ele (como o Photoshop com seleção ativa)
+    let first_x = |c: &Client| c.node(&vcel)["strokes"][0]["points"][0]["x"].as_f64().unwrap();
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "select", "mode": "strokes"}));
+    assert_eq!(c.state()["active_tool"], "lasso", "a Seleção guarda a chave antiga");
+    assert_eq!(c.state()["editor"]["select_tool"]["tool"], "strokes");
+    c.click_canvas(160.0, 40.0);
+    assert_eq!(c.state()["editor"]["selection"]["strokes"].as_array().map(|a| a.len()), Some(1), "o clique no traço o escolhe");
+    c.click_canvas(20.0, 160.0);
+    assert!(c.state()["editor"]["selection"].is_null(), "clique no vazio tira a seleção");
+    c.drag_canvas(&[(60.0, 20.0), (120.0, 60.0)], false);
+    assert_eq!(c.state()["editor"]["selection"]["strokes"].as_array().map(|a| a.len()), Some(1), "a caixa pega o traço que ela toca");
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "move"}));
+    c.drag_canvas(&[(20.0, 160.0), (25.0, 160.0), (30.0, 160.0)], false);
+    assert!((first_x(c) - 90.0).abs() < 1.0, "o Mover levou o traço escolhido: x = {}", first_x(c));
+    c.input(json!([{"kind": "key", "key": "Z", "modifiers": ["ctrl"]}, {"kind": "wait", "frames": 2}]));
+    c.input(json!([{"kind": "key", "key": "Escape"}, {"kind": "wait", "frames": 2}]));
+    assert!(c.state()["editor"]["selection"].is_null());
+
+    // regressão do Mover em camada vetorial com área (as linhas "aleatórias" durante o arrasto): a camada aparece em
+    // escala 0,5 em volta do centro, então o quadrado 80..240 × 40..140 do cel aparece em 120..200 × 65..115 no canvas.
+    // A área feita em volta de onde o traço APARECE leva o traço, e arrastar 20 px no canvas grava 40 px no cel (o
+    // que a tela mostrou). Antes, a área era testada contra os pontos crus do cel: nada a mover, e a prévia desenhava
+    // esses pontos no lugar errado.
+    c.ok("APPLY_COMMAND", json!({"command": {"kind": "set_props", "id": vector, "data": {"scale": 0.5}}}));
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "select", "mode": "rect"}));
+    c.drag_canvas(&[(112.0, 58.0), (208.0, 122.0)], false);
+    assert_eq!(c.state()["editor"]["selection"]["mode"], "Rect");
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "move"}));
+    c.drag_canvas(&[(160.0, 90.0), (170.0, 90.0), (180.0, 90.0)], false);
+    assert!((first_x(c) - 120.0).abs() < 1.5, "20 px no canvas = 40 px no cel da camada em escala 0,5: x = {}", first_x(c));
+    c.input(json!([{"kind": "key", "key": "Z", "modifiers": ["ctrl"]}, {"kind": "wait", "frames": 2}]));
+    assert!((first_x(c) - 80.0).abs() < 1.0);
+    // a área onde o cel "estaria" (o lado direito, onde o traço não aparece) não leva nada
+    c.input(json!([{"kind": "key", "key": "Escape"}, {"kind": "wait", "frames": 2}]));
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "select", "mode": "rect"}));
+    c.drag_canvas(&[(215.0, 30.0), (300.0, 150.0)], false);
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "move"}));
+    c.drag_canvas(&[(250.0, 90.0), (270.0, 90.0)], false);
+    assert!((first_x(c) - 80.0).abs() < 1.0, "a área sem traço não moveu nada: x = {}", first_x(c));
+    c.ok("APPLY_COMMAND", json!({"command": {"kind": "set_props", "id": vector, "data": {"scale": 1.0}}}));
+    c.input(json!([{"kind": "key", "key": "Escape"}, {"kind": "wait", "frames": 2}, {"kind": "key", "key": "Escape"}, {"kind": "wait", "frames": 2}]));
+
+    // varinha na camada vetorial: lê os pixels desenhados; o clique dentro do quadrado pega só o miolo (não o canvas
+    // inteiro), Shift+clique fora soma o lado de fora, Alt+clique dentro tira o miolo de novo
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "select", "mode": "wand"}));
+    c.click_canvas(160.0, 90.0);
+    let st = c.state();
+    assert_eq!(st["editor"]["selection"]["mode"], "Mask", "{}", st["editor"]["selection"]);
+    let r = st["editor"]["selection"]["rect"].clone();
+    assert!(r[2].as_f64().unwrap() < 165.0 && r[3].as_f64().unwrap() < 105.0, "só o miolo do quadrado: {r}");
+    let inner = st["editor"]["select_tool"]["covered_px"].as_u64().unwrap();
+    assert!(inner > 12000 && inner < 16000, "miolo ~156×96: {inner}");
+    let (ox, oy) = c.canvas_pt(20.0, 160.0);
+    c.input(json!([{"kind": "mouse_move", "x": ox, "y": oy}, {"kind": "mouse_down", "x": ox, "y": oy, "button": "primary", "modifiers": ["shift"]}, {"kind": "mouse_up", "x": ox, "y": oy, "button": "primary", "modifiers": ["shift"]}, {"kind": "wait", "frames": 2}]));
+    let both = c.state()["editor"]["select_tool"]["covered_px"].as_u64().unwrap();
+    assert!(both > 320 * 180 - 4500, "Shift soma o lado de fora: {both}");
+    let (ix, iy) = c.canvas_pt(160.0, 90.0);
+    c.input(json!([{"kind": "mouse_move", "x": ix, "y": iy}, {"kind": "mouse_down", "x": ix, "y": iy, "button": "primary", "modifiers": ["alt"]}, {"kind": "mouse_up", "x": ix, "y": iy, "button": "primary", "modifiers": ["alt"]}, {"kind": "wait", "frames": 2}]));
+    let outer = c.state()["editor"]["select_tool"]["covered_px"].as_u64().unwrap();
+    assert!((outer as i64 - (both - inner) as i64).abs() < 50, "Alt tira o miolo: {outer} vs {both} - {inner}");
+    assert!(c.state()["editor"]["select_tool"]["outline_loops"].as_u64().unwrap() >= 2, "formigas no contorno de fora e no buraco");
+    c.input(json!([{"kind": "key", "key": "D", "modifiers": ["ctrl"]}, {"kind": "wait", "frames": 2}]));
+    assert!(c.state()["editor"]["selection"].is_null(), "Ctrl+D tira a seleção");
+
     // zoom pela roda ancorado no cursor e pan com o botão do meio / espaço
     c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "pen"}));
     let before = c.state()["editor"]["canvas"].clone();
