@@ -941,6 +941,15 @@ pub fn tree_from_saved(ws: WorkspaceId, node: &SavedNode) -> Option<Tree<PanelKi
     Some(tree)
 }
 
+/// A árvore de uma janela solta (`dock_float`): o mesmo carregamento, com o id da janela e sem repor o canvas (ele
+/// fica na janela principal ou em outra janela). Painéis em `taken` (já em outro lugar do layout) ficam de fora.
+pub fn float_tree_from_saved(ws: WorkspaceId, node: &SavedNode, id: egui::Id, taken: &std::collections::HashSet<PanelKind>) -> Option<Tree<PanelKind>> {
+    let mut tiles = Tiles::default();
+    let mut seen = taken.clone();
+    let root = load_node(&mut tiles, node, ws, &mut seen)?;
+    Some(Tree::new(id, root, tiles))
+}
+
 /// Mesmo layout: mesma estrutura, mesmos painéis e o mesmo escondido, proporções iguais a menos de 0,5 % (a aba ativa
 /// não conta: trocar de aba não personaliza o layout).
 pub fn same_layout(a: &SavedNode, b: &SavedNode) -> bool {

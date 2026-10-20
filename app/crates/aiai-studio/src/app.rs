@@ -18,6 +18,7 @@ mod commands;
 mod comp;
 mod comp_viewer;
 pub(crate) mod doc;
+mod dock_ui;
 mod prefs_ui;
 mod start;
 mod editor;
@@ -125,6 +126,8 @@ pub struct StudioApp {
     gpu: crate::gpu_mem::GpuMem,
     gpu_seen: gpu_owners::Seen,
     gpu_pressure_seen: crate::gpu_mem::Pressure,
+    /// Painel maximizado e janelas soltas (`dock_ui`, `dock_float`).
+    dock: dock_ui::DockState,
 }
 
 impl StudioApp {
@@ -140,7 +143,7 @@ impl StudioApp {
         theme::install_fonts(ctx);
         let prefs_path = if cli.no_session { None } else { cli.session_file.clone().map(PathBuf::from).or_else(prefs::default_path) };
         let mut prefs = prefs_path.as_deref().map(prefs::load).unwrap_or_default();
-        let layouts_path = layout_store::path_for(cli.no_session, cli.session_file.as_deref());
+        let layouts_path = layout_store::path_for(cli.no_session, cli.session_file.as_deref(), cli.layouts_file.as_deref());
         let layouts = layouts_path.as_deref().map(layout_store::load).unwrap_or_default();
         // flags da linha de comando valem para esta execução (só viram preferência se o usuário mexer depois)
         if let Some(l) = cli.lang {
@@ -197,6 +200,7 @@ impl StudioApp {
             gpu: Default::default(),
             gpu_seen: Default::default(),
             gpu_pressure_seen: Default::default(),
+            dock: Default::default(),
             frame_count: 0,
             last_frame: None,
             frame_ms: 16.7,
@@ -377,6 +381,7 @@ impl StudioApp {
     fn reset_layout(&mut self, ws: WorkspaceId) {
         self.trees.insert(ws, layout::default_tree_v(ws, self.layouts.variant(ws)));
         self.layouts.reset(ws);
+        self.dock_reload(ws);
         self.layouts_changed();
     }
 
@@ -390,6 +395,7 @@ impl StudioApp {
         self.ensure_tree(ws);
         let saved = self.trees.get(&ws).and_then(layout::saved_from_tree).ok_or("árvore vazia")?;
         let replaced = self.layouts.save_named(ws, name, saved);
+        self.dock_save_named(name);
         self.layouts_changed();
         self.notice(format!("{} {name}", tr(if replaced { "msg.layout_replaced" } else { "msg.layout_saved" })));
         Ok(replaced)
@@ -405,6 +411,7 @@ impl StudioApp {
         };
         self.trees.insert(ws, tree);
         self.layouts.entry(ws).active_name = Some(name.to_owned());
+        self.dock_apply_named(name);
         self.layouts_changed();
         self.notice(format!("{} {name}", tr("msg.layout_applied")));
         Ok(())
@@ -428,6 +435,9 @@ impl StudioApp {
         }
         if kind == PanelKind::Canvas && !on {
             return Err("o canvas não se esconde".into());
+        }
+        if let Some(r) = self.dock_set_visible(kind, on) {
+            return r;
         }
         self.ensure_tree(ws);
         let Some(tree) = self.trees.get_mut(&ws) else { return Err("sem árvore".into()) };
@@ -698,7 +708,7 @@ impl StudioApp {
                         ui.label(RichText::new(tr(cat.title_key())).size(11.0).color(self.tokens().text_dim));
                         for k in kinds {
                             let tree = &self.trees[&ws];
-                            let mut on = layout::find_pane(tree, k).is_some_and(|id| tree.tiles.is_visible(id));
+                            let mut on = layout::find_pane(tree, k).is_some_and(|id| tree.tiles.is_visible(id)) || self.dock_floating(k);
                             let meta = k.meta();
                             // o canvas não se esconde; painel que precisa de canvas não entra onde não há canvas
                             let enabled = k != PanelKind::Canvas && (!meta.needs_canvas || canvas_ws);
@@ -778,6 +788,7 @@ impl StudioApp {
             ui.separator();
             let r = ui.menu_button(tr("menu.window.layout"), |ui| self.menu_layout(ui));
             self.rects.note("menu_item:window.layout", r.response.rect);
+            self.menu_dock(ui);
         });
         self.rects.note("menu:window", r.response.rect);
     }
@@ -1020,6 +1031,12 @@ impl StudioApp {
         let ws = self.ws;
         self.layout_update_banner(ui);
         self.ensure_tree(ws);
+        // janelas soltas do layout em uso; painel pedido que está numa delas: a janela vem para a frente
+        self.dock_sync();
+        if self.ed.want_panel.is_some_and(|w| self.dock_focus_floating(w)) {
+            self.ed.want_panel = None;
+        }
+        let pane_dock = self.dock_main_pane();
         let Some(tree) = self.trees.get_mut(&ws) else { return };
         // ferramenta com itens (caneta, pincel, borracha, balde, seleção, editar pontos) escolhida agora (clique ou
         // atalho): o painel Ferramenta vem para a frente
@@ -1032,13 +1049,14 @@ impl StudioApp {
         }
         let mut notes: Vec<(String, Rect)> = Vec::new();
         let env = ui_kit::Env { t, core: &mut self.core, ed: &mut self.ed, icons: &mut self.icons, notes: &mut notes, tool: &mut self.tool, ws };
-        let mut behavior = DockBehavior { t, in_tabs: layout::panes_in_tabs(tree), env, close_req: None };
+        let mut behavior = DockBehavior { t, in_tabs: layout::panes_in_tabs(tree), env, close_req: None, dock: pane_dock };
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.bg_frame).inner_margin(egui::Margin::same(CARD_GAP as i8))).show(ui, |ui| {
-            tree.ui(&mut behavior, ui);
+            dock_ui::tree_ui(tree, &mut behavior, ui);
         });
         if let Some(id) = behavior.close_req.take() {
             tree.tiles.set_visible(id, false);
         }
+        let pane_dock = behavior.dock;
         for (name, rect) in notes {
             self.rects.note(name, rect);
         }
@@ -1048,6 +1066,7 @@ impl StudioApp {
         if let Some(w) = self.ed.want_workspace.take() {
             self.switch_workspace(w);
         }
+        self.dock_main_after(&ui.ctx().clone(), pane_dock);
     }
 
     /// Atalhos do editor (ferramentas, tamanho do pincel, Enter/Esc do mover, quadros, ajustar visão).
@@ -1215,6 +1234,7 @@ impl StudioApp {
             self.tool_shelf(ui);
         }
         self.workspace_ui(ui);
+        self.dock_floats_ui(&ctx);
         self.about_window(&ctx);
         self.prefs_window(&ctx);
         self.start_window(&ctx);
@@ -1299,6 +1319,8 @@ struct DockBehavior<'a> {
     in_tabs: HashSet<TileId>,
     /// Documento, estado do editor, ícones e os retângulos desenhados neste quadro (vão para o `GET_UI_STATE`).
     env: ui_kit::Env<'a>,
+    /// Dock desenhado (janela principal ou solta), painel maximizado e pedidos de maximizar/destacar (`dock_ui`).
+    dock: dock_ui::PaneDock,
 }
 
 impl DockBehavior<'_> {
@@ -1324,6 +1346,7 @@ impl DockBehavior<'_> {
                 self.close_req = Some(tile_id);
             }
         }
+        dock_ui::header_extras(self, ui, hdr, kind, tile_id, &resp);
         if resp.drag_started() {
             UiResponse::DragStarted
         } else {
@@ -1337,6 +1360,7 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
         let rect = ui.max_rect();
         let kind = *pane;
         self.env.note(format!("panel:{}", kind.key()), rect);
+        self.dock.note_hover(ui, rect, kind);
         ui.painter().rect_filled(rect, CARD_RADIUS, self.t.bg_panel);
         let mut resp = UiResponse::None;
         let mut body = rect;
@@ -1408,6 +1432,14 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
 
     fn tab_title_for_pane(&mut self, pane: &PanelKind) -> egui::WidgetText {
         tr(pane.title_key()).into()
+    }
+
+    fn top_bar_right_ui(&mut self, tiles: &Tiles<PanelKind>, ui: &mut egui::Ui, tile_id: TileId, tabs: &egui_tiles::Tabs, _scroll_offset: &mut f32) {
+        dock_ui::tab_bar_buttons(self, tiles, ui, tile_id, tabs);
+    }
+
+    fn on_tab_button(&mut self, tiles: &mut Tiles<PanelKind>, tile_id: TileId, button_response: egui::Response) -> egui::Response {
+        dock_ui::on_tab_button(self, tiles, tile_id, button_response)
     }
 
     fn is_tab_closable(&self, tiles: &Tiles<PanelKind>, tile_id: TileId) -> bool {

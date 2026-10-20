@@ -133,13 +133,15 @@ impl StudioApp {
         let origin = self.client_origin_physical(ctx);
         let vp = ctx.input(|i| i.viewport().clone());
         let screen = ctx.content_rect();
+        let maxed = self.dock_main_maximized();
         let panels: Vec<Value> = match self.trees.get(&self.ws) {
             Some(tree) => tree
                 .tiles
                 .iter()
                 .filter_map(|(id, t)| match t {
                     egui_tiles::Tile::Pane(kind) => {
-                        let visible = tree.tiles.is_visible(*id);
+                        // com um painel maximizado, os outros não estão na tela
+                        let visible = tree.tiles.is_visible(*id) && maxed.is_none_or(|m| m == *kind);
                         let rect = self.rects.get(&format!("panel:{}", kind.key())).or_else(|| tree.tiles.rect(*id));
                         let mut v = json!({ "name": kind.key(), "title": crate::i18n::tr(kind.title_key()), "visible": visible });
                         if let (true, Some(r)) = (visible, rect) {
@@ -156,7 +158,15 @@ impl StudioApp {
                 .collect(),
             None => Vec::new(),
         };
-        let widgets: Map<String, Value> = self.rects.all().iter().filter(|(k, _)| !k.starts_with("panel:")).map(|(k, r)| (k.clone(), self.rect_entry(*r, ppp, origin))).collect();
+        // painéis e widgets das janelas soltas entram com `viewport: "float:N"` e o retângulo na tela daquela janela
+        let mut panels = panels;
+        panels.extend(self.dock_panel_entries());
+        let mut widgets: Map<String, Value> = self.rects.all().iter().filter(|(k, _)| !k.starts_with("panel:")).map(|(k, r)| {
+            let mut v = self.rect_entry(*r, ppp, origin);
+            v["viewport"] = "root".into();
+            (k.clone(), v)
+        }).collect();
+        widgets.extend(self.dock_widget_entries());
         let mut dialogs = Vec::new();
         if self.about_open {
             dialogs.push("about");
@@ -183,6 +193,7 @@ impl StudioApp {
             "layout": self.layout_state(),
             "panels": panels,
             "widgets": widgets,
+            "viewports": self.dock_viewports_json(),
             "overflow": self.layout_overflow(ctx),
             "dialogs": dialogs,
             "popup_open": egui::Popup::is_any_open(ctx),
@@ -230,6 +241,7 @@ impl StudioApp {
             let size = ed.cut.as_ref().map(|c| cmds::canvas_size(p, c)).unwrap_or((0, 0));
             json!({
                 "rect_logical": rect4(r, 1.0),
+                "viewport": self.dock_canvas_viewport(),
                 "zoom": fine(ed.view.zoom),
                 "rotation_deg": round(ed.view.rotation_deg()),
                 "flip": ed.view.flip,
@@ -300,6 +312,7 @@ impl StudioApp {
     /// set_theme {theme: light|dark}, set_language {language: pt|en}, open_dialog/close_dialog {dialog: about|prefs|start, tab?: general|keys|folders|performance},
     /// set_window_size {width, height, maximized?} (pontos lógicos), library_import {files} (abre a janela de importar da Biblioteca),
     /// select_layer {layer}, select_cut {cut}, set_frame {frame}, set_color {color}, fit_view.
+    /// dock {op: list|maximize|restore|detach|redock|redock_all, panel?, group?} (painel maximizado e janelas soltas).
     /// Apelidos aceitos: set_tool = select_tool; open_panel = toggle_panel com visible=true.
     pub(crate) fn bridge_ui_action(&mut self, ctx: &egui::Context, params: &Value) -> BridgeResult {
         let m = as_obj(params)?;
@@ -321,6 +334,7 @@ impl StudioApp {
             "open_dialog" | "close_dialog" => Some(&["dialog", "value", "tab"]),
             "library_import" => Some(&["files"]),
             "gpu" => Some(&["op", "mb"]),
+            "dock" => Some(&["op", "panel", "group"]),
             _ => None,
         };
         if let Some(keys) = keys {
@@ -404,6 +418,7 @@ impl StudioApp {
                 self.set_panel_visible(kind, target).map_err(BridgeError::invalid_params)?;
                 json!({ "panel": key, "visible": target, "workspace": ws.key(), "inserted": found.is_none() && target })
             }
+            "dock" => self.bridge_dock(params)?,
             "layout" => {
                 let op = text(&m, &["op"]).ok_or_else(|| BridgeError::invalid_params("layout exige 'op' (list|save|apply|delete|reset)"))?.to_owned();
                 let name = text(&m, &["name"]).map(str::to_owned);

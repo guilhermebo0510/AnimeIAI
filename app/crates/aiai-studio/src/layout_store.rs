@@ -1,8 +1,11 @@
 //! Layouts do dock guardados fora do projeto (preferência do usuário): `%APPDATA%\AnimeIAI\layouts.json`, ao lado de
 //! `prefs.json`. Por workspace: a árvore em uso quando difere da fábrica, a revisão de fábrica que o usuário viu e os
 //! layouts com nome. Com `--no-session` nada é lido nem gravado; com `--session-file x.json` o arquivo é
-//! `x-layouts.json` ao lado dele.
+//! `x-layouts.json` ao lado dele; `--layouts-file y.json` escolhe o arquivo à força (vale mesmo com `--no-session`: é
+//! o que os testes visuais usam para ver um layout voltar depois de reabrir o app sem tocar no do usuário).
+//! As janelas soltas (`dock_float::SavedFloat`) entram no layout do workspace e nos layouts com nome.
 
+use crate::dock_float::SavedFloat;
 use crate::layout::{self, LayoutVariant, SavedNode};
 use crate::workspace::WorkspaceId;
 use serde::{Deserialize, Serialize};
@@ -16,6 +19,9 @@ pub const VERSION: u32 = 1;
 pub struct NamedLayout {
     pub name: String,
     pub tree: SavedNode,
+    /// Janelas soltas do layout (Janela > Destacar painel).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub floating: Vec<SavedFloat>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -28,6 +34,9 @@ pub struct WsLayouts {
     /// Layout com nome aplicado por último (o status mostra o nome enquanto a árvore for igual a ele).
     pub active_name: Option<String>,
     pub named: Vec<NamedLayout>,
+    /// Janelas soltas em uso (posição, tamanho e monitor de cada uma; ver `dock_float`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub floating: Vec<SavedFloat>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -58,7 +67,8 @@ impl LayoutStore {
         self.variants.insert(ws.key().to_owned(), v);
     }
 
-    fn slot(&self, ws: WorkspaceId) -> String {
+    /// Chave do layout em uso do workspace (com o sufixo da variante: `animacao.douga`).
+    pub fn slot(&self, ws: WorkspaceId) -> String {
         format!("{}{}", ws.key(), self.variant(ws).suffix())
     }
 
@@ -103,6 +113,7 @@ impl LayoutStore {
     pub fn reset(&mut self, ws: WorkspaceId) {
         let e = self.entry(ws);
         e.current = None;
+        e.floating.clear();
         e.active_name = None;
         e.factory_rev_seen = layout::factory_rev(ws);
     }
@@ -115,7 +126,7 @@ impl LayoutStore {
             n.tree = tree;
             return true;
         }
-        e.named.push(NamedLayout { name: name.to_owned(), tree });
+        e.named.push(NamedLayout { name: name.to_owned(), tree, floating: Vec::new() });
         false
     }
 
@@ -143,8 +154,12 @@ impl LayoutStore {
     }
 }
 
-/// `%APPDATA%\AnimeIAI\layouts.json`, ou `<sessão>-layouts.json` ao lado do `--session-file`.
-pub fn path_for(no_session: bool, session_file: Option<&str>) -> Option<PathBuf> {
+/// `%APPDATA%\AnimeIAI\layouts.json`, ou `<sessão>-layouts.json` ao lado do `--session-file`; `--layouts-file`
+/// (`forced`) ganha de tudo, inclusive do `--no-session`.
+pub fn path_for(no_session: bool, session_file: Option<&str>, forced: Option<&str>) -> Option<PathBuf> {
+    if let Some(f) = forced {
+        return Some(PathBuf::from(f));
+    }
     if no_session {
         return None;
     }
@@ -293,7 +308,42 @@ mod tests {
 
     #[test]
     fn no_session_has_no_file() {
-        assert_eq!(path_for(true, Some("x.json")), None);
-        assert_eq!(path_for(false, Some(r"C:\t\sessao.json")), Some(PathBuf::from(r"C:\t\sessao-layouts.json")));
+        assert_eq!(path_for(true, Some("x.json"), None), None);
+        assert_eq!(path_for(false, Some(r"C:\t\sessao.json"), None), Some(PathBuf::from(r"C:\t\sessao-layouts.json")));
+        assert_eq!(path_for(true, None, Some(r"C:\t\l.json")), Some(PathBuf::from(r"C:\t\l.json")), "--layouts-file vale com --no-session");
+    }
+
+    #[test]
+    fn floating_windows_round_trip_in_the_file_and_reset_drops_them() {
+        use crate::dock_float::{IRect, SavedFloat, SavedMonitor};
+        let p = tmp("float");
+        let ws = WorkspaceId::Animacao;
+        let mut s = LayoutStore::default();
+        s.record_current(ws, Some(custom(ws)));
+        let f = SavedFloat {
+            tree: SavedNode::Pane { panel: "timeline".into(), hidden: false },
+            pos: Some([2100, 80]),
+            size: [1200, 360],
+            monitor: Some(SavedMonitor { name: r"\\.\DISPLAY2".into(), work: IRect::new(1920, 0, 1920, 1032) }),
+            home: None,
+        };
+        s.entry(ws).floating = vec![f.clone()];
+        s.save_named(ws, "Dois monitores", custom(ws));
+        s.entry(ws).named[0].floating = vec![f.clone()];
+        save(&p, &s).unwrap();
+        let back = load(&p);
+        assert_eq!(back, s);
+        assert_eq!(back.get(ws).unwrap().floating, vec![f.clone()]);
+        assert_eq!(back.get(ws).unwrap().named[0].floating, vec![f]);
+        // arquivo de antes das janelas soltas (sem o campo) continua legível
+        let old = r#"{"version":1,"workspaces":{"pintura":{"factory_rev_seen":1,"current":null,"active_name":null,"named":[{"name":"a","tree":{"type":"pane","panel":"canvas"}}]}}}"#;
+        let st: LayoutStore = serde_json::from_str(old).unwrap();
+        assert!(st.get(WorkspaceId::Pintura).unwrap().floating.is_empty());
+        // sem janela solta, o campo nem aparece no arquivo
+        assert!(!serde_json::to_string(&st).unwrap().contains("floating"));
+        let mut s2 = back;
+        s2.reset(ws);
+        assert!(s2.get(ws).unwrap().floating.is_empty(), "voltar à fábrica reencaixa tudo");
+        let _ = std::fs::remove_dir_all(p.parent().unwrap());
     }
 }

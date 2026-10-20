@@ -4,6 +4,7 @@
 //! aiai-studio [--no-session] [--session-file <json>] [--project <pasta>] [--lang pt|en]
 //!             [--theme light|dark] [--workspace <chave>] [--size LxA] [--bridge]
 //!             [--screenshot <png>] [--frames <n>] [--splash | --no-splash] [--wait-pid <pid>]
+//!             [--layouts-file <json>]
 //! ```
 //!
 //! A tela de abertura (`splash.rs`) aparece por padrão, menos com `--no-session` e `--screenshot`; `--splash` e
@@ -36,6 +37,8 @@ pub struct Cli {
     /// Reabertura depois de perder a GPU (`gpu_mem`): espera o processo anterior sair (trava do projeto, diário) e
     /// mostra o aviso que ele deixou.
     pub wait_pid: Option<u32>,
+    /// Arquivo de layouts à força (`layout_store::path_for`): lido e gravado mesmo com `--no-session`.
+    pub layouts_file: Option<String>,
 }
 
 impl Cli {
@@ -67,6 +70,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
                 cli.size = Some((w, h));
             }
             "--session-file" => cli.session_file = Some(value("--session-file")?),
+            "--layouts-file" => cli.layouts_file = Some(value("--layouts-file")?),
             "--no-session" => cli.no_session = true,
             "--project" => cli.project = Some(value("--project")?),
             "--bridge" => cli.bridge = true,
@@ -99,7 +103,7 @@ mod tests {
     fn parses_all_flags() {
         let c = p(&[
             "--workspace", "pintura", "--screenshot", "a.png", "--frames", "3", "--size", "1280x720", "--no-session", "--lang", "en", "--theme", "light",
-            "--project", "C:/x", "--session-file", "s.json", "--bridge",
+            "--project", "C:/x", "--session-file", "s.json", "--bridge", "--layouts-file", "l.json",
         ])
         .unwrap();
         assert_eq!(c.workspace, Some(WorkspaceId::Pintura));
@@ -110,6 +114,7 @@ mod tests {
         assert_eq!(c.theme, Some(ThemeKind::Light));
         assert_eq!(c.project.as_deref(), Some("C:/x"));
         assert_eq!(c.session_file.as_deref(), Some("s.json"));
+        assert_eq!(c.layouts_file.as_deref(), Some("l.json"));
     }
 
     #[test]

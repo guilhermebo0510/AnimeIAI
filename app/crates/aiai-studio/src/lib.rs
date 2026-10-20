@@ -7,6 +7,7 @@
 pub mod app;
 pub mod brand;
 pub mod cli;
+pub mod dock_float;
 pub mod gpu_mem;
 pub mod i18n;
 pub mod icons;
