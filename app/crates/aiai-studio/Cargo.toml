@@ -42,9 +42,9 @@ aiai-3d-edit = { path = "../aiai-3d-edit" }
 aiai-assets = { path = "../aiai-assets" }
 glam = { workspace = true }
 pollster = "1"
-# dialogos nativos de abrir/salvar pasta de projeto (Arquivo > Abrir/Salvar como)
 # ícone da janela: o hwnd vem do eframe (CreationContext implementa HasWindowHandle); 0.6.2 já está no Cargo.lock
 raw-window-handle = "0.6"
+# dialogos nativos de abrir/salvar pasta de projeto (Arquivo > Abrir/Salvar como)
 rfd = { version = "0.15", default-features = false }
 # Rasterizacao dos icones SVG. Sem as features padrao: nao precisamos de texto nem de imagens raster dentro dos SVGs
 # (evita fontdb/rustybuzz/memmap e deixa o build mais leve; a regra do workspace "resvg = 0.45" continua valendo).
