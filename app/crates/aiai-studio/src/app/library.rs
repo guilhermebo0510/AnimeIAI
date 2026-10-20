@@ -802,7 +802,7 @@ mod tests {
     #[test]
     fn palette_update_bumps_the_version_and_keeps_the_manifest() {
         let root = tmp("palupd");
-        let pal = Palette { name: "Cores".into(), colors: vec![aiai_assets::palette::parse_loose_json(&json!(["#ff0000"])).unwrap().colors.remove(0)], warnings: vec![] };
+        let pal = Palette { name: "Cores".into(), colors: vec![aiai_assets::palette::parse_loose_json(&json!(["#ff0000"])).unwrap().colors.remove(0)], warnings: vec![], gradients: vec![] };
         let imp = aiai_assets::import::add_palette(&root, &pal, &ImportOpts { license: "CC0-1.0".into(), author: "Ana".into(), ..Default::default() }, "teste").unwrap();
         let idx = Index::scan(&root);
         let e = idx.get(&imp.id).unwrap().clone();
