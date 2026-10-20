@@ -1,0 +1,1 @@
+w=1280 h=720 old_ms=7.930 new_cpu_ms=2.028 new_total_ms=2.533

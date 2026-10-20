@@ -7,8 +7,8 @@
 //!
 //! Navegação: roda = zoom para o cursor (suave); botão do meio orbita (Shift pan, Ctrl zoom); sem botão do meio,
 //! botão direito arrastado orbita (Shift pan, Ctrl zoom), Alt+esquerdo orbita e Espaço+esquerdo faz pan (a mão do resto
-//! do app); gizmo de eixos no canto (clicar = vista, arrastar = órbita, botões de pan/zoom/projeção); Shift+1/3/7 frente,
-//! lado, topo; Shift+5 perspectiva/ortográfica (Alt+número troca de workspace no app); F (ou `.` no perfil Blender) enquadra a seleção; Home enquadra tudo.
+//! do app); gizmo de eixos no canto (clicar = vista, arrastar = órbita, botões de pan/zoom/projeção); Ctrl+1/3/7 frente,
+//! lado, topo; Ctrl+5 perspectiva/ortográfica (Alt+número troca de workspace no app; Shift+número vira símbolo); F (ou `.` no perfil Blender) enquadra a seleção; Home enquadra tudo.
 //! "Salvar na biblioteca" grava um ativo 3D do projeto (GLB + documento editável) e, com sessão, a Biblioteca
 //! (`Documentos\AnimeIAI\Modelos 3D`); "Enviar ao Layout" cria a camada 3D no corte.
 
@@ -321,6 +321,25 @@ impl ModelingState {
         Ok(())
     }
 
+    /// Tira da seleção os índices que não existem mais na malha ativa (a malha mudou por fora: painel, MCP, desfazer de
+    /// outro passo). Nenhum caminho da UI lê vértice/aresta/face por índice guardado sem passar por aqui.
+    pub(crate) fn sanitize_selection(&mut self) {
+        let Some(m) = self.active_mesh() else {
+            if !self.sel.is_empty() {
+                self.sel.clear();
+            }
+            return;
+        };
+        let (nv, nf) = (m.vert_count() as u32, m.face_count() as u32);
+        let stale = self.sel.verts.iter().any(|v| *v >= nv) || self.sel.faces.iter().any(|f| *f >= nf) || self.sel.edges.iter().any(|(a, b)| *a >= nv || *b >= nv);
+        if stale {
+            self.sel.verts.retain(|v| *v < nv);
+            self.sel.faces.retain(|f| *f < nf);
+            self.sel.edges.retain(|(a, b)| *a < nv && *b < nv);
+            self.touch();
+        }
+    }
+
     pub(crate) fn set_select_mode(&mut self, m: SelectMode) {
         if let Some(mesh) = self.active_mesh() {
             self.sel = self.sel.flush(mesh, m);
@@ -431,6 +450,8 @@ pub(crate) fn viewport(env: &mut Env, ui: &mut Ui, body: Rect) {
     let t = env.t;
     let bar = Rect::from_min_size(body.min, egui::vec2(body.width(), 30.0));
     let rect = Rect::from_min_max(egui::pos2(body.left(), bar.bottom()), body.max);
+    env.ed.modeling.fix();
+    env.ed.modeling.sanitize_selection();
     header(env, ui, bar);
     env.note("mdl:viewport", rect);
     let resp = ui.interact(rect, ui.id().with("mdl_viewport"), Sense::click_and_drag());
@@ -1360,6 +1381,10 @@ fn selected_verts(ms: &ModelingState) -> Vec<u32> {
 
 fn selected_edges(ms: &ModelingState) -> Vec<EdgeKey> {
     let Some(m) = ms.active_mesh() else { return Vec::new() };
+    let nv = m.vert_count() as u32;
+    if ms.sel.verts.iter().any(|v| *v >= nv) || ms.sel.edges.iter().any(|(a, b)| *a >= nv || *b >= nv) || ms.sel.faces.iter().any(|f| *f as usize >= m.face_count()) {
+        return Vec::new();
+    }
     let s = ms.sel.flush(m, ms.sel_mode);
     if !s.edges.is_empty() {
         return s.edges.into_iter().collect();
@@ -1460,12 +1485,14 @@ fn start_extrude(env: &mut Env, mouse: Vec2, from_tool: bool) {
 }
 
 fn pivot_px_of(ms: &ModelingState, size: Vec2, verts: &[u32], a: usize) -> Option<Vec2> {
-    let o = &ms.doc.objects[a];
+    let o = ms.doc.objects.get(a)?;
     let m = mat_of(o);
-    if verts.is_empty() {
+    let n = o.mesh.vert_count() as u32;
+    let pts: Vec<Vec3> = verts.iter().filter(|v| **v < n).map(|v| m.transform_point3(o.mesh.co(*v))).collect();
+    if pts.is_empty() {
         return None;
     }
-    let c: Vec3 = verts.iter().map(|v| m.transform_point3(o.mesh.co(*v))).sum::<Vec3>() / verts.len() as f32;
+    let c: Vec3 = pts.iter().sum::<Vec3>() / pts.len() as f32;
     ms.cam.project(c, size).map(|(p, _)| p)
 }
 
@@ -1523,6 +1550,11 @@ fn start_loop_cut(env: &mut Env, size: Vec2, mouse: Vec2, from_tool: bool) -> bo
     // direção do deslizar na tela: perpendicular à aresta cortada (o anel anda ao longo dela)
     let o = &ms.doc.objects[a];
     let m = mat_of(o);
+    let nv = o.mesh.vert_count() as u32;
+    if edge.0 >= nv || edge.1 >= nv {
+        env.ed.notify(tr("mdl.need_edge_hover"));
+        return false;
+    }
     let (pa, pb) = (cam.project(m.transform_point3(o.mesh.co(edge.0)), size), cam.project(m.transform_point3(o.mesh.co(edge.1)), size));
     let screen_dir = match (pa, pb) {
         (Some((pa, _)), Some((pb, _))) => (pb - pa) * 0.5,
@@ -2040,6 +2072,35 @@ mod tests {
         assert_ne!(a, ms.doc.objects[0].mesh.content_hash());
         assert!(ms.undo());
         assert_eq!(ms.doc.objects[0].mesh.face_count(), 6);
+    }
+
+    /// Regressão (pânico em `EditMesh::co`, "len 8, index 8"): a seleção apontava para vértices do extrude depois que a
+    /// malha voltou a 8 vértices. Índices velhos saem da seleção e nenhum caminho da UI lê por eles.
+    #[test]
+    fn stale_selection_indices_never_reach_the_mesh() {
+        let mut ms = ModelingState::default();
+        ms.add_primitive(Primitive::Cube).unwrap();
+        ms.mode = EditMode::Edit;
+        ms.sel = Selection::from_faces(&ms.doc.objects[0].mesh, [0u32]);
+        ms.run_op(OpKind::Extrude, OpParams { distance: 0.3, ..OpParams::default() }).unwrap();
+        assert!(ms.sel.verts.iter().any(|v| *v >= 8), "a seleção é a tampa nova (vértices 8..)");
+        // a malha volta a 8 vértices por fora do viewport (painel/MCP), com a seleção velha ainda guardada
+        let stale = ms.sel.clone();
+        ms.doc.objects[0].mesh = aiai_3d_edit::primitives::cube(1.0);
+        ms.sel = stale;
+        assert!(gizmo_pivot(&ms).is_none(), "só índices velhos: sem pivô (e sem pânico)");
+        ms.sel.verts.insert(0);
+        assert!(gizmo_pivot(&ms).is_some(), "o pivô ignora os índices que não existem");
+        assert!(selected_edges(&ms).is_empty());
+        assert!(pivot_px_of(&ms, Vec2::new(800.0, 600.0), &[0, 8, 11], 0).is_some());
+        let _ = bounds_of(&ms, true);
+        ms.sanitize_selection();
+        let n = ms.doc.objects[0].mesh.vert_count() as u32;
+        assert!(ms.sel.verts.iter().all(|v| *v < n) && ms.sel.faces.iter().all(|f| *f < 6));
+        // desfazer o extrude também limpa a seleção
+        ms.sel = Selection::from_verts([9u32, 10]);
+        assert!(ms.undo());
+        assert!(ms.sel.is_empty());
     }
 
     #[test]

@@ -1,0 +1,841 @@
+{
+ "steps": [
+  {
+   "msg": "app aberto",
+   "pid": 25800
+  },
+  {
+   "msg": "avisos ao abrir: OK"
+  },
+  {
+   "msg": "workspace",
+   "ws": "modelagem"
+  },
+  {
+   "msg": "cubo",
+   "modeling": {
+    "active": 0,
+    "camera": {
+     "distance": 5.0,
+     "ortho": false,
+     "pitch_deg": 22.0,
+     "target": [
+      0.0,
+      0.5,
+      0.0
+     ],
+     "yaw_deg": 35.0
+    },
+    "dirty": true,
+    "frames_drawn": 2,
+    "gpu_bytes": 58148208,
+    "gpu_cpu_ms": 3.5510001182556152,
+    "history": [
+     "Adicionar primitiva"
+    ],
+    "keys_preset": "animeiai",
+    "last_op": null,
+    "mesh": {
+     "faces": 6,
+     "modifiers": [],
+     "verts": 8
+    },
+    "modal": null,
+    "modal_keys": false,
+    "mode": "object",
+    "nav_frame_ms": 0.0,
+    "objects": 1,
+    "proportional": false,
+    "select_mode": "face",
+    "selection": {
+     "edges": 0,
+     "faces": 0,
+     "verts": 0
+    },
+    "shade": "toon",
+    "xray": false
+   }
+  },
+  {
+   "msg": "zoom +30",
+   "wall_s": 1.702,
+   "frames": 64,
+   "ms_per_frame": 26.59,
+   "status_frame_ms": 16.73,
+   "nav_frame_ms": 16.634000778198242,
+   "gpu_cpu_ms": 0.9010000228881836,
+   "camera": {
+    "distance": 0.23199999332427979,
+    "ortho": false,
+    "pitch_deg": 22.0,
+    "target": [
+     0.0010000000474974513,
+     0.49900001287460327,
+     -0.0
+    ],
+    "yaw_deg": 35.0
+   }
+  },
+  {
+   "msg": "zoom -30",
+   "wall_s": 1.799,
+   "frames": 73,
+   "ms_per_frame": 24.65,
+   "status_frame_ms": 16.69,
+   "nav_frame_ms": 16.628999710083008,
+   "gpu_cpu_ms": 0.5099999904632568,
+   "camera": {
+    "distance": 4.197000026702881,
+    "ortho": false,
+    "pitch_deg": 22.0,
+    "target": [
+     0.0,
+     0.5,
+     0.0
+    ],
+    "yaw_deg": 35.0
+   }
+  },
+  {
+   "msg": "orbita direito",
+   "modeling": {
+    "active": 0,
+    "camera": {
+     "distance": 4.250999927520752,
+     "ortho": false,
+     "pitch_deg": 43.6349983215332,
+     "target": [
+      0.0,
+      0.5,
+      0.0
+     ],
+     "yaw_deg": -43.47200012207031
+    },
+    "dirty": true,
+    "frames_drawn": 181,
+    "gpu_bytes": 58148208,
+    "gpu_cpu_ms": 0.5849999785423279,
+    "history": [
+     "Adicionar primitiva"
+    ],
+    "keys_preset": "animeiai",
+    "last_op": null,
+    "mesh": {
+     "faces": 6,
+     "modifiers": [],
+     "verts": 8
+    },
+    "modal": null,
+    "modal_keys": false,
+    "mode": "object",
+    "nav_frame_ms": 32.16299819946289,
+    "objects": 1,
+    "proportional": false,
+    "select_mode": "face",
+    "selection": {
+     "edges": 0,
+     "faces": 0,
+     "verts": 0
+    },
+    "shade": "toon",
+    "xray": false
+   }
+  },
+  {
+   "msg": "orbita alt",
+   "modeling": {
+    "active": 0,
+    "camera": {
+     "distance": 4.250999927520752,
+     "ortho": false,
+     "pitch_deg": 29.333999633789062,
+     "target": [
+      0.0,
+      0.5,
+      0.0
+     ],
+     "yaw_deg": 13.364999771118164
+    },
+    "dirty": true,
+    "frames_drawn": 210,
+    "gpu_bytes": 58148208,
+    "gpu_cpu_ms": 0.46799999475479126,
+    "history": [
+     "Adicionar primitiva"
+    ],
+    "keys_preset": "animeiai",
+    "last_op": null,
+    "mesh": {
+     "faces": 6,
+     "modifiers": [],
+     "verts": 8
+    },
+    "modal": null,
+    "modal_keys": false,
+    "mode": "object",
+    "nav_frame_ms": 31.80500030517578,
+    "objects": 1,
+    "proportional": false,
+    "select_mode": "face",
+    "selection": {
+     "edges": 0,
+     "faces": 0,
+     "verts": 0
+    },
+    "shade": "toon",
+    "xray": false
+   }
+  },
+  {
+   "msg": "pan shift+direito",
+   "modeling": {
+    "active": 0,
+    "camera": {
+     "distance": 4.250999927520752,
+     "ortho": false,
+     "pitch_deg": 29.333999633789062,
+     "target": [
+      -0.16300000250339508,
+      0.578000009059906,
+      -0.08799999952316284
+     ],
+     "yaw_deg": -14.503999710083008
+    },
+    "dirty": true,
+    "frames_drawn": 247,
+    "gpu_bytes": 58148208,
+    "gpu_cpu_ms": 0.5109999775886536,
+    "history": [
+     "Adicionar primitiva"
+    ],
+    "keys_preset": "animeiai",
+    "last_op": null,
+    "mesh": {
+     "faces": 6,
+     "modifiers": [],
+     "verts": 8
+    },
+    "modal": null,
+    "modal_keys": false,
+    "mode": "object",
+    "nav_frame_ms": 31.13800048828125,
+    "objects": 1,
+    "proportional": false,
+    "select_mode": "face",
+    "selection": {
+     "edges": 0,
+     "faces": 0,
+     "verts": 0
+    },
+    "shade": "toon",
+    "xray": false
+   }
+  },
+  {
+   "msg": "vista frente (gizmo)",
+   "modeling": {
+    "active": 0,
+    "camera": {
+     "distance": 4.250999927520752,
+     "ortho": false,
+     "pitch_deg": 0.0,
+     "target": [
+      -0.16300000250339508,
+      0.578000009059906,
+      -0.08799999952316284
+     ],
+     "yaw_deg": 0.0
+    },
+    "dirty": true,
+    "frames_drawn": 248,
+    "gpu_bytes": 58148208,
+    "gpu_cpu_ms": 0.7139999866485596,
+    "history": [
+     "Adicionar primitiva"
+    ],
+    "keys_preset": "animeiai",
+    "last_op": null,
+    "mesh": {
+     "faces": 6,
+     "modifiers": [],
+     "verts": 8
+    },
+    "modal": null,
+    "modal_keys": false,
+    "mode": "object",
+    "nav_frame_ms": 31.13800048828125,
+    "objects": 1,
+    "proportional": false,
+    "select_mode": "face",
+    "selection": {
+     "edges": 0,
+     "faces": 0,
+     "verts": 0
+    },
+    "shade": "toon",
+    "xray": false
+   }
+  },
+  {
+   "msg": "vista topo (Ctrl+7)",
+   "modeling": {
+    "active": 0,
+    "camera": {
+     "distance": 4.250999927520752,
+     "ortho": false,
+     "pitch_deg": 89.9000015258789,
+     "target": [
+      -0.16300000250339508,
+      0.578000009059906,
+      -0.08799999952316284
+     ],
+     "yaw_deg": 0.0
+    },
+    "dirty": true,
+    "frames_drawn": 249,
+    "gpu_bytes": 58148208,
+    "gpu_cpu_ms": 0.5199999809265137,
+    "history": [
+     "Adicionar primitiva"
+    ],
+    "keys_preset": "animeiai",
+    "last_op": null,
+    "mesh": {
+     "faces": 6,
+     "modifiers": [],
+     "verts": 8
+    },
+    "modal": null,
+    "modal_keys": false,
+    "mode": "object",
+    "nav_frame_ms": 31.13800048828125,
+    "objects": 1,
+    "proportional": false,
+    "select_mode": "face",
+    "selection": {
+     "edges": 0,
+     "faces": 0,
+     "verts": 0
+    },
+    "shade": "toon",
+    "xray": false
+   }
+  },
+  {
+   "msg": "ortografica (Ctrl+5)",
+   "modeling": {
+    "active": 0,
+    "camera": {
+     "distance": 4.250999927520752,
+     "ortho": true,
+     "pitch_deg": 89.9000015258789,
+     "target": [
+      -0.16300000250339508,
+      0.578000009059906,
+      -0.08799999952316284
+     ],
+     "yaw_deg": 0.0
+    },
+    "dirty": true,
+    "frames_drawn": 250,
+    "gpu_bytes": 58148208,
+    "gpu_cpu_ms": 0.4819999933242798,
+    "history": [
+     "Adicionar primitiva"
+    ],
+    "keys_preset": "animeiai",
+    "last_op": null,
+    "mesh": {
+     "faces": 6,
+     "modifiers": [],
+     "verts": 8
+    },
+    "modal": null,
+    "modal_keys": false,
+    "mode": "object",
+    "nav_frame_ms": 31.13800048828125,
+    "objects": 1,
+    "proportional": false,
+    "select_mode": "face",
+    "selection": {
+     "edges": 0,
+     "faces": 0,
+     "verts": 0
+    },
+    "shade": "toon",
+    "xray": false
+   }
+  },
+  {
+   "msg": "perspectiva + frente",
+   "modeling": {
+    "active": 0,
+    "camera": {
+     "distance": 4.250999927520752,
+     "ortho": false,
+     "pitch_deg": 0.0,
+     "target": [
+      -0.16300000250339508,
+      0.578000009059906,
+      -0.08799999952316284
+     ],
+     "yaw_deg": 0.0
+    },
+    "dirty": true,
+    "frames_drawn": 252,
+    "gpu_bytes": 58148208,
+    "gpu_cpu_ms": 0.6480000019073486,
+    "history": [
+     "Adicionar primitiva"
+    ],
+    "keys_preset": "animeiai",
+    "last_op": null,
+    "mesh": {
+     "faces": 6,
+     "modifiers": [],
+     "verts": 8
+    },
+    "modal": null,
+    "modal_keys": false,
+    "mode": "object",
+    "nav_frame_ms": 63.62799835205078,
+    "objects": 1,
+    "proportional": false,
+    "select_mode": "face",
+    "selection": {
+     "edges": 0,
+     "faces": 0,
+     "verts": 0
+    },
+    "shade": "toon",
+    "xray": false
+   }
+  },
+  {
+   "msg": "3/4",
+   "camera": {
+    "distance": 2.880000114440918,
+    "ortho": false,
+    "pitch_deg": -24.56800079345703,
+    "target": [
+     0.0,
+     0.5,
+     0.0
+    ],
+    "yaw_deg": 41.803001403808594
+   }
+  },
+  {
+   "msg": "face de cima escolhida",
+   "sel": {
+    "edges": 4,
+    "faces": 1,
+    "verts": 4
+   }
+  },
+  {
+   "msg": "ferramenta extrude (E)",
+   "tool": "m_extrude"
+  },
+  {
+   "msg": "extrude arrastado",
+   "modeling": {
+    "active": 0,
+    "camera": {
+     "distance": 2.880000114440918,
+     "ortho": false,
+     "pitch_deg": -24.56800079345703,
+     "target": [
+      0.0,
+      0.5,
+      0.0
+     ],
+     "yaw_deg": 41.803001403808594
+    },
+    "dirty": true,
+    "frames_drawn": 322,
+    "gpu_bytes": 58148208,
+    "gpu_cpu_ms": 0.6010000109672546,
+    "history": [
+     "Adicionar primitiva",
+     "Extrudar região"
+    ],
+    "keys_preset": "animeiai",
+    "last_op": "extrude",
+    "mesh": {
+     "faces": 10,
+     "modifiers": [],
+     "verts": 12
+    },
+    "modal": null,
+    "modal_keys": false,
+    "mode": "edit",
+    "nav_frame_ms": 57.26499938964844,
+    "objects": 1,
+    "proportional": false,
+    "select_mode": "face",
+    "selection": {
+     "edges": 4,
+     "faces": 1,
+     "verts": 4
+    },
+    "shade": "toon",
+    "xray": false
+   }
+  },
+  {
+   "msg": "ferramenta loop cut (Ctrl+R)",
+   "tool": "m_loopcut"
+  },
+  {
+   "msg": "loop cut",
+   "modeling": {
+    "active": 0,
+    "camera": {
+     "distance": 2.880000114440918,
+     "ortho": false,
+     "pitch_deg": -24.56800079345703,
+     "target": [
+      0.0,
+      0.5,
+      0.0
+     ],
+     "yaw_deg": 41.803001403808594
+    },
+    "dirty": true,
+    "frames_drawn": 341,
+    "gpu_bytes": 58148208,
+    "gpu_cpu_ms": 0.5070000290870667,
+    "history": [
+     "Adicionar primitiva",
+     "Extrudar região",
+     "Corte em loop"
+    ],
+    "keys_preset": "animeiai",
+    "last_op": "loop_cut",
+    "mesh": {
+     "faces": 16,
+     "modifiers": [],
+     "verts": 18
+    },
+    "modal": null,
+    "modal_keys": false,
+    "mode": "edit",
+    "nav_frame_ms": 57.26499938964844,
+    "objects": 1,
+    "proportional": false,
+    "select_mode": "edge",
+    "selection": {
+     "edges": 6,
+     "faces": 0,
+     "verts": 6
+    },
+    "shade": "toon",
+    "xray": false
+   }
+  },
+  {
+   "msg": "aresta escolhida",
+   "sel": {
+    "edges": 1,
+    "faces": 0,
+    "verts": 2
+   }
+  },
+  {
+   "msg": "bevel arrastado (2 entalhes = +2 segmentos)",
+   "modeling": {
+    "active": 0,
+    "camera": {
+     "distance": 2.880000114440918,
+     "ortho": false,
+     "pitch_deg": -24.56800079345703,
+     "target": [
+      0.0,
+      0.5,
+      0.0
+     ],
+     "yaw_deg": 41.803001403808594
+    },
+    "dirty": true,
+    "frames_drawn": 387,
+    "gpu_bytes": 58148208,
+    "gpu_cpu_ms": 0.5590000152587891,
+    "history": [
+     "Adicionar primitiva",
+     "Extrudar região",
+     "Corte em loop",
+     "Chanfro"
+    ],
+    "keys_preset": "animeiai",
+    "last_op": "bevel",
+    "mesh": {
+     "faces": 53,
+     "modifiers": [],
+     "verts": 56
+    },
+    "modal": null,
+    "modal_keys": false,
+    "mode": "edit",
+    "nav_frame_ms": 57.26499938964844,
+    "objects": 1,
+    "proportional": false,
+    "select_mode": "edge",
+    "selection": {
+     "edges": 0,
+     "faces": 0,
+     "verts": 0
+    },
+    "shade": "toon",
+    "xray": false
+   }
+  },
+  {
+   "msg": "Ctrl+Z",
+   "modeling": {
+    "active": 0,
+    "camera": {
+     "distance": 2.880000114440918,
+     "ortho": false,
+     "pitch_deg": -24.56800079345703,
+     "target": [
+      0.0,
+      0.5,
+      0.0
+     ],
+     "yaw_deg": 41.803001403808594
+    },
+    "dirty": true,
+    "frames_drawn": 388,
+    "gpu_bytes": 58148208,
+    "gpu_cpu_ms": 0.7269999980926514,
+    "history": [
+     "Adicionar primitiva",
+     "Extrudar região",
+     "Corte em loop"
+    ],
+    "keys_preset": "animeiai",
+    "last_op": null,
+    "mesh": {
+     "faces": 16,
+     "modifiers": [],
+     "verts": 18
+    },
+    "modal": null,
+    "modal_keys": false,
+    "mode": "edit",
+    "nav_frame_ms": 57.26499938964844,
+    "objects": 1,
+    "proportional": false,
+    "select_mode": "edge",
+    "selection": {
+     "edges": 0,
+     "faces": 0,
+     "verts": 0
+    },
+    "shade": "toon",
+    "xray": false
+   },
+   "notice": "Modelagem: desfeito"
+  },
+  {
+   "msg": "Ctrl+Shift+Z",
+   "modeling": {
+    "active": 0,
+    "camera": {
+     "distance": 2.880000114440918,
+     "ortho": false,
+     "pitch_deg": -24.56800079345703,
+     "target": [
+      0.0,
+      0.5,
+      0.0
+     ],
+     "yaw_deg": 41.803001403808594
+    },
+    "dirty": true,
+    "frames_drawn": 389,
+    "gpu_bytes": 58148208,
+    "gpu_cpu_ms": 1.1790000200271606,
+    "history": [
+     "Adicionar primitiva",
+     "Extrudar região",
+     "Corte em loop",
+     "Chanfro"
+    ],
+    "keys_preset": "animeiai",
+    "last_op": "bevel",
+    "mesh": {
+     "faces": 53,
+     "modifiers": [],
+     "verts": 56
+    },
+    "modal": null,
+    "modal_keys": false,
+    "mode": "edit",
+    "nav_frame_ms": 57.26499938964844,
+    "objects": 1,
+    "proportional": false,
+    "select_mode": "edge",
+    "selection": {
+     "edges": 0,
+     "faces": 0,
+     "verts": 0
+    },
+    "shade": "toon",
+    "xray": false
+   },
+   "notice": "Modelagem: refeito"
+  },
+  {
+   "msg": "ferramenta mover (V)",
+   "tool": "m_move"
+  },
+  {
+   "msg": "modificadores",
+   "modeling": {
+    "active": 0,
+    "camera": {
+     "distance": 2.880000114440918,
+     "ortho": false,
+     "pitch_deg": -24.56800079345703,
+     "target": [
+      0.0,
+      0.5,
+      0.0
+     ],
+     "yaw_deg": 41.803001403808594
+    },
+    "dirty": true,
+    "frames_drawn": 391,
+    "gpu_bytes": 58148208,
+    "gpu_cpu_ms": 7.5279998779296875,
+    "history": [
+     "Adicionar primitiva",
+     "Extrudar região",
+     "Corte em loop",
+     "Chanfro",
+     "Editar",
+     "Editar"
+    ],
+    "keys_preset": "animeiai",
+    "last_op": null,
+    "mesh": {
+     "faces": 53,
+     "modifiers": [
+      "subsurf",
+      "solidify"
+     ],
+     "verts": 56
+    },
+    "modal": null,
+    "modal_keys": false,
+    "mode": "edit",
+    "nav_frame_ms": 57.26499938964844,
+    "objects": 1,
+    "proportional": false,
+    "select_mode": "edge",
+    "selection": {
+     "edges": 0,
+     "faces": 0,
+     "verts": 0
+    },
+    "shade": "toon",
+    "xray": false
+   }
+  },
+  {
+   "msg": "zoom com modificadores +30",
+   "wall_s": 1.654,
+   "frames": 63,
+   "ms_per_frame": 26.25,
+   "status_frame_ms": 16.64,
+   "nav_frame_ms": 16.593000411987305,
+   "gpu_cpu_ms": 1.7259999513626099,
+   "camera": {
+    "distance": 0.1340000033378601,
+    "ortho": false,
+    "pitch_deg": -24.56800079345703,
+    "target": [
+     0.0,
+     0.49900001287460327,
+     -0.0010000000474974513
+    ],
+    "yaw_deg": 41.803001403808594
+   }
+  },
+  {
+   "msg": "zoom com modificadores -30",
+   "wall_s": 1.674,
+   "frames": 72,
+   "ms_per_frame": 23.25,
+   "status_frame_ms": 16.7,
+   "nav_frame_ms": 16.863000869750977,
+   "gpu_cpu_ms": 2.010999917984009,
+   "camera": {
+    "distance": 2.4030001163482666,
+    "ortho": false,
+    "pitch_deg": -24.56800079345703,
+    "target": [
+     0.0,
+     0.5,
+     -0.0
+    ],
+    "yaw_deg": 41.803001403808594
+   }
+  },
+  {
+   "msg": "fim",
+   "modeling": {
+    "active": 0,
+    "camera": {
+     "distance": 2.427000045776367,
+     "ortho": false,
+     "pitch_deg": -24.56800079345703,
+     "target": [
+      0.0,
+      0.5,
+      -0.0
+     ],
+     "yaw_deg": 41.803001403808594
+    },
+    "dirty": true,
+    "frames_drawn": 526,
+    "gpu_bytes": 58148208,
+    "gpu_cpu_ms": 1.690999984741211,
+    "history": [
+     "Adicionar primitiva",
+     "Extrudar região",
+     "Corte em loop",
+     "Chanfro",
+     "Editar",
+     "Editar"
+    ],
+    "keys_preset": "animeiai",
+    "last_op": null,
+    "mesh": {
+     "faces": 53,
+     "modifiers": [
+      "subsurf",
+      "solidify"
+     ],
+     "verts": 56
+    },
+    "modal": null,
+    "modal_keys": false,
+    "mode": "object",
+    "nav_frame_ms": 16.586000442504883,
+    "objects": 1,
+    "proportional": false,
+    "select_mode": "edge",
+    "selection": {
+     "edges": 0,
+     "faces": 0,
+     "verts": 0
+    },
+    "shade": "toon",
+    "xray": false
+   }
+  }
+ ]
+}

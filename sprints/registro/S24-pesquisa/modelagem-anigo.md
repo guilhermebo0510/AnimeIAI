@@ -48,8 +48,8 @@ O histórico do ANIGO é a mesma estratégia do AnimeIAI (snapshot do documento 
    grade e sobreposições por cima (modo `OverlayOnly`) ou sólido/arame. Malha só sobe para a GPU quando o objeto muda;
    câmera nova = só uniformes. Nada de leitura de volta. Navegação: botão do meio (Shift pan, Ctrl zoom), Alt+esquerdo,
    **botão direito orbita** (Shift+direito pan, Ctrl+direito zoom) para quem não tem botão do meio, roda = zoom no cursor
-   (suave), gizmo de eixos e botões pan/zoom/projeção, vistas por Alt+1/3/7 (o egui não distingue o teclado numérico),
-   Alt+5 perspectiva/ortográfica, enquadrar seleção.
+   (suave), gizmo de eixos e botões pan/zoom/projeção, vistas por Ctrl+1/3/7 (o egui não distingue o teclado numérico; Alt+número já troca de workspace
+   e Shift+número vira símbolo), Ctrl+5 perspectiva/ortográfica, menu Vista, enquadrar seleção.
 3. **Edição**: modal com eixo/plano/número/encaixe e edição proporcional (O), caixa e laço de seleção, deslizar aresta
    (escrito aqui; o ANIGO não tem), chanfro com segmentos e perfil, loop cut com cortes; painel Operadores e
    "Ajustar última operação"; painel Modificadores com os 9 tipos.
@@ -66,3 +66,31 @@ O histórico do ANIGO é a mesma estratégia do AnimeIAI (snapshot do documento 
 - **UV**: o AnimeIAI não usa textura nos modelos (material toon por cor), então o editor 2D não paga o custo agora. As
   costuras já entram pelos operadores (marcar/limpar costura).
 - **Multivista** (1/2/4 vistas): o Workbench já tem alvos por vista (`MAX_VIEW_SLOTS`); falta a UI de divisórias.
+
+## Resultado (commits 1db4ecd e 86c8aaa, mais o reforço de seleção velha)
+
+Medidas (GTX 1650, Vulkan, app debug):
+
+| | antes | depois |
+|---|---|---|
+| quadro de câmera do viewport 1280x720 (teste `native_viewport_is_faster_than_readback_per_camera_frame`) | 7,93 ms (render + leitura de volta + conversão + re-upload, um pedido por vez numa thread) | 2,53 ms até a GPU terminar, 2,03 ms de CPU |
+| zoom com a roda, 30 entalhes, mouse real (`nav_frame_ms` do viewport / `frame_ms` do app) | — (o app antigo não compilou no checkout compartilhado durante a medida; o custo dele está na linha de cima) | 16,6 ms / 16,7 ms (60 fps, vsync), CPU do quadro do viewport 0,5–0,9 ms |
+| zoom com subdivisão + espessura | — | 16,6 ms / 16,7 ms, CPU 1,7–2,0 ms |
+
+Conferência com mouse e teclado reais (SendInput no PID do app debug, `ui_copy.aiai`, evidências em
+`sprints/registro/evidencias/S24/modelagem/depois_*.png` e `depois_relatorio.json`): cubo; zoom na roda; órbita no botão
+direito, Alt+esquerdo e meio; pan Shift+direito; gizmo de eixos (frente); Ctrl+7 topo; Ctrl+5 ortográfica; Tab, 3 e
+clique na face; E (ferramenta) e arrastar = extrude; Ctrl+R com o anel em amarelo sob o cursor e arrastar = loop cut;
+2, S, clique na aresta, Ctrl+B e arrastar com 2 entalhes da roda = bevel com mais segmentos; Ctrl+Z e Ctrl+Shift+Z;
+V com o gizmo de mover; Subdivisão e Espessura pelo painel.
+
+Atalhos do perfil AnimeIAI (padrão): S seleção, V mover, R girar, T escalar, E extrude, I inset, Ctrl+B bevel, Ctrl+R
+loop cut, Shift+V deslizar, Tab Objeto/Edição, 1/2/3 vértice/aresta/face, Ctrl+A tudo, Ctrl+D nada, Ctrl+Shift+I
+inverter, L ligados, Ctrl+/- aumentar/diminuir, Delete excluir, Ctrl+Delete dissolver, M unir, Shift+M fundir próximos,
+Alt+F preencher, K bisect, Ctrl+T triangular, Alt+N normais, Ctrl+H/Ctrl+Shift+H ocultar/revelar, Shift+D duplicar,
+Shift+A adicionar, F enquadrar, Home tudo, Ctrl+1/3/7/5 vistas, O proporcional, Alt+Z raio-X, Shift+Z sombreamento.
+Perfil Blender/ANIGO: B seleção, G/R/S modais, X excluir, Ctrl+X dissolver, A/Alt+A, Ctrl+I, F preencher, Shift+N normais,
+H/Alt+H, `.` enquadrar; o resto igual.
+
+Falta: escultura, editor de UV e multivista (plano acima); a seleção de faces na prévia cel é desenhada pelo egui por
+cima (sem profundidade; com raio-X desligado só as faces de frente).
