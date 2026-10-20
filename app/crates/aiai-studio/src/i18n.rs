@@ -43,9 +43,17 @@ pub fn tr(key: &str) -> &str {
     tr_in(lang(), key)
 }
 
+#[path = "i18n_modeling.rs"]
+mod modeling_table;
+
+/// Todas as entradas: a tabela principal e a da Modelagem.
+fn all() -> impl Iterator<Item = &'static (&'static str, &'static str, &'static str)> {
+    TABLE.iter().chain(modeling_table::TABLE.iter())
+}
+
 fn index() -> &'static std::collections::HashMap<&'static str, (&'static str, &'static str)> {
     static IDX: std::sync::OnceLock<std::collections::HashMap<&'static str, (&'static str, &'static str)>> = std::sync::OnceLock::new();
-    IDX.get_or_init(|| TABLE.iter().map(|(k, pt, en)| (*k, (*pt, *en))).collect())
+    IDX.get_or_init(|| all().map(|(k, pt, en)| (*k, (*pt, *en))).collect())
 }
 
 pub fn tr_in(lang: Lang, key: &str) -> &str {
@@ -2876,7 +2884,7 @@ mod tests {
     #[test]
     fn no_key_is_missing_or_empty_in_either_language() {
         let mut seen = HashSet::new();
-        for (k, pt, en) in TABLE {
+        for (k, pt, en) in all() {
             assert!(seen.insert(*k), "chave duplicada: {k}");
             assert!(!k.is_empty() && !pt.trim().is_empty() && !en.trim().is_empty(), "texto vazio em {k}");
             assert!(k.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_'), "chave fora do padrão: {k}");
@@ -2997,9 +3005,13 @@ mod tests {
             ("theme.rs", include_str!("theme.rs")),
             ("cli.rs", include_str!("cli.rs")),
             ("prefs.rs", include_str!("prefs.rs")),
+            ("app/modeling/mod.rs", include_str!("app/modeling/mod.rs")),
+            ("app/modeling/keys.rs", include_str!("app/modeling/keys.rs")),
+            ("app/modeling/nav_gizmo.rs", include_str!("app/modeling/nav_gizmo.rs")),
+            ("app/panels/modeling.rs", include_str!("app/panels/modeling.rs")),
         ];
         const PREFIXES: &[&str] = &["workspace.", "tool.", "panel.", "menu.", "status.", "about.", "prefs.", "lang.", "doc.", "dialog.", "confirm.", "msg.", "blend.", "canvas.", "cel.", "cmd.", "err.", "fill.", "layer.", "layers.", "opt.", "palette.", "project.", "props.", "role.", "sel.", "stab.", "timeline.", "tip.", "tree.", "unit.", "outline.", "script.", "shots.", "board.", "prod.", "editing.", "deliver.", "audio.", "fx.", "char.", "start.", "keys.", "anim.", "scene.", "char_ref.", "splash."];
-        let known: HashSet<&str> = TABLE.iter().map(|(k, _, _)| *k).collect();
+        let known: HashSet<&str> = all().map(|(k, _, _)| *k).collect();
         let mut used = 0;
         for (file, src) in SOURCES {
             // só o código de produção (o módulo de testes cita chaves inexistentes de propósito)
