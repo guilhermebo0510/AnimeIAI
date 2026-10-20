@@ -404,6 +404,15 @@ pub fn render_frame_cached(project: &Project, blobs: &BlobStore, cut_id: &Id, fr
     render_frame_impl(project, blobs, cut_id, frame, opts, Some(cache))
 }
 
+/// Rasteriza um cel (imagem, tiles, preenchimentos e traços, nesta ordem) no tamanho do canvas, sem a transformação do cel
+/// nem o movimento da camada e sem a opacidade/modo dela: o "conteúdo cru" que a mesclagem de camadas compõe.
+/// Devolve também os avisos do render (cor de paleta ausente, blob ilegível...).
+pub fn render_cel_image(project: &Project, blobs: &BlobStore, cel: &CelData, hide_color_trace: bool, canvas: (u32, u32), layer_name: &str) -> (Image, Vec<String>) {
+    let mut r = Renderer { project, blobs, width: canvas.0, height: canvas.1, out_w: canvas.0, out_h: canvas.1, camera: None, layer_motion: false, warnings: Vec::new() };
+    let img = r.render_cel(cel, hide_color_trace, layer_name);
+    (img, r.warnings)
+}
+
 fn render_frame_impl(project: &Project, blobs: &BlobStore, cut_id: &Id, frame: u32, opts: &RenderOptions, cache: Option<&mut FrameCache>) -> Result<RenderOutput, RenderError> {
     let cut_node = project.node(cut_id).ok_or_else(|| RenderError::NoCut(cut_id.clone()))?;
     let cut = match &cut_node.data {

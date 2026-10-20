@@ -776,6 +776,8 @@ pub(crate) struct Editor {
     pub pressure_curve: (f32, f32),
     /// Cursor preciso das preferências: a mira fina sempre, junto com o contorno da ponta (no Photoshop, Caps Lock).
     pub cursor_precise: bool,
+    /// Cursor pedido ao sistema no último quadro sobre o canvas ("hand", "grabbing", "crosshair"...; para a bridge).
+    pub cursor_kind: String,
     /// Já chegou pressão de caneta nesta sessão (mostrado nas Preferências).
     pub pen_seen: bool,
     pub toast: Option<String>,
@@ -899,6 +901,7 @@ impl Default for Editor {
             pressure: 1.0,
             pressure_curve: (0.0, 1.0),
             cursor_precise: false,
+            cursor_kind: String::new(),
             pen_seen: false,
             toast: None,
             pending_latency: None,

@@ -194,7 +194,9 @@ fn script(c: &Client) {
     // a prateleira é a do perfil da Pintura: balde, pincel e borracha, sem caneta (não se desenha linha aqui)
     assert!(ui["widgets"]["tool:fill"]["rect_logical"].is_array(), "prateleira de ferramentas nos workspaces de canvas");
     assert!(ui["widgets"]["tool:pen"].is_null(), "a caneta não aparece na prateleira da Pintura");
-    assert_eq!(ui["shelf_tools"][0], "fill");
+    // a Seleção abre a prateleira (acima do Mover) em todos os workspaces de desenho
+    assert_eq!((ui["shelf_tools"][0].clone(), ui["shelf_tools"][1].clone()), (json!("lasso"), json!("move")));
+    assert!(ui["shelf_tools"].as_array().unwrap().contains(&json!("fill")));
     c.click_widget("tool:eraser");
     assert_eq!(c.state()["active_tool"], "eraser");
     assert_eq!(c.err_code("UI_ACTION", json!({"action": "select_tool", "tool": "pen"})), -32602, "caneta fora da prateleira da Pintura");
@@ -753,6 +755,23 @@ fn editor_script2(c: &Client) {
     assert!(c.state()["editor"]["canvas"]["zoom"].as_f64().unwrap() > z0 * 1.9, "a ferramenta zoom aproxima no clique");
     c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "hand"}));
     let (px0, py0) = c.canvas_pt(100.0, 60.0);
+    // o Pan mostra a mão (aberta; fechada enquanto arrasta), não a seta de quatro pontas do mover
+    c.input(json!([{"kind": "mouse_move", "x": px0, "y": py0}, {"kind": "wait", "frames": 2}]));
+    assert_eq!(c.state()["editor"]["cursor_kind"], "hand", "Pan: mão aberta sobre o canvas");
+    c.input(json!([{"kind": "mouse_down", "x": px0, "y": py0, "button": "primary"}, {"kind": "mouse_move", "x": px0 + 6.0, "y": py0 + 3.0}, {"kind": "wait", "frames": 2}]));
+    assert_eq!(c.state()["editor"]["cursor_kind"], "grabbing", "Pan: mão fechada ao arrastar");
+    c.input(json!([{"kind": "mouse_up", "x": px0 + 6.0, "y": py0 + 3.0, "button": "primary"}, {"kind": "mouse_move", "x": px0, "y": py0}, {"kind": "wait", "frames": 2}]));
+    // Espaço apertado: a mão com qualquer ferramenta; ao soltar, o cursor da ferramenta volta
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "move"}));
+    c.input(json!([{"kind": "mouse_move", "x": px0 + 2.0, "y": py0}, {"kind": "wait", "frames": 2}]));
+    assert_eq!(c.state()["editor"]["cursor_kind"], "move", "o Mover mostra o cursor de mover");
+    c.input(json!([{"kind": "key", "key": "Space", "pressed": true}, {"kind": "wait", "frames": 2}]));
+    assert_eq!(c.state()["editor"]["cursor_kind"], "hand", "Espaço: mão sobre o canvas");
+    c.input(json!([{"kind": "key", "key": "Space", "pressed": false}, {"kind": "wait", "frames": 2}]));
+    assert_eq!(c.state()["editor"]["cursor_kind"], "move", "solto o Espaço, volta o cursor da ferramenta");
+    assert_eq!(c.state()["active_tool"], "move", "a ferramenta anterior segue ativa");
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "hand"}));
+    let (px0, py0) = c.canvas_pt(100.0, 60.0); // o arrasto de 6 px acima já moveu a visão
     c.input(json!([{"kind": "mouse_move", "x": px0, "y": py0}, {"kind": "mouse_down", "x": px0, "y": py0, "button": "primary"}, {"kind": "mouse_move", "x": px0 + 25.0, "y": py0 + 10.0}, {"kind": "mouse_up", "x": px0 + 25.0, "y": py0 + 10.0, "button": "primary"}, {"kind": "wait", "frames": 2}]));
     let (px1, py1) = c.canvas_pt(100.0, 60.0);
     assert!((px1 - px0 - 25.0).abs() < 1.5 && (py1 - py0 - 10.0).abs() < 1.5, "a mão move a visão");
@@ -761,6 +780,83 @@ fn editor_script2(c: &Client) {
     assert_eq!(c.state()["active_tool"], "pen");
     c.input(json!([{"kind": "key", "key": "CloseBracket"}, {"kind": "wait", "frames": 2}]));
     assert!(c.state()["editor"]["tool_options"]["pen_width"].as_f64().unwrap() > 3.2, "] aumenta a largura da caneta");
+}
+
+/// Mesclar camadas pelo app: Ctrl+E, o botão do painel, o menu Editar e Ctrl+Shift+E, cada um num passo de undo.
+fn merge_script(c: &Client) {
+    c.ok("NEW_PROJECT", json!({"name": "mesclar", "settings": {"width": 320, "height": 180}}));
+    let made = |name: &str, parent: Option<&str>, data: Value| -> String { c.ok("APPLY_COMMAND", create_node(name, parent, data))["created"][0].as_str().unwrap().to_string() };
+    let ep = made("EP", None, json!({"type": "episode", "number": 1}));
+    let sc = made("S", Some(&ep), json!({"type": "scene", "number": 1}));
+    let cut = made("C1", Some(&sc), json!({"type": "cut", "number": 1, "duration": 12}));
+    let mut ids = Vec::new();
+    for (name, kind) in [("Fundo", "raster"), ("Tinta", "raster"), ("Linha", "vector")] {
+        let l = made(name, Some(&cut), json!({"type": "layer", "kind": kind}));
+        made("1", Some(&l), json!({"type": "cel", "number": 1}));
+        ids.push(l);
+    }
+    let direct = |r: f32, g: f32, b: f32| json!({"type": "direct", "rgba": [r, g, b, 1.0]});
+    c.ok("PAINT", json!({"cut": cut, "frame": 0, "layer": ids[0], "preset": "redondo duro", "preset_overrides": {"size": 30}, "color": direct(1.0, 0.0, 0.0), "strokes": [{"points": [[40, 60], [120, 60]]}]}));
+    c.ok("PAINT", json!({"cut": cut, "frame": 0, "layer": ids[1], "preset": "redondo duro", "preset_overrides": {"size": 30}, "color": direct(0.0, 0.0, 1.0), "strokes": [{"points": [[80, 100], [200, 100]]}]}));
+    c.ok("DRAW_CURVES", json!({"cut": cut, "frame": 0, "layer": ids[2], "curves": [{"points": [[40, 140], [280, 140]], "width": 6, "color": direct(0.0, 0.0, 0.0)}]}));
+    c.ok("UI_ACTION", json!({"action": "set_workspace", "workspace": "pintura"}));
+    c.ok("UI_ACTION", json!({"action": "open_panel", "panel": "layers"}));
+    assert_eq!(c.state()["editor"]["cut"], json!(cut));
+    let layers = || c.state()["editor"]["layers"].as_array().unwrap().iter().map(|l| l["name"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    assert_eq!(layers(), vec!["Linha", "Tinta", "Fundo"], "de cima para baixo");
+    let key = |k: &str, mods: Value| c.input(json!([{"kind": "key", "key": k, "modifiers": mods}, {"kind": "wait", "frames": 3}]));
+    let undo = || key("Z", json!(["ctrl"]));
+    let px = |x, y| c.render_px(&cut, 0, x, y);
+    let before = (px(100, 60), px(150, 100), px(150, 140));
+    assert!(before.0[0] > 200 && before.1[2] > 200 && before.2[3] > 200, "o desenho de partida: {before:?}");
+
+    // Ctrl+E com a camada do meio ativa: vai para a de baixo (Fundo), a de cima fica
+    c.click_widget("layers:row:1");
+    key("E", json!(["ctrl"]));
+    assert_eq!(layers(), vec!["Linha", "Fundo"], "Tinta foi para Fundo");
+    assert_eq!((px(100, 60), px(150, 100), px(150, 140)), before, "o quadro é o mesmo");
+    assert_eq!(c.state()["editor"]["layer"].as_str().map(|l| c.node(l)["kind"].clone()), Some(json!("raster")));
+    undo();
+    assert_eq!(layers(), vec!["Linha", "Tinta", "Fundo"], "um passo de undo");
+
+    // o botão do painel, com o vetor ativo: rasteriza para a Tinta
+    c.click_widget("layers:row:0");
+    c.click_widget("layers:merge");
+    assert_eq!(layers(), vec!["Tinta", "Fundo"], "Linha foi para Tinta");
+    assert_eq!((px(100, 60), px(150, 100), px(150, 140)), before);
+    undo();
+
+    // o menu Editar e o de contexto da camada
+    c.click_widget("layers:row:1");
+    c.click_widget("menu:edit");
+    c.click_widget("menu_item:edit.merge_layers");
+    assert_eq!(layers(), vec!["Linha", "Fundo"]);
+    undo();
+    let (x, y) = c.center("layers:row:1");
+    c.input(json!([{"kind": "mouse_move", "x": x, "y": y}, {"kind": "mouse_down", "x": x, "y": y, "button": "secondary"}, {"kind": "mouse_up", "x": x, "y": y, "button": "secondary"}, {"kind": "wait", "frames": 2}]));
+    c.click_widget("layers:ctx.merge");
+    assert_eq!(layers(), vec!["Linha", "Fundo"]);
+    undo();
+
+    // duas escolhidas (Ctrl+clique) viram uma só na mais baixa; Ctrl+Shift+E junta todas as visíveis
+    c.click_widget("layers:row:0");
+    let (x, y) = c.center("layers:row:1");
+    c.input(json!([{"kind": "mouse_move", "x": x, "y": y}, {"kind": "mouse_down", "x": x, "y": y, "button": "primary", "modifiers": ["ctrl"]}, {"kind": "mouse_up", "x": x, "y": y, "button": "primary", "modifiers": ["ctrl"]}, {"kind": "wait", "frames": 2}]));
+    key("E", json!(["ctrl"]));
+    assert_eq!(layers(), vec!["Tinta", "Fundo"], "a Linha e a Tinta viraram uma só, na mais baixa das duas (Tinta)");
+    assert_eq!((px(100, 60), px(150, 100), px(150, 140)), before);
+    undo();
+    key("E", json!(["ctrl", "shift"]));
+    assert_eq!(layers(), vec!["Fundo"], "visíveis");
+    assert_eq!((px(100, 60), px(150, 100), px(150, 140)), before);
+    undo();
+    assert_eq!(layers().len(), 3);
+
+    // recusa com aviso e sem mudar nada: camada oculta
+    c.ok("APPLY_COMMAND", json!({"command": {"kind": "set_props", "id": ids[1], "data": {"visible": false}}}));
+    c.click_widget("layers:row:1");
+    key("E", json!(["ctrl"]));
+    assert_eq!(layers().len(), 3, "recusou");
 }
 
 #[test]
@@ -786,6 +882,7 @@ fn the_app_serves_the_bridge_and_reacts_to_real_egui_input() {
             script(&client);
             editor_script(&client);
             editor_script2(&client);
+            merge_script(&client);
         }));
         done2.store(true, Ordering::SeqCst);
         r

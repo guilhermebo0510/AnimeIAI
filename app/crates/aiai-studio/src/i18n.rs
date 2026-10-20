@@ -89,7 +89,8 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("tool.fill", "Balde de tinta", "Fill bucket"),
     ("tool.lasso", "Seleção", "Selection"),
     ("tool.eyedropper", "Conta-gotas", "Eyedropper"),
-    ("tool.hand", "Mão", "Hand"),
+    ("tool.hand", "Pan", "Pan"),
+    ("tool.hand.tip", "Arrasta a visão. Segurar Espaço faz o mesmo em qualquer ferramenta e, ao soltar, volta para ela", "Drags the view. Holding Space does the same with any tool and returns to it on release"),
     ("tool.zoom", "Zoom", "Zoom"),
     ("tool.text", "Texto", "Text"),
     ("tool.ruler", "Régua", "Ruler"),
@@ -991,7 +992,13 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("eraser.tip.brush", "Pincel", "Brush"),
     ("eraser.tip.pencil", "Lápis", "Pencil"),
     ("eraser.tip.block", "Bloco", "Block"),
-    ("eraser.brush_item", "Pincel atual", "Current brush"),
+    // itens da lista da ferramenta Borracha (todos começam com "Borracha": não parecem pincéis)
+    ("eraser.item.pencil", "Borracha lápis (serrilhada)", "Pencil eraser (aliased)"),
+    ("eraser.item.block", "Borracha bloco", "Block eraser"),
+    ("eraser.item.segment", "Borracha: trecho tocado", "Eraser: touched part"),
+    ("eraser.item.intersection", "Borracha: até a interseção", "Eraser: up to intersection"),
+    ("eraser.item.whole", "Borracha: traço inteiro", "Eraser: whole stroke"),
+    ("eraser.brush_item", "Borracha com o pincel atual", "Eraser with the current brush"),
     ("opt.eraser_tip", "Ponta", "Tip"),
     ("opt.eraser_tip.tip", "Pincel: borda com a dureza escolhida; Lápis: borda dura, sem antisserrilhado; Bloco: quadrado duro", "Brush: edge with the chosen hardness; Pencil: hard aliased edge; Block: hard square"),
     ("opt.eraser_hardness.tip", "Dureza da borda (0% macia, 100% dura); vale para a ponta Pincel", "Edge hardness (0% soft, 100% hard); applies to the Brush tip"),
@@ -1012,6 +1019,16 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("opt.keep_aspect", "Manter proporção", "Keep proportions"),
     ("opt.keep_aspect.tip", "Ligado: os cantos da transformação (Ctrl+T) mantêm a proporção e o Shift libera. Desligado: livre, e o Shift mantém a proporção", "On: transform corners (Ctrl+T) keep proportions and Shift frees them. Off: free, and Shift keeps proportions"),
     ("layers.group", "Agrupar camadas escolhidas numa pasta (Ctrl+G)", "Group the chosen layers in a folder (Ctrl+G)"),
+    ("layers.merge", "Mesclar com a camada de baixo, ou as escolhidas numa só (Ctrl+E)", "Merge down, or the chosen layers into one (Ctrl+E)"),
+    ("layers.merge_down", "Mesclar com a de baixo", "Merge down"),
+    ("layers.merge_selected", "Mesclar as camadas escolhidas", "Merge the chosen layers"),
+    ("layers.merge_visible", "Mesclar visíveis", "Merge visible"),
+    ("layers.merge.done", "Camadas mescladas em \"{name}\"", "Layers merged into \"{name}\""),
+    ("layers.merge.none", "Escolha uma camada para mesclar", "Pick a layer to merge"),
+    ("menu.edit.merge_layers", "Mesclar camadas", "Merge layers"),
+    ("menu.edit.merge_visible", "Mesclar visíveis", "Merge visible"),
+    ("keys.layer_merge", "Mesclar camadas (com a de baixo ou as escolhidas)", "Merge layers (down or the chosen ones)"),
+    ("keys.layer_merge_visible", "Mesclar camadas visíveis", "Merge visible layers"),
     ("layers.n_layers", "camadas", "layers"),
     ("layers.err.into_self", "Uma pasta não pode entrar nela mesma", "A folder cannot go inside itself"),
     ("layers.clip.none_below", "Recortar: não há camada embaixo, então esta não aparece", "Clip: there is no layer below, so this one does not show"),
@@ -2018,7 +2035,7 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("editing.tool.slide", "Slide: mover o clipe entre os vizinhos", "Slide: move the clip between its neighbours"),
     ("editing.tool.ripple", "Ripple: aparar e arrastar o resto da edição", "Ripple edit: trim and shift the rest of the edit"),
     ("editing.tool.roll", "Roll: mover o ponto de corte entre dois clipes", "Rolling edit: move the edit point between two clips"),
-    ("editing.tool.hand", "Mão: rolar a linha do tempo", "Hand: scroll the timeline"),
+    ("editing.tool.hand", "Pan: rolar a linha do tempo", "Pan: scroll the timeline"),
     ("editing.tool.zoom", "Zoom: clique aproxima, Alt+clique afasta", "Zoom: click zooms in, Alt+click zooms out"),
     ("editing.snap.tip", "Imã: grudar nas pontas dos clipes e no cabeçote (S)", "Snap to clip edges and the playhead (S)"),
     ("editing.linked_sel.tip", "Seleção vinculada: imagem e som do mesmo corte andam juntos (Alt solta)", "Linked selection: picture and sound of the same cut move together (Alt detaches)"),
@@ -2780,6 +2797,20 @@ mod tests {
         assert_eq!(Lang::from_code("pt-BR"), Some(Lang::Pt));
         assert_eq!(Lang::from_code("EN"), Some(Lang::En));
         assert_eq!(Lang::from_code("jp"), None);
+    }
+
+    #[test]
+    fn eraser_items_are_named_as_erasers_and_the_hand_is_pan() {
+        // os itens da borracha não podem parecer pincéis; a ferramenta Mão agora é Pan e a dica fala do Espaço
+        let get = |k: &str, en: bool| TABLE.iter().find(|(key, _, _)| *key == k).map(|(_, pt, e)| if en { *e } else { *pt }).unwrap_or_else(|| panic!("falta {k}"));
+        for k in ["eraser.hard", "eraser.soft", "eraser.item.pencil", "eraser.item.block", "eraser.brush_item", "eraser.item.segment", "eraser.item.intersection", "eraser.item.whole"] {
+            assert!(get(k, false).starts_with("Borracha"), "{k}: {}", get(k, false));
+            assert!(get(k, true).contains("raser"), "{k}: {}", get(k, true));
+        }
+        assert_eq!(get("eraser.item.pencil", false), "Borracha lápis (serrilhada)");
+        assert_eq!(get("eraser.item.segment", false), "Borracha: trecho tocado");
+        assert_eq!((get("tool.hand", false), get("tool.hand", true)), ("Pan", "Pan"));
+        assert!(get("tool.hand.tip", false).contains("Espaço"));
     }
 
     #[test]

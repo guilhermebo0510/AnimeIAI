@@ -1001,27 +1001,35 @@ fn tool_glyph(painter: &egui::Painter, p: Pos2, tool: ToolId) {
     }
 }
 
-fn set_cursor(env: &Env, ctx: &egui::Context, resp: &egui::Response, tool: ToolId) {
+fn set_cursor(env: &mut Env, ctx: &egui::Context, resp: &egui::Response, tool: ToolId) {
     use egui::CursorIcon as C;
     if !resp.hovered() && matches!(env.ed.gesture, Gesture::None) {
         return;
     }
+    // Pan: a mão do sistema (aberta; fechada enquanto arrasta) na ferramenta Pan, com Espaço apertado e no botão do meio.
+    // Não é o ícone Grab do egui: o winit no Windows o mostra como a seta de quatro pontas (mover).
+    let space = ctx.input(|i| i.key_down(egui::Key::Space));
+    let hand = match &env.ed.gesture {
+        Gesture::Pan { .. } => Some(true),
+        Gesture::None if tool == ToolId::Hand || tool == ToolId::Camera => Some(false),
+        _ if space => Some(false),
+        _ => None,
+    };
+    if let Some(grabbing) = hand {
+        env.ed.cursor_kind = if grabbing { "grabbing" } else { "hand" }.to_owned();
+        return crate::icons::set_hand_cursor(ctx, grabbing);
+    }
     let icon = match &env.ed.gesture {
-        Gesture::Pan { .. } => C::Grabbing,
         Gesture::Rotate { .. } => C::Grabbing,
         Gesture::RulerDrag { .. } => C::Grabbing,
         _ => {
-            if ctx.input(|i| i.key_down(egui::Key::Space)) {
-                C::Grab
-            } else if ctx.input(|i| i.key_down(egui::Key::R)) {
+            if ctx.input(|i| i.key_down(egui::Key::R)) {
                 C::AllScroll
             } else {
                 match tool {
-                    ToolId::Hand => C::Grab,
                     ToolId::Zoom => C::ZoomIn,
                     ToolId::Move => C::Move,
                     ToolId::Text => C::Text,
-                    ToolId::Camera => C::Grab,
                     ToolId::Rotate => C::Alias,
                     ToolId::Ruler if env.ed.rulers.hover.is_some() => C::Grab,
                     // a mira é desenhada pelo canvas junto com o contorno do pincel (paint_canvas): a do Windows anda
@@ -1032,6 +1040,7 @@ fn set_cursor(env: &Env, ctx: &egui::Context, resp: &egui::Response, tool: ToolI
             }
         }
     };
+    env.ed.cursor_kind = format!("{icon:?}").to_lowercase();
     ctx.set_cursor_icon(icon);
 }
 

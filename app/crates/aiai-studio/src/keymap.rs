@@ -155,10 +155,16 @@ pub enum Action {
     OnionToggle,
     /// Linha do tempo normal/compacta.
     TimelineDensity,
+    /// Mesclar camadas: a ativa com a de baixo, ou as escolhidas numa só (Ctrl+E, como no Photoshop).
+    LayerMerge,
+    /// Mesclar todas as camadas visíveis (Ctrl+Shift+E).
+    LayerMergeVisible,
+    /// Dock: maximiza/restaura o painel sob o mouse (o ` do Premiere/After Effects).
+    PanelMaximize,
 }
 
 /// (ação, id guardado nas preferências, chave i18n do nome, atalho padrão), na ordem do editor de atalhos.
-pub const ACTIONS: [(Action, &str, &str, Chord); 42] = [
+pub const ACTIONS: [(Action, &str, &str, Chord); 45] = [
     (Action::ToolMove, "tool.move", "tool.move", Chord::plain(Key::V)),
     (Action::ToolBrush, "tool.brush", "tool.brush", Chord::plain(Key::B)),
     (Action::ToolPen, "tool.pen", "tool.pen", Chord::plain(Key::P)),
@@ -201,6 +207,9 @@ pub const ACTIONS: [(Action, &str, &str, Chord); 42] = [
     (Action::DrawingPrev, "animation.drawing_prev", "keys.drawing_prev", Chord::alt(Key::ArrowLeft)),
     (Action::OnionToggle, "animation.onion", "keys.onion", Chord::plain(Key::O)),
     (Action::TimelineDensity, "animation.timeline_density", "keys.timeline_density", Chord::ctrl_shift(Key::T)),
+    (Action::LayerMerge, "merge.layers", "keys.layer_merge", Chord::ctrl(Key::E)),
+    (Action::LayerMergeVisible, "merge.visible", "keys.layer_merge_visible", Chord::ctrl_shift(Key::E)),
+    (Action::PanelMaximize, "dock.maximize", "keys.panel_maximize", Chord::plain(Key::Backtick)),
 ];
 
 impl Action {

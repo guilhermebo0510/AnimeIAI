@@ -456,6 +456,15 @@ impl BrushPreset {
         Ok(())
     }
 
+    /// Borracha redonda padrão (30 px, dureza 0,9): a base da ferramenta Borracha raster. Não faz parte de `defaults()`
+    /// (a biblioteca de pincéis não lista borrachas: a ferramenta Borracha cobre); o nome "Borracha" ainda vale no PAINT
+    /// da bridge, e os traços já gravados guardam o preset dentro deles.
+    pub fn eraser() -> BrushPreset {
+        let mut p = BrushPreset::round("Borracha", 30.0, 0.9);
+        p.mode = BrushMode::Erase;
+        p
+    }
+
     /// Presets iniciais do programa (S06).
     pub fn defaults() -> Vec<BrushPreset> {
         let mut v = Vec::new();
@@ -563,16 +572,13 @@ impl BrushPreset {
         sparkle.size_jitter = 0.6;
         sparkle.angle_jitter = 20.0;
         v.push(sparkle);
-        let mut eraser = BrushPreset::round("Borracha", 30.0, 0.9);
-        eraser.mode = BrushMode::Erase;
-        v.push(eraser);
+        // sem "Borracha" na biblioteca de fábrica: a ferramenta Borracha cobre (ver `BrushPreset::eraser`)
         for p in &mut v {
             p.category = match p.name.as_str() {
                 "Lápis de rascunho" => "lapis",
                 "Redondo duro" | "Redondo macio" | "Aerógrafo" | "Guache seco" => "pintura",
                 "Aquarela" | "Borrador" => "aquarela",
                 "Carvão" | "Textura de papel" => "textura",
-                "Borracha" => "borracha",
                 _ => "cenario",
             }
             .into();
@@ -1248,6 +1254,18 @@ mod tests {
         let mn = vals.iter().cloned().fold(1.0, f32::min);
         let mx = vals.iter().cloned().fold(0.0, f32::max);
         assert!(mx - mn > 0.2, "textura modula o alfa: {mn}..{mx}");
+    }
+
+    #[test]
+    fn eraser_is_not_a_factory_preset_but_still_a_valid_eraser() {
+        assert!(BrushPreset::defaults().iter().all(|p| p.name != "Borracha" && p.mode != BrushMode::Erase && p.category != "borracha"));
+        let e = BrushPreset::eraser();
+        e.validate().unwrap();
+        assert_eq!((e.name.as_str(), e.mode), ("Borracha", BrushMode::Erase));
+        let mut img = Image::filled(120, 60, [0.2, 0.4, 0.9, 1.0]);
+        let before = img.content_hash();
+        paint_stroke(&mut img, &e, &line(30), [0.0, 0.0, 0.0, 1.0], 1);
+        assert_ne!(img.content_hash(), before, "apaga");
     }
 
     #[test]

@@ -183,32 +183,32 @@ impl WorkspaceId {
         use WorkspaceId as W;
         match self {
             W::Layout => WorkspaceProfile {
-                tools: &[T::Move, T::Pen, T::Brush, T::Points, T::Eraser, T::Lasso, T::Ruler, T::Model3d, T::Text, T::Eyedropper, T::Hand, T::Zoom],
+                tools: &[T::Lasso, T::Move, T::Pen, T::Brush, T::Points, T::Eraser, T::Ruler, T::Model3d, T::Text, T::Eyedropper, T::Hand, T::Zoom],
                 default_tool: T::Pen,
                 canvas: true,
                 editor_keys: true,
             },
             W::Cenario => WorkspaceProfile {
-                tools: &[T::Move, T::Brush, T::Eraser, T::Fill, T::Lasso, T::Ruler, T::Model3d, T::Text, T::Eyedropper, T::Hand, T::Zoom],
+                tools: &[T::Lasso, T::Move, T::Brush, T::Eraser, T::Fill, T::Ruler, T::Model3d, T::Text, T::Eyedropper, T::Hand, T::Zoom],
                 default_tool: T::Brush,
                 canvas: true,
                 editor_keys: true,
             },
             W::Animacao => WorkspaceProfile {
-                tools: &[T::Move, T::Pen, T::Brush, T::Points, T::Eraser, T::Fill, T::Lasso, T::Model3d, T::Text, T::Eyedropper, T::Hand, T::Zoom],
+                tools: &[T::Lasso, T::Move, T::Pen, T::Brush, T::Points, T::Eraser, T::Fill, T::Model3d, T::Text, T::Eyedropper, T::Hand, T::Zoom],
                 default_tool: T::Pen,
                 canvas: true,
                 editor_keys: true,
             },
             W::Pintura => WorkspaceProfile {
-                tools: &[T::Fill, T::Brush, T::Eraser, T::Lasso, T::Move, T::Eyedropper, T::Hand, T::Zoom],
+                tools: &[T::Lasso, T::Move, T::Fill, T::Brush, T::Eraser, T::Eyedropper, T::Hand, T::Zoom],
                 default_tool: T::Fill,
                 canvas: true,
                 editor_keys: true,
             },
             // pasta do personagem: desenha-se nos materiais (folha de modelo, expressões, boca...): linha, cor e conferência
             W::Personagens => WorkspaceProfile {
-                tools: &[T::Move, T::Pen, T::Brush, T::Eraser, T::Fill, T::Lasso, T::Model3d, T::Text, T::Eyedropper, T::Hand, T::Zoom],
+                tools: &[T::Lasso, T::Move, T::Pen, T::Brush, T::Eraser, T::Fill, T::Model3d, T::Text, T::Eyedropper, T::Hand, T::Zoom],
                 default_tool: T::Pen,
                 canvas: true,
                 editor_keys: true,
@@ -306,13 +306,13 @@ impl ToolId {
     }
 
     pub const ALL: [ToolId; 24] = [
+        ToolId::Lasso,
         ToolId::Move,
         ToolId::Brush,
         ToolId::Pen,
         ToolId::Points,
         ToolId::Eraser,
         ToolId::Fill,
-        ToolId::Lasso,
         ToolId::Eyedropper,
         ToolId::Hand,
         ToolId::Zoom,
@@ -472,6 +472,19 @@ mod tests {
                 assert_ne!(a, b);
             }
         }
+    }
+
+    #[test]
+    fn selection_tool_comes_first_on_every_drawing_shelf() {
+        // a Seleção (S) abre a prateleira acima do Mover; a Composição não tem Seleção (o Mover é a seleção de camada)
+        for w in WorkspaceId::ALL {
+            let p = w.profile();
+            if p.canvas && w != WorkspaceId::Composicao {
+                assert_eq!(p.tools.first(), Some(&ToolId::Lasso), "{w:?}");
+                assert_eq!(p.tools.get(1), Some(&ToolId::Move), "{w:?}");
+            }
+        }
+        assert_eq!(ToolId::ALL[0], ToolId::Lasso);
     }
 
     #[test]

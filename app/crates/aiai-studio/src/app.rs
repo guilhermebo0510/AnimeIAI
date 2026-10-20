@@ -24,6 +24,7 @@ mod editor;
 mod gpu_evict;
 mod gpu_owners;
 mod input_queue;
+mod layer_merge;
 mod library;
 mod live;
 mod model3d;
@@ -43,7 +44,7 @@ mod ui_state;
 use crate::brand;
 use crate::cli::Cli;
 use crate::i18n::{self, tr, Lang};
-use crate::icons::{IconId, Icons};
+use crate::icons::Icons;
 use crate::layout::{self, PanelKind};
 use crate::layout_store::{self, LayoutStore};
 use crate::prefs::{self, Prefs, MAX_ZOOM, MIN_ZOOM};
@@ -554,8 +555,12 @@ impl StudioApp {
             .frame(egui::Frame::NONE.fill(t.bg_header).inner_margin(egui::Margin::symmetric(8, 0)))
             .show(ui, |ui| {
                 ui.horizontal_centered(|ui| {
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), Sense::hover());
-                    self.icons.paint(ui.painter(), IconId::LogoSmall, rect, Color32::WHITE);
+                    // a marca nova (quadro de filme + A em pincelada), na grade de pixels do tamanho da tela
+                    let (tex, size) = brand::menu_mark_texture(ui.ctx(), self.prefs.theme, 24.0);
+                    let (rect, resp) = ui.allocate_exact_size(size, Sense::hover());
+                    ui.painter().image(tex, rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+                    self.rects.note("menubar_logo", rect);
+                    resp.on_hover_text(brand::APP_NAME);
                     ui.add_space(4.0);
                     egui::MenuBar::new().ui(ui, |ui| {
                         self.menu_file(ui);
@@ -642,6 +647,17 @@ impl StudioApp {
             }
             if self.menu_item(ui, "edit.redo", "menu.edit.redo", &self.ed.keys.label(crate::keymap::Action::EditRedo), can_redo) {
                 self.doc_redo();
+                ui.close();
+            }
+            ui.separator();
+            // mesclar camadas (Ctrl+E / Ctrl+Shift+E): vale onde há painel de camadas
+            let can_merge = self.ws.profile().canvas && self.ed.can_merge_layers(&self.core);
+            if self.menu_item(ui, "edit.merge_layers", "menu.edit.merge_layers", &self.ed.keys.label(crate::keymap::Action::LayerMerge), can_merge) {
+                self.ed.merge_layers(&mut self.core, false);
+                ui.close();
+            }
+            if self.menu_item(ui, "edit.merge_visible", "menu.edit.merge_visible", &self.ed.keys.label(crate::keymap::Action::LayerMergeVisible), can_merge) {
+                self.ed.merge_layers(&mut self.core, true);
                 ui.close();
             }
             ui.separator();
@@ -977,11 +993,12 @@ impl StudioApp {
                             let ink = if selected || resp.hovered() { t.text } else { t.text_dim };
                             self.icons.paint(p, tool.icon(), rect.shrink(7.0), ink);
                             // dica com o atalho em uso (Preferências > Atalhos)
-                            let key = crate::keymap::Action::for_tool(tool).and_then(|a| self.ed.keys.get(a)).map(|c| c.label()).or(tool.comp_key().map(str::to_owned)).or(tool.modeling_key().map(str::to_owned));
+                            let key = crate::keymap::Action::for_tool(tool).and_then(|a| self.ed.keys.get(a)).map(|c| c.label()).or(tool.comp_key().map(str::to_owned)).or(self.ed.modeling.keys.tool_label(tool)).or(tool.modeling_key().map(str::to_owned));
                             let tip = match key {
                                 Some(k) => format!("{} ({k})", tr(tool.title_key())),
                                 None => tr(tool.title_key()).to_owned(),
                             };
+                            let tip = if tool == ToolId::Hand { format!("{tip}\n{}", tr("tool.hand.tip")) } else { tip };
                             if resp.on_hover_text(tip).clicked() {
                                 // clicar na ferramenta (mesmo a que já está em uso) mostra o painel dela
                                 if !matches!(tool, ToolId::Move | ToolId::Hand | ToolId::Zoom | ToolId::Eyedropper) && tool.comp_key().is_none() && !tool.is_modeling() {

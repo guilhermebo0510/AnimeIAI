@@ -317,8 +317,8 @@ pub(crate) fn tool_options_panel(env: &mut Env, ui: &mut Ui) {
 fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
     let t = env.t;
     let tool = *env.tool;
-    // cor atual (vale para caneta, pincel e balde)
-    if (matches!(tool, ToolId::Pen | ToolId::Brush | ToolId::Fill | ToolId::Eyedropper) || !compact) && !matches!(tool, ToolId::Text | ToolId::Ruler | ToolId::Rotate | ToolId::Anchor | ToolId::Camera | ToolId::Model3d) {
+    // cor atual (vale para caneta, pincel e balde; a borracha não tem cor)
+    if (matches!(tool, ToolId::Pen | ToolId::Brush | ToolId::Fill | ToolId::Eyedropper) || !compact) && !matches!(tool, ToolId::Eraser | ToolId::Text | ToolId::Ruler | ToolId::Rotate | ToolId::Anchor | ToolId::Camera | ToolId::Model3d) {
         row(ui, &t, compact, "opt.color", |ui| {
             let cur = cmds::resolve_color(&env.core.project, &env.ed.color);
             let mut c32 = rgba_to_color32(Rgba([cur.0[0], cur.0[1], cur.0[2], 1.0]));

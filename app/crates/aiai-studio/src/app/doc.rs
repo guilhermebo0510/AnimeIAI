@@ -701,12 +701,14 @@ impl StudioApp {
         let keys = self.ed.keys.clone();
         // com um campo de texto focado, Ctrl+Z/Y são dele (o evento não pode ser consumido aqui)
         let text_focus = ctx.egui_wants_keyboard_input();
-        let (new, open, save_as, save, redo_shift, redo_y, undo) = ctx.input_mut(|i| {
+        let (new, open, save_as, save, redo_shift, redo_y, undo, merge, merge_visible) = ctx.input_mut(|i| {
             let mut hit = |a: A| keys.get(a).is_some_and(|c| c.take(i));
             let (save_as, save, new, open) = (hit(A::FileSaveAs), hit(A::FileSave), hit(A::FileNew), hit(A::FileOpen));
             let (rs, u) = if text_focus { (false, false) } else { (hit(A::EditRedo), hit(A::EditUndo)) };
+            // mesclar camadas (cada atalho exige exatamente os seus modificadores)
+            let (mv, m) = if text_focus { (false, false) } else { (hit(A::LayerMergeVisible), hit(A::LayerMerge)) };
             let ry = !text_focus && crate::keymap::Chord::ctrl(Key::Y).take(i);
-            (new, open, save_as, save, rs, ry, u)
+            (new, open, save_as, save, rs, ry, u, m, mv)
         });
         if new {
             self.open_new_project();
@@ -723,6 +725,9 @@ impl StudioApp {
             self.doc_redo();
         } else if undo {
             self.doc_undo();
+        }
+        if (merge || merge_visible) && self.ws.profile().canvas {
+            self.ed.merge_layers(&mut self.core, merge_visible);
         }
     }
 

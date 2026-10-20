@@ -202,7 +202,8 @@ fn norm(s: &str) -> String {
 
 fn find_default(name: &str) -> Option<BrushPreset> {
     let wanted = norm(name);
-    BrushPreset::defaults().into_iter().find(|p| norm(&p.name) == wanted)
+    // a "Borracha" saiu da biblioteca de fábrica (a ferramenta Borracha cobre), mas o nome continua valendo no PAINT
+    BrushPreset::defaults().into_iter().chain(std::iter::once(BrushPreset::eraser())).find(|p| norm(&p.name) == wanted)
 }
 
 fn merge(base: &mut Value, over: &Map<String, Value>) {

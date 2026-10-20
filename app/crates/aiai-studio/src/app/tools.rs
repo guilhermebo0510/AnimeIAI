@@ -28,9 +28,7 @@ pub(crate) fn presets() -> &'static [BrushPreset] {
 pub(crate) fn eraser_preset(o: &ToolOptions, brush: Option<BrushPreset>) -> BrushPreset {
     use aiai_paint::brush::{BrushTip, TipShape};
     let from_brush = brush.is_some();
-    let mut p = brush.unwrap_or_else(|| {
-        presets().iter().find(|p| p.mode == BrushMode::Erase).or_else(|| presets().iter().find(|p| p.name == "Borracha")).cloned().unwrap_or_else(|| BrushPreset::round("Borracha", 30.0, 0.9))
-    });
+    let mut p = brush.unwrap_or_else(BrushPreset::eraser);
     p.mode = BrushMode::Erase;
     p.size = o.eraser_size.max(0.5);
     p.opacity = o.eraser_opacity.clamp(0.01, 1.0);

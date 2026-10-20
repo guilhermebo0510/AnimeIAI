@@ -63,6 +63,8 @@ pub enum IconId {
     LayerRaster,
     LayerFill,
     LayerGroup,
+    /// Mesclar camadas (Ctrl+E).
+    LayerMerge,
     LayerGuide,
     LayerReference,
     LayerEffect,
@@ -105,8 +107,6 @@ pub enum IconId {
     Logo,
     /// A marca para o tema claro.
     LogoLight,
-    /// A marca simplificada para 16 a 32 px (barra de menus, ícone pequeno).
-    LogoSmall,
 }
 
 impl IconId {
@@ -160,6 +160,7 @@ impl IconId {
         IconId::LayerRaster,
         IconId::LayerFill,
         IconId::LayerGroup,
+        IconId::LayerMerge,
         IconId::LayerGuide,
         IconId::LayerReference,
         IconId::LayerEffect,
@@ -193,12 +194,11 @@ impl IconId {
         IconId::Star,
         IconId::Logo,
         IconId::LogoLight,
-        IconId::LogoSmall,
     ];
 
     /// Marca colorida (não segue a grade de 24 px nem a cor do texto; pintada sem tingimento).
     pub fn is_brand(self) -> bool {
-        matches!(self, IconId::Logo | IconId::LogoLight | IconId::LogoSmall)
+        matches!(self, IconId::Logo | IconId::LogoLight)
     }
 
     pub fn svg(self) -> &'static str {
@@ -252,6 +252,7 @@ impl IconId {
             IconId::LayerRaster => include_str!("../assets/icons/layer-raster.svg"),
             IconId::LayerFill => include_str!("../assets/icons/layer-fill.svg"),
             IconId::LayerGroup => include_str!("../assets/icons/layer-group.svg"),
+            IconId::LayerMerge => include_str!("../assets/icons/layer-merge.svg"),
             IconId::LayerGuide => include_str!("../assets/icons/layer-guide.svg"),
             IconId::LayerReference => include_str!("../assets/icons/layer-reference.svg"),
             IconId::LayerEffect => include_str!("../assets/icons/layer-effect.svg"),
@@ -285,7 +286,6 @@ impl IconId {
             IconId::Star => include_str!("../assets/icons/star.svg"),
             IconId::Logo => include_str!("../assets/brand/logo.svg"),
             IconId::LogoLight => include_str!("../assets/brand/logo-light.svg"),
-            IconId::LogoSmall => include_str!("../assets/brand/logo-small.svg"),
         }
     }
 }
@@ -300,6 +300,47 @@ pub fn rasterize(svg: &str, px: u32) -> Result<(u32, Vec<u8>), String> {
     let scale = px as f32 / size.width().max(size.height());
     resvg::render(&tree, tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
     Ok((px, pixmap.take()))
+}
+
+// --------------------------------------------------------------------------------------------- cursor da mão (Pan)
+
+const HAND_OPEN: &str = include_str!("../assets/icons/cursor-hand-open.svg");
+const HAND_GRAB: &str = include_str!("../assets/icons/cursor-hand-grab.svg");
+
+/// Bitmap do cursor de mão (aberta, ou fechada enquanto arrasta) com `px` pixels de lado, RGBA não premultiplicado,
+/// ponto ativo no centro. O winit no Windows mapeia `Grab`/`Grabbing` para a seta de quatro pontas (IDC_SIZEALL), por
+/// isso a mão é um cursor de imagem (egui `CustomCursorImage`); o ícone `Grab` fica de reserva onde não há suporte.
+pub fn hand_cursor_image(grabbing: bool, px: u32) -> egui::CustomCursorImage {
+    use std::sync::{Arc, Mutex, OnceLock};
+    // o egui compara por ponteiro do Arc: o mesmo bitmap reutilizado a cada quadro não vai de novo ao sistema
+    static CACHE: OnceLock<Mutex<HashMap<(bool, u32), egui::CustomCursorImage>>> = OnceLock::new();
+    let px = px.clamp(16, 128);
+    let mut cache = CACHE.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
+    cache
+        .entry((grabbing, px))
+        .or_insert_with(|| {
+            let (n, mut data) = rasterize(if grabbing { HAND_GRAB } else { HAND_OPEN }, px).unwrap_or_else(|e| {
+                tracing::error!("cursor da mão: {e}");
+                (px, vec![0; (px * px * 4) as usize])
+            });
+            for p in data.chunks_exact_mut(4) {
+                let a = p[3] as u32;
+                if a > 0 && a < 255 {
+                    for c in &mut p[..3] {
+                        *c = ((*c as u32 * 255 + a / 2) / a).min(255) as u8;
+                    }
+                }
+            }
+            egui::CustomCursorImage { rgba: Arc::from(data), size: [n as u16, n as u16], hotspot: [(n / 2) as u16, (n / 2) as u16] }
+        })
+        .clone()
+}
+
+/// Mostra a mão do Pan como cursor do sistema neste quadro (aberta; fechada com `grabbing`). Chame todo quadro.
+pub fn set_hand_cursor(ctx: &egui::Context, grabbing: bool) {
+    let px = (32.0 * ctx.pixels_per_point()).round() as u32;
+    ctx.set_cursor_icon(if grabbing { egui::CursorIcon::Grabbing } else { egui::CursorIcon::Grab });
+    ctx.set_cursor_image(Some(hand_cursor_image(grabbing, px)));
 }
 
 /// Cache de texturas de ícones por (ícone, tamanho em pixels).
@@ -372,6 +413,45 @@ mod tests {
         let (b, d) = rasterize(IconId::ToolMove.svg(), 60).unwrap();
         assert_eq!((a, b), (20, 60));
         assert_eq!(d.len(), 60 * 60 * 4);
+    }
+
+    #[test]
+    fn hand_cursors_draw_an_open_and_a_closed_hand() {
+        let (open, grab) = (hand_cursor_image(false, 32), hand_cursor_image(true, 32));
+        for c in [&open, &grab] {
+            assert_eq!(c.size, [32, 32]);
+            assert_eq!(c.rgba.len(), 32 * 32 * 4);
+            assert_eq!(c.hotspot, [16, 16]);
+            let solid = c.rgba.chunks_exact(4).filter(|p| p[3] > 200).count();
+            assert!((150..800).contains(&solid), "a mão deve ter corpo ({solid} px)");
+            assert!(c.rgba.chunks_exact(4).any(|p| p[3] > 200 && p[0] > 230), "miolo branco");
+            assert!(c.rgba.chunks_exact(4).any(|p| p[3] > 200 && p[0] < 40), "contorno escuro");
+        }
+        assert_ne!(open.rgba, grab.rgba, "aberta e fechada são desenhos diferentes");
+        // o mesmo bitmap volta do cache (o egui deduplica pelo ponteiro)
+        assert!(std::sync::Arc::ptr_eq(&open.rgba, &hand_cursor_image(false, 32).rgba));
+    }
+
+    /// Grava a mão aberta e a fechada ampliadas: `AIAI_HAND_SHEET=<png> cargo test -p aiai-studio hand_sheet -- --ignored`.
+    #[test]
+    #[ignore]
+    fn hand_sheet() {
+        let Some(out) = std::env::var_os("AIAI_HAND_SHEET") else { return };
+        let mut img = image::RgbaImage::from_pixel(2 * 256, 256, image::Rgba([0x80, 0x80, 0x88, 255]));
+        for (i, g) in [false, true].into_iter().enumerate() {
+            let c = hand_cursor_image(g, 32);
+            for y in 0..256u32 {
+                for x in 0..256u32 {
+                    let p = &c.rgba[(((y / 8) * 32 + x / 8) * 4) as usize..][..4];
+                    let a = p[3] as f32 / 255.0;
+                    let dst = img.get_pixel_mut(i as u32 * 256 + x, y);
+                    for k in 0..3 {
+                        dst.0[k] = (p[k] as f32 * a + dst.0[k] as f32 * (1.0 - a)) as u8;
+                    }
+                }
+            }
+        }
+        img.save(out).unwrap();
     }
 
     /// Gera uma folha de contato para inspeção visual: `AIAI_ICON_SHEET=<png> cargo test -p aiai-studio icon_sheet -- --ignored`.

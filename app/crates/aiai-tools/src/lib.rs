@@ -20,6 +20,7 @@ pub mod fill;
 pub mod fx2d;
 pub mod guide;
 pub mod import;
+pub mod layer_merge;
 pub mod library;
 pub mod model3d;
 pub mod modeling;

@@ -147,6 +147,11 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
                 Err(e) => env.ed.notify(e),
             }
         }
+        // mesclar: a ativa com a de baixo, ou as escolhidas numa só (Ctrl+E); no menu de contexto também as visíveis
+        let merge = env.icon_button(ui, IconId::LayerMerge, "layers.merge", false, has, "layers:merge");
+        if merge.clicked() {
+            env.ed.merge_layers(env.core, false);
+        }
         // mover para pasta: lista as pastas do corte
         let groups: Vec<(NodeId, String)> = rows.iter().filter(|r| cmds::layer_data(&env.core.project, &r.id).is_some_and(|l| l.kind == LayerType::Group)).map(|r| (r.id.clone(), env.core.project.node(&r.id).map(|n| n.name.clone()).unwrap_or_default())).collect();
         let into = env.icon_button(ui, IconId::ChevronRight, "layers.move_to_group", false, has && !groups.is_empty(), "layers:to_group");
@@ -336,6 +341,30 @@ fn layer_row(env: &mut Env, ui: &mut Ui, i: usize, row: &LayerRow, active: Optio
             env.ed.layer_sel.clear();
             env.ed.layer = Some(row.id.clone());
         }
+    }
+    // botão direito: a linha entra na escolha (se não estava) e o menu mescla a partir dela
+    if resp.secondary_clicked() && !is_chosen {
+        env.ed.layer = Some(row.id.clone());
+        env.ed.layer_sel.clear();
+    }
+    let mut merge: Option<bool> = None;
+    resp.context_menu(|ui| {
+        let several = chosen.len() >= 2 && is_chosen;
+        let first = ui.button(tr(if several { "layers.merge_selected" } else { "layers.merge_down" }));
+        env.note("layers:ctx.merge", first.rect);
+        if first.clicked() {
+            merge = Some(false);
+            ui.close();
+        }
+        let vis = ui.button(tr("layers.merge_visible"));
+        env.note("layers:ctx.merge_visible", vis.rect);
+        if vis.clicked() {
+            merge = Some(true);
+            ui.close();
+        }
+    });
+    if let Some(visible) = merge {
+        env.ed.merge_layers(env.core, visible);
     }
     if resp.drag_started() {
         // arrasta as escolhidas se a linha é uma delas; senão, só ela

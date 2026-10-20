@@ -19,6 +19,9 @@ Exemplo: {"cut":"<corte>","fill_layer":"<raster>","outline_layer":"<vetorial>","
 const TEXT_LAYER_DESC: &str = r##"Camada de TEXTO EDITÁVEL (o texto e o estilo ficam na camada e o render refaz o layout a cada quadro: depois dá para trocar o texto, a fonte e o tamanho, no app ou aqui). SEM `layer` cria uma camada nova em `cut` (exige `text`); COM `layer` (camada de texto) muda só os campos informados (`null` apaga `box_size`, `stroke` e `shadow`). Um passo de undo. Campos: `text` (quebra de linha = newline), `font` (família: instalada no Windows, da pasta Documentos/AnimeIAI/Fontes, ou "Noto Sans JP", embutida e padrão; `list_fonts:true` lista as famílias e não altera nada; fonte desconhecida dá erro com sugestões), `bold`/`italic` (usa a face da família se existir, senão sintetiza), `size` (px do canvas, altura do em), `color` (direta ou de paleta), `tracking` (milésimos de em), `leading` (entrelinha, múltiplo do tamanho, 1.25), `align` (left|center|right|justify), `vertical` (tategaki), `pos` [x,y] (texto de ponto: topo da primeira linha em y; x é a borda esquerda, o centro ou a direita conforme `align`; no vertical, a borda direita da primeira coluna), `box_size` [largura, altura] (texto de caixa: `pos` é o canto superior esquerdo e o texto quebra dentro da largura), `rotation` (graus, horário, em torno de `pos`), `stroke` {width px, color} (contorno por fora), `shadow` {offset [x,y], blur px, color com alfa}, `opacity` da camada, `name`, `above` (a camada nova entra acima desta). Devolve o Outcome + `layer`, `created` e `text` {bounds [x0,y0,x1,y1] no canvas, lines, font_used, params}. Mova a camada com aiai_text_layer {layer, pos} (ou com a ferramenta Mover no app). Para letras assadas em pixels/traços (onomatopeia com efeitos por camada) use aiai_text. Confirme com aiai_render.
 Exemplo: {"cut":"<corte>","text":"Olá, mundo","font":"Arial","size":72,"pos":[960,200],"color":{"type":"direct","rgba":[1,1,1,1]},"stroke":{"width":6,"color":{"type":"direct","rgba":[0,0,0,1]}}}"##;
 
+const LAYER_MERGE_DESC: &str = r##"Mescla camadas de desenho como o Ctrl+E do Photoshop, num passo de undo: o resultado fica na camada de BAIXO (nome, posição, opacidade e modo dela) e as de cima saem. `op`: `down` (padrão com `layer`: a camada vai para a irmã logo abaixo), `selected` (as `layers`, 2 ou mais, no mesmo pai, viram uma só na mais baixa) ou `visible` (todas as camadas raster/vetor visíveis do `cut`, ou da pasta `parent`, na mais baixa). Tipos: vetor+vetor junta os traços (geometria intacta; a opacidade da de cima vira opacidade de traço e o modo de mistura tem de ser o mesmo), raster+raster compõe por tile com a opacidade e o modo da de cima (a opacidade da de baixo segue valendo), vetor+raster rasteriza os traços e a camada vira raster; pasta, preenchimento, texto, guia, referência, ajuste, efeito, partículas e 3D são recusados. Vale para o corte inteiro: cada trecho de quadros com a mesma combinação de cels expostos vira um cel da camada de baixo (o próprio cel dela se só aparece naquela combinação, senão um cel novo com a trilha ajustada). Recusa, sem alterar nada, camadas ocultas, travadas, de pastas diferentes, com máscara de recorte, com posição/escala/rotação/chaves diferentes, com cel transformado, ou com outra camada visível de tipo diferente entre elas. Máscaras e fronteiras de balde que apontavam para uma que saiu passam para a de baixo. Devolve o Outcome + `layer` (a que ficou), `merged` (as que saíram), `kind`, `cels_changed` e `cels_created`. Confirme com aiai_render.
+Exemplo: {"layer":"<camada de cima>"}  ou  {"op":"selected","layers":["<a>","<b>","<c>"]}  ou  {"op":"visible","cut":"<corte>"}"##;
+
 const LINES_DESC: &str = r##"Linhas de velocidade (paralelas) ou de foco/concentração (集中線, convergindo num ponto) como traços vetoriais afinados na camada VETORIAL (editáveis; troque `seed` por quadro para "ferver"). `kind`: {type:"speed", angle (graus), area:[x,y,w,h]} ou {type:"focus", center:[x,y], clear:[rx,ry] (elipse livre no meio)}; `count` (até 2000), `length` [mín,máx] px, `width` [mín,máx] px, `color`, `seed`. Entra no undo. Confirme com aiai_render.
 Exemplo: {"cut":"<corte>","layer":"<vetorial>","kind":{"type":"focus","center":[960,540],"clear":[220,160]},"count":90,"length":[300,900],"width":[2,9],"color":{"type":"direct","rgba":[0,0,0,1]}}"##;
 
@@ -129,6 +132,7 @@ pub fn definitions() -> Vec<Value> {
         json!({ "name": "aiai_pattern_fill", "description": PATTERN_FILL_DESC, "inputSchema": schema_frame0::<background::PatternFillRequest>() }),
         json!({ "name": "aiai_text", "description": TEXT_DESC, "inputSchema": schema_frame0::<fx2d::TextRequest>() }),
         json!({ "name": "aiai_text_layer", "description": TEXT_LAYER_DESC, "inputSchema": schema_of::<tl::TextLayerRequest>() }),
+        json!({ "name": "aiai_layer_merge", "description": LAYER_MERGE_DESC, "inputSchema": schema_of::<aiai_tools::layer_merge::LayerMergeRequest>() }),
         json!({ "name": "aiai_lines", "description": LINES_DESC, "inputSchema": schema_frame0::<fx2d::LinesRequest>() }),
         json!({ "name": "aiai_gag_bg", "description": GAG_BG_DESC, "inputSchema": schema_frame0::<fx2d::GagBgRequest>() }),
         json!({ "name": "aiai_particles", "description": PARTICLES_DESC, "inputSchema": schema_of::<pt::ParticlesRequest>() }),
@@ -209,6 +213,14 @@ pub fn plan(name: &str, m: &Map<String, Value>) -> Option<Result<Plan, ToolError
                 required(m, &["cut", "text"]).and_then(|_| simple("TEXT_LAYER", Value::Object(m.clone())))
             } else {
                 simple("TEXT_LAYER", Value::Object(m.clone()))
+            }
+        }
+        "aiai_layer_merge" => {
+            let has = |k: &str| m.get(k).is_some_and(|v| !v.is_null() && v.as_array().is_none_or(|a| !a.is_empty()));
+            if !(has("layer") || has("layers") || has("cut") || has("parent")) {
+                Err(ToolError::invalid("Missing 'layer': informe `layer` (mescla para baixo), `layers` (op selected) ou `cut` (op visible)"))
+            } else {
+                simple("LAYER_MERGE", Value::Object(m.clone()))
             }
         }
         "aiai_lines" => with_req(&["cut", "layer", "kind", "count", "length", "width", "color"], "LINES", true),

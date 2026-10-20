@@ -73,6 +73,35 @@ pub fn wordmark_texture(ctx: &egui::Context, theme: ThemeKind, width_pts: f32) -
     (tex.id(), egui::vec2(w as f32 * scale, h as f32 * scale))
 }
 
+/// Textura (em cache no contexto egui) da marca para a barra de menus: o desenho na grade de pixels (16/20/24/32) do tamanho
+/// mais próximo de `size_pts` pontos, na variante do tema, pintada 1:1 em pixels físicos. Devolve o id e o tamanho em pontos.
+pub fn menu_mark_texture(ctx: &egui::Context, theme: ThemeKind, size_pts: f32) -> (egui::TextureId, egui::Vec2) {
+    let ppp = ctx.pixels_per_point();
+    // até 32 px vale o desenho na grade de pixels mais próximo, desenhado no tamanho dele (1:1); de 36 px em diante, a marca
+    // completa (quadro de filme + A com o quadro anterior em onion skin) em 40 px, que é onde ela começa a ficar legível
+    let want = ((size_pts * ppp).round() as u32).max(8);
+    let px = if want >= 36 { 40 } else { HINTED.iter().map(|h| h.0).min_by_key(|n| n.abs_diff(want)).unwrap_or(want) };
+    let id = egui::Id::new(("brand-menu-mark", theme as u8, px));
+    let tex = ctx.data_mut(|d| d.get_temp::<egui::TextureHandle>(id));
+    let tex = tex.unwrap_or_else(|| {
+        let which = match theme {
+            ThemeKind::Dark => IconTheme::Dark,
+            ThemeKind::Light => IconTheme::Light,
+        };
+        let img = match icon_rgba(which, px) {
+            Ok(data) => egui::ColorImage::from_rgba_unmultiplied([px as usize, px as usize], &data),
+            Err(e) => {
+                tracing::error!("marca da barra de menus: {e}");
+                egui::ColorImage::filled([px as usize, px as usize], egui::Color32::MAGENTA)
+            }
+        };
+        let h = ctx.load_texture(format!("brand-menu-mark-{px}"), img, egui::TextureOptions::LINEAR);
+        ctx.data_mut(|d| d.insert_temp(id, h.clone()));
+        h
+    });
+    (tex.id(), egui::Vec2::splat(px as f32 / ppp))
+}
+
 // ------------------------------------------------------------------------------------------------------ ícone do app
 
 /// Variante do ícone do programa: o quadrado escuro (a do exe) ou o claro.
@@ -331,6 +360,27 @@ mod tests {
             assert!((115..=135).contains(&h), "altura {h}"); // 560 x ~128: o lockup tem proporção 4,4:1
             assert_eq!(data.len(), (w * h * 4) as usize);
             assert!(data.chunks_exact(4).filter(|p| p[3] > 8).count() > 5000);
+        }
+    }
+
+    #[test]
+    fn menu_mark_is_the_new_brand_at_pixel_exact_sizes_for_every_scale() {
+        // 100%: o desenho de 24 px na grade (24 pt); 125%: o de 32 px (25,6 pt); 200%: a marca completa em 40 px (20 pt)
+        for (ppp, px) in [(1.0f32, 24u32), (1.25, 32), (1.5, 40), (2.0, 40)] {
+            let ctx = egui::Context::default();
+            ctx.set_pixels_per_point(ppp);
+            ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear(); // a escala só vale a partir de um quadro
+            for theme in [ThemeKind::Dark, ThemeKind::Light] {
+                let (_, size) = menu_mark_texture(&ctx, theme, 24.0);
+                assert!((size.x - px as f32 / ppp).abs() < 1e-3 && size.x == size.y, "ppp {ppp}: {size:?}");
+                assert!(size.y <= 28.0, "cabe na barra de menus (28 pt): {size:?}");
+                let which = if theme == ThemeKind::Dark { IconTheme::Dark } else { IconTheme::Light };
+                // o desenho é o mesmo do ícone da janela naquele tamanho (não o antigo "logo-small")
+                assert_ne!(icon_svg(which, px), include_str!("../assets/brand/logo-small.svg"), "não é o logo-small antigo");
+                assert!(icon_rgba(which, px).unwrap().chunks_exact(4).filter(|p| p[3] > 200).count() > (px * px / 3) as usize);
+            }
+            // as texturas carregadas saem no próximo quadro (o egui exige consumir esse resultado)
+            ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
         }
     }
 

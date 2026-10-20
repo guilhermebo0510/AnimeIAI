@@ -190,7 +190,13 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
                             let fill = if sel { t.accent_dim } else if resp.hovered() { t.bg_hover } else { t.bg_widget };
                             painter.rect(rect, 3.0, fill, Stroke::new(1.0, if sel { t.accent } else { t.border }), StrokeKind::Inside);
                             let name = if it.user { format!("{} ·", it.name) } else { it.name.clone() };
-                            let g = painter.layout_no_wrap(name, egui::FontId::proportional(10.5), t.text);
+                            let mut g = painter.layout_no_wrap(name.clone(), egui::FontId::proportional(10.5), t.text);
+                            // nome comprido (as borrachas) encolhe a letra até caber no cartão, no mínimo 8 pt
+                            let room = card_w - 8.0;
+                            if g.size().x > room && room > 20.0 {
+                                let size = (10.5 * room / g.size().x).clamp(8.0, 10.5);
+                                g = painter.layout_no_wrap(name, egui::FontId::proportional(size), t.text);
+                            }
                             painter.with_clip_rect(rect.shrink(2.0).intersect(ui.clip_rect())).galley(egui::pos2(rect.left() + 4.0, rect.top() + 2.0), g, t.text);
                             let tr_rect = Rect::from_min_max(egui::pos2(rect.left() + 3.0, rect.bottom() - THUMB_H - 3.0), egui::pos2(rect.right() - 3.0, rect.bottom() - 3.0));
                             paint_thumb(env, &painter, tr_rect, it.thumb);
@@ -401,12 +407,11 @@ fn items_for(env: &Env, tool: ToolId) -> Vec<Item> {
         }
         ToolId::Eraser => {
             let mut v: Vec<Item> = ERASERS.iter().enumerate().map(|(i, (k, _))| it(tr(k).to_owned(), "tc.raster", Act::EraserRaster(i as u8), Thumb::Tex(if i == 0 { "erase:hard" } else { "erase:soft" }))).collect();
-            v.extend([(EraserTip::Pencil, "eraser.tip.pencil", "erase:pencil"), (EraserTip::Block, "eraser.tip.block", "erase:block")].into_iter().map(|(m, k, tex)| it(tr(k).to_owned(), "tc.raster", Act::EraserTip(m), Thumb::Tex(tex))));
+            v.extend([(EraserTip::Pencil, "eraser.item.pencil", "erase:pencil"), (EraserTip::Block, "eraser.item.block", "erase:block")].into_iter().map(|(m, k, tex)| it(tr(k).to_owned(), "tc.raster", Act::EraserTip(m), Thumb::Tex(tex))));
             // qualquer pincel da biblioteca apaga (forma, textura, dinâmica): o escolhido na ferramenta Pincel
             let bi = env.ed.opts.brush_preset;
-            let bname = env.ed.brushes.get(bi).map(|p| p.name.clone()).unwrap_or_default();
-            v.push(it(format!("{}: {bname}", tr("eraser.brush_item")), "tc.raster", Act::EraserBrush, Thumb::Brush(bi)));
-            v.extend([(EraseMode::Segment, "opt.erase_segment"), (EraseMode::Intersection, "opt.erase_intersection"), (EraseMode::Whole, "opt.erase_whole")].into_iter().map(|(m, k)| it(tr(k).to_owned(), "tc.vector", Act::EraserVector(m), Thumb::Erase(m))));
+            v.push(it(tr("eraser.brush_item").to_owned(), "tc.raster", Act::EraserBrush, Thumb::Brush(bi)));
+            v.extend([(EraseMode::Segment, "eraser.item.segment"), (EraseMode::Intersection, "eraser.item.intersection"), (EraseMode::Whole, "eraser.item.whole")].into_iter().map(|(m, k)| it(tr(k).to_owned(), "tc.vector", Act::EraserVector(m), Thumb::Erase(m))));
             v
         }
         ToolId::Fill => FILLS.iter().enumerate().map(|(i, (k, ..))| it(tr(k).to_owned(), "tc.fill", Act::Fill(i as u8), Thumb::Fill(i as u8))).collect(),
@@ -763,7 +768,9 @@ fn save_form(env: &mut Env, ui: &mut Ui) {
                     ui.end_row();
                     ui.label(tr("brushes.category"));
                     egui::ComboBox::from_id_salt("brush_save_cat").selected_text(cat_label(&cat)).show_ui(ui, |ui| {
-                        for (k, _) in CATEGORIES {
+                        // "Borrachas" não é destino de pincel novo (a ferramenta Borracha cobre); só aparece se já é a escolhida
+                        let erasers_chosen = cat == "borracha";
+                        for &(k, _) in CATEGORIES.iter().filter(|(k, _)| *k != "borracha" || erasers_chosen) {
                             ui.selectable_value(&mut cat, k.to_owned(), cat_label(k));
                         }
                     });

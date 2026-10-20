@@ -268,6 +268,7 @@ impl StudioApp {
             "select_tool": super::selection::state_json(ed),
             "gesture_active": !matches!(ed.gesture, super::editor::Gesture::None),
             "cursor_logical": ed.cursor.map(|c| json!([round(c.x), round(c.y)])),
+            "cursor_kind": ed.cursor_kind,
             "ghosts": ed.ghosts.len(),
             "node_stroke": ed.node_stroke.as_ref().map(|i| i.0.clone()),
             "node_sel": ed.node_sel,
