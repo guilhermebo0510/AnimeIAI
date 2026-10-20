@@ -34,3 +34,9 @@ sprints/registro/calibracao/**/*_flip_bruto.png
 sprints/registro/calibracao/**/tentativas/
 # renders de trabalho do micro anime (o projeto .aiai e as folhas finais entram)
 /producoes/micro-anime/saida/
+# estado de sessão dentro das pastas de projeto (trava de "aberto em outro lugar", backups rotativos, miniatura,
+# cópias de diário danificado): local de cada máquina
+**/*.aiai/project.lock
+**/*.aiai/backup/
+**/*.aiai/thumbnail.png
+**/*.aiai/wal.ndjson.damaged-*
