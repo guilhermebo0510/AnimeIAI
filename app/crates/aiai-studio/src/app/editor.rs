@@ -541,6 +541,8 @@ pub(crate) struct StrokeGesture {
     /// `inv` do canvas ao cel. As amostras e o caminho ficam no espaço do cel (o que é gravado); a prévia volta ao canvas.
     pub fwd: Option<aiai_paint::Affine>,
     pub inv: Option<aiai_paint::Affine>,
+    /// Régua com encaixe ligado: o traço segue a reta escolhida pelo primeiro trecho (ou é repetido na simetria).
+    pub snap: Option<super::rulers::Snap>,
 }
 
 impl StrokeGesture {
@@ -581,6 +583,10 @@ pub(crate) enum Gesture {
     Eyedrop,
     /// Balde: o clique age ao soltar.
     FillClick,
+    /// Régua: arrasto de uma alça da régua ativa (`orig` = como estava no começo; a prévia fica em `rulers.preview`).
+    RulerDrag { layer: NodeId, orig: Box<aiai_tools::ruler::Ruler>, handle: aiai_tools::ruler::Handle, start: Vec2 },
+    /// Régua: arrasto no vazio que cria uma régua do tipo escolhido.
+    RulerCreate { start: Vec2, cur: Vec2 },
 }
 
 /// Formas "fantasma": o que o gesto acabou de fazer, mostrado no overlay até o render novo chegar.
@@ -773,6 +779,8 @@ pub(crate) struct Editor {
     pub back_to_board: Option<NodeId>,
     /// Animação: mesa de luz, densidade da linha do tempo, cels-chave destravados no douga, Cena e Referências.
     pub anim: super::anim::AnimState,
+    /// Réguas: mostrar, encaixe geral, tipo da próxima, camada de guia das réguas e a prévia do arrasto.
+    pub rulers: super::rulers::RulerState,
 }
 
 impl Default for Editor {
@@ -780,6 +788,7 @@ impl Default for Editor {
         Editor {
             back_to_board: None,
             anim: Default::default(),
+            rulers: Default::default(),
             live_stroke: Default::default(),
             move_live: Default::default(),
             text: Default::default(),

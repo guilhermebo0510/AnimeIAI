@@ -221,6 +221,14 @@ fn toolbar(env: &mut Env, ui: &mut Ui, has_cut: bool) {
         if env.icon_button(ui, IconId::OnionSkin, "canvas.onion", on, has_cut, "canvas:onion").clicked() {
             env.ed.anim.onion.on = !on;
         }
+        // réguas: linhas à mostra (Ctrl+;) e encaixe dos traços (Ctrl+Shift+;)
+        let (rs, rn) = (env.ed.rulers.show, env.ed.rulers.snap);
+        if env.icon_button(ui, IconId::ToolRuler, "canvas.rulers", rs, has_cut, "canvas:rulers").clicked() {
+            env.ed.rulers.show = !rs;
+        }
+        if env.icon_button(ui, IconId::Snap, "canvas.ruler_snap", rn, has_cut, "canvas:ruler_snap").clicked() {
+            env.ed.rulers.snap = !rn;
+        }
         sep(ui, &t);
         if env.ws == crate::workspace::WorkspaceId::Animacao && has_cut {
             phase_bar(env, ui);
@@ -510,7 +518,7 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
             } else if r_held {
                 let ctr = rect.center();
                 env.ed.gesture = Gesture::Rotate { last_angle: (pos - ctr).angle() };
-            } else if mods.alt && !matches!(tool, ToolId::Zoom) {
+            } else if mods.alt && !matches!(tool, ToolId::Zoom | ToolId::Ruler) {
                 tools::do_eyedrop(env, c);
                 env.ed.gesture = Gesture::Eyedrop;
             } else {
@@ -567,6 +575,7 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
                         let f = if mods.shift { 0.5 } else { 2.0 };
                         env.ed.view.zoom_at(rect, ppp, pos, f);
                     }
+                    ToolId::Ruler => env.ed.gesture = super::rulers::press(env, c, &xf),
                     ToolId::Hand | ToolId::Points | ToolId::Text => {}
                 }
             }
@@ -638,6 +647,8 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
         }
         Gesture::Eyedrop => tools::do_eyedrop(env, c),
         Gesture::FillClick => {}
+        Gesture::RulerDrag { .. } => super::rulers::drag_move(env, c),
+        Gesture::RulerCreate { cur, .. } => *cur = c,
     }
 }
 
@@ -701,12 +712,15 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
             env.ed.live_stroke.release(Some(counter));
         }
         Gesture::Shape { start, .. } => {
+            let c = super::rulers::snap_line_end(env, start, c);
             let (pts, geo, closed) = tools::shape_points(env.ed.opts.pen_shape, start, c, env.ed.shift);
             tools::commit_vector_shape(env, pts, geo, closed);
         }
         g @ Gesture::PolyCurve { .. } => env.ed.gesture = g, // a curva continua até Enter/duplo clique
         Gesture::Eyedrop => tools::do_eyedrop(env, c),
         Gesture::FillClick => tools::do_fill(env, c, at),
+        Gesture::RulerDrag { layer, orig, .. } => super::rulers::drag_release(env, layer, *orig),
+        Gesture::RulerCreate { start, .. } => super::rulers::create_release(env, start, c, xf.scale),
     }
 }
 
@@ -796,6 +810,7 @@ fn set_cursor(env: &Env, ctx: &egui::Context, resp: &egui::Response, tool: ToolI
     let icon = match &env.ed.gesture {
         Gesture::Pan { .. } => C::Grabbing,
         Gesture::Rotate { .. } => C::Grabbing,
+        Gesture::RulerDrag { .. } => C::Grabbing,
         _ => {
             if ctx.input(|i| i.key_down(egui::Key::Space)) {
                 C::Grab
@@ -807,6 +822,7 @@ fn set_cursor(env: &Env, ctx: &egui::Context, resp: &egui::Response, tool: ToolI
                     ToolId::Zoom => C::ZoomIn,
                     ToolId::Move => C::Move,
                     ToolId::Text => C::Text,
+                    ToolId::Ruler if env.ed.rulers.hover.is_some() => C::Grab,
                     // a mira é desenhada pelo canvas junto com o contorno do pincel (paint_canvas): a do Windows anda
                     // na hora e o contorno um quadro depois, e os dois se separavam ao mover rápido
                     t if own_cursor(t) => C::None,
@@ -890,6 +906,8 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
         }
     }
 
+    // réguas da camada de guia (só visão) e, com a ferramenta Régua, as alças
+    super::rulers::paint(env, painter, rect, xf, cut, canvas);
     paint_selection(env, painter, xf, cut);
     paint_gestures(env, painter, xf, cut);
     super::text_tool::paint(env, painter, xf, cut);
@@ -1265,7 +1283,9 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
             }
         }
         Gesture::Shape { start, cur } => {
-            let (pts, _, closed) = tools::shape_points(env.ed.opts.pen_shape, *start, *cur, env.ed.shift);
+            let (start, cur) = (*start, *cur);
+            let cur = super::rulers::snap_line_end(env, start, cur);
+            let (pts, _, closed) = tools::shape_points(env.ed.opts.pen_shape, start, cur, env.ed.shift);
             let c = cmds::resolve_color(&env.core.project, &env.ed.color);
             let color = super::ui_kit::rgba_to_color32(Rgba([c.0[0], c.0[1], c.0[2], 1.0]));
             let path: Vec<Vec2> = if closed { pts.iter().copied().chain(pts.first().copied()).collect() } else { pts };

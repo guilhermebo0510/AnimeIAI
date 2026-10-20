@@ -69,6 +69,11 @@ pub(crate) fn target(env: &mut Env, allowed: &[LayerType], wrong_key: &str) -> O
 
 impl StrokeGesture {
     pub(crate) fn push(&mut self, p: Vec2, pressure: f32) {
+        // régua com encaixe: o ponto vai para a reta escolhida (em px do canvas, antes do espaço do cel)
+        let p = match self.snap.as_mut() {
+            Some(s) => s.filter(p),
+            None => p,
+        };
         let p = match &self.inv {
             Some(a) => {
                 let (x, y) = a.apply(p.x, p.y);
@@ -123,12 +128,13 @@ pub(crate) fn begin_stroke(env: &mut Env, tool: ToolId, p: Vec2, pressure: f32, 
     let o = &env.ed.opts;
     let mode = if tool == ToolId::Eraser { StabMode::Off } else { o.stab_mode };
     let stab = Stabilizer::new(mode, o.stab_window as usize, o.stab_radius / scale.max(1e-3));
+    let snap = super::rulers::stroke_snap(env, tool, p, scale);
     // camada que se move neste quadro: o traço é gravado no espaço do cel para aparecer embaixo do cursor
     let fwd = cmds::layer_placement(&env.core.project, &t.cut, &t.layer, t.frame);
     let inv = fwd.and_then(|a| a.inverse());
     let fwd = inv.and(fwd);
     let scale = scale * fwd.map(|a| a.0[0].hypot(a.0[3])).unwrap_or(1.0);
-    let mut g = StrokeGesture { tool, layer: t.layer, samples: Vec::new(), stab, t0: Instant::now(), hits: Vec::new(), path: Vec::new(), screen_scale: scale, fwd, inv };
+    let mut g = StrokeGesture { tool, layer: t.layer, samples: Vec::new(), stab, t0: Instant::now(), hits: Vec::new(), path: Vec::new(), screen_scale: scale, fwd, inv, snap };
     g.push(p, pressure);
     Gesture::Stroke(Box::new(g))
 }
@@ -211,6 +217,13 @@ fn commit_pen(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant
         aliased: o.pen_aliased,
         color_trace: false,
     };
+    // régua de simetria: as cópias espelhadas entram no mesmo passo de undo
+    let pts: Vec<Vec2> = stroke.points.iter().map(|q| Vec2::new(q.x, q.y)).collect();
+    let copies: Vec<Stroke> = super::rulers::mirrored(g, &pts).into_iter().map(|c| {
+        let mut s = stroke.clone();
+        s.points.iter_mut().zip(c).for_each(|(q, p)| (q.x, q.y) = (p.x, p.y));
+        s
+    }).collect();
     let (cut, layer, frame, pref) = (t.cut.clone(), t.layer.clone(), t.frame, env.ed.cel_number);
     let width = stroke.width;
     // o fantasma é a mesma geometria do traço gravado (afinamento, fechamento), não a polilinha do arrasto
@@ -221,7 +234,8 @@ fn commit_pen(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant
     let planned = cmds::plan_with_prep(env.core, &cut, &layer, frame, pref, vec![], |p, _| {
         let cel = cmds::exposed_cel(p, &cut, &layer, frame).ok_or_else(|| tr("err.no_cel").to_owned())?;
         let index = cmds::cel_data(p, &cel).map(|c| c.strokes.len()).unwrap_or(0);
-        Ok(Command::InsertStrokes { cel, items: vec![IndexedStroke { index, stroke }] })
+        let items = std::iter::once(stroke).chain(copies).enumerate().map(|(i, stroke)| IndexedStroke { index: index + i, stroke }).collect();
+        Ok(Command::InsertStrokes { cel, items })
     });
     let color = ghost_color(env, 1.0);
     commit(env, planned, released_at, "pen", Some((ghost_pts, ghost_radii, width, color)));
@@ -474,6 +488,11 @@ fn commit_brush(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Insta
         return;
     }
     let pts = brush_points(&g.samples);
+    // régua de simetria: as cópias espelhadas no mesmo traço (um passo de undo)
+    let mut specs = vec![tpaint::PaintStrokeSpec { points: pts.clone(), smooth: true }];
+    for c in super::rulers::mirrored(g, &pts.iter().map(|q| Vec2::new(q[0], q[1])).collect::<Vec<_>>()) {
+        specs.push(tpaint::PaintStrokeSpec { points: c.iter().zip(&pts).map(|(p, q)| vec![p.x, p.y, q[2]]).collect(), smooth: true });
+    }
     let preset = stroke_preset(env, erase);
     env.ed.brushes.ensure_blobs(&mut env.core.blobs, &preset);
     let color = if erase { ColorRef::Direct { rgba: Rgba::BLACK } } else { env.ed.color.clone() };
@@ -484,7 +503,7 @@ fn commit_brush(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Insta
     let clip = paint_clip_shape(env);
     let ghost_pts: Vec<Vec2> = g.samples.iter().map(|s| g.to_canvas(s.p)).collect();
     let planned = cmds::plan_with_prep(env.core, &cut, &layer, frame, pref, vec![], |p, blobs| {
-        let req = tpaint::PaintRequest { cut: cut.clone(), frame, layer: layer.clone(), preset, color, strokes: vec![tpaint::PaintStrokeSpec { points: pts, smooth: true }], seed };
+        let req = tpaint::PaintRequest { cut: cut.clone(), frame, layer: layer.clone(), preset, color, strokes: specs, seed };
         tpaint::paint_command_in(p, blobs, &req, clip.as_ref()).map_err(|e| e.to_string())
     });
     // com a prévia ao vivo na tela, ela mesma fica até o render chegar (o fantasma em polilinha "mudava" o traço)
@@ -1040,6 +1059,7 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
     if cd {
         env.ed.selection = None;
     }
+    super::rulers::shortcuts(ctx, env);
     let (tool_key, size_dir, enter, esc, step, home_end, fit, one) = ctx.input_mut(|i| {
         // atalho configurável (Preferências > Atalhos): só dispara com os modificadores exatos
         let mut hit = |a: A| keys.get(a).is_some_and(|c| c.take(i));
@@ -1056,6 +1076,7 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
             (A::ToolHand, ToolId::Hand),
             (A::ToolZoom, ToolId::Zoom),
             (A::ToolText, ToolId::Text),
+            (A::ToolRuler, ToolId::Ruler),
         ] {
             if hit(a) {
                 tk = Some(t);

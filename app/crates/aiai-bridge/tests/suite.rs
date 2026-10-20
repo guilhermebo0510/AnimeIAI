@@ -1779,3 +1779,62 @@ fn character_material_actions_list_create_edit_and_validate() {
     assert_eq!(act_err(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "rename", "material": mid, "name": " "})).code, code::INVALID_PARAMS);
     assert_eq!(act_err(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "import", "path": "Z:/nao/existe.png"})).code, code::INVALID_PARAMS);
 }
+
+/// RULER (S24 2.1–2.2): réguas editáveis na camada de guia: criar (perspectiva de 2 pontos, grade), editar com
+/// patch (chave desconhecida = -32602), nível do olho, listar sem mudar nada, ativar, assar em traços (só aparecem com
+/// include_guides; as réguas em si nunca entram no render), apagar, e cada mudança é um passo de undo.
+#[test]
+fn rulers_live_in_the_guide_layer_and_are_one_undo_step_each() {
+    let mut d = prod_doc();
+    let (cut, guide, line) = (d.cut.clone(), d.guide.clone(), d.line.clone());
+    let o = act(&mut d.s, "RULER", json!({"layer": guide, "op": "create", "ruler": {"kind": "perspective", "vps": [[-300.0, 80.0], [620.0, 80.0]]}}));
+    assert_eq!(o["can_undo"], true);
+    assert_eq!(o["id"], "r1");
+    assert_eq!(o["active"], "r1");
+    assert_eq!(o["rulers"][0]["vps"], json!([[-300.0, 80.0], [620.0, 80.0]]));
+    // as réguas ficam em params.rulers e não desenham nada no render (nem com include_guides)
+    let layer_json = act(&mut d.s, "QUERY", json!({"query": {"kind": "node", "id": guide}}));
+    assert!(layer_json.to_string().contains("\"rulers\""), "{layer_json}");
+    assert_eq!(opaque(&shot(&mut d.s, &cut, 0, &[&guide], json!({"include_guides": true}))), 0, "régua é só visão");
+    // grade de 3 pontos a partir do padrão, com points
+    let g = act(&mut d.s, "RULER", json!({"layer": guide, "op": "create", "points": 3, "ruler": {"kind": "perspective", "name": "Torre"}}));
+    assert_eq!((g["id"].as_str(), g["rulers"][1]["vps"].as_array().unwrap().len()), (Some("r2"), 3));
+    let gr = act(&mut d.s, "RULER", json!({"layer": guide, "op": "create", "ruler": {"kind": "grid", "quad": [[100.0, 100.0], [220.0, 100.0], [260.0, 160.0], [60.0, 160.0]], "cells": [6, 4]}}));
+    assert_eq!(gr["id"], "r3");
+    // editar: só os campos dados; nível do olho leva os pontos do horizonte
+    let e = act(&mut d.s, "RULER", json!({"layer": guide, "op": "edit", "id": "r1", "ruler": {"color": "#ff0000ff", "density": 12}, "eye_level": 60.0}));
+    let r1 = &e["rulers"][0];
+    assert_eq!((r1["color"].as_str(), r1["density"].as_u64()), (Some("#ff0000ff"), Some(12)));
+    assert_eq!(r1["vps"], json!([[-300.0, 60.0], [620.0, 60.0]]));
+    // listar não muda a revisão
+    let rev = d.s.project.revision;
+    let l = act(&mut d.s, "RULER", json!({"layer": guide, "op": "list"}));
+    assert_eq!((l["rulers"].as_array().unwrap().len(), d.s.project.revision), (3, rev));
+    // ativar e assar a ativa: linhas no cel da guia
+    act(&mut d.s, "RULER", json!({"layer": guide, "op": "activate", "id": "r1"}));
+    let b = act(&mut d.s, "RULER", json!({"layer": guide, "op": "bake", "frame": 0}));
+    assert_eq!(b["id"], "r1");
+    assert_eq!(opaque(&shot(&mut d.s, &cut, 0, &[&guide], json!({}))), 0, "guia não aparece sem include_guides");
+    assert!(opaque(&shot(&mut d.s, &cut, 0, &[&guide], json!({"include_guides": true}))) > 300, "raios assados");
+    act(&mut d.s, "UNDO", json!({}));
+    assert_eq!(opaque(&shot(&mut d.s, &cut, 0, &[&guide], json!({"include_guides": true}))), 0, "undo tira os traços num passo só");
+    // apagar e desfazer
+    let del = act(&mut d.s, "RULER", json!({"layer": guide, "op": "delete", "id": "r2"}));
+    assert_eq!(del["rulers"].as_array().unwrap().len(), 2);
+    act(&mut d.s, "UNDO", json!({}));
+    assert_eq!(act(&mut d.s, "RULER", json!({"layer": guide, "op": "list"}))["rulers"].as_array().unwrap().len(), 3);
+    // erros claros: chave desconhecida (no pedido e dentro de ruler), camada que não é guia, id que não existe, valor fora
+    for bad in [
+        json!({"layer": guide, "op": "list", "rular": 1}),
+        json!({"layer": guide, "op": "edit", "id": "r1", "ruler": {"vanish": []}}),
+        json!({"layer": line, "op": "list"}),
+        json!({"layer": guide, "op": "edit", "id": "r9", "ruler": {"density": 8}}),
+        json!({"layer": guide, "op": "edit", "id": "r1", "ruler": {"density": 1}}),
+        json!({"layer": guide, "op": "edit", "id": "r1", "ruler": {"vps": []}}),
+        json!({"layer": guide, "op": "create", "ruler": {"name": "sem tipo"}}),
+        json!({"layer": guide, "op": "create", "points": 4, "ruler": {"kind": "perspective"}}),
+        json!({"layer": guide, "op": "zoom"}),
+    ] {
+        assert_eq!(act_err(&mut d.s, "RULER", bad.clone()).code, code::INVALID_PARAMS, "{bad}");
+    }
+}

@@ -27,6 +27,7 @@ pub mod text_layer;
 pub mod production;
 pub mod production_history;
 pub mod production_stats;
+pub mod ruler;
 pub mod transform;
 
 pub use context::{ToolError, ToolResult};

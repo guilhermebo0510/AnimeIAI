@@ -183,13 +183,13 @@ impl WorkspaceId {
         use WorkspaceId as W;
         match self {
             W::Layout => WorkspaceProfile {
-                tools: &[T::Move, T::Pen, T::Brush, T::Points, T::Eraser, T::Lasso, T::Text, T::Eyedropper, T::Hand, T::Zoom],
+                tools: &[T::Move, T::Pen, T::Brush, T::Points, T::Eraser, T::Lasso, T::Ruler, T::Text, T::Eyedropper, T::Hand, T::Zoom],
                 default_tool: T::Pen,
                 canvas: true,
                 editor_keys: true,
             },
             W::Cenario => WorkspaceProfile {
-                tools: &[T::Move, T::Brush, T::Eraser, T::Fill, T::Lasso, T::Text, T::Eyedropper, T::Hand, T::Zoom],
+                tools: &[T::Move, T::Brush, T::Eraser, T::Fill, T::Lasso, T::Ruler, T::Text, T::Eyedropper, T::Hand, T::Zoom],
                 default_tool: T::Brush,
                 canvas: true,
                 editor_keys: true,
@@ -240,10 +240,12 @@ pub enum ToolId {
     Zoom,
     /// Texto: clique cria texto de ponto, arrasto cria caixa; edita no canvas (camada de texto editável).
     Text,
+    /// Régua: cria e edita as réguas de perspectiva, paralelas, radial, simetria e grade da camada de guia (alças).
+    Ruler,
 }
 
 impl ToolId {
-    pub const ALL: [ToolId; 11] = [
+    pub const ALL: [ToolId; 12] = [
         ToolId::Move,
         ToolId::Brush,
         ToolId::Pen,
@@ -255,6 +257,7 @@ impl ToolId {
         ToolId::Hand,
         ToolId::Zoom,
         ToolId::Text,
+        ToolId::Ruler,
     ];
 
     /// Identificador estável (bridge/UI_ACTION): `move`, `brush`, `pen`...
@@ -279,6 +282,7 @@ impl ToolId {
             ToolId::Hand => "tool.hand",
             ToolId::Zoom => "tool.zoom",
             ToolId::Text => "tool.text",
+            ToolId::Ruler => "tool.ruler",
         }
     }
 
@@ -295,6 +299,7 @@ impl ToolId {
             ToolId::Hand => IconId::ToolHand,
             ToolId::Zoom => IconId::ToolZoom,
             ToolId::Text => IconId::ToolText,
+            ToolId::Ruler => IconId::ToolRuler,
         }
     }
 }

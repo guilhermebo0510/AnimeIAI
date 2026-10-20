@@ -105,15 +105,9 @@ pub fn perspective_info(p: &Project, req: &PerspectiveRequest) -> ToolResult<Per
     }
 }
 
-/// Régua de perspectiva desenhada como linhas de guia (raios a partir de cada ponto de fuga + horizonte).
-pub fn perspective_command(p: &Project, req: &PerspectiveRequest) -> ToolResult<Command> {
-    let (node, cel, w, h) = exposed(p, &req.cut, &req.layer, req.frame)?;
-    let info = perspective_info(p, req)?;
-    if info.points.is_empty() {
-        return Err(ToolError::Invalid("nenhum ponto de fuga (câmera ortográfica ou paralela?)".into()));
-    }
-    let color = Rgba::from_hex(&req.color).ok_or_else(|| ToolError::Invalid("cor inválida".into()))?;
-    let mk = |pts: Vec<[f32; 2]>, width: f32| Stroke {
+/// Traço de guia reto (polilinha de marcador, pressão 1): o das linhas de fuga e o das réguas convertidas em traços.
+pub fn guide_stroke(pts: Vec<[f32; 2]>, width: f32, color: Rgba) -> Stroke {
+    Stroke {
         id: Id(String::new()),
         points: pts.into_iter().map(|q| StrokePoint { x: q[0], y: q[1], pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect(),
         geometry: StrokeGeometry::Polyline,
@@ -126,27 +120,23 @@ pub fn perspective_command(p: &Project, req: &PerspectiveRequest) -> ToolResult<
         closed: false,
         aliased: false,
         color_trace: false,
-    };
+    }
+}
+
+/// Régua de perspectiva desenhada como linhas de guia (raios a partir de cada ponto de fuga + horizonte).
+pub fn perspective_command(p: &Project, req: &PerspectiveRequest) -> ToolResult<Command> {
+    let (node, cel, w, h) = exposed(p, &req.cut, &req.layer, req.frame)?;
+    let info = perspective_info(p, req)?;
+    if info.points.is_empty() {
+        return Err(ToolError::Invalid("nenhum ponto de fuga (câmera ortográfica ou paralela?)".into()));
+    }
+    let color = Rgba::from_hex(&req.color).ok_or_else(|| ToolError::Invalid("cor inválida".into()))?;
+    let mk = |pts: Vec<[f32; 2]>, width: f32| guide_stroke(pts, width, color);
     let mut strokes = Vec::new();
     let reach = (w.max(h) as f32) * 3.0;
     for vp in &info.points {
-        // raios distribuídos pelo ângulo sob o qual o canvas é visto a partir do ponto
-        let corners = [[0.0, 0.0], [w as f32, 0.0], [w as f32, h as f32], [0.0, h as f32]];
-        let angs: Vec<f32> = corners.iter().map(|c| (c[1] - vp[1]).atan2(c[0] - vp[0])).collect();
-        let inside = vp[0] >= 0.0 && vp[1] >= 0.0 && vp[0] <= w as f32 && vp[1] <= h as f32;
-        let (a0, a1) = if inside {
-            (0.0, std::f32::consts::TAU)
-        } else {
-            // menor arco que contém os 4 cantos
-            let mut best = (0.0f32, std::f32::consts::TAU);
-            for &s in &angs {
-                let span = angs.iter().map(|&a| (a - s).rem_euclid(std::f32::consts::TAU)).fold(0.0f32, f32::max);
-                if span < best.1 - best.0 {
-                    best = (s, s + span);
-                }
-            }
-            best
-        };
+        // raios distribuídos pelo ângulo sob o qual o canvas é visto a partir do ponto (a mesma conta das réguas)
+        let (a0, a1) = crate::ruler::ray_arc(*vp, [0.0, 0.0, w as f32, h as f32]);
         let n = req.lines_per_point.clamp(2, 200);
         for k in 0..n {
             let a = a0 + (a1 - a0) * (k as f32 + 0.5) / n as f32;

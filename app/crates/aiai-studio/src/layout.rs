@@ -50,6 +50,8 @@ pub enum PanelKind {
     SceneInfo,
     /// Referências do personagem: folhas de modelo e paleta de settei dos personagens do corte.
     CharRef,
+    /// Réguas: as réguas da camada de guia (perspectiva 1/2/3 pontos, paralelas, radial, simetria, grade) e as propriedades.
+    Rulers,
     /// Personagens: a pasta do personagem (materiais por tipo, criar a partir de modelos, abrir para desenhar).
     CharFolder,
 }
@@ -129,7 +131,7 @@ use WorkspaceId as W;
 const DRAWING_WS: &[WorkspaceId] = &[W::Personagens, W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Composicao];
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 32] = [
+    pub const ALL: [PanelKind; 33] = [
         PanelKind::Canvas,
         PanelKind::Layers,
         PanelKind::Properties,
@@ -161,6 +163,7 @@ impl PanelKind {
         PanelKind::LightTable,
         PanelKind::SceneInfo,
         PanelKind::CharRef,
+        PanelKind::Rulers,
         PanelKind::CharFolder,
     ];
 
@@ -207,6 +210,7 @@ impl PanelKind {
             PanelKind::LightTable => "panel.light_table.title",
             PanelKind::SceneInfo => "panel.scene_info.title",
             PanelKind::CharRef => "panel.char_ref.title",
+            PanelKind::Rulers => "panel.rulers.title",
             PanelKind::CharFolder => "panel.char_folder.title",
         }
     }
@@ -245,6 +249,7 @@ impl PanelKind {
             PanelKind::LightTable => "panel.light_table.empty",
             PanelKind::SceneInfo => "panel.scene_info.empty",
             PanelKind::CharRef => "panel.char_ref.empty",
+            PanelKind::Rulers => "panel.rulers.empty",
             PanelKind::CharFolder => "panel.char_folder.empty",
         }
     }
@@ -285,6 +290,7 @@ impl PanelKind {
             PanelKind::LightTable => (C::Drawing, Right, &[W::Animacao, W::Pintura], false),
             PanelKind::SceneInfo => (C::PreProduction, Left, &[W::Storyboard, W::Layout, W::Cenario, W::Animacao, W::Pintura], false),
             PanelKind::CharRef => (C::Character, Left, &[W::Storyboard, W::Layout, W::Animacao, W::Pintura], false),
+            PanelKind::Rulers => (C::Drawing, Left, &[W::Layout, W::Cenario, W::Animacao], true),
             PanelKind::CharFolder => (C::Character, Left, &[W::Personagens], false),
         };
         PanelMeta { key: self.key(), title_key: self.title_key(), category, dock_hint, workspaces, needs_canvas }
@@ -339,7 +345,9 @@ pub fn factory_rev(ws: WorkspaceId) -> u32 {
         // S24: pasta do personagem (materiais por tipo) e canvas para desenhar neles
         W::Personagens => 2,
         // S24: fábricas novas (cada etapa de desenho com a sua cara) e os workspaces novos
-        W::Layout | W::Cenario | W::Pintura | W::Composicao | W::Biblioteca | W::Modelagem => 2,
+        // S24: Réguas (perspectiva) em aba com os pincéis
+        W::Layout => 3,
+        W::Cenario | W::Pintura | W::Composicao | W::Biblioteca | W::Modelagem => 2,
         // S24: painel Texto (legendas) em aba com as Propriedades
         W::Edicao => 2,
         // S24: Produção com Gráficos, Gargalos e Análise por IA ao lado do painel principal
@@ -366,10 +374,10 @@ fn default_node(ws: WorkspaceId) -> Node {
             (0.72, Row(vec![(0.20, Pane(P::Shots)), (0.56, Pane(P::Board)), (0.24, Pane(P::Properties))])),
             (0.28, Pane(P::Timeline)),
         ]),
-        // enquadramento e construção: a cena (cortes) em cima à esquerda, referências e pincéis embaixo; à direita o
+        // enquadramento e construção: a cena (cortes) em cima à esquerda, réguas, pincéis e referências embaixo; à direita o
         // navegador (área de câmera), camadas e propriedades com a paleta em aba
         W::Layout => Row(vec![
-            (0.19, Col(vec![(0.45, Pane(P::Project)), (0.55, TabsOf(&[P::Brushes, P::SubView]))])),
+            (0.19, Col(vec![(0.45, Pane(P::Project)), (0.55, TabsOf(&[P::Rulers, P::Brushes, P::SubView]))])),
             (0.53, Pane(P::Canvas)),
             (0.28, Col(vec![(0.24, Pane(P::Navigator)), (0.42, Pane(P::Layers)), (0.34, TabsOf(&[P::Properties, P::Palette, P::Text]))])),
         ]),
@@ -1048,7 +1056,7 @@ mod tests {
             (W::Roteiro, 1, 0x815a21560ccb6c0e),
             (W::Personagens, 2, 0xcafb2020580c879a),
             (W::Storyboard, 1, 0x14d8a62efb1d9b23),
-            (W::Layout, 2, 0xd1d0b0db8901276e),
+            (W::Layout, 3, 0xab56ac7b0ef62807),
             (W::Cenario, 2, 0x10fcc70dc9e4906a),
             (W::Animacao, 3, 0x5d54281aba1d2f5c),
             (W::Pintura, 2, 0xfc53133a1f95cbd3),

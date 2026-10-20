@@ -35,6 +35,10 @@ pub enum IconId {
     ToolHand,
     ToolZoom,
     ToolText,
+    /// Régua (perspectiva: horizonte e linhas de fuga).
+    ToolRuler,
+    /// Encaixe nas réguas (ímã).
+    Snap,
     ZoomOut,
     Eye,
     EyeOff,
@@ -85,7 +89,7 @@ pub enum IconId {
 }
 
 impl IconId {
-    pub const ALL: [IconId; 68] = [
+    pub const ALL: [IconId; 70] = [
         IconId::WsRoteiro,
         IconId::WsPersonagens,
         IconId::WsStoryboard,
@@ -111,6 +115,8 @@ impl IconId {
         IconId::ToolHand,
         IconId::ToolZoom,
         IconId::ToolText,
+        IconId::ToolRuler,
+        IconId::Snap,
         IconId::ZoomOut,
         IconId::Eye,
         IconId::EyeOff,
@@ -188,6 +194,8 @@ impl IconId {
             IconId::ToolHand => include_str!("../assets/icons/tool-hand.svg"),
             IconId::ToolZoom => include_str!("../assets/icons/tool-zoom.svg"),
             IconId::ToolText => include_str!("../assets/icons/tool-text.svg"),
+            IconId::ToolRuler => include_str!("../assets/icons/tool-ruler.svg"),
+            IconId::Snap => include_str!("../assets/icons/snap.svg"),
             IconId::ZoomOut => include_str!("../assets/icons/zoom-out.svg"),
             IconId::Eye => include_str!("../assets/icons/eye.svg"),
             IconId::EyeOff => include_str!("../assets/icons/eye-off.svg"),

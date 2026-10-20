@@ -330,6 +330,7 @@ pub fn definitions() -> Value {
     list.extend(crate::tools_satsuei::definitions());
     list.extend(crate::tools_preview::definitions());
     list.extend(crate::tools_audio::definitions());
+    list.extend(crate::tools_ruler::definitions());
     Value::Array(list)
 }
 
@@ -392,6 +393,9 @@ pub fn plan(name: &str, args: &Value) -> Result<Plan, ToolError> {
         return p;
     }
     if let Some(p) = crate::tools_audio::plan(name, &m) {
+        return p;
+    }
+    if let Some(p) = crate::tools_ruler::plan(name, &m) {
         return p;
     }
     match name {

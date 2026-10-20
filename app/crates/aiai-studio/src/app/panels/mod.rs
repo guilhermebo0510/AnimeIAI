@@ -22,6 +22,7 @@ pub(crate) mod prod_views;
 pub(crate) mod production;
 pub(crate) mod project;
 pub(crate) mod properties;
+pub(crate) mod rulers;
 pub(crate) mod satsuei;
 pub(crate) mod scene_info;
 pub(crate) mod script;
