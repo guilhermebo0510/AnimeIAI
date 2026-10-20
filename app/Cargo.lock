@@ -325,6 +325,7 @@ dependencies = [
  "image",
  "pollster",
  "raw-window-handle",
+ "rayon",
  "resvg",
  "rfd",
  "serde",

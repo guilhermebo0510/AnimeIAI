@@ -27,6 +27,7 @@ tracing-subscriber = { workspace = true }
 image = { workspace = true }
 base64 = { workspace = true }
 crossbeam-channel = { workspace = true }
+rayon = { workspace = true }
 aiai-core = { workspace = true }
 aiai-render = { workspace = true }
 aiai-fx = { workspace = true }

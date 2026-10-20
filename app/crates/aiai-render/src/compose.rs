@@ -7,6 +7,7 @@ use aiai_paint::blend::blend_pixel;
 use aiai_core::*;
 use aiai_paint::{Affine, Image, Mask, sample_stroke, rasterize_stroke, tile, transform_image};
 use rayon::prelude::*;
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct RenderOptions {
@@ -157,21 +158,226 @@ pub fn cut_canvas(project: &Project, cut: &CutData) -> (u32, u32) {
 /// Enquanto o artista mexe numa camada, as de baixo não são recompostas. A assinatura de cada camada é a maior
 /// revisão de nó na subárvore dela (o núcleo carimba a revisão em todo nó afetado por um comando) mais a da camada
 /// de máscara; a chave global cobre corte (timesheet/câmera), quadro, opções, tamanho e paletas.
+///
+/// Acima da foto, cada camada de topo cujo conteúdo não depende do que está embaixo (não é efeito/ajuste/pasta
+/// direta, nem tem light wrap) guarda a própria imagem pronta (efeitos e posição já aplicados), recortada à caixa do
+/// que não é transparente: re-renderizar depois de uma pincelada só refaz a camada mexida e mistura as outras.
 #[derive(Default)]
 pub struct FrameCache {
     key: Option<String>,
     sigs: Vec<(Id, u64)>,
     snap: Option<FrameSnap>,
+    layers: std::collections::HashMap<Id, LayerEntry>,
     /// Quantas camadas de topo o último render pulou por causa da foto (para medir/testar).
     pub last_skipped: usize,
+    /// Quantas camadas de topo o último render misturou direto da imagem guardada (para medir/testar).
+    pub last_reused: usize,
+}
+
+/// Teto da memória das imagens guardadas por camada (f32 RGBA recortado).
+const LAYER_CACHE_CAP_BYTES: usize = 256 << 20;
+
+struct LayerEntry {
+    sig: u64,
+    /// `None` = a camada não desenhou nada neste quadro.
+    placed: Option<Arc<Placed>>,
+    /// Máscara (luminância × alfa) da camada de máscara, no tamanho da saída.
+    mask: Option<Arc<Vec<f32>>>,
+    /// Avisos que o render da camada gerou (repetidos a cada uso, na mesma ordem).
+    warnings: Vec<String>,
+}
+
+impl LayerEntry {
+    fn bytes(&self) -> usize {
+        self.placed.as_ref().map_or(0, |p| p.img.data.len() * 16) + self.mask.as_ref().map_or(0, |m| m.len() * 4)
+    }
+}
+
+/// Conteúdo de uma camada na saída, recortado à caixa dos pixels com alfa (fora dela tudo é transparente, e misturar
+/// transparente não muda nada: `blend_pixel` sai cedo).
+struct Placed {
+    x0: u32,
+    y0: u32,
+    img: Image,
+}
+
+impl Placed {
+    /// Recorta `img` (tamanho da saída) à caixa dos pixels não transparentes; `None` se não sobra nada.
+    fn crop(img: Image) -> Option<Placed> {
+        let (w, h) = (img.width as usize, img.height as usize);
+        if w == 0 || h == 0 {
+            return None;
+        }
+        // `!(a <= 0)` também pega NaN, que a mistura cheia não pularia
+        let rows: Vec<Option<(usize, usize)>> = img.data.par_chunks(w).map(|row| {
+            let first = row.iter().position(|p| !(p[3] <= 0.0))?;
+            let last = row.iter().rposition(|p| !(p[3] <= 0.0))?;
+            Some((first, last))
+        }).collect();
+        let y0 = rows.iter().position(|r| r.is_some())?;
+        let y1 = rows.iter().rposition(|r| r.is_some())?;
+        let x0 = rows[y0..=y1].iter().flatten().map(|r| r.0).min()?;
+        let x1 = rows[y0..=y1].iter().flatten().map(|r| r.1).max()?;
+        let (cw, ch) = (x1 - x0 + 1, y1 - y0 + 1);
+        if cw == w && ch == h {
+            return Some(Placed { x0: 0, y0: 0, img });
+        }
+        let mut out = Image::new(cw as u32, ch as u32);
+        out.data.par_chunks_mut(cw).enumerate().for_each(|(r, dst)| {
+            let s = (y0 + r) * w + x0;
+            dst.copy_from_slice(&img.data[s..s + cw]);
+        });
+        Some(Placed { x0: x0 as u32, y0: y0 as u32, img: out })
+    }
+
+    /// Alfa no pixel (x, y) da saída.
+    fn alpha(&self, x: u32, y: u32) -> f32 {
+        let (lx, ly) = (x.wrapping_sub(self.x0), y.wrapping_sub(self.y0));
+        if lx < self.img.width && ly < self.img.height { self.img.data[(ly * self.img.width + lx) as usize][3] } else { 0.0 }
+    }
+}
+
+/// Alfa da última camada "base" (não recortada) para as camadas com recorte, sem copiar a imagem inteira.
+#[derive(Clone)]
+enum ClipBase {
+    /// A camada base não desenhou nada: tudo recortado.
+    Empty,
+    Layer(Arc<Placed>),
+}
+
+impl ClipBase {
+    fn alpha(&self, x: u32, y: u32) -> f32 {
+        match self {
+            ClipBase::Empty => 0.0,
+            ClipBase::Layer(p) => p.alpha(x, y),
+        }
+    }
+
+    fn to_vec(&self, w: u32, h: u32) -> Vec<f32> {
+        let mut v = vec![0.0; (w * h) as usize];
+        if let ClipBase::Layer(p) = self {
+            for ly in 0..p.img.height {
+                for lx in 0..p.img.width {
+                    v[((p.y0 + ly) * w + p.x0 + lx) as usize] = p.img.data[(ly * p.img.width + lx) as usize][3];
+                }
+            }
+        }
+        v
+    }
 }
 
 struct FrameSnap {
     /// Índice da camada de topo ANTES da qual a foto foi tirada.
     index: usize,
     buf: Image,
-    clip_base: Option<Vec<f32>>,
+    clip_base: Option<ClipBase>,
     warnings: Vec<String>,
+}
+
+/// O que o laço do topo usa para reaproveitar as imagens por camada.
+struct LayerCtx<'c> {
+    sigs: &'c [(Id, u64)],
+    layers: &'c mut std::collections::HashMap<Id, LayerEntry>,
+    reused: usize,
+}
+
+/// Mistura a camada recortada no quadro, só dentro da caixa dela (fora é transparente: misturar não mudaria nada).
+/// Mesma conta, na mesma ordem, que a mistura do quadro inteiro.
+fn blend_placed(buf: &mut Image, p: &Placed, mode: BlendMode, opacity: f32, mask: Option<&[f32]>, clip: Option<&ClipBase>) {
+    let w = buf.width as usize;
+    let pw = p.img.width as usize;
+    let (x0, y0) = (p.x0 as usize, p.y0 as usize);
+    buf.data.par_chunks_mut(w).skip(y0).take(p.img.height as usize).enumerate().for_each(|(ly, row)| {
+        let y = y0 + ly;
+        let src = &p.img.data[ly * pw..(ly + 1) * pw];
+        for (lx, s) in src.iter().enumerate() {
+            let x = x0 + lx;
+            let mut a = opacity;
+            if let Some(m) = mask {
+                a *= m[y * w + x];
+            }
+            if let Some(c) = clip {
+                a *= c.alpha(x as u32, y as u32);
+            }
+            blend_pixel(&mut row[x], *s, mode, a);
+        }
+    });
+}
+
+/// Índice logo acima da camada de topo mais alta cujo resultado depende do que está composto embaixo (efeito,
+/// ajuste, pasta direta, light wrap): o melhor lugar para a foto quando nada mudou, porque dali para cima tudo sai
+/// das imagens guardadas. 0 = nenhuma.
+fn top_after_barrier(project: &Project, children: &[Id]) -> usize {
+    let mut after = 0;
+    for (i, id) in children.iter().enumerate() {
+        if is_barrier(project, id) {
+            after = i + 1;
+        }
+    }
+    after
+}
+
+/// Teto da memória dos tiles decodificados (1 MiB por tile).
+const TILE_CACHE_CAP_BYTES: usize = 128 << 20;
+
+#[derive(Default)]
+struct TileCache {
+    map: std::collections::HashMap<BlobHash, (Arc<Vec<[f32; 4]>>, u64)>,
+    tick: u64,
+}
+
+static TILE_CACHE: std::sync::OnceLock<std::sync::Mutex<TileCache>> = std::sync::OnceLock::new();
+
+/// Pixels de um tile, decodificados uma vez por blob (o blob é endereçado pelo conteúdo: o hash basta como chave).
+/// `None` = blob ausente.
+fn decoded_tile(blobs: &BlobStore, hash: &BlobHash) -> Option<Result<Arc<Vec<[f32; 4]>>, String>> {
+    let cache = TILE_CACHE.get_or_init(Default::default);
+    if let Ok(mut c) = cache.lock() {
+        c.tick += 1;
+        let t = c.tick;
+        if let Some((px, used)) = c.map.get_mut(hash) {
+            *used = t;
+            return Some(Ok(Arc::clone(px)));
+        }
+    }
+    let bytes = blobs.get(hash)?;
+    let px = match tile::decode_tile(&bytes) {
+        Ok(px) => Arc::new(px),
+        Err(e) => return Some(Err(e)),
+    };
+    if let Ok(mut c) = cache.lock() {
+        c.tick += 1;
+        let t = c.tick;
+        c.map.insert(hash.clone(), (Arc::clone(&px), t));
+        let per = tile::TILE_PIXELS * 16;
+        while c.map.len() * per > TILE_CACHE_CAP_BYTES {
+            let Some(old) = c.map.iter().min_by_key(|(_, (_, u))| *u).map(|(h, _)| h.clone()) else { break };
+            c.map.remove(&old);
+        }
+    }
+    Some(Ok(px))
+}
+
+/// A camada (visível) mexe no que está composto embaixo: efeito, ajuste, light wrap, ou pasta direta com uma dessas
+/// dentro.
+fn is_barrier(project: &Project, id: &Id) -> bool {
+    let Some(node) = project.node(id) else { return false };
+    let NodeKind::Layer(l) = &node.data else { return false };
+    if !l.visible {
+        return false;
+    }
+    match l.kind {
+        LayerType::Effect | LayerType::Adjustment => true,
+        LayerType::Group if l.blend == BlendMode::PassThrough && l.opacity >= 1.0 && l.mask.is_none() && !l.clip_to_below => {
+            node.children.iter().any(|c| is_barrier(project, c))
+        }
+        _ => aiai_fx::stack_from_params(&l.params).map(|s| stack_reads_below(&s)).unwrap_or(false),
+    }
+}
+
+/// A pilha de efeitos lê o composto de baixo (só o light wrap).
+fn stack_reads_below(stack: &[aiai_fx::EffectInstance]) -> bool {
+    stack.iter().any(|e| e.enabled && matches!(e.effect, aiai_fx::Effect::LightWrap { .. }))
 }
 
 fn subtree_revision(project: &Project, id: &Id) -> u64 {
@@ -233,8 +439,13 @@ fn render_frame_impl(project: &Project, blobs: &BlobStore, cut_id: &Id, frame: u
                 cut_id, cut_node.provenance.revision, frame, opts.include_guides as u8, opts.include_reference as u8, opts.camera as u8,
                 opts.layer_motion as u8, w, h, out_w, out_h, palettes, project.settings
             );
+            // quem desenha as camadas 3D (GPU/CPU) muda o pixel: entra na chave
+            let key = format!("{key}|{}", crate::raster3d::layer3d_raster().backend());
             let sigs: Vec<(Id, u64)> = cut_node.children.iter().map(|c| (c.clone(), subtree_revision(project, c))).collect();
             let same_key = cache.key.as_deref() == Some(key.as_str());
+            if !same_key {
+                cache.layers.clear();
+            }
             let first_changed = if same_key { sigs.iter().zip(&cache.sigs).position(|(a, b)| a != b).unwrap_or(sigs.len().min(cache.sigs.len())) } else { 0 };
             let first_changed = if same_key && sigs.len() == cache.sigs.len() { first_changed } else if same_key { first_changed.min(sigs.len().min(cache.sigs.len())) } else { 0 };
             // começa da foto se ela foi tirada antes de qualquer mudança
@@ -246,15 +457,37 @@ fn render_frame_impl(project: &Project, blobs: &BlobStore, cut_id: &Id, frame: u
                 r.warnings = sn.warnings.clone();
                 start = sn.index;
             }
-            // nova foto antes da primeira camada que mudou (é nela que o artista está mexendo)
-            let snap_at = if first_changed > 0 && first_changed < sigs.len() { Some(first_changed) } else { cache.snap.as_ref().filter(|_| same_key).map(|sn| sn.index) };
+            // nova foto antes da primeira camada que mudou (é nela que o artista está mexendo); sem mudança e sem foto,
+            // logo acima da última camada que depende do que está embaixo (de lá para cima tudo vem das imagens guardadas)
+            let after_barrier = top_after_barrier(project, &cut_node.children);
+            let snap_at = if first_changed > 0 && first_changed < sigs.len() {
+                Some(first_changed)
+            } else if let Some(sn) = cache.snap.as_ref().filter(|_| same_key) {
+                Some(sn.index)
+            } else {
+                Some(after_barrier).filter(|i| *i > 0 && *i < sigs.len())
+            };
+            // começando da foto e com a nova foto no mesmo lugar: a de agora já é ela (não copia o quadro de novo)
+            let keep_snap = start > 0 && snap_at == Some(start);
+            let snap_at = if keep_snap { None } else { snap_at };
             let mut taken = None;
-            r.composite_range(&mut buf, &cut_node.children, cut, frame, opts, start, clip_base, snap_at, &mut taken);
+            let mut lc = LayerCtx { sigs: &sigs, layers: &mut cache.layers, reused: 0 };
+            r.composite_range(&mut buf, &cut_node.children, cut, frame, opts, start, clip_base, snap_at, &mut taken, &mut lc);
             cache.last_skipped = start;
+            cache.last_reused = lc.reused;
             if let Some(t) = taken {
                 cache.snap = Some(t);
-            } else if !same_key || snap_at.is_none() {
+            } else if !keep_snap && (!same_key || snap_at.is_none()) {
                 cache.snap = None;
+            }
+            // as camadas abaixo da foto não são recompostas: não precisam da imagem guardada
+            let keep_from = cache.snap.as_ref().map_or(0, |sn| sn.index);
+            let pos: std::collections::HashMap<&Id, usize> = sigs.iter().enumerate().map(|(i, (id, _))| (id, i)).collect();
+            cache.layers.retain(|id, _| pos.get(id).is_some_and(|i| *i >= keep_from));
+            let mut total: usize = cache.layers.values().map(|e| e.bytes()).sum();
+            while total > LAYER_CACHE_CAP_BYTES {
+                let Some(id) = cache.layers.iter().min_by_key(|(id, _)| pos.get(id).copied().unwrap_or(0)).map(|(id, _)| id.clone()) else { break };
+                total -= cache.layers.remove(&id).map_or(0, |e| e.bytes());
             }
             cache.key = Some(key);
             cache.sigs = sigs;
@@ -279,10 +512,11 @@ impl<'a> Renderer<'a> {
         opts: &RenderOptions,
         allowed: Option<&std::collections::BTreeSet<Id>>,
     ) {
-        self.composite_inner(buf, children, cut, frame, opts, allowed, 0, None, None, &mut None);
+        self.composite_inner(buf, children, cut, frame, opts, allowed, 0, None, None, &mut None, None);
     }
 
-    /// Topo do corte com cache: começa em `start` (com o `clip_base` da foto) e tira uma foto antes de `snap_at`.
+    /// Topo do corte com cache: começa em `start` (com o `clip_base` da foto), tira uma foto antes de `snap_at` e
+    /// reaproveita/guarda as imagens por camada em `lc`.
     #[allow(clippy::too_many_arguments)]
     fn composite_range(
         &mut self,
@@ -292,11 +526,12 @@ impl<'a> Renderer<'a> {
         frame: u32,
         opts: &RenderOptions,
         start: usize,
-        clip_base: Option<Vec<f32>>,
+        clip_base: Option<ClipBase>,
         snap_at: Option<usize>,
         taken: &mut Option<FrameSnap>,
+        lc: &mut LayerCtx,
     ) {
-        self.composite_inner(buf, children, cut, frame, opts, None, start, clip_base, snap_at, taken);
+        self.composite_inner(buf, children, cut, frame, opts, None, start, clip_base, snap_at, taken, Some(lc));
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -309,12 +544,13 @@ impl<'a> Renderer<'a> {
         opts: &RenderOptions,
         allowed: Option<&std::collections::BTreeSet<Id>>,
         start: usize,
-        clip_base0: Option<Vec<f32>>,
+        clip_base0: Option<ClipBase>,
         snap_at: Option<usize>,
         taken: &mut Option<FrameSnap>,
+        mut lc: Option<&mut LayerCtx>,
     ) {
         // Alfa da última camada "base" (não recortada), para máscaras de recorte.
-        let mut clip_base: Option<Vec<f32>> = clip_base0;
+        let mut clip_base: Option<ClipBase> = clip_base0;
         let project = self.project;
         for (index, id) in children.iter().enumerate().skip(start) {
             if snap_at == Some(index) {
@@ -340,106 +576,135 @@ impl<'a> Renderer<'a> {
             if layer.kind == LayerType::Model3d && !opts.include_reference && aiai_core::model3d::is_reference(&layer.params) {
                 continue;
             }
-            let content: Option<Image> = match layer.kind {
-                LayerType::Group => {
-                    if layer.blend == BlendMode::PassThrough && layer.opacity >= 1.0 && layer.mask.is_none() && !layer.clip_to_below {
-                        self.composite_children(buf, &node.children, cut, frame, opts, allowed);
-                        clip_base = None;
-                        continue;
+            // imagem guardada da camada (mesma revisão da subárvore, mesma chave do quadro)
+            let sig = lc.as_ref().and_then(|lc| lc.sigs.get(index)).filter(|(sid, _)| sid == id).map(|(_, s)| *s);
+            let hit = match (lc.as_deref_mut(), sig) {
+                (Some(lc), Some(sig)) => match lc.layers.get(id).filter(|e| e.sig == sig) {
+                    Some(e) => {
+                        lc.reused += 1;
+                        Some((e.placed.clone(), e.mask.clone(), e.warnings.clone()))
                     }
-                    let mut g = Image::new(self.out_w, self.out_h);
-                    self.composite_children(&mut g, &node.children, cut, frame, opts, allowed);
-                    Some(g)
-                }
-                LayerType::Effect => {
-                    // Camada de efeito: aplica params.effects ao que está composto abaixo, misturado pela opacidade/máscara.
-                    match aiai_fx::stack_from_params(&layer.params) {
-                        Ok(stack) => {
-                            let before = buf.clone();
-                            let mut processed = buf.clone();
-                            let ctx = aiai_fx::FxContext { frame, below: Some(&before), blobs: self.blobs, seed: fx_seed(id) };
-                            for w in aiai_fx::apply_stack(&mut processed, &stack, &ctx) {
+                    None => None,
+                },
+                _ => None,
+            };
+            let (placed, mask) = if let Some((placed, mask, warnings)) = hit {
+                self.warnings.extend(warnings);
+                (placed, mask)
+            } else {
+                let first_warning = self.warnings.len();
+                if let Some((produced, placed)) = self.tiles_only_placed(id, node, layer, cut, frame) {
+                    let mask = if produced { layer.mask.as_ref().and_then(|m| self.mask_values(m, cut, frame)).map(Arc::new) } else { None };
+                    let placed = placed.map(Arc::new);
+                    if let (Some(lc), Some(sig)) = (lc.as_deref_mut(), sig) {
+                        let warnings = self.warnings[first_warning..].to_vec();
+                        lc.layers.insert(id.clone(), LayerEntry { sig, placed: placed.clone(), mask: mask.clone(), warnings });
+                    }
+                    (placed, mask)
+                } else {
+                    let content: Option<Image> = match layer.kind {
+                        LayerType::Group => {
+                            if layer.blend == BlendMode::PassThrough && layer.opacity >= 1.0 && layer.mask.is_none() && !layer.clip_to_below {
+                                self.composite_children(buf, &node.children, cut, frame, opts, allowed);
+                                clip_base = None;
+                                continue;
+                            }
+                            let mut g = Image::new(self.out_w, self.out_h);
+                            self.composite_children(&mut g, &node.children, cut, frame, opts, allowed);
+                            Some(g)
+                        }
+                        LayerType::Effect => {
+                            // Camada de efeito: aplica params.effects ao que está composto abaixo, misturado pela opacidade/máscara.
+                            match aiai_fx::stack_from_params(&layer.params) {
+                                Ok(stack) => {
+                                    let before = buf.clone();
+                                    let mut processed = buf.clone();
+                                    let ctx = aiai_fx::FxContext { frame, below: Some(&before), blobs: self.blobs, seed: fx_seed(id) };
+                                    for w in aiai_fx::apply_stack(&mut processed, &stack, &ctx) {
+                                        self.warnings.push(format!("{}: {w}", node.name));
+                                    }
+                                    let mask = layer.mask.as_ref().and_then(|m| self.mask_values(m, cut, frame));
+                                    let opacity = layer_prop(layer, "opacity", frame, layer.opacity).clamp(0.0, 1.0);
+                                    buf.data.par_iter_mut().enumerate().for_each(|(i, d)| {
+                                        let k = opacity * mask.as_ref().map_or(1.0, |m| m[i]);
+                                        let s = processed.data[i];
+                                        for c in 0..4 {
+                                            d[c] += (s[c] - d[c]) * k;
+                                        }
+                                    });
+                                }
+                                Err(e) => self.warnings.push(format!("{}: {e}", node.name)),
+                            }
+                            continue;
+                        }
+                        LayerType::Adjustment => {
+                            // Camada de ajuste: altera o que já foi composto abaixo dela (dentro da mesma pasta).
+                            match layer.params.get("adjustment").map(|v| serde_json::from_value::<aiai_paint::adjust::Adjustment>(v.clone())) {
+                                Some(Ok(adj)) => {
+                                    let mask = layer.mask.as_ref().and_then(|m| self.mask_values(m, cut, frame));
+                                    let clip = if layer.clip_to_below { clip_base.as_ref().map(|c| c.to_vec(buf.width, buf.height)) } else { None };
+                                    let m: Option<Vec<f32>> = match (mask, clip) {
+                                        (Some(a), Some(b)) => Some(a.iter().zip(&b).map(|(x, y)| x * y).collect()),
+                                        (Some(a), None) => Some(a),
+                                        (None, Some(b)) => Some(b),
+                                        (None, None) => None,
+                                    };
+                                    adj.apply_image(buf, layer.opacity, m.as_deref());
+                                }
+                                Some(Err(e)) => self.warnings.push(format!("ajuste inválido em '{}': {e}", node.name)),
+                                None => self.warnings.push(format!("camada de ajuste '{}' sem params.adjustment", node.name)),
+                            }
+                            continue;
+                        }
+                        LayerType::Particles => self.particles_image(node, layer, cut, frame),
+                        LayerType::Text => self.text_image(node, layer, frame),
+                        LayerType::Model3d => self.model3d_image(node, layer, frame),
+                        k if k.holds_cels() => self.layer_image(id, node, layer, cut, frame),
+                        other => {
+                            self.warnings.push(format!("camada '{}' do tipo {other:?} ainda não é renderizada", node.name));
+                            None
+                        }
+                    };
+                    let mut reads_below = false;
+                    let content = match (content, aiai_fx::stack_from_params(&layer.params)) {
+                        (Some(mut img), Ok(stack)) if !stack.is_empty() => {
+                            // só o light wrap lê o composto de baixo: só ele paga a cópia do quadro (e não fica guardado)
+                            reads_below = stack_reads_below(&stack);
+                            let below = reads_below.then(|| buf.clone());
+                            let ctx = aiai_fx::FxContext { frame, below: below.as_ref(), blobs: self.blobs, seed: fx_seed(id) };
+                            for w in aiai_fx::apply_stack(&mut img, &stack, &ctx) {
                                 self.warnings.push(format!("{}: {w}", node.name));
                             }
-                            let mask = layer.mask.as_ref().and_then(|m| self.mask_values(m, cut, frame));
-                            let opacity = layer_prop(layer, "opacity", frame, layer.opacity).clamp(0.0, 1.0);
-                            buf.data.par_iter_mut().enumerate().for_each(|(i, d)| {
-                                let k = opacity * mask.as_ref().map_or(1.0, |m| m[i]);
-                                let s = processed.data[i];
-                                for c in 0..4 {
-                                    d[c] += (s[c] - d[c]) * k;
-                                }
-                            });
+                            Some(img)
                         }
-                        Err(e) => self.warnings.push(format!("{}: {e}", node.name)),
-                    }
-                    continue;
-                }
-                LayerType::Adjustment => {
-                    // Camada de ajuste: altera o que já foi composto abaixo dela (dentro da mesma pasta).
-                    match layer.params.get("adjustment").map(|v| serde_json::from_value::<aiai_paint::adjust::Adjustment>(v.clone())) {
-                        Some(Ok(adj)) => {
-                            let mask = layer.mask.as_ref().and_then(|m| self.mask_values(m, cut, frame));
-                            let clip = if layer.clip_to_below { clip_base.clone() } else { None };
-                            let m: Option<Vec<f32>> = match (mask, clip) {
-                                (Some(a), Some(b)) => Some(a.iter().zip(&b).map(|(x, y)| x * y).collect()),
-                                (Some(a), None) => Some(a),
-                                (None, Some(b)) => Some(b),
-                                (None, None) => None,
-                            };
-                            adj.apply_image(buf, layer.opacity, m.as_deref());
+                        (c, Err(e)) => {
+                            self.warnings.push(format!("{}: {e}", node.name));
+                            c
                         }
-                        Some(Err(e)) => self.warnings.push(format!("ajuste inválido em '{}': {e}", node.name)),
-                        None => self.warnings.push(format!("camada de ajuste '{}' sem params.adjustment", node.name)),
+                        (c, _) => c,
+                    };
+                    let mask = if content.is_some() { layer.mask.as_ref().and_then(|m| self.mask_values(m, cut, frame)).map(Arc::new) } else { None };
+                    // sem conteúdo ou tudo transparente dá no mesmo: nada a misturar e, como base de recorte, recorta tudo
+                    let placed = content.and_then(Placed::crop).map(Arc::new);
+                    if let (Some(lc), Some(sig), false) = (lc.as_deref_mut(), sig, reads_below) {
+                        let warnings = self.warnings[first_warning..].to_vec();
+                        lc.layers.insert(id.clone(), LayerEntry { sig, placed: placed.clone(), mask: mask.clone(), warnings });
                     }
-                    continue;
-                }
-                LayerType::Particles => self.particles_image(node, layer, cut, frame),
-                LayerType::Text => self.text_image(node, layer, frame),
-                LayerType::Model3d => self.model3d_image(node, layer, frame),
-                k if k.holds_cels() => self.layer_image(id, node, layer, cut, frame),
-                other => {
-                    self.warnings.push(format!("camada '{}' do tipo {other:?} ainda não é renderizada", node.name));
-                    None
+                    (placed, mask)
                 }
             };
-            let content = match (content, aiai_fx::stack_from_params(&layer.params)) {
-                (Some(mut img), Ok(stack)) if !stack.is_empty() => {
-                    let below = buf.clone();
-                    let ctx = aiai_fx::FxContext { frame, below: Some(&below), blobs: self.blobs, seed: fx_seed(id) };
-                    for w in aiai_fx::apply_stack(&mut img, &stack, &ctx) {
-                        self.warnings.push(format!("{}: {w}", node.name));
-                    }
-                    Some(img)
-                }
-                (c, Err(e)) => {
-                    self.warnings.push(format!("{}: {e}", node.name));
-                    c
-                }
-                (c, _) => c,
-            };
-            let Some(img) = content else {
+            let Some(p) = placed else {
                 if !layer.clip_to_below {
-                    clip_base = Some(vec![0.0; buf.data.len()]);
+                    clip_base = Some(ClipBase::Empty);
                 }
                 continue;
             };
-            let mask = layer.mask.as_ref().and_then(|m| self.mask_values(m, cut, frame));
             let mode = if layer.blend == BlendMode::PassThrough { BlendMode::Normal } else { layer.blend };
-            let clip = if layer.clip_to_below { clip_base.as_deref() } else { None };
+            let clip = if layer.clip_to_below { clip_base.as_ref() } else { None };
             let opacity = layer_prop(layer, "opacity", frame, layer.opacity).clamp(0.0, 1.0);
-            buf.data.par_iter_mut().enumerate().for_each(|(i, d)| {
-                let mut a = opacity;
-                if let Some(m) = &mask {
-                    a *= m[i];
-                }
-                if let Some(c) = clip {
-                    a *= c[i];
-                }
-                blend_pixel(d, img.data[i], mode, a);
-            });
+            blend_placed(buf, &p, mode, opacity, mask.as_deref().map(|m| m.as_slice()), clip);
             if !layer.clip_to_below {
-                clip_base = Some(img.data.iter().map(|p| p[3]).collect());
+                clip_base = Some(ClipBase::Layer(p));
             }
         }
     }
@@ -462,6 +727,51 @@ impl<'a> Renderer<'a> {
                     _ => u32::MAX,
                 }),
         }
+    }
+
+    /// Atalho do cel só de tiles (raster sem imagem, preenchimento nem traço), sem efeitos e sem movimento: monta só a
+    /// caixa dos tiles, sem a imagem do canvas inteiro. `None` = não se aplica (vai pelo caminho geral); senão
+    /// (a camada desenhou?, conteúdo), exatamente o que o caminho geral daria depois do recorte.
+    fn tiles_only_placed(&mut self, id: &Id, node: &Node, layer: &LayerData, cut: &CutData, frame: u32) -> Option<(bool, Option<Placed>)> {
+        if matches!(layer.kind, LayerType::Group | LayerType::Effect | LayerType::Adjustment | LayerType::Particles | LayerType::Text | LayerType::Model3d)
+            || !layer.kind.holds_cels()
+            || !layer.params.get("effects").is_none_or(|v| v.is_null() || v.as_array().is_some_and(|a| a.is_empty()))
+        {
+            return None;
+        }
+        let Some(cel_node) = self.exposed_cel(id, node, cut, frame) else { return Some((false, None)) };
+        let NodeKind::Cel(cel) = &cel_node.data else { return Some((false, None)) };
+        if cel.image.is_some() || !cel.fills.is_empty() || !cel.strokes.is_empty() {
+            return None;
+        }
+        let xf = self.placement_affine(layer, frame, cel.transform);
+        if !(xf.is_identity() && self.out_w == self.width && self.out_h == self.height) {
+            return None;
+        }
+        let ts = TILE_SIZE as i64;
+        let (w, h) = (self.width as i64, self.height as i64);
+        let (mut x0, mut y0, mut x1, mut y1) = (i64::MAX, i64::MAX, i64::MIN, i64::MIN);
+        for t in &cel.tiles {
+            let (tx0, ty0) = ((t.x as i64 * ts).max(0), (t.y as i64 * ts).max(0));
+            let (tx1, ty1) = ((t.x as i64 * ts + ts).min(w), (t.y as i64 * ts + ts).min(h));
+            if tx0 < tx1 && ty0 < ty1 {
+                (x0, y0, x1, y1) = (x0.min(tx0), y0.min(ty0), x1.max(tx1), y1.max(ty1));
+            }
+        }
+        let decoded: Vec<Option<Result<Arc<Vec<[f32; 4]>>, String>>> = cel.tiles.par_iter().map(|t| decoded_tile(self.blobs, &t.blob)).collect();
+        let mut img = (x0 < x1).then(|| Image::new((x1 - x0) as u32, (y1 - y0) as u32));
+        for (t, d) in cel.tiles.iter().zip(decoded) {
+            match d {
+                Some(Ok(px)) => {
+                    if let Some(img) = img.as_mut() {
+                        tile::blit_tile(img, &px, t.x, t.y, [x0 as i32, y0 as i32]);
+                    }
+                }
+                Some(Err(e)) => self.warnings.push(format!("{}: tile ({}, {}) ilegível: {e}", node.name, t.x, t.y)),
+                None => self.warnings.push(format!("{}: tile ({}, {}) sem blob", node.name, t.x, t.y)),
+            }
+        }
+        Some((true, img.map(|img| Placed { x0: x0 as u32, y0: y0 as u32, img })))
     }
 
     fn layer_image(&mut self, id: &Id, node: &Node, layer: &LayerData, cut: &CutData, frame: u32) -> Option<Image> {
@@ -642,8 +952,10 @@ impl<'a> Renderer<'a> {
                 None => self.warnings.push(format!("{layer_name}: blob de imagem ausente {hash}")),
             }
         }
-        for t in &cel.tiles {
-            match self.blobs.get(&t.blob).map(|b| tile::decode_tile(&b)) {
+        // tiles decodificados guardados pelo hash do blob: depois de uma pincelada só os tiles novos são decodificados
+        let decoded: Vec<Option<Result<Arc<Vec<[f32; 4]>>, String>>> = cel.tiles.par_iter().map(|t| decoded_tile(self.blobs, &t.blob)).collect();
+        for (t, d) in cel.tiles.iter().zip(decoded) {
+            match d {
                 Some(Ok(px)) => tile::blit_tile(&mut img, &px, t.x, t.y, [0, 0]),
                 Some(Err(e)) => self.warnings.push(format!("{layer_name}: tile ({}, {}) ilegível: {e}", t.x, t.y)),
                 None => self.warnings.push(format!("{layer_name}: tile ({}, {}) sem blob", t.x, t.y)),

@@ -7,6 +7,7 @@ use super::commands::NodeId;
 use aiai_core::{BlobStore, Project};
 use aiai_render::{FrameCache, RenderOptions, render_frame_cached};
 use egui::{Color32, ColorImage};
+use rayon::prelude::*;
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Instant;
@@ -270,12 +271,13 @@ fn render_job(job: &Job, t0: Instant, cache: &mut FrameCache) -> Result<Rendered
     let r = k.reduce.max(1) as usize;
     let (nw, nh) = (w.div_ceil(r), h.div_ceil(r));
     let px = |p: [f32; 4]| Color32::from_rgba_premultiplied((p[0].clamp(0.0, 1.0) * 255.0 + 0.5) as u8, (p[1].clamp(0.0, 1.0) * 255.0 + 0.5) as u8, (p[2].clamp(0.0, 1.0) * 255.0 + 0.5) as u8, (p[3].clamp(0.0, 1.0) * 255.0 + 0.5) as u8);
-    let mut pixels = Vec::with_capacity(nw * nh);
+    // conversão em paralelo: no quadro 1920×1080 ela custava, sozinha, quase o mesmo que o render depois de uma pincelada
+    let mut pixels = vec![Color32::TRANSPARENT; nw * nh];
     if r == 1 {
-        pixels.extend(out.image.data.iter().map(|p| px(*p)));
+        pixels.par_iter_mut().zip(out.image.data.par_iter()).for_each(|(d, p)| *d = px(*p));
     } else {
-        for ty in 0..nh {
-            for tx in 0..nw {
+        pixels.par_chunks_mut(nw).enumerate().for_each(|(ty, row)| {
+            for (tx, d) in row.iter_mut().enumerate() {
                 let (x0, y0) = (tx * r, ty * r);
                 let (x1, y1) = ((x0 + r).min(w), (y0 + r).min(h));
                 let mut acc = [0.0f32; 4];
@@ -288,9 +290,9 @@ fn render_job(job: &Job, t0: Instant, cache: &mut FrameCache) -> Result<Rendered
                     }
                 }
                 let n = ((x1 - x0) * (y1 - y0)) as f32;
-                pixels.push(px([acc[0] / n, acc[1] / n, acc[2] / n, acc[3] / n]));
+                *d = px([acc[0] / n, acc[1] / n, acc[2] / n, acc[3] / n]);
             }
-        }
+        });
     }
     let uv_max = [w as f32 / r as f32 / nw as f32, h as f32 / r as f32 / nh as f32];
     Ok(Rendered {
