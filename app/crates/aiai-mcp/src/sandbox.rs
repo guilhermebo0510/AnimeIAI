@@ -67,6 +67,11 @@ impl Sandbox {
         &self.dirs
     }
 
+    /// A gravação em disco está ligada (`AIAI_MCP_ALLOW_FS_WRITE`).
+    pub fn writes_enabled(&self) -> bool {
+        self.writes_enabled
+    }
+
     /// Valida um destino de gravação e devolve o caminho absoluto. Não cria nada.
     pub fn check_write(&self, input: &str) -> Result<PathBuf> {
         if !self.writes_enabled {

@@ -1137,6 +1137,7 @@ impl StudioApp {
         self.ed.pressure_curve = (self.prefs.pen_pressure_min, self.prefs.pen_pressure_gamma);
         self.autosave_tick();
         panels::timeline::tick(&self.core, &mut self.ed, &ctx);
+        panels::deliver::tick(&self.core, &mut self.ed, &ctx);
         panels::audio_ws::tick(&mut self.core, &mut self.ed, &ctx);
         panels::char_folder::tick(&self.core, &mut self.ed, self.ws);
         {
@@ -1324,7 +1325,11 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::Sheet => panels::characters::sheet(&mut self.env, ui, body),
             PanelKind::Media => panels::edit::media(&mut self.env, ui, body),
             PanelKind::Presets => panels::deliver::presets(&mut self.env, ui, body),
-            PanelKind::Queue => panels::deliver::queue(&mut self.env, ui, body),
+            PanelKind::Queue => panels::deliver_panels::queue(&mut self.env, ui, body),
+            PanelKind::Destinations => panels::deliver_panels::destinations(&mut self.env, ui, body),
+            PanelKind::Deliverables => panels::deliver_panels::deliverables(&mut self.env, ui, body),
+            PanelKind::Poster => panels::deliver_panels::poster_panel(&mut self.env, ui, body),
+            PanelKind::Preflight => panels::deliver_panels::preflight_panel(&mut self.env, ui, body),
             PanelKind::Preview => panels::edit::preview(&mut self.env, ui, body),
             PanelKind::SourceMonitor => panels::edit_panels::source_monitor(&mut self.env, ui, body),
             PanelKind::Transitions => panels::edit_panels::transitions(&mut self.env, ui, body),

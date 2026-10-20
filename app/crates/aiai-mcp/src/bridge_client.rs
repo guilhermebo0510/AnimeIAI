@@ -53,7 +53,7 @@ pub fn read_timeout_for(action: &str) -> Duration {
     match action {
         "SCREENSHOT" | "RENDER" | "COMPARE" => Duration::from_secs(35),
         "NEW_PROJECT" | "OPEN_PROJECT" | "SAVE_PROJECT" => Duration::from_secs(25),
-        "EXPORT_VIDEO" | "ANIMATIC" => Duration::from_secs(1200),
+        "EXPORT_VIDEO" | "ANIMATIC" | "DELIVERY" => Duration::from_secs(1200),
         "STORYBOARD" | "CUTS_FROM_STORYBOARD" | "PRODUCTION" | "RETAKE" => Duration::from_secs(65),
         "RENDER_SHEET" | "EDIT_PREVIEW" | "EDIT_MIX" | "TTS_REGENERATE" => Duration::from_secs(130),
         "BGM" | "TTS_LINE" | "TTS_KOKORO" | "MIX_CUT" | "LOUDNESS" | "AUDIO_EDIT" | "AUDIO_ANALYZE" => Duration::from_secs(130),

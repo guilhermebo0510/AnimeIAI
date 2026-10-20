@@ -86,6 +86,14 @@ pub enum PanelKind {
     EffectsBrowser,
     /// Composição: controles de efeito da camada selecionada (parâmetros, ordem, ligar/desligar, cronômetros).
     EffectControls,
+    /// Entrega: destinos (pasta, modelo de nome, versão automática, cópias, pacote de entrega).
+    Destinations,
+    /// Entrega: biblioteca do que já foi exportado (miniaturas, metadados, abrir, exportar de novo, lixeira).
+    Deliverables,
+    /// Entrega: pôster do entregável (quadro e título sobre a imagem).
+    Poster,
+    /// Entrega: verificação final antes de exportar (semáforo com link para corrigir).
+    Preflight,
 }
 
 /// Categoria do painel (agrupa o Exibir > Painéis e decide junto de quem um painel novo entra como aba).
@@ -165,7 +173,7 @@ const DRAWING_WS: &[WorkspaceId] = &[W::Personagens, W::Layout, W::Cenario, W::A
 const LIBRARY_WS: &[WorkspaceId] = &[W::Biblioteca, W::Modelagem, W::Personagens, W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Composicao];
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 49] = [
+    pub const ALL: [PanelKind; 53] = [
         PanelKind::Canvas,
         PanelKind::Layers,
         PanelKind::Properties,
@@ -215,6 +223,10 @@ impl PanelKind {
         PanelKind::CompTimeline,
         PanelKind::EffectsBrowser,
         PanelKind::EffectControls,
+            PanelKind::Destinations,
+        PanelKind::Deliverables,
+        PanelKind::Poster,
+        PanelKind::Preflight,
     ];
 
     /// Identificador estável (bridge/UI_ACTION, `layouts.json`): `canvas`, `layers`, `timeline`...
@@ -255,6 +267,10 @@ impl PanelKind {
             PanelKind::Tts => "panel.tts.title",
             PanelKind::Presets => "panel.presets.title",
             PanelKind::Queue => "panel.queue.title",
+            PanelKind::Destinations => "panel.destinations.title",
+            PanelKind::Deliverables => "panel.deliverables.title",
+            PanelKind::Poster => "panel.poster.title",
+            PanelKind::Preflight => "panel.preflight.title",
             PanelKind::Tasks => "panel.tasks.title",
             PanelKind::Episodes => "panel.episodes.title",
             PanelKind::ProdCharts => "panel.prod_charts.title",
@@ -310,6 +326,10 @@ impl PanelKind {
             PanelKind::Tts => "panel.tts.empty",
             PanelKind::Presets => "panel.presets.empty",
             PanelKind::Queue => "panel.queue.empty",
+            PanelKind::Destinations => "panel.destinations.empty",
+            PanelKind::Deliverables => "panel.deliverables.empty",
+            PanelKind::Poster => "panel.poster.empty",
+            PanelKind::Preflight => "panel.preflight.empty",
             PanelKind::Tasks => "panel.tasks.empty",
             PanelKind::Episodes => "panel.episodes.empty",
             PanelKind::ProdCharts => "panel.prod_charts.empty",
@@ -367,6 +387,10 @@ impl PanelKind {
             PanelKind::Tts => (C::SoundEdit, Right, &[W::Audio, W::Roteiro], false),
             PanelKind::Presets => (C::Delivery, Left, &[W::Entrega], false),
             PanelKind::Queue => (C::Delivery, Center, &[W::Entrega], false),
+            PanelKind::Destinations => (C::Delivery, Left, &[W::Entrega], false),
+            PanelKind::Deliverables => (C::Delivery, Center, &[W::Entrega], false),
+            PanelKind::Poster => (C::Delivery, Right, &[W::Entrega], false),
+            PanelKind::Preflight => (C::Delivery, Right, &[W::Entrega], false),
             PanelKind::Tasks => (C::Management, Center, &[W::Producao], false),
             PanelKind::Episodes => (C::Management, Left, &[W::Producao], false),
             PanelKind::ProdCharts => (C::Management, Center, &[W::Producao], false),
@@ -461,6 +485,8 @@ pub fn factory_rev(ws: WorkspaceId) -> u32 {
         // S24: Forma de onda, Efeitos, Medidores, Multipista e Voz sintética
         W::Audio => 2,
         // S24: Produção com Gráficos, Gargalos e Análise por IA ao lado do painel principal
+        // S24 4.8–4.12: fila com progresso, Destinos, Entregáveis, Pôster e Verificação final
+        W::Entrega => 2,
         W::Producao => 2,
         _ => 1,
     }
@@ -560,7 +586,13 @@ fn default_node(ws: WorkspaceId) -> Node {
             ])),
             (0.45, Pane(P::Timeline)),
         ]),
-        W::Entrega => Row(vec![(0.24, Pane(P::Presets)), (0.46, Pane(P::Queue)), (0.30, Pane(P::Properties))]),
+        // S24 4.8–4.12: formatos e destinos à esquerda, a fila em cima e os entregáveis embaixo no centro, e à direita o
+        // pôster, a verificação final e o pedido
+        W::Entrega => Row(vec![
+            (0.20, TabsOf(&[P::Presets, P::Destinations])),
+            (0.44, Col(vec![(0.58, Pane(P::Queue)), (0.42, Pane(P::Deliverables))])),
+            (0.36, Col(vec![(0.34, Pane(P::Poster)), (0.30, Pane(P::Preflight)), (0.36, Pane(P::Properties))])),
+        ]),
         // gestão (S24 14): episódios/cenas à esquerda; o painel principal (Lista, Miniaturas, Grande, Quadro) com os
         // Gráficos em aba grande ao lado; à direita o detalhe do corte e, embaixo, Gargalos e a Análise por IA (opcional)
         W::Producao => Row(vec![
@@ -1196,7 +1228,7 @@ mod tests {
             (W::Modelagem, 3, 0x575fe9a79c6ad671),
             (W::Audio, 2, 0xb370ba9cf04cb8ac),
             (W::Edicao, 3, 0x3d752f0083dbd76d),
-            (W::Entrega, 1, 0x6989668e53aa64aa),
+            (W::Entrega, 2, 0x5ef237c098c7824b),
             (W::Producao, 2, 0x9b17b578f72810dc),
         ];
         let mut report = String::new();

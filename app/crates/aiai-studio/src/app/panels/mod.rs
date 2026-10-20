@@ -12,6 +12,7 @@ pub(crate) mod characters;
 pub(crate) mod colors;
 pub(crate) mod comp_timeline;
 pub(crate) mod deliver;
+pub(crate) mod deliver_panels;
 pub(crate) mod edit;
 pub(crate) mod edit_panels;
 pub(crate) mod edit_timeline;

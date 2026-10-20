@@ -69,6 +69,13 @@ impl Ctx {
             "MODELING" => &["path"],
             _ => &[],
         };
+        // Entrega: as pastas de saída saem do projeto e dos destinos (não de `out`); o motor confere cada uma contra estas
+        if action == "DELIVERY" {
+            if let Some(o) = params.as_object_mut() {
+                let dirs: Vec<String> = if self.sandbox.writes_enabled() { self.sandbox.dirs().iter().map(|d| d.display().to_string()).collect() } else { vec!["<gravação desligada>".to_owned()] };
+                o.insert("allowed_dirs".into(), json!(dirs));
+            }
+        }
         for key in write_keys {
             if let Some(s) = params.get(*key).and_then(Value::as_str) {
                 let p = self.sandbox.check_write(s).map_err(|e| ToolError::invalid(format!("'{key}': {e}")))?;

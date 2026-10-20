@@ -115,7 +115,7 @@ pub fn action_timeout(action: &str) -> Duration {
         "SCREENSHOT" | "RENDER" | "COMPARE" => Duration::from_secs(30),
         "OPEN_PROJECT" | "SAVE_PROJECT" | "NEW_PROJECT" => Duration::from_secs(20),
         // ferramentas de produção: o trabalho roda na thread da UI (exportar vídeo bloqueia a janela até terminar)
-        "EXPORT_VIDEO" | "ANIMATIC" => Duration::from_secs(1190),
+        "EXPORT_VIDEO" | "ANIMATIC" | "DELIVERY" => Duration::from_secs(1190),
         "STORYBOARD" | "CUTS_FROM_STORYBOARD" | "PRODUCTION" | "RETAKE" => Duration::from_secs(60),
         "RENDER_SHEET" | "EDIT_PREVIEW" | "EDIT_MIX" | "TTS_REGENERATE" => Duration::from_secs(120),
         "BGM" | "TTS_LINE" | "TTS_KOKORO" | "MIX_CUT" | "LOUDNESS" | "AUDIO_EDIT" | "AUDIO_ANALYZE" => Duration::from_secs(120),

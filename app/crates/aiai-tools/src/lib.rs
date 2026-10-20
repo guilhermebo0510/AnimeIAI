@@ -11,6 +11,7 @@ pub mod char_material;
 pub mod character;
 pub mod compare;
 pub mod context;
+pub mod delivery;
 pub mod draw;
 pub mod edit;
 pub mod erase;

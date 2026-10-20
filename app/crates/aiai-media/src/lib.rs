@@ -28,6 +28,75 @@ pub enum VideoCodec {
     Prores,
     /// Sequência PNG (o `out` deve conter `%05d`).
     PngSequence,
+    /// H.265/HEVC (libx265, MP4 com a marca hvc1 para tocar no Apple/Windows) — só se o ffmpeg tiver o codificador.
+    H265,
+    /// VP9 em WebM (libvpx-vp9, áudio Opus) — só se o ffmpeg tiver os codificadores.
+    Vp9,
+}
+
+impl VideoCodec {
+    /// Codificadores do ffmpeg que este codec exige (vazio = o ffmpeg padrão serve).
+    pub fn required_encoders(self) -> &'static [&'static str] {
+        match self {
+            VideoCodec::H264 => &["libx264"],
+            VideoCodec::H264Nvenc => &["h264_nvenc"],
+            VideoCodec::Prores => &["prores_ks"],
+            VideoCodec::PngSequence => &["png"],
+            VideoCodec::H265 => &["libx265"],
+            VideoCodec::Vp9 => &["libvpx-vp9", "libopus"],
+        }
+    }
+
+    /// `Ok` se o ffmpeg deste PC tem tudo o que o codec precisa; senão o motivo em texto (para a interface).
+    pub fn availability(self) -> Result<(), String> {
+        let have = encoders();
+        if have.is_empty() {
+            return Err(format!("não consegui consultar o ffmpeg ({})", ffmpeg().display()));
+        }
+        let missing: Vec<&str> = self.required_encoders().iter().copied().filter(|e| !have.contains(*e)).collect();
+        if missing.is_empty() { Ok(()) } else { Err(format!("o ffmpeg não tem o codificador {}", missing.join(", "))) }
+    }
+}
+
+/// Codificadores que o ffmpeg do PC lista (`ffmpeg -encoders`), consultados uma vez por processo. Vazio se o ffmpeg não roda.
+pub fn encoders() -> &'static std::collections::BTreeSet<String> {
+    static CACHE: std::sync::OnceLock<std::collections::BTreeSet<String>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| {
+        let out = Command::new(ffmpeg()).args(["-hide_banner", "-encoders"]).stdin(Stdio::null()).output();
+        let Ok(out) = out else { return Default::default() };
+        parse_encoders(&String::from_utf8_lossy(&out.stdout))
+    })
+}
+
+/// Linhas de `ffmpeg -encoders`: depois do cabeçalho "------", cada uma é "<flags> <nome> <descrição>".
+pub fn parse_encoders(text: &str) -> std::collections::BTreeSet<String> {
+    let mut after = false;
+    let mut set = std::collections::BTreeSet::new();
+    for line in text.lines() {
+        if line.trim_start().starts_with("------") {
+            after = true;
+            continue;
+        }
+        if !after {
+            continue;
+        }
+        let mut it = line.split_whitespace();
+        if let (Some(flags), Some(name)) = (it.next(), it.next()) {
+            if flags.len() == 6 {
+                set.insert(name.to_owned());
+            }
+        }
+    }
+    set
+}
+
+/// Ajustes finos da codificação que não fazem parte do contrato de [`EncodeOptions`] (prévia pequena e rápida).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct EncodeTuning {
+    /// Altura final (largura proporcional, par): a imagem renderizada é reduzida pelo ffmpeg depois das legendas queimadas.
+    pub scale_height: Option<u32>,
+    /// Velocidade do x264/x265 (`veryfast`, `medium`, `slow`...); `None` = `slow` no x264 e `medium` no x265.
+    pub speed: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -67,6 +136,10 @@ pub struct Encoder {
 
 impl Encoder {
     pub fn start(out: &Path, opts: &EncodeOptions) -> Result<Encoder, String> {
+        Self::start_tuned(out, opts, &EncodeTuning::default())
+    }
+
+    pub fn start_tuned(out: &Path, opts: &EncodeOptions, tune: &EncodeTuning) -> Result<Encoder, String> {
         if opts.width % 2 != 0 || opts.height % 2 != 0 {
             return Err("largura e altura precisam ser pares (yuv420p)".into());
         }
@@ -76,14 +149,30 @@ impl Encoder {
         if let Some(a) = &opts.audio {
             cmd.arg("-i").arg(a);
         }
+        let mut filters: Vec<String> = Vec::new();
         if let Some(srt) = &opts.burn_subtitles {
             // o filtro subtitles exige escapar ':' e '\' do caminho no Windows
             let p = srt.to_string_lossy().replace('\\', "/").replace(':', "\\:");
-            cmd.args(["-vf", &format!("subtitles='{p}'")]);
+            filters.push(format!("subtitles='{p}'"));
         }
+        if let Some(h) = tune.scale_height.filter(|h| *h > 0 && *h < opts.height) {
+            filters.push(format!("scale=-2:{}:flags=lanczos", h & !1));
+        }
+        if !filters.is_empty() {
+            cmd.args(["-vf", &filters.join(",")]);
+        }
+        let speed = |default: &'static str| tune.speed.clone().unwrap_or_else(|| default.to_owned());
         match opts.codec {
+            VideoCodec::H265 => {
+                cmd.args(["-c:v", "libx265", "-preset", &speed("medium"), "-crf", &opts.crf.to_string(), "-pix_fmt", "yuv420p", "-tag:v", "hvc1", "-movflags", "+faststart"]);
+                cmd.args(["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"]);
+            }
+            VideoCodec::Vp9 => {
+                cmd.args(["-c:v", "libvpx-vp9", "-crf", &opts.crf.to_string(), "-b:v", "0", "-row-mt", "1", "-pix_fmt", "yuv420p"]);
+                cmd.args(["-deadline", if tune.speed.as_deref().is_some_and(|s| s.contains("fast")) { "realtime" } else { "good" }, "-cpu-used", "4"]);
+            }
             VideoCodec::H264 => {
-                cmd.args(["-c:v", "libx264", "-preset", "slow", "-crf", &opts.crf.to_string(), "-pix_fmt", "yuv420p", "-movflags", "+faststart"]);
+                cmd.args(["-c:v", "libx264", "-preset", &speed("slow"), "-crf", &opts.crf.to_string(), "-pix_fmt", "yuv420p", "-movflags", "+faststart"]);
                 cmd.args(["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"]);
             }
             VideoCodec::H264Nvenc => {
@@ -100,6 +189,7 @@ impl Encoder {
             match opts.codec {
                 VideoCodec::Prores => cmd.args(["-c:a", "pcm_s24le"]),
                 VideoCodec::PngSequence => cmd.args(["-an"]),
+                VideoCodec::Vp9 => cmd.args(["-c:a", "libopus", "-b:a", "192k", "-shortest"]),
                 _ => cmd.args(["-c:a", "aac", "-b:a", "320k", "-shortest"]),
             };
         }
@@ -118,6 +208,14 @@ impl Encoder {
         self.stdin.as_mut().ok_or("ffmpeg já finalizado")?.write_all(&rgb).map_err(|e| format!("ffmpeg recusou o quadro: {e}"))?;
         self.frames += 1;
         Ok(())
+    }
+
+    /// Desiste da codificação (cancelada): mata o ffmpeg e apaga o arquivo parcial.
+    pub fn abort(mut self) {
+        drop(self.stdin.take());
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = std::fs::remove_file(&self.out);
     }
 
     pub fn finish(mut self) -> Result<EncodeReport, String> {
@@ -213,6 +311,20 @@ pub fn write_srt(subs: &[Subtitle]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn encoder_list_is_parsed_and_codecs_report_what_is_missing() {
+        let txt = "Encoders:
+ V..... = Video
+ ------
+ V....D libx265              libx265 H.265 / HEVC (codec hevc)
+ A....D aac                  AAC
+";
+        let set = parse_encoders(txt);
+        assert!(set.contains("libx265") && set.contains("aac") && !set.contains("Video"));
+        assert_eq!(VideoCodec::H265.required_encoders(), &["libx265"]);
+        assert!(VideoCodec::Vp9.required_encoders().contains(&"libopus"));
+    }
 
     #[test]
     fn srt_format() {

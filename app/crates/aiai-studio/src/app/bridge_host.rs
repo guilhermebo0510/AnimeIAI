@@ -130,6 +130,9 @@ impl StudioApp {
     }
 
     fn bridge_exec(&mut self, ctx: &egui::Context, action: &str, params: &Value) -> BridgeResult {
+        if action == "DELIVERY" {
+            return super::panels::deliver::bridge(&self.core, &mut self.ed, ctx, params);
+        }
         if core_ops::is_core_action(action) {
             let res = handle_core_action(&mut self.core, action, params).unwrap_or_else(|| Err(BridgeError::unknown_action(action)));
             if let Ok(v) = &res {

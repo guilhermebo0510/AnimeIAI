@@ -727,6 +727,12 @@ pub struct ExportVideoRequest {
     /// trilha de legenda visível: a primeira com o nome do vídeo, as outras com o idioma (`.en.srt`) ou o número da trilha.
     #[serde(default)]
     pub sidecar_srt: bool,
+    /// Reduz o vídeo a esta altura (largura proporcional e par), depois das legendas queimadas; ignorado se o projeto já for menor. Não vale em png_sequence.
+    #[serde(default)]
+    pub height: Option<u32>,
+    /// Velocidade do x264/x265: ultrafast, veryfast, faster, fast, medium, slow (padrão: slow no h264, medium no h265). Mais rápido = arquivo maior.
+    #[serde(default)]
+    pub speed: Option<String>,
 }
 
 /// Arquivo temporário apagado ao sair do escopo.
@@ -814,15 +820,20 @@ fn export_audio(session: &CoreSession, segs: &[(Id, u32, u32)]) -> Result<Option
     Ok(Some(out))
 }
 
-fn export_video(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
+pub(crate) fn export_video(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
     let started = Instant::now();
     let r: ExportVideoRequest = request(params, "EXPORT_VIDEO")?;
     let out_path = check_abs(&r.out, "out")?;
     let name = out_path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_lowercase();
     match r.codec {
-        VideoCodec::H264 | VideoCodec::H264Nvenc => {
+        VideoCodec::H264 | VideoCodec::H264Nvenc | VideoCodec::H265 => {
             if !(name.ends_with(".mp4") || name.ends_with(".mkv") || name.ends_with(".mov")) {
-                return Err(BridgeError::invalid_params("'out' deve terminar em .mp4 (ou .mkv/.mov) para h264"));
+                return Err(BridgeError::invalid_params("'out' deve terminar em .mp4 (ou .mkv/.mov) para h264/h265"));
+            }
+        }
+        VideoCodec::Vp9 => {
+            if !(name.ends_with(".webm") || name.ends_with(".mkv")) {
+                return Err(BridgeError::invalid_params("'out' deve terminar em .webm (ou .mkv) para vp9"));
             }
         }
         VideoCodec::Prores => {
@@ -836,9 +847,17 @@ fn export_video(session: &mut CoreSession, params: &Value) -> Result<Value, Brid
             }
         }
     }
-    if r.crf.is_some_and(|c| c > 51) {
-        return Err(BridgeError::invalid_params("'crf' deve ser 0..51"));
+    if r.crf.is_some_and(|c| c > 63 || (c > 51 && r.codec != VideoCodec::Vp9)) {
+        return Err(BridgeError::invalid_params("'crf' deve ser 0..51 (0..63 em vp9)"));
     }
+    if let Some(sp) = &r.speed {
+        if !["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower"].contains(&sp.as_str()) {
+            return Err(BridgeError::invalid_params(format!("'speed' desconhecido: {sp} (ultrafast, veryfast, faster, fast, medium, slow)")));
+        }
+    }
+    // o codificador precisa existir neste ffmpeg: o erro diz qual falta (H.265/WebM dependem da build)
+    r.codec.availability().map_err(|e| BridgeError::failed(format!("{:?}: {e}", r.codec)))?;
+    let ctl = crate::export_ctl::current();
     let bg = parse_hex_rgb(r.background.as_deref().unwrap_or("#ffffff"), "background")?;
     let edit_doc = match (&r.edit, &r.cut, &r.episode) {
         (Some(id), None, None) => {
@@ -860,6 +879,10 @@ fn export_video(session: &mut CoreSession, params: &Value) -> Result<Value, Brid
     };
     if total > 200_000 {
         return Err(BridgeError::invalid_params(format!("{total} quadros é demais para uma chamada (máx. 200000)")));
+    }
+    if let Some(c) = &ctl {
+        c.begin(total, crate::export_ctl::Phase::Audio);
+        c.checkpoint().map_err(|_| BridgeError::failed(crate::export_ctl::CANCELED))?;
     }
     let settings = session.project.settings.clone();
     let want_audio = r.audio.unwrap_or(true) && r.codec != VideoCodec::PngSequence;
@@ -919,8 +942,21 @@ fn export_video(session: &mut CoreSession, params: &Value) -> Result<Value, Brid
         Some(_) => (0..total as u32).map(|f| (None, f)).collect(),
         None => segs.iter().flat_map(|(c, s, e)| (*s..*e).map(move |f| (Some(c), f))).collect(),
     };
+    if let Some(c) = &ctl {
+        c.set_phase(crate::export_ctl::Phase::Frames);
+    }
+    let tuning = aiai_media::EncodeTuning { scale_height: r.height.filter(|_| r.codec != VideoCodec::PngSequence), speed: r.speed.clone() };
     {
         for (cut, f) in jobs {
+            // pausa e cancelamento entre os quadros (o ffmpeg é morto e o arquivo parcial apagado)
+            if let Some(c) = &ctl {
+                if c.checkpoint().is_err() {
+                    if let Some(e) = encoder.take() {
+                        e.abort();
+                    }
+                    return Err(BridgeError::failed(crate::export_ctl::CANCELED));
+                }
+            }
             let (image, frame_warnings) = match (cut, &edit_doc) {
                 (Some(cut), _) => {
                     let o = render_frame(&session.project, &session.blobs, cut, f, &opts).map_err(|er| BridgeError::invalid_params(format!("render do corte {cut} quadro {f}: {er}")))?;
@@ -946,10 +982,16 @@ fn export_video(session: &mut CoreSession, params: &Value) -> Result<Value, Brid
                     burn_subtitles: srt_path.clone(),
                     background: bg,
                 };
-                encoder = Some(Encoder::start(&out_path, &eo).map_err(BridgeError::failed)?);
+                encoder = Some(Encoder::start_tuned(&out_path, &eo, &tuning).map_err(BridgeError::failed)?);
             }
             encoder.as_mut().expect("iniciado").push(&rendered.image).map_err(BridgeError::failed)?;
+            if let Some(c) = &ctl {
+                c.frame_done();
+            }
         }
+    }
+    if let Some(c) = &ctl {
+        c.set_phase(crate::export_ctl::Phase::Finishing);
     }
     let report = encoder.ok_or_else(|| BridgeError::failed("nenhum quadro renderizado"))?.finish().map_err(BridgeError::failed)?;
     // legenda de entrega ao lado do vídeo
