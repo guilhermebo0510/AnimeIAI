@@ -61,6 +61,13 @@ pub(crate) struct ThumbCache {
 }
 
 impl ThumbCache {
+    /// Esquece todas as miniaturas (orçamento de VRAM): voltam aos poucos, pelo limite de renders por quadro.
+    pub(crate) fn clear(&mut self) -> bool {
+        let had = !self.map.is_empty();
+        self.map.clear();
+        had
+    }
+
     /// Textura do painel; renderiza se o desenho mudou e ainda houver `budget`, senão devolve a antiga (ou nada).
     pub(crate) fn get(&mut self, ctx: &egui::Context, core: &CoreSession, panel: &Panel, canvas: [u32; 2], budget: &mut u32) -> Option<egui::TextureId> {
         let size = thumb_size(canvas);

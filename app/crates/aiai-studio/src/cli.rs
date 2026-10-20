@@ -3,7 +3,7 @@
 //! ```text
 //! aiai-studio [--no-session] [--session-file <json>] [--project <pasta>] [--lang pt|en]
 //!             [--theme light|dark] [--workspace <chave>] [--size LxA] [--bridge]
-//!             [--screenshot <png>] [--frames <n>] [--splash | --no-splash]
+//!             [--screenshot <png>] [--frames <n>] [--splash | --no-splash] [--wait-pid <pid>]
 //! ```
 //!
 //! A tela de abertura (`splash.rs`) aparece por padrão, menos com `--no-session` e `--screenshot`; `--splash` e
@@ -33,6 +33,9 @@ pub struct Cli {
     pub bridge: bool,
     /// Tela de abertura: `None` = padrão (não aparece com `--no-session` nem `--screenshot`), `Some(b)` = forçado.
     pub splash: Option<bool>,
+    /// Reabertura depois de perder a GPU (`gpu_mem`): espera o processo anterior sair (trava do projeto, diário) e
+    /// mostra o aviso que ele deixou.
+    pub wait_pid: Option<u32>,
 }
 
 impl Cli {
@@ -69,6 +72,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Cli, String> {
             "--bridge" => cli.bridge = true,
             "--splash" => cli.splash = Some(true),
             "--no-splash" => cli.splash = Some(false),
+            "--wait-pid" => cli.wait_pid = Some(value("--wait-pid")?.parse().map_err(|_| "--wait-pid precisa ser inteiro".to_string())?),
             "--lang" => {
                 let v = value("--lang")?;
                 cli.lang = Some(Lang::from_code(&v).ok_or_else(|| format!("idioma desconhecido: {v}"))?);

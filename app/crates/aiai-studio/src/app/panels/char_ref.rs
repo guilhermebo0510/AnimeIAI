@@ -31,7 +31,7 @@ pub(crate) struct CharRefState {
     pub pan: Vec2,
     /// Mostrar todos os personagens, não só os do corte.
     pub all: bool,
-    preview: EditPreview,
+    pub(crate) preview: EditPreview,
 }
 
 impl Default for CharRefState {

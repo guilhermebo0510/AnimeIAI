@@ -184,6 +184,13 @@ pub(crate) struct CutThumbs {
 }
 
 impl CutThumbs {
+    /// Esquece todas as miniaturas (orçamento de VRAM): voltam aos poucos, pelo limite de renders por quadro.
+    pub(crate) fn clear(&mut self) -> bool {
+        let had = !self.map.is_empty();
+        self.map.clear();
+        had
+    }
+
     pub(crate) fn get(&mut self, ctx: &egui::Context, core: &CoreSession, cut: &NodeId, budget: &mut u32) -> Option<egui::TextureId> {
         let counter = core.change_counter;
         if let Some(e) = self.map.get_mut(&cut.0) {

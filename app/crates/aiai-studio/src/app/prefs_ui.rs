@@ -311,5 +311,6 @@ impl StudioApp {
         let now = self.gpu_name.clone().unwrap_or_else(|| "—".into());
         ui.label(RichText::new(format!("{}: {now}", tr("prefs.gpu.current"))).size(11.5).color(t.text_dim));
         ui.label(RichText::new(tr("prefs.restart")).size(11.5).color(t.text_dim));
+        self.prefs_vram(ui, t);
     }
 }

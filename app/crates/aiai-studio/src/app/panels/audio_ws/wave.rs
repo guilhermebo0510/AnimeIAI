@@ -116,6 +116,12 @@ impl Default for WaveState {
 }
 
 impl WaveState {
+    /// Solta o espectrograma (orçamento de VRAM, `gpu_owners`): é refeito quando a vista volta.
+    pub(crate) fn release_gpu(&mut self) -> bool {
+        self.spec.shown = None;
+        self.spec.tex.take().is_some()
+    }
+
     pub(crate) fn open_asset(&mut self, id: Id) {
         self.target = Some(Target::Asset(id));
         self.sel = None;

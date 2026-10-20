@@ -212,6 +212,8 @@ impl StudioApp {
             "notice": self.notice.as_ref().filter(|(_, at)| at.elapsed().as_secs() < 6).map(|(m, _)| m.clone()),
             "input_pending": self.input.pending(),
             "project": { "name": self.doc_name(), "path": self.core.path.as_ref().map(|p| p.display().to_string()), "revision": self.core.project.revision, "dirty": self.doc_dirty() },
+            // memória de vídeo: uso por subsistema, alocador do wgpu, uso/orçamento do sistema, pressão e despejos
+            "gpu": self.gpu.to_json(),
         })
     }
 
@@ -316,6 +318,7 @@ impl StudioApp {
             "set_language" => Some(&["language", "lang", "value"]),
             "open_dialog" | "close_dialog" => Some(&["dialog", "value", "tab"]),
             "library_import" => Some(&["files"]),
+            "gpu" => Some(&["op", "mb"]),
             _ => None,
         };
         if let Some(keys) = keys {
@@ -470,6 +473,8 @@ impl StudioApp {
                 self.ed.library.begin_import(files.clone());
                 json!({ "files": files.len() })
             }
+            // memória de vídeo: testar o orçamento e a resiliência sem esgotar a placa (ver gpu_evict::gpu_bridge)
+            "gpu" => self.gpu_bridge(text(&m, &["op"]).unwrap_or(""), m.get("mb").and_then(Value::as_u64))?,
             other => {
                 return Err(BridgeError::invalid_params(format!(
                     "UI_ACTION desconhecida: {other}; use set_workspace, select_tool, toggle_panel, open_panel, layout, set_theme, set_language, set_window_size, open_dialog, close_dialog, select_layer, select_cut, set_frame, set_color, fit_view"

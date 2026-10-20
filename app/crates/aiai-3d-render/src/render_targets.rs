@@ -65,6 +65,27 @@ impl RenderTargetCache {
         self.current = None;
     }
 
+    /// Bytes de GPU dos alvos alocados agora (cor MSAA e profundidade com as
+    /// amostras do contrato; intermediárias do DoF a 1×).
+    pub fn gpu_bytes(&self) -> u64 {
+        let Some(a) = &self.current else { return 0 };
+        let px = a.width as u64 * a.height as u64;
+        let samples = contract::msaa_sample_count().max(1) as u64;
+        let color = contract::color_bytes_per_pixel();
+        let depth = contract::depth_bytes_per_pixel();
+        let mut b = px * samples * depth;
+        if a.msaa_view.is_some() {
+            b += px * samples * color;
+        }
+        if a.scene_view.is_some() {
+            b += px * color;
+        }
+        if a.dof_depth_view.is_some() {
+            b += px * depth;
+        }
+        b
+    }
+
     /// Garante os alvos para `width`×`height` e devolve os handles.
     /// Realoca apenas quando o tamanho mudou; o DoF é alocado sob demanda.
     pub(crate) fn ensure(

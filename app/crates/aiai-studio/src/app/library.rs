@@ -252,6 +252,16 @@ fn thumb_key(e: &Entry) -> String {
 }
 
 impl LibraryState {
+    /// Solta a prévia (turntable, imagem) e, com `thumbs`, as miniaturas da grade (orçamento de VRAM, `gpu_owners`).
+    pub(crate) fn release_gpu(&mut self, thumbs: bool) -> bool {
+        let mut had = self.preview.frame.take().is_some() | self.preview.image.take().is_some();
+        if thumbs && !self.thumbs.is_empty() {
+            self.thumbs.clear();
+            had = true;
+        }
+        had
+    }
+
     /// A biblioteca está ligada (há uma pasta raiz)?
     pub(crate) fn enabled(&self) -> bool {
         self.root.is_some()

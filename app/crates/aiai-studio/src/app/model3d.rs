@@ -70,9 +70,42 @@ pub(crate) fn install_gpu(rs: &egui_wgpu::RenderState) {
     tracing::info!("camada 3D: renderer cel na GPU ({} {:?})", info.name, info.backend);
 }
 
+/// Bytes de GPU que o serviço 3D guarda entre quadros (alvos e mapa de sombra; ver `gpu_mem`).
+static GPU_CACHED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Pedido do app (pressão de VRAM) para o serviço 3D soltar o que guarda entre quadros.
+static GPU_RELEASE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Sem quadro 3D por este tempo, o serviço solta os alvos guardados (voltam no próximo quadro).
+const GPU_IDLE_RELEASE: std::time::Duration = std::time::Duration::from_secs(20);
+
+pub(crate) fn gpu_cached_bytes() -> u64 {
+    GPU_CACHED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub(crate) fn gpu_release_cached() {
+    GPU_RELEASE.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 fn gpu_worker(renderer: aiai_3d_render::HeadlessRenderer, rx: crossbeam_channel::Receiver<Job>) {
+    use std::sync::atomic::Ordering;
     let mut scenes: Vec<(BlobHash, aiai_3d_core::Scene)> = Vec::new();
-    while let Ok(job) = rx.recv() {
+    let mut last_job = std::time::Instant::now();
+    loop {
+        let job = match rx.recv_timeout(std::time::Duration::from_secs(1)) {
+            Ok(job) => job,
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                let idle = last_job.elapsed() >= GPU_IDLE_RELEASE && GPU_CACHED.load(Ordering::Relaxed) > 0;
+                if GPU_RELEASE.swap(false, Ordering::Relaxed) || idle {
+                    renderer.release_cached_targets();
+                    GPU_CACHED.store(renderer.cached_gpu_bytes(), Ordering::Relaxed);
+                }
+                continue;
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+        };
+        last_job = std::time::Instant::now();
+        if GPU_RELEASE.swap(false, Ordering::Relaxed) {
+            renderer.release_cached_targets();
+        }
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<Vec<u8>, String> {
             if job.state.mode == RenderMode3d::Wire {
                 return Ok(to_u8(&raster::render_cpu(&job.model, &job.state, job.w, job.h)));
@@ -92,6 +125,7 @@ fn gpu_worker(renderer: aiai_3d_render::HeadlessRenderer, rx: crossbeam_channel:
             let (img, _m) = pollster::block_on(renderer.render_scene(scene, job.w, job.h)).map_err(|e| format!("render 3D na GPU: {e}"))?;
             Ok(img.into_raw())
         }));
+        GPU_CACHED.store(renderer.cached_gpu_bytes(), Ordering::Relaxed);
         let _ = job.reply.send(r.unwrap_or_else(|_| Err("o renderer 3D entrou em pânico".into())));
     }
 }
@@ -192,6 +226,18 @@ pub(crate) struct M3dState {
     pub user_files: bool,
     user_poses: Option<Vec<UserPose>>,
     pose_name: String,
+}
+
+impl M3dState {
+    /// Fora de um arrasto: solta as imagens da prévia (abaixo/acima da camada e o quadro ao vivo; orçamento de VRAM,
+    /// `gpu_owners`). O próximo arrasto pede de novo.
+    pub(crate) fn release_gpu(&mut self) -> bool {
+        if self.drag.is_some() || self.hold.is_some() {
+            return false;
+        }
+        self.live_state = None;
+        self.split.take().is_some() | self.live_tex.take().is_some()
+    }
 }
 
 /// Pose guardada pelo usuário (arquivo `.aiaipose`, o envelope de recurso da Biblioteca com a pose no `payload`).

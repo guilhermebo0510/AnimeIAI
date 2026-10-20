@@ -592,6 +592,17 @@ pub fn msaa_sample_count() -> u32 {
     contract()["targets"]["msaa_samples"].as_u64().unwrap_or(1) as u32
 }
 
+/// Bytes por pixel da cor offscreen (telemetria de VRAM).
+pub fn color_bytes_per_pixel() -> u64 {
+    offscreen_color_format().block_copy_size(None).unwrap_or(4) as u64
+}
+
+/// Bytes por pixel da profundidade (formatos sem cópia, como `depth24plus`,
+/// contam 4: é o que os drivers reservam).
+pub fn depth_bytes_per_pixel() -> u64 {
+    depth_format().block_copy_size(Some(wgpu::TextureAspect::DepthOnly)).unwrap_or(4).max(4) as u64
+}
+
 /// `true` quando o alvo offscreen resolve a textura de MSAA antes da leitura.
 pub fn resolve_to_swapchain() -> bool {
     contract()["targets"]["resolve_to_swapchain"].as_bool().unwrap_or(false)

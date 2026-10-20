@@ -21,6 +21,8 @@ pub(crate) mod doc;
 mod prefs_ui;
 mod start;
 mod editor;
+mod gpu_evict;
+mod gpu_owners;
 mod input_queue;
 mod library;
 mod live;
@@ -118,6 +120,10 @@ pub struct StudioApp {
     recoveries: Vec<PathBuf>,
     /// O documento veio de uma cópia de recuperação: some depois de salvo numa pasta de verdade.
     recovered_from: Option<PathBuf>,
+    /// Memória de vídeo: contabilidade, orçamento e pressão (`gpu_mem`, `gpu_evict`).
+    gpu: crate::gpu_mem::GpuMem,
+    gpu_seen: gpu_owners::Seen,
+    gpu_pressure_seen: crate::gpu_mem::Pressure,
 }
 
 impl StudioApp {
@@ -187,6 +193,9 @@ impl StudioApp {
             autosave: autosave::Autosave::new(!cli_no_autosave),
             recoveries: Vec::new(),
             recovered_from: None,
+            gpu: Default::default(),
+            gpu_seen: Default::default(),
+            gpu_pressure_seen: Default::default(),
             frame_count: 0,
             last_frame: None,
             frame_ms: 16.7,
@@ -229,6 +238,7 @@ impl StudioApp {
                 }
             }
         }
+        app.gpu_startup_markers();
         app
     }
 
@@ -1203,6 +1213,8 @@ impl StudioApp {
             ctx.request_repaint_after(Duration::from_millis(500));
         }
         self.rects.end_frame();
+        // depois do fim do quadro: os retângulos lidos são os deste quadro (painéis na tela)
+        self.gpu_tick(&ctx);
     }
 }
 
@@ -1217,6 +1229,7 @@ impl eframe::App for StudioApp {
             if let Some(rs) = frame.wgpu_render_state() {
                 // camada 3D: renderer cel na GPU (no device do egui) para o compositor
                 model3d::install_gpu(rs);
+                self.gpu.install(rs);
                 let info = rs.adapter.get_info();
                 self.gpu_name = Some(info.name.clone());
                 self.ed.audio_ws.hw.set_gpu(&info.name, &format!("{:?}", info.device_type), &format!("{:?}", info.backend), &info.driver);
@@ -1224,6 +1237,9 @@ impl eframe::App for StudioApp {
             }
         }
         self.ed.sanitize_color(&self.core.project);
+        if let Some(reason) = crate::gpu_mem::device_lost() {
+            self.gpu_lost_exit(&reason);
+        }
         self.frame(ui);
     }
 

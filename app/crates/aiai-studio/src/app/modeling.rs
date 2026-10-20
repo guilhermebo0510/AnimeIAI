@@ -145,6 +145,12 @@ impl Default for ModelingState {
 }
 
 impl ModelingState {
+    /// Solta a textura (orçamento de VRAM, `gpu_owners`): volta pedida de novo quando o painel aparecer.
+    pub(crate) fn release_gpu(&mut self) -> bool {
+        self.shown_key = None;
+        self.tex.take().is_some()
+    }
+
     /// Guarda o "antes" no histórico se o documento mudou.
     fn commit(&mut self, before: ModelDoc) {
         if before != self.doc {

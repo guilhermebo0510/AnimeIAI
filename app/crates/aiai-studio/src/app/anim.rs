@@ -130,6 +130,12 @@ impl Default for AnimState {
 }
 
 impl AnimState {
+    /// Solta a textura da mesa de luz (orçamento de VRAM, `gpu_owners`); o próximo quadro com ela ligada pede de novo.
+    pub(crate) fn release_onion(&mut self) -> bool {
+        self.asked = None;
+        self.onion_tex.take().is_some()
+    }
+
     /// Densidade da linha do tempo no workspace: a Animação começa compacta (a linha do tempo ocupava área demais).
     pub(crate) fn density(&self, ws: WorkspaceId) -> Density {
         self.density.get(&ws).copied().unwrap_or(if ws == WorkspaceId::Animacao { Density::Compact } else { Density::Normal })

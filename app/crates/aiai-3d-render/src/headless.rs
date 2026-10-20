@@ -2076,6 +2076,28 @@ impl HeadlessRenderer {
         self.lock_target_cache().allocations()
     }
 
+    /// Bytes de GPU guardados entre quadros: alvos em cache (MSAA, profundidade,
+    /// DoF) e mapa de sombra. Telemetria e orçamento de VRAM do app (as
+    /// texturas de leitura de cada quadro são soltas no fim dele).
+    pub fn cached_gpu_bytes(&self) -> u64 {
+        let targets = self.lock_target_cache().gpu_bytes();
+        let shadow = self
+            .shadow_target
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .map_or(0, |t| t.size as u64 * t.size as u64 * contract::depth_bytes_per_pixel());
+        targets + shadow
+    }
+
+    /// Solta o que é guardado entre quadros (alvos e mapa de sombra; voltam no
+    /// próximo quadro que precisar). Usado pelo app quando o 3D fica ocioso ou a
+    /// VRAM aperta.
+    pub fn release_cached_targets(&self) {
+        self.lock_target_cache().clear();
+        *self.shadow_target.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    }
+
     /// Mapa de sombra `size × size` (profundidade do contrato, 1×): realocado só
     /// quando o tamanho muda. Devolve a view (um handle barato, clonado).
     fn ensure_shadow_target(&self, size: u32) -> wgpu::TextureView {

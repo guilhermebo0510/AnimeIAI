@@ -22,6 +22,15 @@ pub(crate) struct PanelState {
     made_count: u32,
 }
 
+impl PanelState {
+    /// Esquece as prévias de fonte (orçamento de VRAM, `gpu_owners`): voltam aos poucos quando o painel aparece.
+    pub(crate) fn release_gpu(&mut self) -> bool {
+        let had = !self.previews.is_empty();
+        self.previews.clear();
+        had
+    }
+}
+
 pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: egui::Rect) {
     let mut child = body_ui(ui, body, 8.0);
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(&mut child, |ui| {

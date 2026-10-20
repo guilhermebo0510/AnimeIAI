@@ -18,6 +18,13 @@ pub(crate) struct SubViewState {
     pub(crate) error: Option<String>,
 }
 
+impl SubViewState {
+    /// Solta a imagem carregada (orçamento de VRAM, `gpu_owners`): é relida do disco quando o painel aparece.
+    pub(crate) fn release_gpu(&mut self) -> bool {
+        self.loaded.take().is_some()
+    }
+}
+
 pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
     let t = env.t;
     let mut child = body_ui(ui, body, 6.0);

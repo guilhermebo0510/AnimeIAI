@@ -53,6 +53,8 @@ resvg = { version = "0.45", default-features = false }
 [target.'cfg(windows)'.dependencies]
 # memoria do processo na barra de status (GetProcessMemoryInfo); 0.61.2 ja esta no Cargo.lock
 windows-sys = { version = "0.61", features = ["Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_Media_Audio", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_Graphics_Dwm"] }
+# memória de vídeo do processo e orçamento do sistema (DXGI QueryVideoMemoryInfo, gpu_mem.rs); 0.62.2 já está no Cargo.lock
+windows = { version = "0.62", features = ["Win32_Graphics_Dxgi", "Win32_Foundation"] }
 
 [target.'cfg(windows)'.build-dependencies]
 # icone e versao embutidos no .exe (Explorer, atalho, barra de tarefas, menu Iniciar): compila um .rc com o rc.exe do Windows SDK

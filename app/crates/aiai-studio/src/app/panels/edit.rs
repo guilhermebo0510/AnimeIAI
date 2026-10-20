@@ -47,6 +47,13 @@ pub(crate) struct EditPreview {
 }
 
 impl EditPreview {
+    /// Solta a textura (orçamento de VRAM, `gpu_owners`): volta pedida de novo quando o painel aparecer.
+    pub(crate) fn release_gpu(&mut self) -> bool {
+        self.asked = None;
+        self.shown_frame = None;
+        self.texture.take().is_some()
+    }
+
     pub(crate) fn update(&mut self, ctx: &egui::Context, core: &CoreSession, key: String, doc: &Arc<EditDoc>, frame: u32) {
         self.request(ctx, (core.change_counter, key, frame), || {
             let (project, blobs, doc) = (core.project.clone(), core.blobs.clone(), doc.clone());
@@ -66,7 +73,8 @@ impl EditPreview {
                     self.job = None;
                     match res {
                         Ok((w, h, rgba)) => {
-                            let img = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba);
+                            // sob pressão de VRAM a prévia vem menor (o monitor escala para o retângulo dele)
+                            let img = crate::gpu_mem::scale_for_pressure(egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &rgba));
                             match &mut self.texture {
                                 Some(t) => t.set(img, egui::TextureOptions::LINEAR),
                                 None => self.texture = Some(ctx.load_texture("edit-preview", img, egui::TextureOptions::LINEAR)),
