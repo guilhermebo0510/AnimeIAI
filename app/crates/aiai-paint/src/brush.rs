@@ -253,6 +253,23 @@ pub struct DualBrush {
     pub hardness: f32,
 }
 
+/// Autor de um pincel (vai no manifesto do `.aiaibrush`; tudo opcional).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct BrushAuthor {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub email: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub url: String,
+}
+
+impl BrushAuthor {
+    pub fn is_empty(&self) -> bool {
+        self.name.trim().is_empty() && self.email.trim().is_empty() && self.url.trim().is_empty()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct BrushPreset {
     pub name: String,
@@ -262,6 +279,24 @@ pub struct BrushPreset {
     /// De onde veio (pincel importado: arquivo e pasta dentro dele); a licença é a do autor do pacote.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub source: String,
+    /// Identificador estável (UUID) do pincel na biblioteca e nos pacotes; vazio = pincel sem arquivo próprio.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
+    #[serde(default, skip_serializing_if = "BrushAuthor::is_empty")]
+    pub author: BrushAuthor,
+    /// Licença: um identificador SPDX (CC-BY-4.0, CC0-1.0, MIT...) ou o texto livre da licença.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub license: String,
+    /// Versão do pincel (1.0.0), para a biblioteca saber qual cópia é mais nova.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub version: String,
+    /// Criado/alterado em (ISO 8601, UTC).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub created: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub modified: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     #[serde(default)]
     pub tip: BrushTip,
     /// Diâmetro em px com pressão máxima.
@@ -359,6 +394,13 @@ impl BrushPreset {
             name: name.into(),
             category: String::new(),
             source: String::new(),
+            id: String::new(),
+            author: BrushAuthor::default(),
+            license: String::new(),
+            version: String::new(),
+            created: String::new(),
+            modified: String::new(),
+            tags: Vec::new(),
             tip: BrushTip::Round { hardness, roundness: 1.0, angle: 0.0 },
             size,
             spacing: d_spacing(),

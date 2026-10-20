@@ -31,6 +31,19 @@ pub struct Prefs {
     /// Curva de pressão da caneta: pressão mínima (o traço nunca some) e expoente (< 1 = mão leve, > 1 = mão pesada).
     pub pen_pressure_min: f32,
     pub pen_pressure_gamma: f32,
+    /// Autor e licença usados nos pincéis novos e preenchidos na exportação (os últimos valores digitados).
+    pub brush_author: BrushAuthorPrefs,
+}
+
+/// Autor e licença dos pincéis do usuário (dados do perfil de criador; vão no manifesto do `.aiaibrush`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BrushAuthorPrefs {
+    pub name: String,
+    pub email: String,
+    pub url: String,
+    /// Id SPDX ou texto; vazio = "Proprietário / todos os direitos reservados".
+    pub license: String,
 }
 
 /// Pressão da caneta pela curva das preferências: `min + (1 − min) · f^gamma`, presa em [0,02; 1].
@@ -60,7 +73,7 @@ pub const MAX_RECENT: usize = 10;
 
 impl Default for Prefs {
     fn default() -> Self {
-        Prefs { theme: ThemeKind::Dark, lang: Lang::Pt, workspace: WorkspaceId::default(), ui_zoom: 1.0, recent: Vec::new(), show_start: true, shortcuts: BTreeMap::new(), projects_dir: None, gpu: GpuPref::Dedicated, pen_pressure_min: 0.0, pen_pressure_gamma: 1.0 }
+        Prefs { theme: ThemeKind::Dark, lang: Lang::Pt, workspace: WorkspaceId::default(), ui_zoom: 1.0, recent: Vec::new(), show_start: true, shortcuts: BTreeMap::new(), projects_dir: None, gpu: GpuPref::Dedicated, pen_pressure_min: 0.0, pen_pressure_gamma: 1.0, brush_author: BrushAuthorPrefs::default() }
     }
 }
 
@@ -128,7 +141,7 @@ mod tests {
     #[test]
     fn round_trip() {
         let p = tmp("rt");
-        let prefs = Prefs { theme: ThemeKind::Light, lang: Lang::En, workspace: WorkspaceId::Animacao, ui_zoom: 1.25, recent: vec![PathBuf::from(r"C:\x\a.aiai")], show_start: false, shortcuts: [("tool.fill".to_owned(), "K".to_owned())].into(), projects_dir: Some(PathBuf::from(r"D:\anim")), gpu: GpuPref::Integrated, pen_pressure_min: 0.1, pen_pressure_gamma: 1.5 };
+        let prefs = Prefs { theme: ThemeKind::Light, lang: Lang::En, workspace: WorkspaceId::Animacao, ui_zoom: 1.25, recent: vec![PathBuf::from(r"C:\x\a.aiai")], show_start: false, shortcuts: [("tool.fill".to_owned(), "K".to_owned())].into(), projects_dir: Some(PathBuf::from(r"D:\anim")), gpu: GpuPref::Integrated, pen_pressure_min: 0.1, pen_pressure_gamma: 1.5, brush_author: BrushAuthorPrefs { name: "Ana".into(), email: "ana@exemplo.com".into(), url: String::new(), license: "CC-BY-4.0".into() } };
         save(&p, &prefs).unwrap();
         assert_eq!(load(&p), prefs);
         let _ = std::fs::remove_dir_all(p.parent().unwrap());

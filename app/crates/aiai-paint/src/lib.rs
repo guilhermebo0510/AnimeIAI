@@ -7,6 +7,7 @@ pub mod adjust;
 pub mod blend;
 pub mod brush;
 pub mod brush_import;
+pub mod brush_pack;
 pub mod curve;
 pub mod fill;
 pub mod fonts;
@@ -21,6 +22,7 @@ pub mod text_layer;
 pub mod texture;
 pub mod tile;
 pub mod transform;
+pub mod userdirs;
 pub mod warp;
 
 pub use crate::image::Image;

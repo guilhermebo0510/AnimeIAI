@@ -247,7 +247,8 @@ pub fn user_fonts_dir() -> Option<PathBuf> {
     if let Some(v) = std::env::var_os("AIAI_FONTS_DIR").filter(|v| !v.is_empty()) {
         return Some(PathBuf::from(v));
     }
-    let mut bases: Vec<PathBuf> = Vec::new();
+    // a pasta Documentos do sistema primeiro (segue OneDrive e o idioma do Windows); as heurísticas são o plano B
+    let mut bases: Vec<PathBuf> = crate::userdirs::documents_dir().into_iter().collect();
     for var in ["OneDrive", "OneDriveConsumer", "OneDriveCommercial", "USERPROFILE"] {
         if let Some(b) = std::env::var_os(var).filter(|v| !v.is_empty()).map(PathBuf::from) {
             for sub in ["Documentos", "Documents"] {

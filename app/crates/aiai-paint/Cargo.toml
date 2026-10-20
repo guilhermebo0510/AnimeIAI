@@ -18,5 +18,6 @@ ab_glyph = "0.2.32"
 flate2 = "1.1"
 roxmltree = "0.20"
 png = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]

@@ -33,6 +33,8 @@ pub(crate) struct BrushPanelState {
     /// Janelas "Criar pincel" e "Importar pincéis".
     pub maker: Option<super::brush_maker::Maker>,
     pub importer: Option<super::brush_maker::Importer>,
+    /// Janela "Exportar pincel / categoria".
+    pub export: Option<super::brush_maker::ExportDialog>,
     /// Altura que as propriedades e a lista (itens e categorias) ocuparam no quadro anterior (divisória automática).
     props_h: f32,
     list_need: f32,
@@ -121,6 +123,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
     let mut pick: Option<Act> = None;
     let mut delete: Option<usize> = None;
     let mut make_from: Option<usize> = None;
+    let mut export_req: Option<super::brush_maker::ExportTarget> = None;
     let (mut cats_need, mut items_need) = (0.0f32, 0.0f32);
     // a linha de cima tem altura fixa (o separador vertical não pode esticar até o fim do painel)
     ui.allocate_ui_with_layout(egui::vec2(total_w, list_h), egui::Layout::left_to_right(egui::Align::Min), |ui| {
@@ -190,11 +193,28 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
                                 pick = Some(it.act);
                             }
                             let (user, idx) = (it.user, if let Act::Brush(b) = it.act { Some(b) } else { None });
-                            let r = resp.on_hover_text(it.name.clone());
+                            let r = match idx {
+                                Some(b) => {
+                                    let lib = &env.ed.brushes;
+                                    resp.on_hover_ui(|ui| brush_tooltip(ui, lib, b))
+                                }
+                                None => resp.on_hover_text(it.name.clone()),
+                            };
                             if let Some(b) = idx {
+                                let cat = it.cat.clone();
+                                let lib = &env.ed.brushes;
                                 r.context_menu(|ui| {
+                                    let cat_user = lib.category_has_user(&cat);
                                     if ui.button(tr("brushes.make_from")).clicked() {
                                         make_from = Some(b);
+                                        ui.close();
+                                    }
+                                    if ui.add_enabled(user, egui::Button::new(tr("brushes.export"))).on_hover_text(tr("brushes.export.tip")).clicked() {
+                                        export_req = Some(super::brush_maker::ExportTarget::Brush(b));
+                                        ui.close();
+                                    }
+                                    if ui.add_enabled(cat_user, egui::Button::new(tr("brushes.export_cat"))).on_hover_text(tr("brushes.export_cat.tip")).clicked() {
+                                        export_req = Some(super::brush_maker::ExportTarget::Category(cat));
                                         ui.close();
                                     }
                                     if ui.add_enabled(user, egui::Button::new(tr("brushes.delete"))).clicked() {
@@ -261,10 +281,29 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
             if b.on_hover_text(tr("brushes.import_open.tip")).clicked() {
                 super::brush_maker::pick_import(env, ui.ctx());
             }
+            // a pasta de pincéis é do usuário: reler (arquivos copiados para lá ou tirados) e abrir no Explorador
+            let has_dir = env.ed.brushes.dir().is_some();
+            let b = ui.add_enabled(has_dir, egui::Button::new(tr("brushes.rescan")));
+            env.note("brushes:rescan", b.rect);
+            if b.on_hover_text(tr("brushes.rescan.tip")).clicked() {
+                rescan(env);
+            }
+            let tip = env.ed.brushes.dir().map(|d| d.display().to_string()).unwrap_or_else(|| tr("brushes.folder.none").to_owned());
+            let b = ui.add_enabled(has_dir, egui::Button::new(tr("brushes.open_dir")));
+            env.note("brushes:open_dir", b.rect);
+            if b.on_hover_text(tip).clicked() {
+                if let Some(d) = env.ed.brushes.dir() {
+                    let _ = std::fs::create_dir_all(d);
+                    let _ = std::process::Command::new("explorer").arg(d).spawn();
+                }
+            }
         });
     }
     if let Some(i) = make_from {
         super::brush_maker::open_maker(env, Some(i));
+    }
+    if let Some(t) = export_req {
+        super::brush_maker::open_export(env, t);
     }
     super::brush_maker::windows(env, ui.ctx());
     // ---- embaixo: as propriedades do item escolhido
@@ -273,6 +312,56 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
         super::properties::tool_options_panel(env, ui);
     });
     env.ed.brush_panel.props_h = out.content_size.y;
+}
+
+/// Relê a pasta de pincéis e mantém o pincel escolhido (os índices mudam).
+fn rescan(env: &mut Env) {
+    let cur = env.ed.brushes.get(env.ed.opts.brush_preset).map(|p| (p.id.clone(), p.name.clone()));
+    let n = env.ed.brushes.rescan();
+    let bad = env.ed.brushes.problems.len();
+    if let Some((id, name)) = cur {
+        env.ed.opts.brush_preset = env.ed.brushes.index_of(&id, &name).unwrap_or(1);
+    }
+    if env.ed.opts.brush_preset >= env.ed.brushes.items.len() {
+        env.ed.opts.brush_preset = 1;
+    }
+    env.ed.opts.brush_custom = None;
+    let mut msg = tr("brushes.rescan.done").replace("{n}", &n.to_string()).replace("{bad}", &bad.to_string());
+    // quais arquivos deram problema (os primeiros); o motivo de cada um está no registro (log)
+    let names: Vec<String> = env.ed.brushes.problems.iter().take(3).filter_map(|(p, _)| p.file_name().map(|n| n.to_string_lossy().into_owned())).collect();
+    if !names.is_empty() {
+        msg = format!("{msg}: {}", names.join(", "));
+    }
+    env.ed.notify(msg);
+    // o aviso detalhado só vale na abertura; aqui o resumo acima basta
+    let _ = env.ed.brushes.take_warning();
+}
+
+/// O que a dica do cartão do pincel mostra: nome, autor, licença, fonte, versão e etiquetas.
+fn brush_tooltip(ui: &mut Ui, lib: &crate::app::brushes::BrushLibrary, i: usize) {
+    let Some(b) = lib.items.get(i) else { return };
+    let p = &b.preset;
+    ui.label(egui::RichText::new(&p.name).strong());
+    if !b.user {
+        ui.label(tr("brush.tip.factory"));
+        return;
+    }
+    let row = |ui: &mut Ui, key: &str, v: String| {
+        if !v.trim().is_empty() {
+            ui.label(format!("{}: {v}", tr(key)));
+        }
+    };
+    row(ui, "brushes.author", [p.author.name.clone(), p.author.email.clone(), p.author.url.clone()].into_iter().filter(|x| !x.is_empty()).collect::<Vec<_>>().join(" · "));
+    row(ui, "brushes.license", p.license.clone());
+    let imported = b.manifest.as_ref().map(|m| m.source.imported_from.clone()).filter(|f| !f.is_empty());
+    let source = match imported {
+        Some(f) if p.source.is_empty() => f,
+        Some(f) => format!("{} ({f})", p.source),
+        None => p.source.clone(),
+    };
+    row(ui, "brushes.source", source);
+    row(ui, "brush.tip.version", p.version.clone());
+    row(ui, "brushes.tags", p.tags.join(", "));
 }
 
 fn cat_label_any(c: &str) -> String {

@@ -418,6 +418,11 @@ impl StudioApp {
         if let Some(w) = self.ed.brushes.take_warning() {
             self.push_warnings(OpenWarnings { lines: vec![w], ..Default::default() });
         }
+        // autor/licença que o usuário confirmou ao criar ou exportar pincel viram preferência (valem para os próximos)
+        if let Some(a) = self.ed.brushes.take_author_change() {
+            self.prefs.brush_author = a;
+            self.mark_dirty();
+        }
     }
 
     /// Miniatura do projeto depois de salvar (pelo menu ou pela bridge), noutra thread.
