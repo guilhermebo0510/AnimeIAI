@@ -307,8 +307,9 @@ pub(crate) struct Selection {
     pub offset: Vec2,
     /// Sem seleção de verdade: o Mover leva o conteúdo inteiro da camada.
     pub whole: bool,
-    /// Alças do Mover: escala e rotação (graus, horário) em volta do centro original, ainda não aplicadas.
-    pub scale: f32,
+    /// Alças do Mover: escala (x, y; negativa = espelhada) e rotação (graus, horário) em volta do centro original,
+    /// ainda não aplicadas.
+    pub scale: Vec2,
     pub rotate: f32,
     /// Varinha: máscara da região.
     pub mask: Option<std::sync::Arc<WandMask>>,
@@ -321,7 +322,7 @@ pub(crate) struct Selection {
 
 impl Selection {
     pub(crate) fn new(mode: SelMode, pts: Vec<Vec2>, whole: bool) -> Self {
-        Selection { mode, pts, offset: Vec2::ZERO, whole, scale: 1.0, rotate: 0.0, mask: None, strokes: Vec::new(), strokes_layer: None }
+        Selection { mode, pts, offset: Vec2::ZERO, whole, scale: Vec2::splat(1.0), rotate: 0.0, mask: None, strokes: Vec::new(), strokes_layer: None }
     }
 
     /// Centro da caixa da seleção (pivô da escala e da rotação), antes do deslocamento.
@@ -332,7 +333,10 @@ impl Selection {
     /// Transformação pendente (escala e rotação em volta do centro, depois o deslocamento).
     pub(crate) fn affine(&self) -> aiai_paint::Affine {
         let c = self.center();
-        aiai_paint::Affine::from_trs(self.offset.x, self.offset.y, self.scale, self.rotate, [c.x, c.y])
+        // M = T(c + offset) · R · S · T(-c), a mesma ordem do Deform::Affine do commit
+        let (s, co) = self.rotate.to_radians().sin_cos();
+        let (a, b, d, e) = (co * self.scale.x, -s * self.scale.y, s * self.scale.x, co * self.scale.y);
+        aiai_paint::Affine([a, b, c.x + self.offset.x - (a * c.x + b * c.y), d, e, c.y + self.offset.y - (d * c.x + e * c.y)])
     }
 
     pub(crate) fn map(&self, p: Vec2) -> Vec2 {
@@ -341,7 +345,7 @@ impl Selection {
     }
 
     pub(crate) fn is_identity(&self) -> bool {
-        self.offset == Vec2::ZERO && (self.scale - 1.0).abs() < 1e-4 && self.rotate.abs() < 1e-3
+        self.offset == Vec2::ZERO && self.plain_scale() && self.rotate.abs() < 1e-3
     }
     pub(crate) fn rect_of(&self) -> Option<[f32; 4]> {
         if let Some(m) = &self.mask {
@@ -367,6 +371,17 @@ impl Selection {
         }
     }
 
+    /// `p` (px do canvas, já com a transformação pendente) cai dentro da escolha?
+    pub(crate) fn contains_mapped(&self, p: Vec2) -> bool {
+        match self.affine().inverse() {
+            Some(inv) => {
+                let (x, y) = inv.apply(p.x, p.y);
+                self.contains(Vec2::new(x, y))
+            }
+            None => false,
+        }
+    }
+
     pub(crate) fn contains(&self, p: Vec2) -> bool {
         match self.mode {
             SelMode::Rect => self.rect_of().is_some_and(|r| p.x >= r[0] && p.x <= r[0] + r[2] && p.y >= r[1] && p.y <= r[1] + r[3]),
@@ -386,7 +401,7 @@ impl Selection {
     /// Aplica a transformação pendente às coordenadas (depois de um Enter). Com escala/rotação, retângulo, elipse e
     /// varinha viram laço (o contorno transformado).
     pub(crate) fn bake_offset(&mut self) {
-        if (self.scale - 1.0).abs() < 1e-4 && self.rotate.abs() < 1e-3 && self.mask.is_none() {
+        if self.plain_scale() && self.rotate.abs() < 1e-3 && self.mask.is_none() {
             for p in &mut self.pts {
                 *p += self.offset;
             }
@@ -407,8 +422,13 @@ impl Selection {
             self.mask = None;
         }
         self.offset = Vec2::ZERO;
-        self.scale = 1.0;
+        self.scale = Vec2::splat(1.0);
         self.rotate = 0.0;
+    }
+
+    /// Sem escala pendente.
+    pub(crate) fn plain_scale(&self) -> bool {
+        (self.scale - Vec2::splat(1.0)).length() < 1e-4
     }
 }
 
@@ -540,6 +560,8 @@ pub(crate) enum Gesture {
     Stroke(Box<StrokeGesture>),
     Select { start: Vec2, pts: Vec<Vec2>, mode: SelMode },
     MoveSel { last: Vec2 },
+    /// Mover em camada vetorial: caixa de seleção de traços (arrasto fora de qualquer traço); `add` = Shift.
+    BoxPick { start: Vec2, cur: Vec2, add: bool },
     /// Editar pontos: arrasto de um ponto de controle (posições no espaço do cel; `width` = muda a largura no ponto).
     DragNode { idx: usize, start: Vec2, cur: Vec2, width: bool, t0: std::time::Instant },
     /// Editar pontos: arrasto de uma ponta da alça do ponto `idx` (`side` = +1 a de saída, -1 a de chegada).
@@ -549,7 +571,7 @@ pub(crate) enum Gesture {
     /// Caneta em curva por cliques: cada clique põe um ponto; Enter, duplo clique ou botão direito termina.
     PolyCurve { pts: Vec<Vec2>, last_click: std::time::Instant },
     /// Alça de canto do Mover: escala em volta do centro.
-    ScaleSel { start_dist: f32, start_scale: f32 },
+    ScaleSel { handle: usize, start_scale: Vec2, start_offset: Vec2, start_rotate: f32 },
     /// Alça de rotação do Mover.
     RotateSel { start_angle: f32, start_rot: f32 },
     /// Conta-gotas: amostra ao apertar e enquanto arrasta.
@@ -631,6 +653,8 @@ pub(crate) struct Shown {
 pub(crate) struct Editor {
     /// Shift seguro neste quadro (formas da caneta: ângulo de 15°, quadrado, círculo).
     pub shift: bool,
+    /// Alt apertado (escala a partir do centro na transformação).
+    pub alt: bool,
     /// Sub View (imagens de referência do disco, fora do projeto).
     pub subview: super::panels::subview::SubViewState,
     /// Traço escolhido para editar pontos (Mover em "Editar pontos").
@@ -752,6 +776,7 @@ impl Default for Editor {
             node_sel: None,
             node_field: None,
             shift: false,
+            alt: false,
             brushes: Default::default(),
             brush_panel: Default::default(),
             want_panel: None,

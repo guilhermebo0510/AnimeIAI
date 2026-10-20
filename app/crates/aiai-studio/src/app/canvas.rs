@@ -340,6 +340,7 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
     let events: Vec<Event> = ui.input(|i| i.events.clone());
     let (space, r_held, any_down) = ui.input(|i| (i.key_down(egui::Key::Space), i.key_down(egui::Key::R), i.pointer.any_down()));
     env.ed.shift = ui.input(|i| i.modifiers.shift);
+    env.ed.alt = ui.input(|i| i.modifiers.alt);
     if let Some(p) = ui.input(|i| i.pointer.hover_pos()) {
         env.ed.cursor = Some(p);
     }
@@ -494,18 +495,23 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
                             if near(knob) {
                                 let d = c - center;
                                 Some(Gesture::RotateSel { start_angle: d.y.atan2(d.x).to_degrees(), start_rot: s.rotate })
-                            } else if corners.iter().any(|q| near(*q)) {
-                                Some(Gesture::ScaleSel { start_dist: (c - center).length().max(1.0), start_scale: s.scale })
+                            } else if let Some(h) = s.rect_of().and_then(|r| handle_points(r).iter().position(|q| near(s.map(*q)))) {
+                                let _ = (corners, center);
+                                Some(Gesture::ScaleSel { handle: h, start_scale: s.scale, start_offset: s.offset, start_rotate: s.rotate })
                             } else {
                                 None
                             }
                         });
+                        let mut boxpick = false;
                         if hit.is_none() {
-                            // camada vetorial: clicar num traço escolhe só ele (Shift soma); fora = a camada inteira
-                            tools::move_pick(env, c, 6.0 / xf.scale.max(1e-3), mods.shift);
+                            // camada vetorial: clicar num traço escolhe só ele (Shift soma); arrastar fora de qualquer
+                            // traço desenha a caixa de seleção (como o Mover com seleção automática do Photoshop)
+                            boxpick = tools::move_pick(env, c, 6.0 / xf.scale.max(1e-3), mods.shift);
                         }
                         if let Some(g) = hit {
                             env.ed.gesture = g;
+                        } else if boxpick {
+                            env.ed.gesture = Gesture::BoxPick { start: c, cur: c, add: mods.shift };
                         } else if tools::begin_move(env) {
                             env.ed.gesture = Gesture::MoveSel { last: c };
                         }
@@ -566,12 +572,13 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
         Gesture::Shape { cur, .. } => *cur = c,
         Gesture::DragNode { .. } | Gesture::DragHandle { .. } => super::nodes::drag(env, c),
         Gesture::PolyCurve { .. } => {}
-        Gesture::ScaleSel { start_dist, start_scale } => {
+        Gesture::ScaleSel { handle, start_scale, start_offset, start_rotate } => {
+            let (shift, alt) = (env.ed.shift, env.ed.alt);
             if let Some(s) = env.ed.selection.as_mut() {
-                let center = s.center() + s.offset;
-                s.scale = (*start_scale * (c - center).length() / *start_dist).clamp(0.05, 20.0);
+                scale_drag(s, *handle, *start_scale, *start_offset, *start_rotate, c, shift, alt);
             }
         }
+        Gesture::BoxPick { cur, .. } => *cur = c,
         Gesture::RotateSel { start_angle, start_rot } => {
             if let Some(s) = env.ed.selection.as_mut() {
                 let d = c - (s.center() + s.offset);
@@ -610,6 +617,16 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
                 pts.push(c);
             }
             tools::finish_select(env, mode, start, pts);
+        }
+        Gesture::BoxPick { start, add, .. } => {
+            // arrasto curto = clique fora: desfaz a escolha; caixa = os traços que ela toca
+            if (c - start).length() * xf_scale(env, rect, ppp) < 4.0 {
+                if !add {
+                    env.ed.selection = None;
+                }
+            } else {
+                tools::box_pick(env, start, c, add);
+            }
         }
         Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } => {
             let key = tools::move_key(env);
@@ -955,6 +972,19 @@ fn two_tone(painter: &egui::Painter, pts: Vec<Pos2>, closed: bool) {
 }
 
 /// Cantos (transformados), alça de rotação e centro (transformado) da seleção, em coordenadas do canvas.
+/// Alças da transformação na caixa original (sem a transformação pendente): 0..4 cantos (sup-esq, sup-dir, inf-dir,
+/// inf-esq) e 4..8 meios dos lados (cima, direita, baixo, esquerda).
+pub(crate) fn handle_points(r: [f32; 4]) -> [Vec2; 8] {
+    let (x0, y0, x1, y1) = (r[0], r[1], r[0] + r[2], r[1] + r[3]);
+    let (mx, my) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+    [Vec2::new(x0, y0), Vec2::new(x1, y0), Vec2::new(x1, y1), Vec2::new(x0, y1), Vec2::new(mx, y0), Vec2::new(x1, my), Vec2::new(mx, y1), Vec2::new(x0, my)]
+}
+
+/// Alça oposta (âncora da escala) de cada alça.
+fn opposite(h: usize) -> usize {
+    [2, 3, 0, 1, 6, 7, 4, 5][h]
+}
+
 fn handles(s: &Selection) -> ([Vec2; 4], Vec2, Vec2) {
     let r = s.rect_of().unwrap_or([0.0, 0.0, 0.0, 0.0]);
     let corners = [Vec2::new(r[0], r[1]), Vec2::new(r[0] + r[2], r[1]), Vec2::new(r[0] + r[2], r[1] + r[3]), Vec2::new(r[0], r[1] + r[3])].map(|q| s.map(q));
@@ -1014,9 +1044,13 @@ fn paint_selection(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId
     }
     if *env.tool == ToolId::Move && !sel.whole {
         let (corners, knob, _) = handles(&sel);
-        for q in corners {
-            let p = xf.to_screen(q);
-            painter.rect(Rect::from_center_size(p, egui::vec2(9.0, 9.0)), 1.0, Color32::WHITE, Stroke::new(1.5, env.t.accent), egui::StrokeKind::Inside);
+        if let Some(r) = sel.rect_of() {
+            for (k, q) in handle_points(r).iter().enumerate() {
+                let p = xf.to_screen(sel.map(*q));
+                let side = if k < 4 { 9.0 } else { 7.0 };
+                painter.rect(Rect::from_center_size(p, egui::vec2(side, side)), 1.0, Color32::WHITE, Stroke::new(1.5, env.t.accent), egui::StrokeKind::Inside);
+                env.note(format!("transform:handle:{k}"), Rect::from_center_size(p, egui::vec2(side, side)));
+            }
         }
         let top_mid = xf.to_screen((corners[0] + corners[1]) / 2.0);
         let kp = xf.to_screen(knob);
@@ -1035,12 +1069,13 @@ fn paint_selection(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId
         let Some(cd) = cmds::cel_data(&env.core.project, &cel) else { return };
         let accent = env.t.accent;
         for s in &cd.strokes {
-            if !sel.whole && !aiai_tools::transform::stroke_in_selection(s, |x, y| sel.contains(Vec2::new(x, y))) {
+            let inside = if sel.strokes.is_empty() { aiai_tools::transform::stroke_in_selection(s, |x, y| sel.contains(Vec2::new(x, y))) } else { sel.strokes.contains(&s.id) };
+            if !sel.whole && !inside {
                 continue;
             }
             let pts: Vec<Pos2> = s.points.iter().map(|p| xf.to_screen(sel.map(Vec2::new(p.x, p.y)))).collect();
             if pts.len() >= 2 {
-                painter.add(Shape::line(pts, Stroke::new((s.width * sel.scale * xf.scale).max(1.0), accent.gamma_multiply(0.7))));
+                painter.add(Shape::line(pts, Stroke::new((s.width * sel.scale.x.abs().max(sel.scale.y.abs()) * xf.scale).max(1.0), accent.gamma_multiply(0.7))));
             }
         }
     }
@@ -1119,6 +1154,12 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
         painter.add(quad(ov.tex.id(), pts, uv));
     });
     let has_live = live.is_some();
+    if let Gesture::BoxPick { start, cur, .. } = env.ed.gesture {
+        let r = Rect::from_two_pos(xf.to_screen(start), xf.to_screen(cur));
+        painter.rect_filled(r, 0.0, env.t.accent.gamma_multiply(0.12));
+        let pts = vec![r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
+        two_tone(painter, pts, false);
+    }
     // pontos do Editar pontos por cima da prévia do traço
     if *env.tool == ToolId::Points {
         super::nodes::paint(env, painter, |p| xf.to_screen(p), env.t.accent);
@@ -1268,4 +1309,49 @@ fn paint_picked_strokes(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &N
             painter.add(egui::Shape::line(pts, Stroke::new(1.5, accent)));
         }
     }
+}
+
+/// Escala da tela (px de tela por px do canvas) para limiares de clique.
+fn xf_scale(env: &Env, rect: Rect, ppp: f32) -> f32 {
+    env.ed.view.xf(rect, ppp).scale
+}
+
+/// Arrasto de uma alça da transformação: a alça oposta fica parada (Alt = o centro); cantos escalam os dois eixos
+/// (livre; Shift mantém a proporção), meios dos lados escalam um eixo só. Passar da âncora espelha.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn scale_drag(s: &mut Selection, handle: usize, start_scale: Vec2, start_offset: Vec2, start_rotate: f32, cursor: Vec2, shift: bool, alt: bool) {
+    let Some(r) = s.rect_of() else { return };
+    let pts = handle_points(r);
+    let c = Vec2::new(r[0] + r[2] / 2.0, r[1] + r[3] / 2.0);
+    let (h, a) = (pts[handle], if alt { c } else { pts[opposite(handle)] });
+    // estado do começo do arrasto
+    let mut st = s.clone();
+    st.scale = start_scale;
+    st.offset = start_offset;
+    st.rotate = start_rotate;
+    let Some(inv) = st.affine().inverse() else { return };
+    let (lx, ly) = inv.apply(cursor.x, cursor.y);
+    let fac = |l: f32, hh: f32, aa: f32| if (hh - aa).abs() > 1e-3 { (l - aa) / (hh - aa) } else { 1.0 };
+    let (mut fx, mut fy) = (fac(lx, h.x, a.x), fac(ly, h.y, a.y));
+    match handle {
+        4 | 6 => fx = 1.0,
+        5 | 7 => fy = 1.0,
+        _ => {
+            if shift {
+                let f = if fx.abs() > fy.abs() { fx } else { fy };
+                (fx, fy) = (f.abs() * fx.signum(), f.abs() * fy.signum());
+            }
+        }
+    }
+    let lim = |v: f32| if v.abs() < 0.01 { 0.01f32.copysign(if v == 0.0 { 1.0 } else { v }) } else { v.clamp(-50.0, 50.0) };
+    let new_scale = Vec2::new(lim(start_scale.x * fx), lim(start_scale.y * fy));
+    // a âncora fica onde estava
+    let (ax, ay) = st.affine().apply(a.x, a.y);
+    let (sn, cs) = start_rotate.to_radians().sin_cos();
+    let d = a - c;
+    let sd = Vec2::new(d.x * new_scale.x, d.y * new_scale.y);
+    let rd = Vec2::new(cs * sd.x - sn * sd.y, sn * sd.x + cs * sd.y);
+    s.scale = new_scale;
+    s.rotate = start_rotate;
+    s.offset = Vec2::new(ax, ay) - c - rd;
 }

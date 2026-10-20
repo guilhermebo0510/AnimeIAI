@@ -730,7 +730,7 @@ pub(crate) fn commit_move(env: &mut Env) {
     if sel.is_identity() {
         return;
     }
-    let plain = (sel.scale - 1.0).abs() < 1e-4 && sel.rotate.abs() < 1e-3;
+    let plain = sel.plain_scale() && sel.rotate.abs() < 1e-3;
     let Some(t) = target(env, &[LayerType::Vector, LayerType::Raster], "err.move_layer") else { return };
     let mut off = sel.offset;
     if t.kind == LayerType::Raster && plain {
@@ -745,7 +745,7 @@ pub(crate) fn commit_move(env: &mut Env) {
         cut: t.cut.clone(),
         frame: t.frame,
         layer: t.layer.clone(),
-        deform: ttransform::Deform::Affine { translate: [off.x, off.y], scale: [sel.scale, sel.scale], rotate: sel.rotate, shear: [0.0, 0.0], pivot: [c.x, c.y] },
+        deform: ttransform::Deform::Affine { translate: [off.x, off.y], scale: [sel.scale.x, sel.scale.y], rotate: sel.rotate, shear: [0.0, 0.0], pivot: [c.x, c.y] },
         selection: if sel.whole || !sel.strokes.is_empty() { None } else { sel.shape() },
         scale_width: true,
         strokes: sel.strokes.clone(),
@@ -833,13 +833,14 @@ pub(crate) fn select_strokes(env: &mut Env, ids: Vec<Id>) {
 
 /// Clique do Mover numa camada vetorial (antes de começar o arrasto): no traço = escolhe só ele (Shift soma ou
 /// tira); fora de qualquer traço e fora da caixa escolhida = desfaz a escolha (o arrasto leva a camada inteira).
-pub(crate) fn move_pick(env: &mut Env, c: Vec2, tol: f32, shift: bool) {
+/// Devolve `true` quando o clique caiu fora de qualquer traço e fora da escolha: o arrasto vira caixa de seleção.
+pub(crate) fn move_pick(env: &mut Env, c: Vec2, tol: f32, shift: bool) -> bool {
     if !env.ed.opts.move_pick {
-        return;
+        return false;
     }
     let vector = env.ed.active_layer(env.core).and_then(|l| cmds::layer_data(&env.core.project, &l).map(|d| d.kind)) == Some(LayerType::Vector);
     if !vector {
-        return;
+        return false;
     }
     let cur: Vec<Id> = env.ed.selection.as_ref().map(|s| s.strokes.clone()).unwrap_or_default();
     match stroke_at(env, c, tol) {
@@ -860,13 +861,81 @@ pub(crate) fn move_pick(env: &mut Env, c: Vec2, tol: f32, shift: bool) {
             if next != cur || env.ed.selection.as_ref().is_some_and(|s| s.strokes.is_empty()) {
                 select_strokes(env, next);
             }
+            false
         }
         None => {
-            let inside = env.ed.selection.as_ref().is_some_and(|s| !s.strokes.is_empty() && s.contains(c));
-            if !cur.is_empty() && !inside && !shift {
-                env.ed.selection = None;
+            // dentro da caixa dos escolhidos: arrasta os escolhidos; fora: caixa de seleção
+            let inside = env.ed.selection.as_ref().is_some_and(|s| !s.whole && s.contains_mapped(c));
+            !inside
+        }
+    }
+}
+
+/// Caixa de seleção (px do canvas): escolhe os traços que ela toca (Shift soma aos já escolhidos).
+pub(crate) fn box_pick(env: &mut Env, a: Vec2, b: Vec2, add: bool) {
+    let (Some(cut), Some(layer)) = (env.ed.active_cut(env.core), env.ed.active_layer(env.core)) else { return };
+    let Some(cel) = cmds::exposed_cel(&env.core.project, &cut, &layer, env.ed.frame) else { return };
+    let fwd = cmds::layer_placement(&env.core.project, &cut, &layer, env.ed.frame);
+    let Some(data) = cmds::cel_data(&env.core.project, &cel) else { return };
+    let (x0, y0, x1, y1) = (a.x.min(b.x), a.y.min(b.y), a.x.max(b.x), a.y.max(b.y));
+    let mut ids: Vec<Id> = if add { env.ed.selection.as_ref().map(|s| s.strokes.clone()).unwrap_or_default() } else { Vec::new() };
+    for s in &data.strokes {
+        let touches = aiai_paint::sample_stroke(s).iter().any(|q| {
+            let (x, y) = match &fwd {
+                Some(m) => m.apply(q.x, q.y),
+                None => (q.x, q.y),
+            };
+            x >= x0 && x <= x1 && y >= y0 && y <= y1
+        });
+        if touches && !ids.contains(&s.id) {
+            ids.push(s.id.clone());
+        }
+    }
+    select_strokes(env, ids);
+}
+
+/// Ctrl+A: tudo da camada ativa (vetor: todos os traços; raster: a caixa do conteúdo).
+pub(crate) fn select_all(env: &mut Env) {
+    let (Some(cut), Some(layer)) = (env.ed.active_cut(env.core), env.ed.active_layer(env.core)) else { return };
+    let Some(l) = cmds::layer_data(&env.core.project, &layer).cloned() else { return };
+    match l.kind {
+        LayerType::Vector => {
+            let ids = cmds::exposed_cel(&env.core.project, &cut, &layer, env.ed.frame).and_then(|c| cmds::cel_data(&env.core.project, &c)).map(|d| d.strokes.iter().map(|s| s.id.clone()).collect()).unwrap_or_default();
+            select_strokes(env, ids);
+        }
+        LayerType::Raster => {
+            if let Some(r) = raster_content_box(env, &cut, &layer) {
+                env.ed.selection = Some(Selection::new(SelMode::Rect, vec![Vec2::new(r[0], r[1]), Vec2::new(r[0] + r[2], r[1] + r[3])], false));
             }
         }
+        _ => {}
+    }
+}
+
+/// Caixa (x, y, w, h) do que a camada raster tem pintado no quadro, em px do canvas.
+fn raster_content_box(env: &Env, cut: &NodeId, layer: &NodeId) -> Option<[f32; 4]> {
+    let opts = aiai_render::RenderOptions { include_guides: false, include_reference: false, only_layers: Some(vec![layer.clone()]), background: None, camera: false, layer_motion: true };
+    let img = aiai_render::render_frame(&env.core.project, &env.core.blobs, cut, env.ed.frame, &opts).ok()?.image;
+    let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0u32, 0u32);
+    for y in 0..img.height {
+        for x in 0..img.width {
+            if img.data[(y * img.width + x) as usize][3] > 0.004 {
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x + 1);
+                y1 = y1.max(y + 1);
+            }
+        }
+    }
+    (x0 < x1).then(|| [x0 as f32, y0 as f32, (x1 - x0) as f32, (y1 - y0) as f32])
+}
+
+/// Ctrl+T: transformação livre no Mover: sobre a escolha atual, ou sobre tudo da camada quando não há escolha.
+pub(crate) fn free_transform(env: &mut Env) {
+    *env.tool = ToolId::Move;
+    if env.ed.selection.as_ref().is_none_or(|s| s.whole) {
+        env.ed.selection = None;
+        select_all(env);
     }
 }
 
@@ -874,7 +943,7 @@ pub(crate) fn cancel_move(ed: &mut Editor) {
     if let Some(s) = ed.selection.as_mut() {
         if !s.is_identity() {
             s.offset = Vec2::ZERO;
-            s.scale = 1.0;
+            s.scale = Vec2::splat(1.0);
             s.rotate = 0.0;
             if s.whole {
                 ed.selection = None;
@@ -945,6 +1014,18 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
                 env.ed.node_stroke = None;
             }
         }
+    }
+    // Ctrl+T transformação livre, Ctrl+A tudo, Ctrl+D desfaz a seleção (como no Photoshop)
+    let (ct, ca, cd) = ctx.input_mut(|i| (i.consume_key(Modifiers::COMMAND, Key::T), i.consume_key(Modifiers::COMMAND, Key::A), i.consume_key(Modifiers::COMMAND, Key::D)));
+    if ct {
+        free_transform(env);
+    }
+    if ca {
+        env.ed.selection = None;
+        select_all(env);
+    }
+    if cd {
+        env.ed.selection = None;
     }
     let (tool_key, size_dir, enter, esc, step, home_end, fit, one) = ctx.input_mut(|i| {
         // atalho configurável (Preferências > Atalhos): só dispara com os modificadores exatos
