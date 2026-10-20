@@ -698,7 +698,7 @@ pub(crate) struct Editor {
     pub live_stroke: super::live::Live,
     /// Mover ao vivo: a camada separada do quadro, pronta para o arrasto.
     pub move_live: super::move_live::MoveLive,
-    /// Ferramenta Texto: estilo do proximo texto, sessao de digitacao, arrasto e estado do painel Texto.
+    /// Ferramenta Texto: estilo do próximo texto, sessão de digitação, arrasto e estado do painel Texto.
     pub text: super::text_tool::TextState,
     /// Último valor real da cor do pincel (para não perder a cor quando a paleta some).
     pub color_seen: Rgba,

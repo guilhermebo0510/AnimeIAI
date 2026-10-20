@@ -631,7 +631,9 @@ fn editor_script2(c: &Client) {
     let cel3 = c.ok("QUERY", json!({"query": {"kind": "tree", "id": vec_id}}))["children"][2]["id"].as_str().unwrap().to_string();
     assert_eq!(c.strokes(&cel3).len(), 1, "o cel duplicado tem o traço do cel 1");
 
-    // Cores: paleta nova, cor na paleta, renomear pela interface, trocar a cor na paleta recolore o canvas
+    // Cores: paleta nova, cor na paleta, renomear pela interface, trocar a cor na paleta recolore o canvas. Na Animação
+    // as Cores ficam numa aba pequena ao lado da mesa de luz; a edição da paleta é feita na Pintura, onde o painel é grande
+    c.ok("UI_ACTION", json!({"action": "set_workspace", "workspace": "pintura"}));
     c.click_widget("colors:new_palette");
     assert_eq!(roots("palettes").len(), 1);
     c.ok("UI_ACTION", json!({"action": "set_color", "color": "#336699"}));
@@ -642,6 +644,7 @@ fn editor_script2(c: &Client) {
     c.click_widget("colors:name");
     typed("Pele");
     assert_eq!(c.node(&pal)["colors"][0]["name"], "Pele", "o nome da cor foi editado pela interface (ReplaceData)");
+    c.ok("UI_ACTION", json!({"action": "set_workspace", "workspace": "animacao"}));
 
     // linha do tempo: menu de contexto > quadro vazio
     c.click_widget("layers:row:1");

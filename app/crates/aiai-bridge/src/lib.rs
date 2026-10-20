@@ -13,9 +13,9 @@
 //! * [`audio_tools`] — edição e análise de áudio (S24): AUDIO_EDIT, AUDIO_ANALYZE;
 //! * [`ruler_tools`] — réguas editáveis da camada de guia (S24): RULER;
 //! * [`model3d_tools`] — camada 3D de referência (S24): MODEL3D;
-//! * [`delivery_tools`] — entrega (S24): DELIVERY (fila, destinos, entregáveis, verificação final, pacote); [`export_ctl`] — progresso e cancelamento do EXPORT_VIDEO;
 //! * [`modeling_tools`] — modelagem por comando (S24): MODELING;
 //! * [`library_tools`] — biblioteca de recursos (S24): LIBRARY;
+//! * [`delivery_tools`] — entrega (S24): DELIVERY (fila, destinos, entregáveis, verificação final, pacote); [`export_ctl`] — progresso e cancelamento do EXPORT_VIDEO;
 //! * [`preprod_tools`] — pré-produção (S16): SCRIPT, BEATS, STORYBOARD, ANIMATIC, CUTS_FROM_STORYBOARD;
 //! * [`satsuei_tools`] — satsuei, câmera e cor tipados (S13/S15): EFFECTS, GRADE, CAMERA, LAYER_MOTION;
 //! * [`review_tools`] — produção e revisão (S19): PRODUCTION, CORRECTION, RETAKE;

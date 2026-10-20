@@ -45,9 +45,9 @@ pub fn is_tool_action(action: &str) -> bool {
         || crate::audio_tools::AUDIO_ACTIONS.contains(&action)
         || crate::ruler_tools::RULER_ACTIONS.contains(&action)
         || crate::model3d_tools::MODEL3D_ACTIONS.contains(&action)
-        || crate::delivery_tools::DELIVERY_ACTIONS.contains(&action)
         || crate::modeling_tools::MODELING_ACTIONS.contains(&action)
         || crate::library_tools::LIBRARY_ACTIONS.contains(&action)
+        || crate::delivery_tools::DELIVERY_ACTIONS.contains(&action)
 }
 
 /// Ações de ferramenta que mudam o documento.
@@ -58,9 +58,9 @@ pub fn is_mutating_tool(action: &str) -> bool {
         || crate::audio_tools::is_mutating(action)
         || crate::ruler_tools::is_mutating(action)
         || crate::model3d_tools::is_mutating(action)
-        || crate::delivery_tools::is_mutating(action)
         || crate::modeling_tools::is_mutating(action)
         || crate::library_tools::is_mutating(action)
+        || crate::delivery_tools::is_mutating(action)
 }
 
 /// Erros das ferramentas → códigos da bridge: referência/valor inválido é `-32602`; falha do motor é `-32000`.
@@ -86,9 +86,9 @@ pub fn handle_tool_action(session: &mut CoreSession, action: &str, params: &Valu
         a if crate::audio_tools::AUDIO_ACTIONS.contains(&a) => crate::audio_tools::handle(session, a, params),
         a if crate::ruler_tools::RULER_ACTIONS.contains(&a) => crate::ruler_tools::handle(session, a, params),
         a if crate::model3d_tools::MODEL3D_ACTIONS.contains(&a) => crate::model3d_tools::handle(session, a, params),
-        a if crate::delivery_tools::DELIVERY_ACTIONS.contains(&a) => crate::delivery_tools::handle(session, a, params),
         a if crate::modeling_tools::MODELING_ACTIONS.contains(&a) => crate::modeling_tools::handle(session, a, params),
         a if crate::library_tools::LIBRARY_ACTIONS.contains(&a) => crate::library_tools::handle(session, a, params),
+        a if crate::delivery_tools::DELIVERY_ACTIONS.contains(&a) => crate::delivery_tools::handle(session, a, params),
         "LINT" => lint_action(session, params),
         "DRAW_CURVES" => request::<DrawRequest>(params, "DRAW_CURVES").and_then(|r| {
             let cmd = draw_command(&session.project, &r).map_err(tool_error)?;

@@ -1728,58 +1728,6 @@ fn audio_edit_and_analyze_actions() {
     assert_eq!(act_err(&mut d.s, "AUDIO_ANALYZE", json!({"path": "relativo.wav"})).code, code::INVALID_PARAMS);
 }
 
-#[test]
-fn character_material_actions_list_create_edit_and_validate() {
-    let mut d = prod_doc();
-    let ch = made(&mut d.s, "Hana", None, json!({"type": "character"}));
-    // projeto novo: lista vazia, e listar não muda o documento
-    let rev = d.s.project.revision;
-    let l = act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch}));
-    assert_eq!(l["materials"].as_array().unwrap().len(), 0);
-    assert_eq!(d.s.project.revision, rev, "list só lê");
-    // MODEL_SHEET entra na pasta como material model_sheet e devolve o id dele
-    let ms = act(&mut d.s, "MODEL_SHEET", json!({"character": ch, "name": "Hana", "heads_tall": 6.0, "figure_px": 300.0, "views": [0.0, 90.0]}));
-    assert!(ms["material"].is_string());
-    // modelos: expressões (12 células), boca (9, uma por forma do lip-sync), olhos (9), figurino (paleta copiada), folha extra
-    let ex = act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "create", "kind": "expressions"}));
-    assert_eq!(ex["cells"].as_array().unwrap().len(), 12);
-    assert!(ex["line_layer"].is_string() && ex["cut"].is_string() && ex["material"].is_string());
-    assert_eq!(ex["cells"][0]["label"], "neutro");
-    let mouth = act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "create", "kind": "mouth_chart", "name": "Boca da Hana"}));
-    assert_eq!(mouth["cells"].as_array().unwrap().len(), 9);
-    act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "create", "kind": "eyes"}));
-    let outfit = act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "create", "kind": "outfit", "name": "Uniforme"}));
-    let other = act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "create", "kind": "other", "size": [800, 600]}));
-    assert_eq!(other["canvas"], json!([800, 600]));
-    let l = act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "list"}));
-    let kinds: Vec<&str> = l["materials"].as_array().unwrap().iter().map(|m| m["kind"].as_str().unwrap()).collect();
-    assert_eq!(kinds, ["model_sheet", "expressions", "mouth_chart", "eyes", "outfit", "other"]);
-    assert!(l["materials"][4]["palette"].is_string(), "figurino com variante de paleta");
-    // renomear, mover, editar notas, duplicar e apagar (cada um um passo de undo)
-    let mid = mouth["material"].as_str().unwrap();
-    act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "rename", "material": mid, "name": "Bocas"}));
-    act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "move", "material": mid, "index": 0}));
-    act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "update", "material": mid, "notes": "conferir com o lip-sync"}));
-    let dup = act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "duplicate", "material": outfit["material"]}));
-    assert_ne!(dup["cut"], outfit["cut"]);
-    let l = act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch}));
-    assert_eq!(l["materials"][0]["name"], "Bocas");
-    assert_eq!(l["materials"][0]["notes"], "conferir com o lip-sync");
-    assert_eq!(l["materials"].as_array().unwrap().len(), 7);
-    act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "delete", "material": dup["material"]}));
-    act(&mut d.s, "UNDO", json!({}));
-    assert_eq!(act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch}))["materials"].as_array().unwrap().len(), 7);
-    // o corte do material renderiza com os rótulos
-    let png = act(&mut d.s, "RENDER", json!({"cut": ex["cut"], "camera": false, "include_guides": true, "background": "#ffffff"}));
-    assert!(png["png_base64"].is_string());
-    // erros: chave desconhecida, personagem inválido, material inexistente, nome vazio, importar arquivo inexistente
-    assert_eq!(act_err(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "acton": "list"})).code, code::INVALID_PARAMS);
-    assert_eq!(act_err(&mut d.s, "CHARACTER_MATERIAL", json!({"character": d.cut})).code, code::INVALID_PARAMS, "corte não é personagem");
-    assert_eq!(act_err(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "delete", "material": "nada"})).code, code::INVALID_PARAMS);
-    assert_eq!(act_err(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "rename", "material": mid, "name": " "})).code, code::INVALID_PARAMS);
-    assert_eq!(act_err(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "import", "path": "Z:/nao/existe.png"})).code, code::INVALID_PARAMS);
-}
-
 /// RULER (S24 2.1–2.2): réguas editáveis na camada de guia: criar (perspectiva de 2 pontos, grade), editar com
 /// patch (chave desconhecida = -32602), nível do olho, listar sem mudar nada, ativar, assar em traços (só aparecem com
 /// include_guides; as réguas em si nunca entram no render), apagar, e cada mudança é um passo de undo.
@@ -1837,6 +1785,58 @@ fn rulers_live_in_the_guide_layer_and_are_one_undo_step_each() {
     ] {
         assert_eq!(act_err(&mut d.s, "RULER", bad.clone()).code, code::INVALID_PARAMS, "{bad}");
     }
+}
+
+#[test]
+fn character_material_actions_list_create_edit_and_validate() {
+    let mut d = prod_doc();
+    let ch = made(&mut d.s, "Hana", None, json!({"type": "character"}));
+    // projeto novo: lista vazia, e listar não muda o documento
+    let rev = d.s.project.revision;
+    let l = act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch}));
+    assert_eq!(l["materials"].as_array().unwrap().len(), 0);
+    assert_eq!(d.s.project.revision, rev, "list só lê");
+    // MODEL_SHEET entra na pasta como material model_sheet e devolve o id dele
+    let ms = act(&mut d.s, "MODEL_SHEET", json!({"character": ch, "name": "Hana", "heads_tall": 6.0, "figure_px": 300.0, "views": [0.0, 90.0]}));
+    assert!(ms["material"].is_string());
+    // modelos: expressões (12 células), boca (9, uma por forma do lip-sync), olhos (9), figurino (paleta copiada), folha extra
+    let ex = act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "create", "kind": "expressions"}));
+    assert_eq!(ex["cells"].as_array().unwrap().len(), 12);
+    assert!(ex["line_layer"].is_string() && ex["cut"].is_string() && ex["material"].is_string());
+    assert_eq!(ex["cells"][0]["label"], "neutro");
+    let mouth = act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "create", "kind": "mouth_chart", "name": "Boca da Hana"}));
+    assert_eq!(mouth["cells"].as_array().unwrap().len(), 9);
+    act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "create", "kind": "eyes"}));
+    let outfit = act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "create", "kind": "outfit", "name": "Uniforme"}));
+    let other = act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "create", "kind": "other", "size": [800, 600]}));
+    assert_eq!(other["canvas"], json!([800, 600]));
+    let l = act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "list"}));
+    let kinds: Vec<&str> = l["materials"].as_array().unwrap().iter().map(|m| m["kind"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["model_sheet", "expressions", "mouth_chart", "eyes", "outfit", "other"]);
+    assert!(l["materials"][4]["palette"].is_string(), "figurino com variante de paleta");
+    // renomear, mover, editar notas, duplicar e apagar (cada um um passo de undo)
+    let mid = mouth["material"].as_str().unwrap();
+    act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "rename", "material": mid, "name": "Bocas"}));
+    act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "move", "material": mid, "index": 0}));
+    act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "update", "material": mid, "notes": "conferir com o lip-sync"}));
+    let dup = act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "duplicate", "material": outfit["material"]}));
+    assert_ne!(dup["cut"], outfit["cut"]);
+    let l = act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch}));
+    assert_eq!(l["materials"][0]["name"], "Bocas");
+    assert_eq!(l["materials"][0]["notes"], "conferir com o lip-sync");
+    assert_eq!(l["materials"].as_array().unwrap().len(), 7);
+    act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "delete", "material": dup["material"]}));
+    act(&mut d.s, "UNDO", json!({}));
+    assert_eq!(act(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch}))["materials"].as_array().unwrap().len(), 7);
+    // o corte do material renderiza com os rótulos
+    let png = act(&mut d.s, "RENDER", json!({"cut": ex["cut"], "camera": false, "include_guides": true, "background": "#ffffff"}));
+    assert!(png["png_base64"].is_string());
+    // erros: chave desconhecida, personagem inválido, material inexistente, nome vazio, importar arquivo inexistente
+    assert_eq!(act_err(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "acton": "list"})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "CHARACTER_MATERIAL", json!({"character": d.cut})).code, code::INVALID_PARAMS, "corte não é personagem");
+    assert_eq!(act_err(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "delete", "material": "nada"})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "rename", "material": mid, "name": " "})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "CHARACTER_MATERIAL", json!({"character": ch, "action": "import", "path": "Z:/nao/existe.png"})).code, code::INVALID_PARAMS);
 }
 
 #[test]

@@ -588,9 +588,9 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
         ("aiai_audio_analyze", json!({"asset": "a"}), "AUDIO_ANALYZE"),
         ("aiai_ruler", json!({"layer": "l", "op": "list"}), "RULER"),
         ("aiai_model3d", json!({"op": "list"}), "MODEL3D"),
-        ("aiai_delivery", json!({"op": "formats"}), "DELIVERY"),
         ("aiai_modeling", json!({"op": "list"}), "MODELING"),
         ("aiai_library", json!({"op": "list"}), "LIBRARY"),
+        ("aiai_delivery", json!({"op": "formats"}), "DELIVERY"),
         ("aiai_compare", json!({"cut": "c", "reference": "r.png"}), "COMPARE"),
         ("aiai_probe_color", json!({"reference": "r.png", "points": [[1, 1]]}), "PROBE_COLOR"),
         ("aiai_measure_line", json!({"reference": "r.png", "points": [[1, 1], [2, 2]]}), "MEASURE_LINE"),
@@ -634,9 +634,9 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
         ("aiai_sfx", json!({})),
         ("aiai_ruler", json!({"layer": "l"})),
         ("aiai_model3d", json!({"layer": "l"})),
-        ("aiai_delivery", json!({"preset": "tv"})),
         ("aiai_modeling", json!({"asset": "a"})),
         ("aiai_library", json!({"query": "x"})),
+        ("aiai_delivery", json!({"preset": "tv"})),
     ] {
         assert!(plan(tool, args.clone()).is_err(), "{tool} {args}: deveria faltar algo");
     }

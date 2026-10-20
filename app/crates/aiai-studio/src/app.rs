@@ -1138,8 +1138,8 @@ impl StudioApp {
         self.autosave_tick();
         panels::timeline::tick(&self.core, &mut self.ed, &ctx);
         panels::deliver::tick(&self.core, &mut self.ed, &ctx);
-        panels::audio_ws::tick(&mut self.core, &mut self.ed, &ctx);
         panels::char_folder::tick(&self.core, &mut self.ed, self.ws);
+        panels::audio_ws::tick(&mut self.core, &mut self.ed, &ctx);
         {
             // som ao vivo acompanha a reprodução e o cabeçote
             let cut = self.ed.cut.clone();

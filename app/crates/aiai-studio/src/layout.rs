@@ -267,10 +267,6 @@ impl PanelKind {
             PanelKind::Tts => "panel.tts.title",
             PanelKind::Presets => "panel.presets.title",
             PanelKind::Queue => "panel.queue.title",
-            PanelKind::Destinations => "panel.destinations.title",
-            PanelKind::Deliverables => "panel.deliverables.title",
-            PanelKind::Poster => "panel.poster.title",
-            PanelKind::Preflight => "panel.preflight.title",
             PanelKind::Tasks => "panel.tasks.title",
             PanelKind::Episodes => "panel.episodes.title",
             PanelKind::ProdCharts => "panel.prod_charts.title",
@@ -294,6 +290,10 @@ impl PanelKind {
             PanelKind::CompTimeline => "panel.comp_timeline.title",
             PanelKind::EffectsBrowser => "panel.effects_browser.title",
             PanelKind::EffectControls => "panel.effect_controls.title",
+            PanelKind::Destinations => "panel.destinations.title",
+            PanelKind::Deliverables => "panel.deliverables.title",
+            PanelKind::Poster => "panel.poster.title",
+            PanelKind::Preflight => "panel.preflight.title",
         }
     }
 
@@ -326,10 +326,6 @@ impl PanelKind {
             PanelKind::Tts => "panel.tts.empty",
             PanelKind::Presets => "panel.presets.empty",
             PanelKind::Queue => "panel.queue.empty",
-            PanelKind::Destinations => "panel.destinations.empty",
-            PanelKind::Deliverables => "panel.deliverables.empty",
-            PanelKind::Poster => "panel.poster.empty",
-            PanelKind::Preflight => "panel.preflight.empty",
             PanelKind::Tasks => "panel.tasks.empty",
             PanelKind::Episodes => "panel.episodes.empty",
             PanelKind::ProdCharts => "panel.prod_charts.empty",
@@ -353,6 +349,10 @@ impl PanelKind {
             PanelKind::CompTimeline => "panel.comp_timeline.empty",
             PanelKind::EffectsBrowser => "panel.effects_browser.empty",
             PanelKind::EffectControls => "panel.effect_controls.empty",
+            PanelKind::Destinations => "panel.destinations.empty",
+            PanelKind::Deliverables => "panel.deliverables.empty",
+            PanelKind::Poster => "panel.poster.empty",
+            PanelKind::Preflight => "panel.preflight.empty",
         }
     }
 
@@ -387,10 +387,6 @@ impl PanelKind {
             PanelKind::Tts => (C::SoundEdit, Right, &[W::Audio, W::Roteiro], false),
             PanelKind::Presets => (C::Delivery, Left, &[W::Entrega], false),
             PanelKind::Queue => (C::Delivery, Center, &[W::Entrega], false),
-            PanelKind::Destinations => (C::Delivery, Left, &[W::Entrega], false),
-            PanelKind::Deliverables => (C::Delivery, Center, &[W::Entrega], false),
-            PanelKind::Poster => (C::Delivery, Right, &[W::Entrega], false),
-            PanelKind::Preflight => (C::Delivery, Right, &[W::Entrega], false),
             PanelKind::Tasks => (C::Management, Center, &[W::Producao], false),
             PanelKind::Episodes => (C::Management, Left, &[W::Producao], false),
             PanelKind::ProdCharts => (C::Management, Center, &[W::Producao], false),
@@ -414,6 +410,10 @@ impl PanelKind {
             PanelKind::CompTimeline => (C::Time, Bottom, &[W::Composicao], false),
             PanelKind::EffectsBrowser => (C::Color, Right, &[W::Composicao], false),
             PanelKind::EffectControls => (C::Color, Right, &[W::Composicao], false),
+            PanelKind::Destinations => (C::Delivery, Left, &[W::Entrega], false),
+            PanelKind::Deliverables => (C::Delivery, Center, &[W::Entrega], false),
+            PanelKind::Poster => (C::Delivery, Right, &[W::Entrega], false),
+            PanelKind::Preflight => (C::Delivery, Right, &[W::Entrega], false),
         };
         PanelMeta { key: self.key(), title_key: self.title_key(), category, dock_hint, workspaces, needs_canvas }
     }

@@ -384,7 +384,7 @@ pub(crate) fn add_layer(core: &mut CoreSession, cut: &NodeId, kind: LayerType, a
     };
     let mut data = LayerData::new(kind);
     if kind == LayerType::Text {
-        // camada de texto do "+": texto de ponto no meio do canvas, editavel com a ferramenta Texto ou no painel Texto
+        // camada de texto do "+": texto de ponto no meio do canvas, editável com a ferramenta Texto ou no painel Texto
         let tp = super::text_tool::default_layer_params(canvas_size(p, cut), ColorRef::default());
         data.params = json!({ aiai_paint::text_layer::TextParams::KEY: tp.to_value() });
     }

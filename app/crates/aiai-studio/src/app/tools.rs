@@ -990,7 +990,7 @@ pub(crate) fn cancel_move(ed: &mut Editor) {
 /// Teclas do editor. Ficam desligadas enquanto um campo de texto tem o foco ou um menu/popup está aberto (roda antes da
 /// barra de menus no quadro: consumir Esc/setas aqui impedia o menu de fechar com Esc).
 pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
-    // digitando num texto no canvas: as teclas sao do texto (a ferramenta Texto trata o teclado em `text_tool::frame`)
+    // digitando num texto no canvas: as teclas são do texto (a ferramenta Texto trata o teclado em `text_tool::frame`)
     if ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(ctx) || super::text_tool::editing(env.ed) {
         return;
     }
