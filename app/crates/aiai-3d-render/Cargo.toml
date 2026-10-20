@@ -1,0 +1,24 @@
+[package]
+name = "aiai-3d-render"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+description = "Renderer cel 3D vendorizado do ANIGO (anigo-renderer): cel shading, contorno por casco invertido, offscreen (HeadlessRenderer)"
+
+[dependencies]
+aiai-3d-core = { path = "../aiai-3d-core" }
+wgpu = { workspace = true }
+glam = { workspace = true }
+bytemuck = { workspace = true }
+# AnimeIAI: o ANIGO fixa pollster 0.4; aqui usamos a 1.x que já está no Cargo.lock (mesma API `block_on`).
+pollster = "1"
+image = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+# Mesma série do naga que o wgpu 30 embute: valida os .wgsl sem precisar de GPU.
+naga = { version = "30.0.1", default-features = false, features = ["wgsl-in"] }

@@ -15,6 +15,7 @@ aiai-audio = { workspace = true }
 aiai-media = { workspace = true }
 ab_glyph = "0.2.32"
 aiai-guide3d = { workspace = true }
+aiai-3d-model = { path = "../aiai-3d-model" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true }

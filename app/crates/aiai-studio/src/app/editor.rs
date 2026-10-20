@@ -783,6 +783,8 @@ pub(crate) struct Editor {
     pub anim: super::anim::AnimState,
     /// Réguas: mostrar, encaixe geral, tipo da próxima, camada de guia das réguas e a prévia do arrasto.
     pub rulers: super::rulers::RulerState,
+    /// Camada 3D: modo do gizmo, arrasto em curso e prévia reduzida.
+    pub m3d: super::model3d::M3dState,
 }
 
 impl Default for Editor {
@@ -791,6 +793,7 @@ impl Default for Editor {
             back_to_board: None,
             anim: Default::default(),
             rulers: Default::default(),
+            m3d: Default::default(),
             live_stroke: Default::default(),
             move_live: Default::default(),
             text: Default::default(),

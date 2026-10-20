@@ -1,0 +1,14 @@
+[package]
+name = "aiai-3d-core"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+description = "Núcleo 3D vendorizado do ANIGO (anigo-core, subconjunto de render): malha, matemática, cena, NPR, sombra, morphs"
+
+[dependencies]
+glam = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+bytemuck = { workspace = true }
+base64 = { workspace = true }
+thiserror = { workspace = true }

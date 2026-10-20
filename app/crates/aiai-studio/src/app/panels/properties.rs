@@ -24,7 +24,11 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: egui::Rect) {
             WorkspaceId::Producao => return super::production::properties(env, ui),
             WorkspaceId::Edicao => return super::edit::properties(env, ui),
             WorkspaceId::Entrega => return super::deliver::properties(env, ui),
-            WorkspaceId::Personagens => return super::characters::properties(env, ui),
+            WorkspaceId::Personagens => {
+                // a camada 3D ativa (referência sobre o material) mostra a seção 3D acima da ficha
+                crate::app::model3d::properties(env, ui);
+                return super::characters::properties(env, ui);
+            }
             _ => {}
         }
         let tool = *env.tool;
@@ -314,7 +318,7 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
     let t = env.t;
     let tool = *env.tool;
     // cor atual (vale para caneta, pincel e balde)
-    if (matches!(tool, ToolId::Pen | ToolId::Brush | ToolId::Fill | ToolId::Eyedropper) || !compact) && !matches!(tool, ToolId::Text | ToolId::Ruler) {
+    if (matches!(tool, ToolId::Pen | ToolId::Brush | ToolId::Fill | ToolId::Eyedropper) || !compact) && !matches!(tool, ToolId::Text | ToolId::Ruler | ToolId::Model3d) {
         row(ui, &t, compact, "opt.color", |ui| {
             let cur = cmds::resolve_color(&env.core.project, &env.ed.color);
             let mut c32 = rgba_to_color32(Rgba([cur.0[0], cur.0[1], cur.0[2], 1.0]));
@@ -643,6 +647,7 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
         }
         ToolId::Text => super::text::controls(env, ui, compact),
         ToolId::Ruler => super::rulers::tool_options(env, ui, compact),
+        ToolId::Model3d => crate::app::model3d::tool_options(env, ui, compact),
         ToolId::Eyedropper | ToolId::Hand | ToolId::Zoom => {
             if !compact {
                 dim_label(ui, &t, tr(match tool {
@@ -723,6 +728,9 @@ fn layer_properties(env: &mut Env, ui: &mut Ui) {
         });
         ui.end_row();
     });
+    if l.kind == LayerType::Model3d {
+        crate::app::model3d::properties(env, ui);
+    }
 }
 
 fn cut_properties(env: &mut Env, ui: &mut Ui) {

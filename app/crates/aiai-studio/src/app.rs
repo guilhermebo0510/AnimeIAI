@@ -21,6 +21,7 @@ mod start;
 mod editor;
 mod input_queue;
 mod live;
+mod model3d;
 mod move_live;
 mod nodes;
 mod panels;
@@ -1175,6 +1176,8 @@ impl eframe::App for StudioApp {
         if !self.gpu_logged {
             self.gpu_logged = true;
             if let Some(rs) = frame.wgpu_render_state() {
+                // camada 3D: renderer cel na GPU (no device do egui) para o compositor
+                model3d::install_gpu(rs);
                 let info = rs.adapter.get_info();
                 self.gpu_name = Some(info.name.clone());
                 self.ed.audio_ws.hw.set_gpu(&info.name, &format!("{:?}", info.device_type), &format!("{:?}", info.backend), &info.driver);

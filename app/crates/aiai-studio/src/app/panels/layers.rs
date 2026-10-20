@@ -35,6 +35,7 @@ pub(crate) fn kind_icon(k: LayerType) -> IconId {
         LayerType::Adjustment => IconId::LayerAdjustment,
         LayerType::Effect => IconId::LayerEffect,
         LayerType::Particles => IconId::LayerParticles,
+        LayerType::Model3d => IconId::LayerModel3d,
     }
 }
 
@@ -79,6 +80,16 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
                     }
                     ui.close();
                 }
+            }
+            // camada 3D de referência: importa .glb/.gltf/.obj (cria o ativo e a camada no topo)
+            ui.separator();
+            let tex = env.icons.texture(ui.ctx(), IconId::LayerModel3d, 16.0);
+            let img = egui::Image::new((tex, egui::vec2(16.0, 16.0))).tint(t.text_dim);
+            let item = ui.add(egui::Button::image_and_text(img, tr("layers.add.model3d")));
+            env.note("layers:add.model3d", item.rect);
+            if item.clicked() {
+                ui.close();
+                crate::app::model3d::import_dialog(env, &cut);
             }
         });
         let has = active.is_some();
@@ -189,6 +200,7 @@ pub(crate) fn kind_id(k: LayerType) -> &'static str {
         LayerType::Adjustment => "adjustment",
         LayerType::Effect => "effect",
         LayerType::Particles => "particles",
+        LayerType::Model3d => "model3d",
     }
 }
 

@@ -331,6 +331,7 @@ pub fn definitions() -> Value {
     list.extend(crate::tools_preview::definitions());
     list.extend(crate::tools_audio::definitions());
     list.extend(crate::tools_ruler::definitions());
+    list.extend(crate::tools_model3d::definitions());
     Value::Array(list)
 }
 
@@ -396,6 +397,9 @@ pub fn plan(name: &str, args: &Value) -> Result<Plan, ToolError> {
         return p;
     }
     if let Some(p) = crate::tools_ruler::plan(name, &m) {
+        return p;
+    }
+    if let Some(p) = crate::tools_model3d::plan(name, &m) {
         return p;
     }
     match name {

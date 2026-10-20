@@ -456,6 +456,9 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
             _ => {}
         }
     }
+    if !any_down && super::model3d::dragging(env) {
+        super::model3d::release(env);
+    }
     // soltou fora da janela sem o evento de soltar: termina o gesto
     if !any_down && !matches!(env.ed.gesture, Gesture::None) && !events.iter().any(|e| matches!(e, Event::PointerButton { pressed: true, .. })) {
         let p = env.ed.cursor.unwrap_or(rect.center());
@@ -497,6 +500,10 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
     if tool == ToolId::Points && !space && matches!(button, egui::PointerButton::Primary | egui::PointerButton::Secondary) {
         // editar pontos: o tamanho de 1 px de tela em px do canvas dá a tolerância do clique
         super::nodes::press(env, xf.to_canvas(pos), 1.0 / xf.scale.max(1e-3), button, mods);
+        return;
+    }
+    // camada 3D: gizmo e câmera da camada (ferramenta 3D; com o Mover, Alt+arrastar orbita)
+    if button == egui::PointerButton::Primary && !space && !r_held && super::model3d::press(env, &xf, pos, mods) {
         return;
     }
     // Texto: clique cria/edita; o Mover leva a camada de texto ativa
@@ -576,7 +583,7 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
                         env.ed.view.zoom_at(rect, ppp, pos, f);
                     }
                     ToolId::Ruler => env.ed.gesture = super::rulers::press(env, c, &xf),
-                    ToolId::Hand | ToolId::Points | ToolId::Text => {}
+                    ToolId::Hand | ToolId::Points | ToolId::Text | ToolId::Model3d => {}
                 }
             }
         }
@@ -589,6 +596,10 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
     let c = xf.to_canvas(pos);
     if super::text_tool::dragging(env) {
         super::text_tool::drag(env, c);
+        return;
+    }
+    if super::model3d::dragging(env) {
+        super::model3d::drag(env, &xf, pos);
         return;
     }
     match &mut env.ed.gesture {
@@ -658,6 +669,10 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
     let c = xf.to_canvas(pos);
     if button == egui::PointerButton::Primary && super::text_tool::dragging(env) {
         super::text_tool::release(env, c, xf.scale);
+        return;
+    }
+    if button == egui::PointerButton::Primary && super::model3d::dragging(env) {
+        super::model3d::release(env);
         return;
     }
     let g = std::mem::replace(&mut env.ed.gesture, Gesture::None);
@@ -868,7 +883,10 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
     } else {
         env.ed.move_live.hold.as_ref().filter(|_| env.ed.move_live.key.as_ref().is_some_and(|k| k.cut == *cut)).map(|h| h.1)
     };
-    if let (Some(aff), Some(mt)) = (live_aff, env.ed.move_live.tex.as_ref()) {
+    let shown_counter = env.ed.shown.as_ref().map(|s| s.rendered.key.counter);
+    if super::model3d::paint_live(env, painter, xf, cut, shown_counter) {
+        // camada 3D em arrasto: a prévia reduzida no lugar do quadro
+    } else if let (Some(aff), Some(mt)) = (live_aff, env.ed.move_live.tex.as_ref()) {
         let full = [Pos2::new(0.0, 0.0), Pos2::new(1.0, 0.0), Pos2::new(1.0, 1.0), Pos2::new(0.0, 1.0)];
         let (mw, mh) = (mt.size[0] as f32, mt.size[1] as f32);
         let plain: [Pos2; 4] = std::array::from_fn(|i| xf.to_screen(corners(mw, mh)[i]));
@@ -908,6 +926,7 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
 
     // réguas da camada de guia (só visão) e, com a ferramenta Régua, as alças
     super::rulers::paint(env, painter, rect, xf, cut, canvas);
+    super::model3d::paint(env, painter, rect, xf, cut);
     paint_selection(env, painter, xf, cut);
     paint_gestures(env, painter, xf, cut);
     super::text_tool::paint(env, painter, xf, cut);

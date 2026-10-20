@@ -19,6 +19,7 @@ pub mod fill;
 pub mod fx2d;
 pub mod guide;
 pub mod import;
+pub mod model3d;
 pub mod paint;
 pub mod points;
 pub mod preprod;

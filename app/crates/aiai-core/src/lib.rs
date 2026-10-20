@@ -13,6 +13,7 @@ pub mod ids;
 pub mod keys;
 pub mod lock;
 pub mod model;
+pub mod model3d;
 pub mod patch;
 pub mod persist;
 pub mod query;

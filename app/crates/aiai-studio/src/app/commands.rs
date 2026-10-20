@@ -153,6 +153,7 @@ pub(crate) fn layer_type_key(k: LayerType) -> &'static str {
         LayerType::Adjustment => "layer.kind.adjustment",
         LayerType::Effect => "layer.kind.effect",
         LayerType::Particles => "layer.kind.particles",
+        LayerType::Model3d => "layer.kind.model3d",
     }
 }
 

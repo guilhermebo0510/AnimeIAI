@@ -183,19 +183,19 @@ impl WorkspaceId {
         use WorkspaceId as W;
         match self {
             W::Layout => WorkspaceProfile {
-                tools: &[T::Move, T::Pen, T::Brush, T::Points, T::Eraser, T::Lasso, T::Ruler, T::Text, T::Eyedropper, T::Hand, T::Zoom],
+                tools: &[T::Move, T::Pen, T::Brush, T::Points, T::Eraser, T::Lasso, T::Ruler, T::Model3d, T::Text, T::Eyedropper, T::Hand, T::Zoom],
                 default_tool: T::Pen,
                 canvas: true,
                 editor_keys: true,
             },
             W::Cenario => WorkspaceProfile {
-                tools: &[T::Move, T::Brush, T::Eraser, T::Fill, T::Lasso, T::Ruler, T::Text, T::Eyedropper, T::Hand, T::Zoom],
+                tools: &[T::Move, T::Brush, T::Eraser, T::Fill, T::Lasso, T::Ruler, T::Model3d, T::Text, T::Eyedropper, T::Hand, T::Zoom],
                 default_tool: T::Brush,
                 canvas: true,
                 editor_keys: true,
             },
             W::Animacao => WorkspaceProfile {
-                tools: &[T::Move, T::Pen, T::Brush, T::Points, T::Eraser, T::Fill, T::Lasso, T::Text, T::Eyedropper, T::Hand, T::Zoom],
+                tools: &[T::Move, T::Pen, T::Brush, T::Points, T::Eraser, T::Fill, T::Lasso, T::Model3d, T::Text, T::Eyedropper, T::Hand, T::Zoom],
                 default_tool: T::Pen,
                 canvas: true,
                 editor_keys: true,
@@ -208,7 +208,7 @@ impl WorkspaceId {
             },
             // pasta do personagem: desenha-se nos materiais (folha de modelo, expressões, boca...): linha, cor e conferência
             W::Personagens => WorkspaceProfile {
-                tools: &[T::Move, T::Pen, T::Brush, T::Eraser, T::Fill, T::Lasso, T::Text, T::Eyedropper, T::Hand, T::Zoom],
+                tools: &[T::Move, T::Pen, T::Brush, T::Eraser, T::Fill, T::Lasso, T::Model3d, T::Text, T::Eyedropper, T::Hand, T::Zoom],
                 default_tool: T::Pen,
                 canvas: true,
                 editor_keys: true,
@@ -242,10 +242,12 @@ pub enum ToolId {
     Text,
     /// Régua: cria e edita as réguas de perspectiva, paralelas, radial, simetria e grade da camada de guia (alças).
     Ruler,
+    /// Camada 3D: gizmo de mover/girar/escalar o modelo e órbita, pan e dolly da câmera da camada (M).
+    Model3d,
 }
 
 impl ToolId {
-    pub const ALL: [ToolId; 12] = [
+    pub const ALL: [ToolId; 13] = [
         ToolId::Move,
         ToolId::Brush,
         ToolId::Pen,
@@ -258,6 +260,7 @@ impl ToolId {
         ToolId::Zoom,
         ToolId::Text,
         ToolId::Ruler,
+        ToolId::Model3d,
     ];
 
     /// Identificador estável (bridge/UI_ACTION): `move`, `brush`, `pen`...
@@ -283,6 +286,7 @@ impl ToolId {
             ToolId::Zoom => "tool.zoom",
             ToolId::Text => "tool.text",
             ToolId::Ruler => "tool.ruler",
+            ToolId::Model3d => "tool.model3d",
         }
     }
 
@@ -300,6 +304,7 @@ impl ToolId {
             ToolId::Zoom => IconId::ToolZoom,
             ToolId::Text => IconId::ToolText,
             ToolId::Ruler => IconId::ToolRuler,
+            ToolId::Model3d => IconId::ToolModel3d,
         }
     }
 }

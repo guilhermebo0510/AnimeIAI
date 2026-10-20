@@ -39,6 +39,8 @@ pub enum IconId {
     ToolRuler,
     /// Encaixe nas réguas (ímã).
     Snap,
+    /// Camada 3D: cubo com a órbita da câmera.
+    ToolModel3d,
     ZoomOut,
     Eye,
     EyeOff,
@@ -58,6 +60,8 @@ pub enum IconId {
     LayerReference,
     LayerEffect,
     LayerParticles,
+    /// Camada 3D de referência.
+    LayerModel3d,
     LayerText,
     LayerAdjustment,
     Play,
@@ -89,7 +93,7 @@ pub enum IconId {
 }
 
 impl IconId {
-    pub const ALL: [IconId; 70] = [
+    pub const ALL: [IconId; 72] = [
         IconId::WsRoteiro,
         IconId::WsPersonagens,
         IconId::WsStoryboard,
@@ -117,6 +121,7 @@ impl IconId {
         IconId::ToolText,
         IconId::ToolRuler,
         IconId::Snap,
+        IconId::ToolModel3d,
         IconId::ZoomOut,
         IconId::Eye,
         IconId::EyeOff,
@@ -136,6 +141,7 @@ impl IconId {
         IconId::LayerReference,
         IconId::LayerEffect,
         IconId::LayerParticles,
+        IconId::LayerModel3d,
         IconId::LayerText,
         IconId::LayerAdjustment,
         IconId::Play,
@@ -196,6 +202,7 @@ impl IconId {
             IconId::ToolText => include_str!("../assets/icons/tool-text.svg"),
             IconId::ToolRuler => include_str!("../assets/icons/tool-ruler.svg"),
             IconId::Snap => include_str!("../assets/icons/snap.svg"),
+            IconId::ToolModel3d => include_str!("../assets/icons/tool-model3d.svg"),
             IconId::ZoomOut => include_str!("../assets/icons/zoom-out.svg"),
             IconId::Eye => include_str!("../assets/icons/eye.svg"),
             IconId::EyeOff => include_str!("../assets/icons/eye-off.svg"),
@@ -215,6 +222,7 @@ impl IconId {
             IconId::LayerReference => include_str!("../assets/icons/layer-reference.svg"),
             IconId::LayerEffect => include_str!("../assets/icons/layer-effect.svg"),
             IconId::LayerParticles => include_str!("../assets/icons/layer-particles.svg"),
+            IconId::LayerModel3d => include_str!("../assets/icons/layer-model3d.svg"),
             IconId::LayerText => include_str!("../assets/icons/layer-text.svg"),
             IconId::LayerAdjustment => include_str!("../assets/icons/layer-adjustment.svg"),
             IconId::Play => include_str!("../assets/icons/play.svg"),

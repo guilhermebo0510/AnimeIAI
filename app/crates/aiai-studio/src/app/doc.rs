@@ -568,6 +568,9 @@ impl StudioApp {
         let r: Result<String, String> = if ext == "wav" {
             super::actions::run(&mut self.core, "IMPORT_AUDIO", json!({ "path": path.display().to_string(), "cut": cut, "start_frame": self.ed.frame, "track": "sfx" }))
                 .map(|_| format!("{}: {stem}", tr("msg.imported")))
+        } else if super::model3d::DROP_EXTS.contains(&ext.as_str()) {
+            // modelo 3D: camada 3D de referência nova no topo do corte (o .vrm volta com "em breve")
+            super::model3d::import_into(&mut self.core, &mut self.ed, &cut, path)
         } else if IMAGE_EXTS.contains(&ext.as_str()) {
             // camada de referência nova no topo do corte, com um cel, e a imagem ajustada ao canvas
             let (layer, cel) = (self.core.ids.next(), self.core.ids.next());

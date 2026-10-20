@@ -480,6 +480,9 @@ pub enum LayerType {
     Adjustment,
     Effect,
     Particles,
+    /// Modelo 3D de referência (S24): GLB do ativo renderizado por quadro com a câmera e a transformação de
+    /// `params.model3d` (ver [`crate::model3d`]). Sem cels.
+    Model3d,
 }
 
 impl LayerType {
@@ -612,6 +615,13 @@ impl LayerData {
         }
         if !(self.depth.is_finite() && self.offset.iter().all(|v| v.is_finite())) {
             return Err("profundidade/deslocamento não finitos".into());
+        }
+        if self.kind == LayerType::Model3d {
+            match crate::model3d::Model3dParams::from_layer_params(&self.params) {
+                Some(r) => r?,
+                None => return Err("camada 3D sem params.model3d".into()),
+            };
+            crate::model3d::validate_keys(&self.keys)?;
         }
         self.keys.validate()
     }
@@ -898,6 +908,9 @@ pub enum AssetType {
     Background,
     EffectPreset,
     Font,
+    /// Modelo 3D (S24): blob = GLB normalizado pelo importador; `params.model3d` = informações (triângulos, caixa,
+    /// licença, arquivo de origem).
+    Model3d,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -1118,6 +1131,11 @@ impl Project {
                 if let Some(m) = &l.mask {
                     if !self.nodes.contains_key(m) {
                         return Err(format!("máscara {m} de {id} não existe"));
+                    }
+                }
+                if let Some(Ok(m3)) = (l.kind == LayerType::Model3d).then(|| crate::model3d::Model3dParams::from_layer_params(&l.params)).flatten() {
+                    if !matches!(self.nodes.get(&m3.asset).map(|a| &a.data), Some(NodeKind::Asset(a)) if a.asset == AssetType::Model3d) {
+                        return Err(format!("camada 3D {} aponta para um ativo 3D inexistente ({})", n.name, m3.asset));
                     }
                 }
                 for r in &l.line_refs {

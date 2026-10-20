@@ -58,6 +58,50 @@ dependencies = [
 ]
 
 [[package]]
+name = "aiai-3d-core"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "bytemuck",
+ "glam",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "aiai-3d-model"
+version = "0.1.0"
+dependencies = [
+ "aiai-3d-core",
+ "aiai-core",
+ "base64",
+ "blake3",
+ "glam",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "aiai-3d-render"
+version = "0.1.0"
+dependencies = [
+ "aiai-3d-core",
+ "anyhow",
+ "bytemuck",
+ "glam",
+ "image",
+ "naga",
+ "pollster",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tracing",
+ "wgpu",
+]
+
+[[package]]
 name = "aiai-anim"
 version = "0.1.0"
 dependencies = [
@@ -83,6 +127,7 @@ dependencies = [
 name = "aiai-bridge"
 version = "0.1.0"
 dependencies = [
+ "aiai-3d-model",
  "aiai-anim",
  "aiai-audio",
  "aiai-core",
@@ -203,10 +248,12 @@ dependencies = [
 name = "aiai-render"
 version = "0.1.0"
 dependencies = [
+ "aiai-3d-model",
  "aiai-anim",
  "aiai-core",
  "aiai-fx",
  "aiai-paint",
+ "blake3",
  "rayon",
  "serde",
  "serde_json",
@@ -217,6 +264,9 @@ dependencies = [
 name = "aiai-studio"
 version = "0.1.0"
 dependencies = [
+ "aiai-3d-core",
+ "aiai-3d-model",
+ "aiai-3d-render",
  "aiai-audio",
  "aiai-bridge",
  "aiai-core",
@@ -231,7 +281,9 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "egui_tiles",
+ "glam",
  "image",
+ "pollster",
  "resvg",
  "rfd",
  "serde",
@@ -248,6 +300,7 @@ name = "aiai-tools"
 version = "0.1.0"
 dependencies = [
  "ab_glyph",
+ "aiai-3d-model",
  "aiai-anim",
  "aiai-audio",
  "aiai-core",

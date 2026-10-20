@@ -552,7 +552,7 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
     assert!(plan("aiai_zzz", json!({})).is_err());
     // o catálogo é uma lista estável de ferramentas, todas com plano
     let defs = tools::definitions();
-    assert_eq!(defs.as_array().unwrap().len(), 77);
+    assert_eq!(defs.as_array().unwrap().len(), 78);
     // todas as ferramentas de produção: descrição com exemplo de uma linha, schema de objeto, plano com a ação certa e frame 0 por padrão
     for t in defs.as_array().unwrap() {
         let n = t["name"].as_str().unwrap();
@@ -587,6 +587,7 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
         ("aiai_audio_edit", json!({"asset": "a", "steps": [{"op": "mono"}]}), "AUDIO_EDIT"),
         ("aiai_audio_analyze", json!({"asset": "a"}), "AUDIO_ANALYZE"),
         ("aiai_ruler", json!({"layer": "l", "op": "list"}), "RULER"),
+        ("aiai_model3d", json!({"op": "list"}), "MODEL3D"),
         ("aiai_compare", json!({"cut": "c", "reference": "r.png"}), "COMPARE"),
         ("aiai_probe_color", json!({"reference": "r.png", "points": [[1, 1]]}), "PROBE_COLOR"),
         ("aiai_measure_line", json!({"reference": "r.png", "points": [[1, 1], [2, 2]]}), "MEASURE_LINE"),
@@ -627,6 +628,7 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
         ("aiai_compare", json!({"cut": "c"})),
         ("aiai_sfx", json!({})),
         ("aiai_ruler", json!({"layer": "l"})),
+        ("aiai_model3d", json!({"layer": "l"})),
     ] {
         assert!(plan(tool, args.clone()).is_err(), "{tool} {args}: deveria faltar algo");
     }

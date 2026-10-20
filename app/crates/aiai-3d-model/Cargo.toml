@@ -1,0 +1,16 @@
+[package]
+name = "aiai-3d-model"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Modelos 3D de referência do AnimeIAI: importação glTF/GLB/OBJ para GLB normalizado, câmera orbital e gizmo (matemática pura), cena para o renderer cel e rasterizador CPU de reserva"
+
+[dependencies]
+aiai-core = { workspace = true }
+aiai-3d-core = { path = "../aiai-3d-core" }
+glam = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = { workspace = true }
+thiserror = { workspace = true }
+blake3 = { workspace = true }

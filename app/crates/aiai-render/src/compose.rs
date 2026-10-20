@@ -325,6 +325,10 @@ impl<'a> Renderer<'a> {
             if (layer.kind == LayerType::Guide && !opts.include_guides) || (layer.kind == LayerType::Reference && !opts.include_reference) {
                 continue;
             }
+            // camada 3D marcada como referência segue a regra das referências (padrão: fora do render final)
+            if layer.kind == LayerType::Model3d && !opts.include_reference && aiai_core::model3d::is_reference(&layer.params) {
+                continue;
+            }
             let content: Option<Image> = match layer.kind {
                 LayerType::Group => {
                     if layer.blend == BlendMode::PassThrough && layer.opacity >= 1.0 && layer.mask.is_none() && !layer.clip_to_below {
@@ -381,6 +385,7 @@ impl<'a> Renderer<'a> {
                 }
                 LayerType::Particles => self.particles_image(node, layer, cut, frame),
                 LayerType::Text => self.text_image(node, layer, frame),
+                LayerType::Model3d => self.model3d_image(node, layer, frame),
                 k if k.holds_cels() => self.layer_image(id, node, layer, cut, frame),
                 other => {
                     self.warnings.push(format!("camada '{}' do tipo {other:?} ainda não é renderizada", node.name));
@@ -546,6 +551,31 @@ impl<'a> Renderer<'a> {
         };
         let xf = self.placement_affine(layer, frame, [0.0, 0.0, 1.0, 0.0]);
         crate::text::render_text_layer(&p, &lay, &colors, xf, self.out_w, self.out_h)
+    }
+
+    /// Camada 3D: o modelo desenhado no canvas do corte pelo renderizador registrado (GPU no app, CPU no headless), com
+    /// a câmera e a transformação de `params.model3d` avaliadas no quadro; depois segue como qualquer imagem do canvas.
+    fn model3d_image(&mut self, node: &Node, layer: &LayerData, frame: u32) -> Option<Image> {
+        let p = match aiai_core::model3d::Model3dParams::from_layer_params(&layer.params) {
+            Some(Ok(p)) => p,
+            Some(Err(e)) => {
+                self.warnings.push(format!("{}: {e}", node.name));
+                return None;
+            }
+            None => {
+                self.warnings.push(format!("camada 3D '{}' sem params.model3d", node.name));
+                return None;
+            }
+        };
+        let state = p.eval(&layer.keys, frame as f32);
+        let job = crate::raster3d::Layer3dJob { model_hash: &p.model_hash, state: &state, blobs: self.blobs, width: self.width, height: self.height };
+        match crate::raster3d::render_layer3d(&job) {
+            Ok(img) => Some(self.place(img, layer, frame, [0.0, 0.0, 1.0, 0.0])),
+            Err(e) => {
+                self.warnings.push(format!("{}: {e}", node.name));
+                None
+            }
+        }
     }
 
     /// Aplica transformação do cel, chaves da camada e câmera (multiplano) a uma imagem do canvas.

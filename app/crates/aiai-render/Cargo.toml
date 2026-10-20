@@ -10,6 +10,8 @@ aiai-core = { workspace = true }
 aiai-paint = { workspace = true }
 aiai-fx = { workspace = true }
 aiai-anim = { workspace = true }
+aiai-3d-model = { path = "../aiai-3d-model" }
+blake3 = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

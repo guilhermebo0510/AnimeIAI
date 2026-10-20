@@ -1060,6 +1060,7 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
         env.ed.selection = None;
     }
     super::rulers::shortcuts(ctx, env);
+    super::model3d::shortcuts(ctx, env);
     let (tool_key, size_dir, enter, esc, step, home_end, fit, one) = ctx.input_mut(|i| {
         // atalho configurável (Preferências > Atalhos): só dispara com os modificadores exatos
         let mut hit = |a: A| keys.get(a).is_some_and(|c| c.take(i));
@@ -1077,6 +1078,7 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
             (A::ToolZoom, ToolId::Zoom),
             (A::ToolText, ToolId::Text),
             (A::ToolRuler, ToolId::Ruler),
+            (A::ToolModel3d, ToolId::Model3d),
         ] {
             if hit(a) {
                 tk = Some(t);

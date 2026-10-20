@@ -118,6 +118,8 @@ pub enum Action {
     ToolText,
     /// Régua (U, como no Clip Studio: o R segurado gira a visão).
     ToolRuler,
+    /// Camada 3D: gizmo e câmera da camada (M).
+    ToolModel3d,
     /// Réguas: mostrar/ocultar as linhas no canvas.
     RulersShow,
     /// Réguas: encaixe dos traços liga/desliga.
@@ -156,7 +158,7 @@ pub enum Action {
 }
 
 /// (ação, id guardado nas preferências, chave i18n do nome, atalho padrão), na ordem do editor de atalhos.
-pub const ACTIONS: [(Action, &str, &str, Chord); 41] = [
+pub const ACTIONS: [(Action, &str, &str, Chord); 42] = [
     (Action::ToolMove, "tool.move", "tool.move", Chord::plain(Key::V)),
     (Action::ToolBrush, "tool.brush", "tool.brush", Chord::plain(Key::B)),
     (Action::ToolPen, "tool.pen", "tool.pen", Chord::plain(Key::P)),
@@ -169,6 +171,7 @@ pub const ACTIONS: [(Action, &str, &str, Chord); 41] = [
     (Action::ToolZoom, "tool.zoom", "tool.zoom", Chord::plain(Key::Z)),
     (Action::ToolText, "tool.text", "tool.text", Chord::plain(Key::T)),
     (Action::ToolRuler, "tool.ruler", "tool.ruler", Chord::plain(Key::U)),
+    (Action::ToolModel3d, "tool.model3d", "tool.model3d", Chord::plain(Key::M)),
     (Action::RulersShow, "ruler.show", "keys.rulers_show", Chord::ctrl(Key::Semicolon)),
     (Action::RulerSnap, "ruler.snap", "keys.ruler_snap", Chord::ctrl_shift(Key::Semicolon)),
     (Action::RulerNext, "ruler.next", "keys.ruler_next", Chord::shift(Key::U)),
@@ -230,6 +233,7 @@ impl Action {
             T::Zoom => Action::ToolZoom,
             T::Text => Action::ToolText,
             T::Ruler => Action::ToolRuler,
+            T::Model3d => Action::ToolModel3d,
         }
     }
 }
