@@ -24,7 +24,6 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: egui::Rect) {
             WorkspaceId::Producao => return super::production::properties(env, ui),
             WorkspaceId::Edicao => return super::edit::properties(env, ui),
             WorkspaceId::Entrega => return super::deliver::properties(env, ui),
-            WorkspaceId::Cor => return super::satsuei::grade(env, ui),
             WorkspaceId::Personagens => return super::characters::properties(env, ui),
             _ => {}
         }
@@ -40,6 +39,9 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: egui::Rect) {
         if env.ws == WorkspaceId::Composicao {
             super::satsuei::layer_effects(env, ui);
             super::satsuei::camera(env, ui);
+            // a grade do corte (lift/gamma/gain), que ficava no antigo workspace Cor, agora é trabalho do satsuei
+            ui.add_space(4.0);
+            egui::CollapsingHeader::new(tr("fx.grade_section")).id_salt("props_grade").default_open(false).show(ui, |ui| super::satsuei::grade(env, ui));
         }
         cut_properties(env, ui);
     });

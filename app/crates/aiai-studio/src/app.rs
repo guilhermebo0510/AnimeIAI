@@ -34,6 +34,7 @@ use crate::cli::Cli;
 use crate::i18n::{self, tr, Lang};
 use crate::icons::{IconId, Icons};
 use crate::layout::{self, PanelKind};
+use crate::layout_store::{self, LayoutStore};
 use crate::prefs::{self, Prefs, MAX_ZOOM, MIN_ZOOM};
 use crate::sysmem;
 use crate::theme::{self, ThemeKind, Tokens, CARD_GAP, CARD_RADIUS, HEADER_H, PANEL_MIN};
@@ -62,6 +63,14 @@ pub struct StudioApp {
     /// (ferramenta, área de trabalho) do quadro anterior: só troca de ferramenta na mesma área traz o painel.
     last_tool: Option<(crate::workspace::ToolId, WorkspaceId)>,
     trees: HashMap<WorkspaceId, Tree<PanelKind>>,
+    /// Layouts guardados (`layouts.json`): a árvore em uso de cada workspace, a revisão de fábrica vista e os com nome.
+    layouts: LayoutStore,
+    /// `None` com `--no-session` (nada é lido nem gravado).
+    layouts_path: Option<PathBuf>,
+    /// Última mudança ainda não gravada no arquivo (grava 500 ms depois da última, e ao sair).
+    layouts_dirty_at: Option<Instant>,
+    /// Diálogo "Salvar layout atual como…" aberto, com o nome digitado.
+    layout_name: Option<String>,
     icons: Icons,
     tool: ToolId,
     about_open: bool,
@@ -112,6 +121,8 @@ impl StudioApp {
         theme::install_fonts(ctx);
         let prefs_path = if cli.no_session { None } else { cli.session_file.clone().map(PathBuf::from).or_else(prefs::default_path) };
         let mut prefs = prefs_path.as_deref().map(prefs::load).unwrap_or_default();
+        let layouts_path = layout_store::path_for(cli.no_session, cli.session_file.as_deref());
+        let layouts = layouts_path.as_deref().map(layout_store::load).unwrap_or_default();
         // flags da linha de comando valem para esta execução (só viram preferência se o usuário mexer depois)
         if let Some(l) = cli.lang {
             prefs.lang = l;
@@ -136,6 +147,10 @@ impl StudioApp {
             prefs_path,
             prefs_dirty: false,
             trees: HashMap::new(),
+            layouts,
+            layouts_path,
+            layouts_dirty_at: None,
+            layout_name: None,
             last_tool: None,
             icons: Icons::default(),
             tool: ToolId::default(),
@@ -170,6 +185,7 @@ impl StudioApp {
             screenshot_requested: false,
         };
         app.ed.keys = crate::keymap::Keymap::from_overrides(&app.prefs.shortcuts);
+        app.fit_tool_to_workspace();
         // pincéis de fábrica + os do usuário (sem sessão: só os de fábrica, nada é gravado)
         app.ed.brushes = brushes::BrushLibrary::load(if app.cli.no_session { None } else { brushes::default_path() });
         if let Some(dir) = app.cli.project.clone() {
@@ -245,11 +261,204 @@ impl StudioApp {
             self.ws = w;
             self.prefs.workspace = w;
             self.mark_dirty();
+            self.fit_tool_to_workspace();
         }
     }
 
+    /// A ferramenta ativa que não existe na prateleira do workspace troca pela padrão dele (a Composição não fica com o
+    /// balde da Pintura escolhido sem mostrar).
+    fn fit_tool_to_workspace(&mut self) {
+        let p = self.ws.profile();
+        if p.canvas && !p.allows(self.tool) {
+            self.tool = p.default_tool;
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------ layouts do dock
+
+    /// Garante a árvore do workspace em `trees`: a guardada em `layouts.json` (se ainda tem painel conhecido) ou a de fábrica.
+    pub(crate) fn ensure_tree(&mut self, ws: WorkspaceId) {
+        if self.trees.contains_key(&ws) {
+            return;
+        }
+        let saved = self.layouts.get(ws).and_then(|e| e.current.as_ref()).and_then(|s| layout::tree_from_saved(ws, s));
+        let tree = saved.unwrap_or_else(|| layout::default_tree(ws));
+        self.trees.insert(ws, tree);
+    }
+
+    /// Mudanças na árvore do workspace atual (arrastar, fechar, redimensionar) vão para o `layouts.json`; o arquivo é
+    /// gravado 500 ms depois da última mudança (nunca com `--no-session`).
+    fn layouts_tick(&mut self) {
+        let ws = self.ws;
+        if let Some(tree) = self.trees.get(&ws) {
+            let saved = layout::saved_from_tree(tree);
+            if self.layouts.record_current(ws, saved) {
+                self.layouts_dirty_at = Some(Instant::now());
+            }
+        }
+        if self.layouts_dirty_at.is_some_and(|t| t.elapsed() >= Duration::from_millis(500)) {
+            self.save_layouts();
+        }
+    }
+
+    fn save_layouts(&mut self) {
+        self.layouts_dirty_at = None;
+        if let Some(p) = &self.layouts_path {
+            if let Err(e) = layout_store::save(p, &self.layouts) {
+                tracing::warn!("falha ao salvar os layouts em {}: {e}", p.display());
+                self.notice(format!("{} {}: {e}", tr("msg.layout_save_failed"), p.display()));
+            }
+        }
+    }
+
+    fn layouts_changed(&mut self) {
+        self.layouts_dirty_at = Some(Instant::now());
+    }
+
+    /// Volta o workspace ao layout de fábrica (os layouts com nome ficam).
     fn reset_layout(&mut self, ws: WorkspaceId) {
-        self.trees.remove(&ws);
+        self.trees.insert(ws, layout::default_tree(ws));
+        self.layouts.reset(ws);
+        self.layouts_changed();
+    }
+
+    /// Guarda a árvore em uso do workspace atual com um nome.
+    pub(crate) fn layout_save_named(&mut self, name: &str) -> Result<bool, String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("nome vazio".into());
+        }
+        let ws = self.ws;
+        self.ensure_tree(ws);
+        let saved = self.trees.get(&ws).and_then(layout::saved_from_tree).ok_or("árvore vazia")?;
+        let replaced = self.layouts.save_named(ws, name, saved);
+        self.layouts_changed();
+        self.notice(format!("{} {name}", tr(if replaced { "msg.layout_replaced" } else { "msg.layout_saved" })));
+        Ok(replaced)
+    }
+
+    /// Aplica um layout com nome do workspace atual.
+    pub(crate) fn layout_apply(&mut self, name: &str) -> Result<(), String> {
+        let ws = self.ws;
+        let node = self.layouts.named(ws, name).cloned().ok_or_else(|| format!("layout desconhecido neste workspace: {name}"))?;
+        let Some(tree) = layout::tree_from_saved(ws, &node) else {
+            self.notice(tr("msg.layout_bad"));
+            return Err(tr("msg.layout_bad").to_owned());
+        };
+        self.trees.insert(ws, tree);
+        self.layouts.entry(ws).active_name = Some(name.to_owned());
+        self.layouts_changed();
+        self.notice(format!("{} {name}", tr("msg.layout_applied")));
+        Ok(())
+    }
+
+    pub(crate) fn layout_delete(&mut self, name: &str) -> bool {
+        let ok = self.layouts.delete_named(self.ws, name);
+        if ok {
+            self.layouts_changed();
+            self.notice(format!("{} {name}", tr("msg.layout_deleted")));
+        }
+        ok
+    }
+
+    /// Mostra ou esconde um painel do catálogo no workspace atual; mostrar um painel que não está na árvore insere o
+    /// painel (junto da mesma categoria ou pelo `dock_hint`). O canvas não se esconde nem entra onde não há canvas.
+    pub(crate) fn set_panel_visible(&mut self, kind: PanelKind, on: bool) -> Result<bool, String> {
+        let ws = self.ws;
+        if kind.meta().needs_canvas && !ws.profile().canvas {
+            return Err(format!("o painel '{}' precisa de canvas e o workspace {} não tem", kind.key(), ws.key()));
+        }
+        if kind == PanelKind::Canvas && !on {
+            return Err("o canvas não se esconde".into());
+        }
+        self.ensure_tree(ws);
+        let Some(tree) = self.trees.get_mut(&ws) else { return Err("sem árvore".into()) };
+        match (layout::find_pane(tree, kind), on) {
+            (_, true) => {
+                layout::insert_panel(tree, kind);
+            }
+            (Some(id), false) => tree.tiles.set_visible(id, false),
+            (None, false) => {}
+        }
+        Ok(on)
+    }
+
+    /// Faixa "o padrão foi atualizado" no topo do workspace (só quando o usuário tem layout próprio mais velho que a fábrica).
+    fn layout_update_banner(&mut self, ui: &mut egui::Ui) {
+        let ws = self.ws;
+        if !self.layouts.factory_update_pending(ws) {
+            return;
+        }
+        let t = self.tokens();
+        let (mut use_new, mut keep) = (false, false);
+        let r = egui::Panel::top("layout_update")
+            .exact_size(30.0)
+            .frame(egui::Frame::NONE.fill(t.bg_header).inner_margin(egui::Margin::symmetric(10, 0)))
+            .show(ui, |ui| {
+                ui.horizontal_centered(|ui| {
+                    ui.label(RichText::new(tr("msg.layout_update")).size(12.0).color(t.text));
+                    let a = ui.button(tr("msg.layout_update.use"));
+                    self.rects.note("layout_update:use", a.rect);
+                    use_new = a.clicked();
+                    let b = ui.button(tr("msg.layout_update.keep"));
+                    self.rects.note("layout_update:keep", b.rect);
+                    keep = b.clicked();
+                });
+            });
+        self.rects.note("layout_update", r.response.rect);
+        if use_new {
+            // o layout do usuário fica guardado com nome antes de a fábrica entrar
+            let name = tr("msg.layout_previous").to_owned();
+            if let Some(cur) = self.layouts.get(ws).and_then(|e| e.current.clone()) {
+                self.layouts.save_named(ws, &name, cur);
+            }
+            self.reset_layout(ws);
+        } else if keep {
+            self.layouts.entry(ws).factory_rev_seen = layout::factory_rev(ws);
+            self.layouts_changed();
+        }
+    }
+
+    /// Diálogo "Salvar layout atual como…": `Enter` salva, `Esc` fecha.
+    fn layout_name_window(&mut self, ctx: &egui::Context) {
+        let Some(mut name) = self.layout_name.take() else { return };
+        let mut open = true;
+        let (mut save, mut cancel) = (false, false);
+        let win = egui::Window::new(tr("dialog.layout_name.title"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
+            .fixed_size([360.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(tr("dialog.layout_name.label"));
+                let r = ui.add(egui::TextEdit::singleline(&mut name).desired_width(f32::INFINITY));
+                self.rects.note("layout_name:text", r.rect);
+                if !r.has_focus() && !r.lost_focus() {
+                    r.request_focus();
+                }
+                let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    let b = ui.add_enabled(!name.trim().is_empty(), egui::Button::new(tr("dialog.layout_name.save")));
+                    self.rects.note("layout_name:save", b.rect);
+                    save = b.clicked() || (enter && !name.trim().is_empty());
+                    let c = ui.button(tr("confirm.cancel"));
+                    self.rects.note("layout_name:cancel", c.rect);
+                    cancel = c.clicked();
+                });
+            });
+        if let Some(w) = win {
+            self.rects.note("dialog:layout_name", w.response.rect);
+        }
+        if cancel || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            open = false;
+        }
+        if save {
+            let _ = self.layout_save_named(&name);
+        } else if open {
+            self.layout_name = Some(name);
+        }
     }
 
     // ------------------------------------------------------------------------------------------ medidas
@@ -391,32 +600,53 @@ impl StudioApp {
 
     fn menu_view(&mut self, ui: &mut egui::Ui) {
         let r = ui.menu_button(tr("menu.view"), |ui| {
-            // painéis do workspace atual: marcar mostra (e traz a aba para a frente), desmarcar esconde
-            ui.menu_button(tr("menu.view.panels"), |ui| {
+            // todos os painéis do catálogo, por categoria: marcar mostra (o que não está no layout entra junto da mesma
+            // categoria ou no lado do `dock_hint`), desmarcar esconde
+            let r = ui.menu_button(tr("menu.view.panels"), |ui| {
                 let ws = self.ws;
-                let tree = self.trees.entry(ws).or_insert_with(|| layout::default_tree(ws));
-                let mut panes: Vec<(TileId, PanelKind)> = tree.tiles.iter().filter_map(|(id, t)| match t {
-                    egui_tiles::Tile::Pane(k) if *k != PanelKind::Canvas => Some((*id, *k)),
-                    _ => None,
-                }).collect();
-                panes.sort_by_key(|(_, k)| tr(k.title_key()).to_owned());
-                for (id, k) in panes {
-                    let mut on = tree.tiles.is_visible(id);
-                    let r = ui.checkbox(&mut on, tr(k.title_key()));
-                    self.rects.note(format!("menu_item:view.panel.{}", k.key()), r.rect);
-                    if r.changed() {
-                        tree.tiles.set_visible(id, on);
-                        if on {
-                            tree.make_active(|tid, _| tid == id);
-                        }
-                    }
-                }
-                ui.separator();
-                if ui.button(tr("menu.window.reset")).clicked() {
+                self.ensure_tree(ws);
+                let canvas_ws = ws.profile().canvas;
+                let mut change: Option<(PanelKind, bool)> = None;
+                if self.menu_item(ui, "view.reset_layout", "menu.window.reset", "", true) {
                     self.reset_layout(self.ws);
+                    self.notice(tr("msg.layout_reset"));
                     ui.close();
                 }
+                ui.separator();
+                // o catálogo inteiro não cabe numa tela baixa: a lista rola
+                let max_h = (ui.ctx().content_rect().height() - 140.0).max(200.0);
+                egui::ScrollArea::vertical().max_height(max_h).min_scrolled_height(max_h).auto_shrink([true, true]).show(ui, |ui| {
+                    for cat in layout::PanelCategory::ALL {
+                        let kinds: Vec<PanelKind> = PanelKind::ALL.into_iter().filter(|k| k.meta().category == cat).collect();
+                        if kinds.is_empty() {
+                            continue;
+                        }
+                        ui.add_space(2.0);
+                        ui.label(RichText::new(tr(cat.title_key())).size(11.0).color(self.tokens().text_dim));
+                        for k in kinds {
+                            let tree = &self.trees[&ws];
+                            let mut on = layout::find_pane(tree, k).is_some_and(|id| tree.tiles.is_visible(id));
+                            let meta = k.meta();
+                            // o canvas não se esconde; painel que precisa de canvas não entra onde não há canvas
+                            let enabled = k != PanelKind::Canvas && (!meta.needs_canvas || canvas_ws);
+                            let suggested = meta.workspaces.contains(&ws);
+                            let text = if suggested { RichText::new(tr(k.title_key())) } else { RichText::new(tr(k.title_key())).color(self.tokens().text_dim) };
+                            let r = ui.add_enabled(enabled, egui::Checkbox::new(&mut on, text));
+                            self.rects.note(format!("menu_item:view.panel.{}", k.key()), r.rect);
+                            let r = if !enabled && meta.needs_canvas && !canvas_ws { r.on_disabled_hover_text(tr("menu.view.panels.needs_canvas")) } else if suggested { r.on_hover_text(tr("menu.view.panels.suggested")) } else { r };
+                            if r.changed() {
+                                change = Some((k, on));
+                            }
+                        }
+                    }
+                });
+                if let Some((k, on)) = change {
+                    if let Err(e) = self.set_panel_visible(k, on) {
+                        self.notice(e);
+                    }
+                }
             });
+            self.rects.note("menu_item:view.panels", r.response.rect);
             ui.separator();
             ui.menu_button(tr("menu.view.theme"), |ui| {
                 for (k, key) in [(ThemeKind::Light, "menu.view.theme.light"), (ThemeKind::Dark, "menu.view.theme.dark")] {
@@ -452,11 +682,20 @@ impl StudioApp {
     fn menu_window(&mut self, ui: &mut egui::Ui) {
         let r = ui.menu_button(tr("menu.window"), |ui| {
             let t = self.tokens();
-            for w in WorkspaceId::ALL {
+            let mut group = None;
+            for (i, w) in WorkspaceId::ALL.into_iter().enumerate() {
+                if group.is_some_and(|g| g != w.group()) {
+                    ui.separator();
+                }
+                group = Some(w.group());
                 let tex = self.icons.texture(ui.ctx(), w.icon(), 16.0);
                 let selected = self.ws == w;
                 let img = egui::Image::new((tex, egui::vec2(16.0, 16.0))).tint(if selected { t.accent } else { t.text_dim });
-                let item = ui.add(egui::Button::image_and_text(img, tr(w.title_key())).selected(selected));
+                let mut b = egui::Button::image_and_text(img, tr(w.title_key())).selected(selected);
+                if let Some(k) = workspace_key_label(i) {
+                    b = b.shortcut_text(k);
+                }
+                let item = ui.add(b);
                 self.rects.note(format!("menu_item:window.{}", w.key()), item.rect);
                 if item.clicked() {
                     self.switch_workspace(w);
@@ -464,16 +703,72 @@ impl StudioApp {
                 }
             }
             ui.separator();
-            if ui.button(tr("menu.window.reset")).clicked() {
-                self.reset_layout(self.ws);
-                ui.close();
-            }
-            if ui.button(tr("menu.window.reset_all")).clicked() {
-                self.trees.clear();
-                ui.close();
-            }
+            let r = ui.menu_button(tr("menu.window.layout"), |ui| self.menu_layout(ui));
+            self.rects.note("menu_item:window.layout", r.response.rect);
         });
         self.rects.note("menu:window", r.response.rect);
+    }
+
+    /// Janela > Layout: os layouts com nome do workspace atual (aplicar, salvar, excluir) e voltar à fábrica.
+    fn menu_layout(&mut self, ui: &mut egui::Ui) {
+        let ws = self.ws;
+        if self.menu_item(ui, "layout.save_as", "menu.window.layout.save_as", "", true) {
+            self.layout_name = Some(String::new());
+            ui.close();
+        }
+        ui.separator();
+        ui.label(RichText::new(tr("menu.window.layout.mine")).size(11.0).color(self.tokens().text_dim));
+        let names: Vec<String> = self.layouts.get(ws).map(|e| e.named.iter().map(|n| n.name.clone()).collect()).unwrap_or_default();
+        let active = self.layouts.label(ws);
+        if names.is_empty() {
+            ui.add_enabled(false, egui::Button::new(tr("menu.window.layout.none")));
+        }
+        let mut apply = None;
+        for n in &names {
+            let r = ui.radio(active.as_deref() == Some(n.as_str()), n.as_str());
+            self.rects.note(format!("menu_item:layout.apply.{n}"), r.rect);
+            if r.clicked() {
+                apply = Some(n.clone());
+            }
+        }
+        if let Some(n) = apply {
+            let _ = self.layout_apply(&n);
+            ui.close();
+        }
+        let mut delete = None;
+        ui.add_enabled_ui(!names.is_empty(), |ui| {
+            let r = ui.menu_button(tr("menu.window.layout.delete"), |ui| {
+                for n in &names {
+                    let r = ui.button(n.as_str());
+                    self.rects.note(format!("menu_item:layout.delete.{n}"), r.rect);
+                    if r.clicked() {
+                        delete = Some(n.clone());
+                    }
+                }
+            });
+            self.rects.note("menu_item:layout.delete", r.response.rect);
+        });
+        if let Some(n) = delete {
+            self.layout_delete(&n);
+            ui.close();
+        }
+        ui.separator();
+        let r = ui.button(tr("menu.window.reset")).on_hover_text(tr("menu.window.layout.factory_tip"));
+        self.rects.note("menu_item:window.reset", r.rect);
+        if r.clicked() {
+            self.reset_layout(ws);
+            self.notice(tr("msg.layout_reset"));
+            ui.close();
+        }
+        let r = ui.button(tr("menu.window.reset_all")).on_hover_text(tr("menu.window.layout.factory_tip"));
+        self.rects.note("menu_item:window.reset_all", r.rect);
+        if r.clicked() {
+            for w in WorkspaceId::ALL {
+                self.reset_layout(w);
+            }
+            self.notice(tr("msg.layout_reset"));
+            ui.close();
+        }
     }
 
     fn menu_help(&mut self, ui: &mut egui::Ui) {
@@ -486,7 +781,8 @@ impl StudioApp {
         self.rects.note("menu:help", r.response.rect);
     }
 
-    /// Abas de workspace (como no Blender). Se não couberem com rótulo, só o ativo mostra o nome.
+    /// Abas de workspace (como no Blender), com um separador discreto entre os grupos (pré-produção, arte, finalização,
+    /// recursos, som e montagem, gestão). Se não couberem com rótulo, só o ativo mostra o nome.
     fn workspace_bar(&mut self, ui: &mut egui::Ui) {
         let t = self.tokens();
         let bar = egui::Panel::top("wsbar")
@@ -497,16 +793,26 @@ impl StudioApp {
                 let pad = 9.0;
                 let icon = 16.0;
                 let gap = 6.0;
+                let sep_w = 11.0;
                 let widths: Vec<f32> = WorkspaceId::ALL
                     .iter()
                     .map(|w| pad * 2.0 + icon + gap + ui.painter().layout_no_wrap(tr(w.title_key()).to_owned(), font.clone(), Color32::WHITE).size().x)
                     .collect();
                 let spacing = 2.0;
-                let total: f32 = widths.iter().sum::<f32>() + spacing * (widths.len() as f32 - 1.0);
+                let groups = WorkspaceId::ALL.windows(2).filter(|p| p[0].group() != p[1].group()).count() as f32;
+                let total: f32 = widths.iter().sum::<f32>() + spacing * (widths.len() as f32 - 1.0) + groups * (sep_w + spacing);
                 let compact = total > ui.available_width();
                 ui.spacing_mut().item_spacing.x = spacing;
                 ui.horizontal(|ui| {
-                    for (w, full) in WorkspaceId::ALL.into_iter().zip(widths) {
+                    let mut prev_group = None;
+                    for (i, (w, full)) in WorkspaceId::ALL.into_iter().zip(widths).enumerate() {
+                        if prev_group.is_some_and(|g| g != w.group()) {
+                            let (r, resp) = ui.allocate_exact_size(egui::vec2(sep_w, 30.0), Sense::hover());
+                            let x = r.center().x.round() + 0.5;
+                            ui.painter().vline(x, (r.center().y - 7.0)..=(r.center().y + 9.0), Stroke::new(1.0, t.border));
+                            resp.on_hover_text(tr(w.group().title_key()));
+                        }
+                        prev_group = Some(w.group());
                         let selected = self.ws == w;
                         let show_label = !compact || selected;
                         let width = if show_label { full } else { pad * 2.0 + icon };
@@ -527,8 +833,12 @@ impl StudioApp {
                         if show_label {
                             p.text(egui::pos2(rect.left() + pad + icon + gap, rect.center().y + 1.0), Align2::LEFT_CENTER, tr(w.title_key()), font.clone(), ink);
                         }
-                        let resp = if show_label { resp } else { resp.on_hover_text(tr(w.title_key())) };
-                        if resp.clicked() {
+                        // dica: nome (quando só o ícone aparece), grupo e atalho
+                        let mut tip = format!("{} · {}", tr(w.title_key()), tr(w.group().title_key()));
+                        if let Some(k) = workspace_key_label(i) {
+                            tip.push_str(&format!(" ({k})"));
+                        }
+                        if resp.on_hover_text(tip).clicked() {
                             self.switch_workspace(w);
                         }
                     }
@@ -548,6 +858,13 @@ impl StudioApp {
                     let (r, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), Sense::hover());
                     self.icons.paint(ui.painter(), self.ws.icon(), r, t.text_dim);
                     ui.label(RichText::new(tr(self.ws.title_key())).size(12.0).color(t.text));
+                    let layout_label = match self.layouts.label(self.ws) {
+                        None => tr("status.layout.factory").to_owned(),
+                        Some(n) if n.is_empty() => tr("status.layout.custom").to_owned(),
+                        Some(n) => n,
+                    };
+                    let r = ui.label(RichText::new(format!("{}: {layout_label}", tr("status.layout"))).size(12.0).color(t.text_dim));
+                    self.rects.note("status:layout", r.rect);
                     ui.separator();
                     let project = format!("{}{}", self.doc_name(), if self.doc_dirty() { "*" } else { "" });
                     ui.label(RichText::new(format!("{}: {}  ({} {})", tr("status.project"), project, tr("status.revision"), self.core.project.revision)).size(12.0).color(t.text_dim));
@@ -579,7 +896,7 @@ impl StudioApp {
         self.rects.note("statusbar", bar.response.rect);
     }
 
-    /// Prateleira de ferramentas dos workspaces de canvas (só seleção por enquanto).
+    /// Prateleira de ferramentas dos workspaces de canvas: as do perfil do workspace (`WorkspaceProfile::tools`).
     fn tool_shelf(&mut self, ui: &mut egui::Ui) {
         let t = self.tokens();
         let shelf = egui::Panel::left("toolshelf")
@@ -592,7 +909,7 @@ impl StudioApp {
                     ui.set_min_height(ui.available_height());
                     ui.spacing_mut().item_spacing.y = 4.0;
                     ui.vertical_centered(|ui| {
-                        for tool in ToolId::ALL {
+                        for &tool in self.ws.profile().tools {
                             let selected = self.tool == tool;
                             let (rect, resp) = ui.allocate_exact_size(egui::vec2(36.0, 36.0), Sense::click());
                             self.rects.note(format!("tool:{}", tool.key()), rect);
@@ -626,7 +943,9 @@ impl StudioApp {
     fn workspace_ui(&mut self, ui: &mut egui::Ui) {
         let t = self.tokens();
         let ws = self.ws;
-        let tree = self.trees.entry(ws).or_insert_with(|| layout::default_tree(ws));
+        self.layout_update_banner(ui);
+        self.ensure_tree(ws);
+        let Some(tree) = self.trees.get_mut(&ws) else { return };
         // ferramenta com itens (caneta, pincel, borracha, balde, seleção, editar pontos) escolhida agora (clique ou
         // atalho): o painel Ferramenta vem para a frente
         if self.last_tool.is_some_and(|(t, w)| t != self.tool && w == ws) && !matches!(self.tool, crate::workspace::ToolId::Move | crate::workspace::ToolId::Hand | crate::workspace::ToolId::Zoom | crate::workspace::ToolId::Eyedropper) {
@@ -661,14 +980,34 @@ impl StudioApp {
         if self.key_capture.is_some() {
             return;
         }
-        if !(self.ws.has_canvas() || matches!(self.ws, WorkspaceId::Storyboard | WorkspaceId::Audio | WorkspaceId::Edicao)) {
+        self.workspace_keys(ctx);
+        let profile = self.ws.profile();
+        if !profile.editor_keys {
             return;
         }
         let t = self.tokens();
         let ws = self.ws;
+        let before = self.tool;
         let mut notes = Vec::new();
         let mut env = ui_kit::Env { t, core: &mut self.core, ed: &mut self.ed, icons: &mut self.icons, notes: &mut notes, tool: &mut self.tool, ws };
         tools::shortcuts(ctx, &mut env);
+        // a tecla de uma ferramenta que não está na prateleira deste workspace não troca a ferramenta
+        if !profile.allows(self.tool) && self.tool != before {
+            self.tool = before;
+        }
+    }
+
+    /// Alt+1..9 e Alt+0 trocam para os dez primeiros workspaces da barra (fora de campos de texto e menus).
+    fn workspace_keys(&mut self, ctx: &egui::Context) {
+        if ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(ctx) {
+            return;
+        }
+        use egui::Key as K;
+        const KEYS: [egui::Key; 10] = [K::Num1, K::Num2, K::Num3, K::Num4, K::Num5, K::Num6, K::Num7, K::Num8, K::Num9, K::Num0];
+        let hit = ctx.input_mut(|i| KEYS.iter().position(|k| i.consume_key(egui::Modifiers::ALT, *k)));
+        if let Some(w) = hit.and_then(|n| WorkspaceId::ALL.get(n)) {
+            self.switch_workspace(*w);
+        }
     }
 
     // ------------------------------------------------------------------------------------------ diálogos
@@ -772,7 +1111,7 @@ impl StudioApp {
         self.menu_bar(ui);
         self.workspace_bar(ui);
         self.status_bar(ui);
-        if self.ws.has_canvas() {
+        if self.ws.profile().canvas {
             self.tool_shelf(ui);
         }
         self.workspace_ui(ui);
@@ -780,6 +1119,8 @@ impl StudioApp {
         self.prefs_window(&ctx);
         self.start_window(&ctx);
         self.confirm_window(&ctx);
+        self.layout_name_window(&ctx);
+        self.layouts_tick();
         self.persist();
         self.handle_screenshot(&ctx);
         let title = self.window_title();
@@ -823,12 +1164,41 @@ impl eframe::App for StudioApp {
 
     fn on_exit(&mut self) {
         self.persist();
+        if self.layouts_dirty_at.is_some() {
+            self.save_layouts();
+        }
         // saída normal (o usuário já decidiu sobre as alterações): a cópia de recuperação desta execução sai
         self.autosave.discard();
     }
 }
 
 // -------------------------------------------------------------------------------------------------------- dock
+
+/// Atalho de troca de workspace da posição `i` da barra: Alt+1..9 e Alt+0 (o décimo).
+fn workspace_key_label(i: usize) -> Option<String> {
+    match i {
+        0..=8 => Some(format!("Alt+{}", i + 1)),
+        9 => Some("Alt+0".to_owned()),
+        _ => None,
+    }
+}
+
+/// Painel em construção (Biblioteca, Modelagem): o título e o que vem, sem botões que não fazem nada.
+fn planned_panel(env: &mut ui_kit::Env, ui: &mut egui::Ui, body: Rect, kind: PanelKind) {
+    let t = env.t;
+    let mut child = ui_kit::body_ui(ui, body, 14.0);
+    child.vertical_centered(|ui| {
+        ui.add_space((body.height() * 0.18).min(120.0));
+        let (r, _) = ui.allocate_exact_size(egui::vec2(40.0, 40.0), Sense::hover());
+        let icon = if kind == PanelKind::Modeling { IconId::WsModelagem } else { IconId::WsBiblioteca };
+        env.icons.paint(ui.painter(), icon, r, t.text_dim);
+        ui.add_space(8.0);
+        ui.label(RichText::new(tr(kind.title_key())).size(15.0).strong().color(t.text));
+        ui.add_space(6.0);
+        ui.set_max_width(body.width().min(520.0) - 28.0);
+        ui.label(RichText::new(tr(kind.empty_key())).size(12.5).color(t.text_dim));
+    });
+}
 
 struct DockBehavior<'a> {
     /// Painel solto fechado pelo X do cabeçalho neste quadro (escondido depois do desenho da árvore).
@@ -891,7 +1261,6 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::Media if self.env.ws == WorkspaceId::Audio => panels::audio::media(&mut self.env, ui, body),
             PanelKind::Preview if self.env.ws == WorkspaceId::Audio => panels::audio::monitor(&mut self.env, ui, body),
             PanelKind::Mixer => panels::audio::mixer(&mut self.env, ui, body),
-            PanelKind::Navigator if self.env.ws == WorkspaceId::Cor => panels::audio::monitor(&mut self.env, ui, body),
             PanelKind::Navigator => panels::navigator::show(&mut self.env, ui, body),
             PanelKind::SubView => panels::subview::show(&mut self.env, ui, body),
             PanelKind::Brushes => panels::brushes::show(&mut self.env, ui, body),
@@ -910,6 +1279,7 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::Board => panels::board::show(&mut self.env, ui, body),
             PanelKind::Episodes => panels::production::episodes(&mut self.env, ui, body),
             PanelKind::Tasks => panels::production::tasks(&mut self.env, ui, body),
+            PanelKind::Library | PanelKind::Modeling => planned_panel(&mut self.env, ui, body, kind),
         }
         ui.painter().rect_stroke(rect, CARD_RADIUS, Stroke::new(1.0, self.t.border), StrokeKind::Inside);
         resp

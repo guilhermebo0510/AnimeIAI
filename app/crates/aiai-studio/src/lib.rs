@@ -11,6 +11,7 @@ pub mod i18n;
 pub mod icons;
 pub mod keymap;
 pub mod layout;
+pub mod layout_store;
 pub mod prefs;
 pub mod sysmem;
 pub mod theme;

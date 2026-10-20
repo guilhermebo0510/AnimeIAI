@@ -18,7 +18,8 @@ pub enum IconId {
     WsPintura,
     WsCenario,
     WsComposicao,
-    WsCor,
+    WsBiblioteca,
+    WsModelagem,
     WsAudio,
     WsEdicao,
     WsEntrega,
@@ -82,7 +83,7 @@ pub enum IconId {
 }
 
 impl IconId {
-    pub const ALL: [IconId; 66] = [
+    pub const ALL: [IconId; 67] = [
         IconId::WsRoteiro,
         IconId::WsPersonagens,
         IconId::WsStoryboard,
@@ -91,7 +92,8 @@ impl IconId {
         IconId::WsPintura,
         IconId::WsCenario,
         IconId::WsComposicao,
-        IconId::WsCor,
+        IconId::WsBiblioteca,
+        IconId::WsModelagem,
         IconId::WsAudio,
         IconId::WsEdicao,
         IconId::WsEntrega,
@@ -166,7 +168,8 @@ impl IconId {
             IconId::WsPintura => include_str!("../assets/icons/ws-pintura.svg"),
             IconId::WsCenario => include_str!("../assets/icons/ws-cenario.svg"),
             IconId::WsComposicao => include_str!("../assets/icons/ws-composicao.svg"),
-            IconId::WsCor => include_str!("../assets/icons/ws-cor.svg"),
+            IconId::WsBiblioteca => include_str!("../assets/icons/ws-biblioteca.svg"),
+            IconId::WsModelagem => include_str!("../assets/icons/ws-modelagem.svg"),
             IconId::WsAudio => include_str!("../assets/icons/ws-audio.svg"),
             IconId::WsEdicao => include_str!("../assets/icons/ws-edicao.svg"),
             IconId::WsEntrega => include_str!("../assets/icons/ws-entrega.svg"),

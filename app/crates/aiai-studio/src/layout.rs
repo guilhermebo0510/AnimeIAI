@@ -1,8 +1,10 @@
-//! Painéis e layouts padrão de cada workspace (`egui_tiles`). Os painéis são placeholders com título e texto de
-//! estado vazio; o conteúdo real chega nas sprints seguintes (canvas na S03, projeto na S01...).
+//! Painéis, o catálogo deles (`PanelMeta`) e os layouts de fábrica de cada workspace (`egui_tiles`). A árvore em uso vira
+//! `SavedNode` (painéis pela chave de texto, nunca pelo índice do enum) para ser guardada em `layouts.json`
+//! (`layout_store`) e volta por `tree_from_saved`, que descarta chaves desconhecidas.
 
 use crate::workspace::WorkspaceId;
 use egui_tiles::{Container, Linear, LinearDir, Tabs, Tile, TileId, Tiles, Tree};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PanelKind {
@@ -30,12 +32,90 @@ pub enum PanelKind {
     SubView,
     /// Pincéis por categoria e propriedades da ferramenta.
     Brushes,
+    /// Biblioteca (em construção): diz o que o workspace vai ter.
+    Library,
+    /// Modelagem 3D (em construção): diz o que o workspace vai ter.
+    Modeling,
     /// Texto: fonte, tamanho, cor, alinhamento, contorno e sombra da camada de texto.
     Text,
 }
 
+/// Categoria do painel (agrupa o Exibir > Painéis e decide junto de quem um painel novo entra como aba).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PanelCategory {
+    General,
+    PreProduction,
+    Character,
+    Drawing,
+    Color,
+    Reference,
+    Time,
+    SoundEdit,
+    Delivery,
+    Management,
+    Resources,
+}
+
+impl PanelCategory {
+    /// Ordem do menu.
+    pub const ALL: [PanelCategory; 11] = [
+        PanelCategory::General,
+        PanelCategory::PreProduction,
+        PanelCategory::Character,
+        PanelCategory::Drawing,
+        PanelCategory::Color,
+        PanelCategory::Reference,
+        PanelCategory::Time,
+        PanelCategory::SoundEdit,
+        PanelCategory::Delivery,
+        PanelCategory::Management,
+        PanelCategory::Resources,
+    ];
+
+    pub fn title_key(self) -> &'static str {
+        match self {
+            PanelCategory::General => "panel.cat.general",
+            PanelCategory::PreProduction => "panel.cat.preprod",
+            PanelCategory::Character => "panel.cat.character",
+            PanelCategory::Drawing => "panel.cat.drawing",
+            PanelCategory::Color => "panel.cat.color",
+            PanelCategory::Reference => "panel.cat.reference",
+            PanelCategory::Time => "panel.cat.time",
+            PanelCategory::SoundEdit => "panel.cat.sound_edit",
+            PanelCategory::Delivery => "panel.cat.delivery",
+            PanelCategory::Management => "panel.cat.management",
+            PanelCategory::Resources => "panel.cat.resources",
+        }
+    }
+}
+
+/// Onde um painel que não está na árvore entra quando o usuário o liga (se não houver painel da mesma categoria).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DockHint {
+    Left,
+    Right,
+    Bottom,
+    Center,
+}
+
+/// Ficha do painel no catálogo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PanelMeta {
+    pub key: &'static str,
+    pub title_key: &'static str,
+    pub category: PanelCategory,
+    pub dock_hint: DockHint,
+    /// Workspaces que sugerem o painel (os de fábrica estão aqui; um workspace pode sugerir sem trazer de fábrica).
+    pub workspaces: &'static [WorkspaceId],
+    /// Só faz sentido onde há canvas (o próprio canvas, o navegador da visão).
+    pub needs_canvas: bool,
+}
+
+use WorkspaceId as W;
+const DRAWING_WS: &[WorkspaceId] = &[W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Composicao];
+
 impl PanelKind {
-    pub const ALL: [PanelKind; 23] = [
+    pub const ALL: [PanelKind; 25] = [
         PanelKind::Canvas,
         PanelKind::Layers,
         PanelKind::Properties,
@@ -58,10 +138,12 @@ impl PanelKind {
         PanelKind::Project,
         PanelKind::SubView,
         PanelKind::Brushes,
+        PanelKind::Library,
+        PanelKind::Modeling,
         PanelKind::Text,
     ];
 
-    /// Identificador estável (bridge/UI_ACTION): `canvas`, `layers`, `timeline`...
+    /// Identificador estável (bridge/UI_ACTION, `layouts.json`): `canvas`, `layers`, `timeline`...
     pub fn key(self) -> &'static str {
         self.title_key().split('.').nth(1).unwrap_or("")
     }
@@ -95,6 +177,8 @@ impl PanelKind {
             PanelKind::Project => "panel.project.title",
             PanelKind::SubView => "panel.subview.title",
             PanelKind::Brushes => "panel.brushes.title",
+            PanelKind::Library => "panel.library.title",
+            PanelKind::Modeling => "panel.modeling.title",
             PanelKind::Text => "panel.text.title",
         }
     }
@@ -124,8 +208,49 @@ impl PanelKind {
             PanelKind::Project => "panel.project.empty",
             PanelKind::SubView => "panel.subview.empty",
             PanelKind::Brushes => "panel.brushes.empty",
+            PanelKind::Library => "panel.library.empty",
+            PanelKind::Modeling => "panel.modeling.empty",
             PanelKind::Text => "panel.text.empty",
         }
+    }
+
+    /// Ficha do catálogo: categoria, onde docar, em quais workspaces faz sentido, se precisa de canvas.
+    pub fn meta(self) -> PanelMeta {
+        use DockHint::*;
+        use PanelCategory as C;
+        let (category, dock_hint, workspaces, needs_canvas): (PanelCategory, DockHint, &'static [WorkspaceId], bool) = match self {
+            PanelKind::Canvas => (C::Drawing, Center, DRAWING_WS, true),
+            PanelKind::Layers => (C::Drawing, Right, DRAWING_WS, false),
+            PanelKind::Properties => (C::General, Right, &[W::Roteiro, W::Personagens, W::Storyboard, W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Composicao, W::Edicao, W::Entrega, W::Producao], false),
+            PanelKind::Palette => (C::Color, Right, &[W::Personagens, W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Biblioteca], false),
+            PanelKind::Navigator => (C::Drawing, Right, DRAWING_WS, true),
+            PanelKind::Timeline => (C::Time, Bottom, &[W::Storyboard, W::Animacao, W::Pintura, W::Composicao, W::Audio, W::Edicao], false),
+            PanelKind::Script => (C::PreProduction, Center, &[W::Roteiro], false),
+            PanelKind::Outline => (C::PreProduction, Left, &[W::Roteiro], false),
+            PanelKind::Characters => (C::Character, Left, &[W::Personagens, W::Modelagem], false),
+            PanelKind::Sheet => (C::Character, Center, &[W::Personagens], false),
+            PanelKind::Shots => (C::PreProduction, Left, &[W::Storyboard], false),
+            PanelKind::Board => (C::PreProduction, Center, &[W::Storyboard], false),
+            PanelKind::Preview => (C::SoundEdit, Center, &[W::Audio, W::Edicao], false),
+            PanelKind::Media => (C::SoundEdit, Left, &[W::Audio, W::Edicao], false),
+            PanelKind::Mixer => (C::SoundEdit, Right, &[W::Audio], false),
+            PanelKind::Presets => (C::Delivery, Left, &[W::Entrega], false),
+            PanelKind::Queue => (C::Delivery, Center, &[W::Entrega], false),
+            PanelKind::Tasks => (C::Management, Center, &[W::Producao], false),
+            PanelKind::Episodes => (C::Management, Left, &[W::Producao], false),
+            PanelKind::Project => (C::General, Left, DRAWING_WS, false),
+            PanelKind::SubView => (C::Reference, Left, &[W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Biblioteca, W::Modelagem], false),
+            PanelKind::Brushes => (C::Drawing, Left, &[W::Layout, W::Cenario, W::Animacao, W::Pintura], false),
+            PanelKind::Library => (C::Resources, Center, &[W::Biblioteca], false),
+            PanelKind::Modeling => (C::Resources, Center, &[W::Modelagem], false),
+            PanelKind::Text => (C::Drawing, Right, &[W::Layout, W::Cenario, W::Animacao, W::Composicao, W::Edicao], false),
+        };
+        PanelMeta { key: self.key(), title_key: self.title_key(), category, dock_hint, workspaces, needs_canvas }
+    }
+
+    /// Painel que ainda não tem conteúdo: só explica o que vem (Biblioteca, Modelagem).
+    pub fn is_planned(self) -> bool {
+        matches!(self, PanelKind::Library | PanelKind::Modeling)
     }
 }
 
@@ -141,59 +266,90 @@ enum Node {
 
 use Node::{Col, Pane, Row, Tabs as TabsOf};
 
-/// Layout padrão de um workspace.
+/// Revisão do layout de fábrica de cada workspace. Mudou a fábrica (`default_node`), sobe a revisão: quem tem layout
+/// próprio guardado vê o aviso "o padrão foi atualizado" e escolhe (nada é sobrescrito sem pedir). O teste
+/// `factory_changes_bump_the_revision` lembra de subir.
+pub fn factory_rev(ws: WorkspaceId) -> u32 {
+    match ws {
+        // S24: fábricas novas (cada etapa de desenho com a sua cara) e os workspaces novos
+        W::Layout | W::Cenario | W::Animacao | W::Pintura | W::Composicao | W::Biblioteca | W::Modelagem => 2,
+        // S24: painel Texto (legendas) em aba com as Propriedades
+        W::Edicao => 2,
+        _ => 1,
+    }
+}
+
+/// Layout padrão de um workspace. Os de desenho seguem `S24-pesquisa/workspaces.md` (b), com os painéis que já existem:
+/// a Cena vira o Projeto (os cortes da cena), as Referências do personagem viram a Sub View e a fila de pintura vira a
+/// linha do tempo (os quadros do corte).
 fn default_node(ws: WorkspaceId) -> Node {
     use PanelKind as P;
     match ws {
-        WorkspaceId::Roteiro => Row(vec![(0.22, Pane(P::Outline)), (0.52, Pane(P::Script)), (0.26, Pane(P::Properties))]),
-        WorkspaceId::Personagens => Row(vec![
+        W::Roteiro => Row(vec![(0.22, Pane(P::Outline)), (0.52, Pane(P::Script)), (0.26, Pane(P::Properties))]),
+        W::Personagens => Row(vec![
             (0.22, Pane(P::Characters)),
             (0.50, Pane(P::Sheet)),
             (0.28, Col(vec![(0.42, Pane(P::Palette)), (0.58, Pane(P::Properties))])),
         ]),
-        WorkspaceId::Storyboard => Col(vec![
+        W::Storyboard => Col(vec![
             (0.72, Row(vec![(0.20, Pane(P::Shots)), (0.56, Pane(P::Board)), (0.24, Pane(P::Properties))])),
             (0.28, Pane(P::Timeline)),
         ]),
-        WorkspaceId::Layout => Row(vec![
-            (0.18, Col(vec![(0.7, TabsOf(&[P::Project, P::Brushes])), (0.3, TabsOf(&[P::Navigator, P::SubView]))])),
+        // enquadramento e construção: a cena (cortes) em cima à esquerda, referências e pincéis embaixo; à direita o
+        // navegador (área de câmera), camadas e propriedades com a paleta em aba
+        W::Layout => Row(vec![
+            (0.19, Col(vec![(0.45, Pane(P::Project)), (0.55, TabsOf(&[P::Brushes, P::SubView]))])),
+            (0.53, Pane(P::Canvas)),
+            (0.28, Col(vec![(0.24, Pane(P::Navigator)), (0.42, Pane(P::Layers)), (0.34, TabsOf(&[P::Properties, P::Palette, P::Text]))])),
+        ]),
+        // fundo: pincéis e referências grandes à esquerda (pintura de fundo vive de referência), paleta, camadas (planos)
+        // e propriedades à direita
+        W::Cenario => Row(vec![
+            (0.17, Col(vec![(0.40, Pane(P::Brushes)), (0.60, TabsOf(&[P::SubView, P::Navigator]))])),
             (0.54, Pane(P::Canvas)),
-            (0.28, Col(vec![(0.36, Pane(P::Palette)), (0.64, TabsOf(&[P::Layers, P::Properties]))])),
+            (0.29, Col(vec![(0.30, Pane(P::Palette)), (0.42, TabsOf(&[P::Layers, P::Project])), (0.28, TabsOf(&[P::Properties, P::Text]))])),
         ]),
-        WorkspaceId::Animacao => Col(vec![
-            (0.66, Row(vec![
-                (0.17, TabsOf(&[P::Project, P::Brushes])),
-                (0.55, Pane(P::Canvas)),
-                (0.28, Col(vec![(0.38, Pane(P::Palette)), (0.62, TabsOf(&[P::Layers, P::Properties]))])),
+        // genga/douga: cena e pincéis com as referências embaixo, linha do tempo embaixo de tudo
+        W::Animacao => Col(vec![
+            (0.72, Row(vec![
+                (0.17, Col(vec![(0.56, TabsOf(&[P::Project, P::Brushes])), (0.44, Pane(P::SubView))])),
+                (0.56, Pane(P::Canvas)),
+                (0.27, Col(vec![(0.18, Pane(P::Navigator)), (0.32, Pane(P::Palette)), (0.50, TabsOf(&[P::Layers, P::Properties]))])),
             ])),
-            (0.34, Pane(P::Timeline)),
+            (0.28, Pane(P::Timeline)),
         ]),
-        WorkspaceId::Pintura => Row(vec![
-            (0.17, Col(vec![(0.7, TabsOf(&[P::Project, P::Brushes])), (0.3, TabsOf(&[P::Navigator, P::SubView]))])),
-            (0.55, Pane(P::Canvas)),
-            (0.28, Col(vec![(0.36, Pane(P::Palette)), (0.64, TabsOf(&[P::Layers, P::Properties]))])),
+        // shiage: as cores (settei) em destaque à esquerda, referências à direita e os quadros do corte embaixo
+        W::Pintura => Col(vec![
+            (0.80, Row(vec![
+                (0.18, Col(vec![(0.58, Pane(P::Palette)), (0.42, TabsOf(&[P::Brushes, P::Project]))])),
+                (0.54, Pane(P::Canvas)),
+                (0.28, Col(vec![(0.24, Pane(P::Navigator)), (0.46, TabsOf(&[P::Layers, P::Properties])), (0.30, Pane(P::SubView))])),
+            ])),
+            (0.20, Pane(P::Timeline)),
         ]),
-        WorkspaceId::Cenario => Row(vec![
-            (0.17, Col(vec![(0.7, TabsOf(&[P::Project, P::Brushes])), (0.3, TabsOf(&[P::Navigator, P::SubView]))])),
-            (0.55, Pane(P::Canvas)),
-            (0.28, Col(vec![(0.36, Pane(P::Palette)), (0.64, TabsOf(&[P::Layers, P::Properties]))])),
+        // satsuei como no After Effects: projeto à esquerda, viewer no centro, camadas e efeitos/câmera/cor (e o texto
+        // dos letreiros em aba) à direita, linha do tempo embaixo
+        W::Composicao => Col(vec![
+            (0.68, Row(vec![
+                (0.18, TabsOf(&[P::Project, P::Navigator])),
+                (0.54, Pane(P::Canvas)),
+                (0.28, Col(vec![(0.40, Pane(P::Layers)), (0.60, TabsOf(&[P::Properties, P::Text]))])),
+            ])),
+            (0.32, Pane(P::Timeline)),
         ]),
-        WorkspaceId::Composicao => Row(vec![
-            (0.17, Col(vec![(0.7, TabsOf(&[P::Project, P::Brushes])), (0.3, Pane(P::Navigator))])),
-            (0.55, Pane(P::Canvas)),
-            (0.28, Col(vec![(0.24, Pane(P::Palette)), (0.40, Pane(P::Layers)), (0.36, Pane(P::Properties))])),
-        ]),
-        WorkspaceId::Cor => Row(vec![(0.28, Pane(P::Navigator)), (0.44, Pane(P::Palette)), (0.28, Pane(P::Properties))]),
-        WorkspaceId::Audio => Col(vec![
+        // em construção: o painel central diz o que vem; paletas e referências já são recursos
+        W::Biblioteca => Row(vec![(0.24, Pane(P::Palette)), (0.50, Pane(P::Library)), (0.26, Pane(P::SubView))]),
+        W::Modelagem => Row(vec![(0.18, Pane(P::Characters)), (0.56, Pane(P::Modeling)), (0.26, Pane(P::SubView))]),
+        W::Audio => Col(vec![
             (0.55, Row(vec![(0.22, Pane(P::Media)), (0.50, Pane(P::Preview)), (0.28, Pane(P::Mixer))])),
             (0.45, Pane(P::Timeline)),
         ]),
-        WorkspaceId::Edicao => Col(vec![
-            (0.55, Row(vec![(0.22, Pane(P::Media)), (0.50, Pane(P::Preview)), (0.28, Pane(P::Properties))])),
+        W::Edicao => Col(vec![
+            (0.55, Row(vec![(0.22, Pane(P::Media)), (0.50, Pane(P::Preview)), (0.28, TabsOf(&[P::Properties, P::Text]))])),
             (0.45, Pane(P::Timeline)),
         ]),
-        WorkspaceId::Entrega => Row(vec![(0.24, Pane(P::Presets)), (0.46, Pane(P::Queue)), (0.30, Pane(P::Properties))]),
-        WorkspaceId::Producao => Row(vec![(0.22, Pane(P::Episodes)), (0.52, Pane(P::Tasks)), (0.26, Pane(P::Properties))]),
+        W::Entrega => Row(vec![(0.24, Pane(P::Presets)), (0.46, Pane(P::Queue)), (0.30, Pane(P::Properties))]),
+        W::Producao => Row(vec![(0.22, Pane(P::Episodes)), (0.52, Pane(P::Tasks)), (0.26, Pane(P::Properties))]),
     }
 }
 
@@ -218,11 +374,15 @@ fn linear(tiles: &mut Tiles<PanelKind>, dir: LinearDir, children: &[(f32, Node)]
     tiles.insert_new(Tile::Container(Container::Linear(lin)))
 }
 
+fn tree_id(ws: WorkspaceId) -> egui::Id {
+    egui::Id::new(("aiai_dock", ws.key()))
+}
+
 /// Árvore padrão do workspace.
 pub fn default_tree(ws: WorkspaceId) -> Tree<PanelKind> {
     let mut tiles = Tiles::default();
     let root = build(&mut tiles, &default_node(ws));
-    Tree::new(egui::Id::new(("aiai_dock", ws.key())), root, tiles)
+    Tree::new(tree_id(ws), root, tiles)
 }
 
 /// Painéis (folhas) de uma árvore.
@@ -236,6 +396,11 @@ pub fn panels(tree: &Tree<PanelKind>) -> Vec<PanelKind> {
         .collect()
 }
 
+/// O tile do painel, se ele está na árvore (visível ou escondido).
+pub fn find_pane(tree: &Tree<PanelKind>, kind: PanelKind) -> Option<TileId> {
+    tree.tiles.iter().find_map(|(id, t)| matches!(t, Tile::Pane(k) if *k == kind).then_some(*id))
+}
+
 /// Painéis que já têm barra de abas (não desenham cabeçalho próprio).
 pub fn panes_in_tabs(tree: &Tree<PanelKind>) -> std::collections::HashSet<TileId> {
     let mut out = std::collections::HashSet::new();
@@ -247,17 +412,299 @@ pub fn panes_in_tabs(tree: &Tree<PanelKind>) -> std::collections::HashSet<TileId
     out
 }
 
+// ------------------------------------------------------------------------------------------ inserir painel ausente
+
+/// Tiles da árvore a partir da raiz, em profundidade (ordem estável, ao contrário de `tiles.iter()`).
+fn dfs(tree: &Tree<PanelKind>) -> Vec<TileId> {
+    let mut out = Vec::new();
+    let mut stack: Vec<TileId> = tree.root.into_iter().collect();
+    while let Some(id) = stack.pop() {
+        out.push(id);
+        if let Some(Tile::Container(c)) = tree.tiles.get(id) {
+            let kids = c.children_vec();
+            stack.extend(kids.into_iter().rev());
+        }
+    }
+    out
+}
+
+fn contains(tree: &Tree<PanelKind>, ancestor: TileId, needle: TileId) -> bool {
+    let mut cur = Some(needle);
+    while let Some(id) = cur {
+        if id == ancestor {
+            return true;
+        }
+        cur = tree.tiles.parent_of(id);
+    }
+    false
+}
+
+/// A linha principal (horizontal) do layout: a que tem o canvas ou, sem canvas, a primeira linha horizontal.
+fn main_row(tree: &Tree<PanelKind>) -> Option<TileId> {
+    let rows: Vec<TileId> = dfs(tree).into_iter().filter(|id| matches!(tree.tiles.get(*id), Some(Tile::Container(Container::Linear(l))) if l.dir == LinearDir::Horizontal)).collect();
+    let canvas = find_pane(tree, PanelKind::Canvas);
+    canvas.and_then(|c| rows.iter().copied().find(|r| contains(tree, *r, c))).or_else(|| rows.first().copied())
+}
+
+/// Põe `new` na linear `lin_id` na posição `index` com `frac` do espaço (as proporções dos outros ficam).
+fn insert_into_linear(tree: &mut Tree<PanelKind>, lin_id: TileId, index: usize, new: TileId, frac: f32) {
+    if let Some(Tile::Container(Container::Linear(l))) = tree.tiles.get_mut(lin_id) {
+        let total: f32 = l.children.iter().map(|c| l.shares[*c]).sum::<f32>().max(0.001);
+        let share = total * frac / (1.0 - frac);
+        let i = index.min(l.children.len());
+        l.children.insert(i, new);
+        l.shares.set_share(new, share);
+    }
+}
+
+/// Embrulha a raiz numa linear nova com `new` antes ou depois.
+fn wrap_root(tree: &mut Tree<PanelKind>, dir: LinearDir, new: TileId, new_first: bool, frac: f32) {
+    let Some(root) = tree.root else {
+        tree.root = Some(new);
+        return;
+    };
+    let children = if new_first { [new, root] } else { [root, new] };
+    let mut lin = Linear::new(dir, children.to_vec());
+    lin.shares.set_share(new, frac);
+    lin.shares.set_share(root, 1.0 - frac);
+    tree.root = Some(tree.tiles.insert_container(Container::Linear(lin)));
+}
+
+/// Liga um painel que não está na árvore: entra como aba junto de um painel visível da mesma categoria; sem ele, segundo
+/// `dock_hint` (coluna à esquerda/direita da linha principal, faixa embaixo, ou coluna ao lado do centro). Devolve o tile.
+pub fn insert_panel(tree: &mut Tree<PanelKind>, kind: PanelKind) -> TileId {
+    if let Some(id) = find_pane(tree, kind) {
+        tree.tiles.set_visible(id, true);
+        tree.make_active(|tid, _| tid == id);
+        return id;
+    }
+    let meta = kind.meta();
+    let order = dfs(tree);
+    let new = tree.tiles.insert_pane(kind);
+    // 1. aba ao lado de um painel da mesma categoria (nunca junto do canvas)
+    let mate = order.iter().copied().find(|id| tree.tiles.is_visible(*id) && matches!(tree.tiles.get(*id), Some(Tile::Pane(k)) if *k != PanelKind::Canvas && k.meta().category == meta.category));
+    if let Some(mate) = mate {
+        let parent = tree.tiles.parent_of(mate);
+        match parent.and_then(|p| tree.tiles.get_mut(p)) {
+            Some(Tile::Container(Container::Tabs(t))) => {
+                t.add_child(new);
+                t.set_active(new);
+            }
+            _ => {
+                // painel solto: vira uma barra de abas [mate, novo] no mesmo lugar
+                let tabs = tree.tiles.insert_container(Container::Tabs(Tabs::new(vec![mate, new])));
+                if let Some(p) = parent {
+                    if let Some(Tile::Container(c)) = tree.tiles.get_mut(p) {
+                        let _ = c.replace_child(mate, tabs);
+                    }
+                } else {
+                    tree.root = Some(tabs);
+                }
+                if let Some(Tile::Container(Container::Tabs(t))) = tree.tiles.get_mut(tabs) {
+                    t.set_active(new);
+                }
+            }
+        }
+    } else {
+        let row = main_row(tree);
+        match (meta.dock_hint, row) {
+            (DockHint::Left, Some(r)) => insert_into_linear(tree, r, 0, new, 0.22),
+            (DockHint::Right, Some(r)) => insert_into_linear(tree, r, usize::MAX, new, 0.25),
+            (DockHint::Center, Some(r)) => {
+                let canvas = find_pane(tree, PanelKind::Canvas);
+                let idx = match tree.tiles.get(r) {
+                    Some(Tile::Container(Container::Linear(l))) => {
+                        canvas.and_then(|c| l.children.iter().position(|k| contains(tree, *k, c))).map(|i| i + 1).unwrap_or(l.children.len() / 2 + 1)
+                    }
+                    _ => 0,
+                };
+                insert_into_linear(tree, r, idx, new, 0.30);
+            }
+            (DockHint::Bottom, _) => match tree.root.and_then(|r| tree.tiles.get(r)) {
+                Some(Tile::Container(Container::Linear(l))) if l.dir == LinearDir::Vertical => {
+                    let r = tree.root.unwrap_or(new);
+                    insert_into_linear(tree, r, usize::MAX, new, 0.25)
+                }
+                _ => wrap_root(tree, LinearDir::Vertical, new, false, 0.25),
+            },
+            (DockHint::Left, None) => wrap_root(tree, LinearDir::Horizontal, new, true, 0.22),
+            (DockHint::Right | DockHint::Center, None) => wrap_root(tree, LinearDir::Horizontal, new, false, 0.25),
+        }
+    }
+    tree.make_active(|tid, _| tid == new);
+    new
+}
+
+// ------------------------------------------------------------------------------------------ árvore guardada
+
+/// Um filho de linha/coluna com a sua proporção.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SavedChild {
+    pub share: f32,
+    pub node: SavedNode,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+/// Árvore do dock em forma guardável: painéis pela chave (`PanelKind::key`), proporções e abas ativas.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SavedNode {
+    Pane {
+        panel: String,
+        #[serde(default, skip_serializing_if = "is_false")]
+        hidden: bool,
+    },
+    Tabs {
+        children: Vec<SavedNode>,
+        #[serde(default)]
+        active: Option<usize>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        hidden: bool,
+    },
+    Row {
+        children: Vec<SavedChild>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        hidden: bool,
+    },
+    Col {
+        children: Vec<SavedChild>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        hidden: bool,
+    },
+    Grid {
+        children: Vec<SavedNode>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        hidden: bool,
+    },
+}
+
+fn save_tile(tiles: &Tiles<PanelKind>, id: TileId) -> Option<SavedNode> {
+    let hidden = !tiles.is_visible(id);
+    Some(match tiles.get(id)? {
+        Tile::Pane(k) => SavedNode::Pane { panel: k.key().to_owned(), hidden },
+        Tile::Container(Container::Tabs(t)) => {
+            let kids: Vec<(TileId, SavedNode)> = t.children.iter().filter_map(|c| Some((*c, save_tile(tiles, *c)?))).collect();
+            let active = t.active.and_then(|a| kids.iter().position(|(c, _)| *c == a));
+            SavedNode::Tabs { children: kids.into_iter().map(|(_, n)| n).collect(), active, hidden }
+        }
+        Tile::Container(Container::Linear(l)) => {
+            let children = l.children.iter().filter_map(|c| Some(SavedChild { share: l.shares[*c], node: save_tile(tiles, *c)? })).collect();
+            if l.dir == LinearDir::Horizontal { SavedNode::Row { children, hidden } } else { SavedNode::Col { children, hidden } }
+        }
+        Tile::Container(Container::Grid(g)) => SavedNode::Grid { children: g.children().filter_map(|c| save_tile(tiles, *c)).collect(), hidden },
+    })
+}
+
+/// A árvore em uso em forma guardável (`None` = árvore vazia).
+pub fn saved_from_tree(tree: &Tree<PanelKind>) -> Option<SavedNode> {
+    save_tile(&tree.tiles, tree.root?)
+}
+
+/// Monta um nó guardado; chaves desconhecidas, painéis repetidos e o canvas onde não há canvas são descartados
+/// (registrados no log). Contêiner que ficou vazio some.
+fn load_node(tiles: &mut Tiles<PanelKind>, node: &SavedNode, ws: WorkspaceId, seen: &mut std::collections::HashSet<PanelKind>) -> Option<TileId> {
+    let (id, hidden) = match node {
+        SavedNode::Pane { panel, hidden } => {
+            let Some(kind) = PanelKind::from_key(panel) else {
+                tracing::info!("layout de {}: painel desconhecido '{panel}' descartado", ws.key());
+                return None;
+            };
+            if (kind.meta().needs_canvas && !ws.profile().canvas) || !seen.insert(kind) {
+                tracing::info!("layout de {}: painel '{panel}' descartado (repetido ou sem canvas)", ws.key());
+                return None;
+            }
+            (tiles.insert_pane(kind), *hidden)
+        }
+        SavedNode::Tabs { children, active, hidden } => {
+            let kids: Vec<(usize, TileId)> = children.iter().enumerate().filter_map(|(i, c)| Some((i, load_node(tiles, c, ws, seen)?))).collect();
+            if kids.is_empty() {
+                return None;
+            }
+            let mut t = Tabs::new(kids.iter().map(|(_, id)| *id).collect());
+            if let Some(a) = active.and_then(|a| kids.iter().find(|(i, _)| *i == a)) {
+                t.set_active(a.1);
+            }
+            (tiles.insert_container(Container::Tabs(t)), *hidden)
+        }
+        SavedNode::Row { children, hidden } | SavedNode::Col { children, hidden } => {
+            let dir = if matches!(node, SavedNode::Row { .. }) { LinearDir::Horizontal } else { LinearDir::Vertical };
+            let kids: Vec<(f32, TileId)> = children.iter().filter_map(|c| Some((c.share, load_node(tiles, &c.node, ws, seen)?))).collect();
+            if kids.is_empty() {
+                return None;
+            }
+            let mut lin = Linear::new(dir, kids.iter().map(|(_, id)| *id).collect());
+            for (share, id) in &kids {
+                lin.shares.set_share(*id, if share.is_finite() && *share > 0.0 { *share } else { 1.0 });
+            }
+            (tiles.insert_container(Container::Linear(lin)), *hidden)
+        }
+        SavedNode::Grid { children, hidden } => {
+            let kids: Vec<TileId> = children.iter().filter_map(|c| load_node(tiles, c, ws, seen)).collect();
+            if kids.is_empty() {
+                return None;
+            }
+            (tiles.insert_container(Container::new_grid(kids)), *hidden)
+        }
+    };
+    if hidden {
+        tiles.set_visible(id, false);
+    }
+    Some(id)
+}
+
+/// A árvore de um layout guardado, ou `None` se não sobrou nenhum painel conhecido. Workspace com canvas sem o canvas na
+/// árvore (arquivo editado à mão) ganha o canvas de volta.
+pub fn tree_from_saved(ws: WorkspaceId, node: &SavedNode) -> Option<Tree<PanelKind>> {
+    let mut tiles = Tiles::default();
+    let mut seen = std::collections::HashSet::new();
+    let root = load_node(&mut tiles, node, ws, &mut seen)?;
+    let mut tree = Tree::new(tree_id(ws), root, tiles);
+    if ws.profile().canvas && !seen.contains(&PanelKind::Canvas) {
+        insert_panel(&mut tree, PanelKind::Canvas);
+    }
+    Some(tree)
+}
+
+/// Mesmo layout: mesma estrutura, mesmos painéis e o mesmo escondido, proporções iguais a menos de 0,5 % (a aba ativa
+/// não conta: trocar de aba não personaliza o layout).
+pub fn same_layout(a: &SavedNode, b: &SavedNode) -> bool {
+    fn shares_close(a: &[SavedChild], b: &[SavedChild]) -> bool {
+        let (ta, tb) = (a.iter().map(|c| c.share).sum::<f32>().max(1e-6), b.iter().map(|c| c.share).sum::<f32>().max(1e-6));
+        a.iter().zip(b).all(|(x, y)| (x.share / ta - y.share / tb).abs() < 0.005 && same_layout(&x.node, &y.node))
+    }
+    match (a, b) {
+        (SavedNode::Pane { panel: p, hidden: h }, SavedNode::Pane { panel: q, hidden: g }) => p == q && h == g,
+        (SavedNode::Tabs { children: x, hidden: h, .. }, SavedNode::Tabs { children: y, hidden: g, .. })
+        | (SavedNode::Grid { children: x, hidden: h }, SavedNode::Grid { children: y, hidden: g }) => {
+            h == g && x.len() == y.len() && x.iter().zip(y).all(|(m, n)| same_layout(m, n))
+        }
+        (SavedNode::Row { children: x, hidden: h }, SavedNode::Row { children: y, hidden: g })
+        | (SavedNode::Col { children: x, hidden: h }, SavedNode::Col { children: y, hidden: g }) => h == g && x.len() == y.len() && shares_close(x, y),
+        _ => false,
+    }
+}
+
+/// O layout de fábrica em forma guardável.
+pub fn factory_saved(ws: WorkspaceId) -> SavedNode {
+    saved_from_tree(&default_tree(ws)).expect("fábrica sem raiz")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::i18n::{self, Lang};
+    use std::collections::HashSet;
 
     #[test]
     fn panel_keys_round_trip_and_are_unique() {
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = HashSet::new();
         for p in PanelKind::ALL {
             assert_eq!(PanelKind::from_key(p.key()), Some(p));
             assert!(seen.insert(p.key()), "{}", p.key());
+            assert_eq!(p.meta().key, p.key());
         }
         assert_eq!(PanelKind::Canvas.key(), "canvas");
     }
@@ -269,7 +716,7 @@ mod tests {
             assert!(tree.root().is_some(), "{ws:?} sem raiz");
             let p = panels(&tree);
             assert!(p.len() >= 3, "{ws:?} com poucos painéis: {p:?}");
-            let set: std::collections::HashSet<_> = p.iter().collect();
+            let set: HashSet<_> = p.iter().collect();
             assert_eq!(set.len(), p.len(), "{ws:?} repete painel");
             assert!(tree.tiles.len() > p.len(), "{ws:?} sem containers");
         }
@@ -279,7 +726,7 @@ mod tests {
     fn canvas_workspaces_have_a_canvas_and_the_others_do_not() {
         for ws in WorkspaceId::ALL {
             let has = panels(&default_tree(ws)).contains(&PanelKind::Canvas);
-            assert_eq!(has, ws.has_canvas(), "{ws:?}");
+            assert_eq!(has, ws.profile().canvas, "{ws:?}");
         }
     }
 
@@ -289,7 +736,42 @@ mod tests {
         assert!(has(WorkspaceId::Animacao, PanelKind::Timeline));
         assert!(has(WorkspaceId::Audio, PanelKind::Timeline));
         assert!(has(WorkspaceId::Edicao, PanelKind::Timeline));
+        assert!(has(WorkspaceId::Composicao, PanelKind::Timeline));
         assert!(has(WorkspaceId::Roteiro, PanelKind::Script));
+        assert!(has(WorkspaceId::Biblioteca, PanelKind::Library));
+        assert!(has(WorkspaceId::Modelagem, PanelKind::Modeling));
+        // a Composição é um viewer: sem pincéis nem paleta de pintura
+        assert!(!has(WorkspaceId::Composicao, PanelKind::Brushes) && !has(WorkspaceId::Composicao, PanelKind::Palette));
+    }
+
+    #[test]
+    fn drawing_workspaces_no_longer_look_the_same() {
+        let ws = [WorkspaceId::Layout, WorkspaceId::Cenario, WorkspaceId::Animacao, WorkspaceId::Pintura, WorkspaceId::Composicao];
+        for (i, a) in ws.iter().enumerate() {
+            for b in &ws[i + 1..] {
+                assert!(!same_layout(&factory_saved(*a), &factory_saved(*b)), "{a:?} e {b:?} têm o mesmo layout de fábrica");
+            }
+        }
+    }
+
+    #[test]
+    fn catalog_is_consistent_with_the_factories() {
+        let mut used: HashSet<PanelKind> = HashSet::new();
+        for ws in WorkspaceId::ALL {
+            for p in panels(&default_tree(ws)) {
+                assert!(p.meta().workspaces.contains(&ws), "{p:?} está na fábrica de {ws:?} mas o catálogo não sugere");
+                assert!(!p.meta().needs_canvas || ws.profile().canvas, "{p:?} precisa de canvas e está em {ws:?}");
+                used.insert(p);
+            }
+        }
+        for p in PanelKind::ALL {
+            assert!(used.contains(&p), "{p:?} não está em nenhum workspace");
+            assert!(!p.meta().workspaces.is_empty(), "{p:?}");
+        }
+        let cats: HashSet<_> = PanelKind::ALL.iter().map(|p| p.meta().category).collect();
+        for c in cats {
+            assert!(PanelCategory::ALL.contains(&c));
+        }
     }
 
     #[test]
@@ -303,5 +785,145 @@ mod tests {
                 }
             }
         }
+        for c in PanelCategory::ALL {
+            for lang in [Lang::Pt, Lang::En] {
+                assert_ne!(i18n::tr_in(lang, c.title_key()), c.title_key());
+            }
+        }
+    }
+
+    #[test]
+    fn saved_tree_round_trips_through_json() {
+        for ws in WorkspaceId::ALL {
+            let mut tree = default_tree(ws);
+            // personaliza: esconde um painel e muda uma proporção
+            let p = panels(&tree).into_iter().find(|p| *p != PanelKind::Canvas).unwrap();
+            let id = find_pane(&tree, p).unwrap();
+            tree.tiles.set_visible(id, false);
+            let saved = saved_from_tree(&tree).unwrap();
+            assert!(!same_layout(&saved, &factory_saved(ws)), "{ws:?}: esconder um painel personaliza");
+            let json = serde_json::to_string(&saved).unwrap();
+            assert!(json.contains(&format!("\"panel\":\"{}\"", p.key())), "chave de texto, não índice: {json}");
+            let back: SavedNode = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, saved);
+            let rebuilt = tree_from_saved(ws, &back).unwrap();
+            assert_eq!(saved_from_tree(&rebuilt).unwrap(), saved, "{ws:?}");
+            assert!(!rebuilt.tiles.is_visible(find_pane(&rebuilt, p).unwrap()));
+            assert!(same_layout(&factory_saved(ws), &saved_from_tree(&default_tree(ws)).unwrap()));
+        }
+    }
+
+    #[test]
+    fn unknown_and_repeated_keys_are_dropped() {
+        let json = r#"{"type":"row","children":[
+            {"share":0.3,"node":{"type":"pane","panel":"painel_que_nao_existe"}},
+            {"share":0.4,"node":{"type":"tabs","children":[{"type":"pane","panel":"layers"},{"type":"pane","panel":"layers"},{"type":"pane","panel":"nada"}],"active":2}},
+            {"share":0.3,"node":{"type":"col","children":[{"share":1.0,"node":{"type":"pane","panel":"zzz"}}]}}]}"#;
+        let node: SavedNode = serde_json::from_str(json).unwrap();
+        // Pintura tem canvas: volta mesmo sem estar no arquivo
+        let tree = tree_from_saved(WorkspaceId::Pintura, &node).unwrap();
+        let mut p = panels(&tree);
+        p.sort_by_key(|k| k.key());
+        assert_eq!(p, vec![PanelKind::Canvas, PanelKind::Layers]);
+        // só chaves desconhecidas: nada a carregar (o app usa a fábrica)
+        let none: SavedNode = serde_json::from_str(r#"{"type":"tabs","children":[{"type":"pane","panel":"x"}]}"#).unwrap();
+        assert!(tree_from_saved(WorkspaceId::Roteiro, &none).is_none());
+        // canvas onde não há canvas é descartado
+        let c: SavedNode = serde_json::from_str(r#"{"type":"row","children":[{"share":1,"node":{"type":"pane","panel":"canvas"}},{"share":1,"node":{"type":"pane","panel":"script"}}]}"#).unwrap();
+        assert_eq!(panels(&tree_from_saved(WorkspaceId::Roteiro, &c).unwrap()), vec![PanelKind::Script]);
+    }
+
+    #[test]
+    fn showing_a_missing_panel_inserts_it_by_category_or_dock_hint() {
+        // mesma categoria: Projeto (Geral) no Roteiro entra como aba junto das Propriedades (Geral)
+        let mut t = default_tree(WorkspaceId::Roteiro);
+        let id = insert_panel(&mut t, PanelKind::Project);
+        let parent = t.tiles.parent_of(id).unwrap();
+        match t.tiles.get(parent) {
+            Some(Tile::Container(Container::Tabs(tabs))) => {
+                assert!(tabs.is_active(id));
+                assert!(tabs.children.iter().any(|c| matches!(t.tiles.get(*c), Some(Tile::Pane(PanelKind::Properties)))));
+            }
+            other => panic!("esperava abas: {other:?}"),
+        }
+        // embaixo: Linha do tempo no Roteiro (sem par de categoria) vira faixa embaixo de tudo
+        let mut t = default_tree(WorkspaceId::Roteiro);
+        let id = insert_panel(&mut t, PanelKind::Timeline);
+        let root = t.root.unwrap();
+        match t.tiles.get(root) {
+            Some(Tile::Container(Container::Linear(l))) => {
+                assert_eq!(l.dir, LinearDir::Vertical);
+                assert_eq!(l.children.last(), Some(&id));
+            }
+            other => panic!("{other:?}"),
+        }
+        // esquerda: Mídia (Som e montagem) no Layout entra como primeira coluna da linha do canvas
+        let mut t = default_tree(WorkspaceId::Layout);
+        let id = insert_panel(&mut t, PanelKind::Media);
+        let row = main_row(&t).unwrap();
+        match t.tiles.get(row) {
+            Some(Tile::Container(Container::Linear(l))) => assert_eq!(l.children.first(), Some(&id)),
+            other => panic!("{other:?}"),
+        }
+        // centro: Roteiro (Script) na Pintura entra logo depois do canvas
+        let mut t = default_tree(WorkspaceId::Pintura);
+        let id = insert_panel(&mut t, PanelKind::Script);
+        let row = main_row(&t).unwrap();
+        let canvas = find_pane(&t, PanelKind::Canvas).unwrap();
+        match t.tiles.get(row) {
+            Some(Tile::Container(Container::Linear(l))) => {
+                let ci = l.children.iter().position(|c| contains(&t, *c, canvas)).unwrap();
+                assert_eq!(l.children.get(ci + 1), Some(&id));
+            }
+            other => panic!("{other:?}"),
+        }
+        // painel escondido: só volta a aparecer (não duplica)
+        let mut t = default_tree(WorkspaceId::Animacao);
+        let tl = find_pane(&t, PanelKind::Timeline).unwrap();
+        t.tiles.set_visible(tl, false);
+        assert_eq!(insert_panel(&mut t, PanelKind::Timeline), tl);
+        assert!(t.tiles.is_visible(tl));
+        assert_eq!(panels(&t).iter().filter(|p| **p == PanelKind::Timeline).count(), 1);
+        // a árvore com o painel novo continua guardável e volta igual
+        let saved = saved_from_tree(&t).unwrap();
+        assert_eq!(saved_from_tree(&tree_from_saved(WorkspaceId::Animacao, &saved).unwrap()).unwrap(), saved);
+    }
+
+    /// Assinatura da fábrica (FNV-1a do JSON guardável): mudar `default_node` muda a assinatura e obriga a rever a tabela
+    /// abaixo junto com `factory_rev` (quem tem layout próprio precisa ser avisado do padrão novo).
+    fn signature(ws: WorkspaceId) -> u64 {
+        let json = serde_json::to_string(&factory_saved(ws)).unwrap();
+        json.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3))
+    }
+
+    #[test]
+    fn factory_changes_bump_the_revision() {
+        let expected: &[(WorkspaceId, u32, u64)] = &[
+            (W::Roteiro, 1, 0x815a21560ccb6c0e),
+            (W::Personagens, 1, 0x5b309a476b020e21),
+            (W::Storyboard, 1, 0x14d8a62efb1d9b23),
+            (W::Layout, 2, 0xd1d0b0db8901276e),
+            (W::Cenario, 2, 0x10fcc70dc9e4906a),
+            (W::Animacao, 2, 0xe5ae17e3e39b9662),
+            (W::Pintura, 2, 0xfc53133a1f95cbd3),
+            (W::Composicao, 2, 0xe373fff7d0e1aa31),
+            (W::Biblioteca, 2, 0xf001e10a1c6ff92d),
+            (W::Modelagem, 2, 0xcccad1946cd12fc3),
+            (W::Audio, 1, 0x3c28e5ca28ea9c2e),
+            (W::Edicao, 2, 0x391a9dc3fd389b14),
+            (W::Entrega, 1, 0x6989668e53aa64aa),
+            (W::Producao, 1, 0xf4dfe50f3b37db6f),
+        ];
+        let mut report = String::new();
+        let mut changed = Vec::new();
+        for ws in WorkspaceId::ALL {
+            let sig = signature(ws);
+            report.push_str(&format!("(W::{ws:?}, {}, 0x{sig:016x}),\n", factory_rev(ws)));
+            if expected.iter().find(|(w, _, _)| *w == ws).is_some_and(|(_, rev, s)| (*rev, *s) != (factory_rev(ws), sig)) {
+                changed.push(ws);
+            }
+        }
+        assert!(changed.is_empty(), "a fábrica de {changed:?} mudou; suba `factory_rev` e atualize a tabela:\n{report}");
+        assert_eq!(expected.len(), WorkspaceId::ALL.len(), "tabela incompleta; atual:\n{report}");
     }
 }

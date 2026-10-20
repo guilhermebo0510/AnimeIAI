@@ -177,9 +177,31 @@ fn script(c: &Client) {
     let ui = c.state();
     assert_eq!(ui["workspace"], "pintura", "{ui}");
     assert!(ui["panels"].as_array().unwrap().iter().any(|p| p["name"] == "canvas" && p["rect_logical"].is_array()), "pintura tem canvas");
-    assert!(ui["widgets"]["tool:pen"]["rect_logical"].is_array(), "prateleira de ferramentas nos workspaces de canvas");
-    c.click_widget("tool:pen");
-    assert_eq!(c.state()["active_tool"], "pen");
+    // a prateleira é a do perfil da Pintura: balde, pincel e borracha, sem caneta (não se desenha linha aqui)
+    assert!(ui["widgets"]["tool:fill"]["rect_logical"].is_array(), "prateleira de ferramentas nos workspaces de canvas");
+    assert!(ui["widgets"]["tool:pen"].is_null(), "a caneta não aparece na prateleira da Pintura");
+    assert_eq!(ui["shelf_tools"][0], "fill");
+    c.click_widget("tool:eraser");
+    assert_eq!(c.state()["active_tool"], "eraser");
+    assert_eq!(c.err_code("UI_ACTION", json!({"action": "select_tool", "tool": "pen"})), -32602, "caneta fora da prateleira da Pintura");
+    // Exibir > Painéis lista o catálogo inteiro: painel fora do layout entra (e sai) pelo menu
+    c.click_widget("menu:view");
+    c.click_widget("menu_item:view.panels");
+    c.click_widget("menu_item:view.panel.script");
+    let ui = c.state();
+    assert!(ui["panels"].as_array().unwrap().iter().any(|p| p["name"] == "script" && p["visible"] == true), "o Roteiro entrou no layout da Pintura");
+    assert_eq!(ui["layout"]["label"], "custom");
+    c.ok("UI_ACTION", json!({"action": "layout", "op": "save", "name": "com roteiro"}));
+    assert_eq!(c.state()["layout"]["label"], "com roteiro");
+    c.ok("UI_ACTION", json!({"action": "layout", "op": "reset"}));
+    let ui = c.state();
+    assert_eq!(ui["layout"]["label"], "factory");
+    assert!(!ui["panels"].as_array().unwrap().iter().any(|p| p["name"] == "script"), "a fábrica da Pintura não tem o Roteiro");
+    c.ok("UI_ACTION", json!({"action": "layout", "op": "apply", "name": "com roteiro"}));
+    assert!(c.state()["panels"].as_array().unwrap().iter().any(|p| p["name"] == "script"));
+    c.ok("UI_ACTION", json!({"action": "layout", "op": "delete", "name": "com roteiro"}));
+    c.ok("UI_ACTION", json!({"action": "layout", "op": "reset"}));
+    assert_eq!(c.state()["layout"]["named"], json!([]));
 
     // --- UI_ACTION
     assert_eq!(c.ok("UI_ACTION", json!({"action": "set_workspace", "workspace": "animacao"}))["workspace"], "animacao");

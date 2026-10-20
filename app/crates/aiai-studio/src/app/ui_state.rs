@@ -178,6 +178,9 @@ impl StudioApp {
             "workspaces": WorkspaceId::ALL.iter().map(|w| w.key()).collect::<Vec<_>>(),
             "active_tool": self.tool.key(),
             "tools": ToolId::ALL.iter().map(|t| t.key()).collect::<Vec<_>>(),
+            // a prateleira deste workspace (`WorkspaceProfile`) e o layout em uso
+            "shelf_tools": self.ws.profile().tools.iter().map(|t| t.key()).collect::<Vec<_>>(),
+            "layout": self.layout_state(),
             "panels": panels,
             "widgets": widgets,
             "overflow": self.layout_overflow(ctx),
@@ -273,7 +276,21 @@ impl StudioApp {
         })
     }
 
+    /// Layout do workspace atual para o GET_UI_STATE: rótulo (`factory`, `custom` ou o nome), nomes salvos e o aviso de
+    /// fábrica nova pendente.
+    fn layout_state(&self) -> Value {
+        let ws = self.ws;
+        let label = match self.layouts.label(ws) {
+            None => "factory".to_owned(),
+            Some(n) if n.is_empty() => "custom".to_owned(),
+            Some(n) => n,
+        };
+        let named: Vec<String> = self.layouts.get(ws).map(|e| e.named.iter().map(|n| n.name.clone()).collect()).unwrap_or_default();
+        json!({ "label": label, "named": named, "factory_rev": crate::layout::factory_rev(ws), "update_pending": self.layouts.factory_update_pending(ws), "persisted": self.layouts_path.is_some() })
+    }
+
     /// `UI_ACTION {action, ...}`: set_workspace {workspace}, select_tool {tool}, toggle_panel {panel, visible?},
+    /// open_panel {panel} (insere o painel do catálogo que não está no layout), layout {op: list|save|apply|delete|reset, name?},
     /// set_theme {theme: light|dark}, set_language {language: pt|en}, open_dialog/close_dialog {dialog: about|prefs|start, tab?: general|keys|folders|performance},
     /// set_window_size {width, height, maximized?} (pontos lógicos),
     /// select_layer {layer}, select_cut {cut}, set_frame {frame}, set_color {color}, fit_view.
@@ -291,6 +308,7 @@ impl StudioApp {
             "set_color" => Some(&["color", "value"]),
             "fit_view" => Some(&[]),
             "toggle_panel" | "open_panel" => Some(&["panel", "value", "visible"]),
+            "layout" => Some(&["op", "name"]),
             "set_theme" => Some(&["theme", "value"]),
             "set_window_size" => Some(&["width", "height", "maximized"]),
             "set_language" => Some(&["language", "lang", "value"]),
@@ -313,6 +331,11 @@ impl StudioApp {
             "select_tool" | "set_tool" => {
                 let key = text(&m, &["tool", "value"]).ok_or_else(|| BridgeError::invalid_params("select_tool exige 'tool'"))?;
                 let t = ToolId::from_key(key).ok_or_else(|| BridgeError::invalid_params(format!("ferramenta desconhecida: {key}; válidas: {}", ToolId::ALL.map(|t| t.key()).join(", "))))?;
+                let shelf = self.ws.profile().tools;
+                if !shelf.contains(&t) {
+                    let list: Vec<&str> = shelf.iter().map(|t| t.key()).collect();
+                    return Err(BridgeError::invalid_params(format!("a ferramenta '{key}' não está na prateleira do workspace {}; nele: [{}]", self.ws.key(), list.join(", "))));
+                }
                 self.tool = t;
                 json!({ "active_tool": self.tool.key() })
             }
@@ -356,20 +379,39 @@ impl StudioApp {
                 let kind = PanelKind::from_key(key).ok_or_else(|| BridgeError::invalid_params(format!("painel desconhecido: {key}")))?;
                 let want = m.get("visible").and_then(Value::as_bool);
                 let ws = self.ws;
-                let tree = self.trees.entry(ws).or_insert_with(|| crate::layout::default_tree(ws));
-                let id = tree
-                    .tiles
-                    .iter()
-                    .find_map(|(id, t)| matches!(t, egui_tiles::Tile::Pane(k) if *k == kind).then_some(*id))
-                    .ok_or_else(|| BridgeError::invalid_params(format!("o painel '{key}' não existe no workspace {}", ws.key())))?;
-                let now = tree.tiles.is_visible(id);
-                let target = if action == "open_panel" { true } else { want.unwrap_or(!now) };
-                tree.tiles.set_visible(id, target);
-                // aberto = também a aba da frente quando divide espaço com outros (ex.: Projeto e Pincéis)
-                if target {
-                    tree.make_active(|tid, _| tid == id);
+                self.ensure_tree(ws);
+                let found = self.trees.get(&ws).and_then(|t| crate::layout::find_pane(t, kind).map(|id| t.tiles.is_visible(id)));
+                let target = if action == "open_panel" { true } else { want.unwrap_or(!found.unwrap_or(false)) };
+                // alternar um painel que não está no layout é engano provável: só open_panel / visible=true o insere
+                if found.is_none() && action == "toggle_panel" && want.is_none() {
+                    return Err(BridgeError::invalid_params(format!("o painel '{key}' não está no layout do workspace {}; use open_panel (ou visible: true) para inserir", ws.key())));
                 }
-                json!({ "panel": key, "visible": target, "workspace": ws.key() })
+                // aberto = também a aba da frente quando divide espaço com outros (ex.: Projeto e Pincéis)
+                self.set_panel_visible(kind, target).map_err(BridgeError::invalid_params)?;
+                json!({ "panel": key, "visible": target, "workspace": ws.key(), "inserted": found.is_none() && target })
+            }
+            "layout" => {
+                let op = text(&m, &["op"]).ok_or_else(|| BridgeError::invalid_params("layout exige 'op' (list|save|apply|delete|reset)"))?.to_owned();
+                let name = text(&m, &["name"]).map(str::to_owned);
+                let need = |n: &Option<String>| n.clone().filter(|s| !s.trim().is_empty()).ok_or_else(|| BridgeError::invalid_params(format!("layout {op} exige 'name'")));
+                match op.as_str() {
+                    "list" => {}
+                    "save" => {
+                        self.layout_save_named(&need(&name)?).map_err(BridgeError::invalid_params)?;
+                    }
+                    "apply" => self.layout_apply(&need(&name)?).map_err(BridgeError::invalid_params)?,
+                    "delete" => {
+                        let n = need(&name)?;
+                        if !self.layout_delete(&n) {
+                            return Err(BridgeError::invalid_params(format!("layout desconhecido neste workspace: {n}")));
+                        }
+                    }
+                    "reset" => self.reset_layout(self.ws),
+                    other => return Err(BridgeError::invalid_params(format!("layout op desconhecida: {other} (list|save|apply|delete|reset)"))),
+                }
+                let mut v = self.layout_state();
+                v["workspace"] = json!(self.ws.key());
+                v
             }
             "set_theme" => {
                 let key = text(&m, &["theme", "value"]).ok_or_else(|| BridgeError::invalid_params("set_theme exige 'theme' (light|dark)"))?;
@@ -412,7 +454,7 @@ impl StudioApp {
             }
             other => {
                 return Err(BridgeError::invalid_params(format!(
-                    "UI_ACTION desconhecida: {other}; use set_workspace, select_tool, toggle_panel, set_theme, set_language, set_window_size, open_dialog, close_dialog, select_layer, select_cut, set_frame, set_color, fit_view"
+                    "UI_ACTION desconhecida: {other}; use set_workspace, select_tool, toggle_panel, open_panel, layout, set_theme, set_language, set_window_size, open_dialog, close_dialog, select_layer, select_cut, set_frame, set_color, fit_view"
                 )));
             }
         };
