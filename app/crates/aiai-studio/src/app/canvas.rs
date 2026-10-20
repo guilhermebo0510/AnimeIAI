@@ -58,6 +58,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
         env.ed.view.fit(rect, ppp, canvas, MARGIN);
     }
     update_render(env, &ctx, &cut, canvas);
+    super::anim::onion_frame(env, &ctx, &cut, canvas);
     super::text_tool::frame(env, &ctx);
 
     let resp = ui.interact(rect, ui.id().with("canvas_area"), Sense::click_and_drag());
@@ -216,9 +217,39 @@ fn toolbar(env: &mut Env, ui: &mut Ui, has_cut: bool) {
         if env.icon_button(ui, IconId::LayerReference, "canvas.reference", rf, has_cut, "canvas:reference").clicked() {
             env.ed.show_reference = !rf;
         }
+        let on = env.ed.anim.onion.on;
+        if env.icon_button(ui, IconId::OnionSkin, "canvas.onion", on, has_cut, "canvas:onion").clicked() {
+            env.ed.anim.onion.on = !on;
+        }
         sep(ui, &t);
+        if env.ws == crate::workspace::WorkspaceId::Animacao && has_cut {
+            phase_bar(env, ui);
+            sep(ui, &t);
+        }
         super::panels::properties::tool_options(env, ui, true);
     });
+}
+
+/// Animação: a fase do corte (Genga | Douga; troca o layout e o padrão da mesa de luz) e, no douga, o aviso do
+/// cel-chave travado com o botão de destravar.
+fn phase_bar(env: &mut Env, ui: &mut Ui) {
+    let Some(cut) = env.ed.active_cut(env.core) else { return };
+    let ph = super::anim::cut_phase(&env.core.project, &cut);
+    ui.label(egui::RichText::new(tr("anim.phase")).size(12.0).color(env.t.text_dim));
+    for (p, name) in [(CutPhase::Genga, "genga"), (CutPhase::Douga, "douga")] {
+        let r = ui.selectable_label(ph == p, tr(super::anim::phase_key(p))).on_hover_text(tr(if p == CutPhase::Genga { "anim.phase.genga_tip" } else { "anim.phase.douga_tip" }));
+        env.note(format!("canvas:phase.{name}"), r.rect);
+        if r.clicked() {
+            super::anim::set_phase(env, &cut, p);
+        }
+    }
+    if let Some(cel) = super::anim::locked_key_cel(env.core, env.ed) {
+        let b = ui.button(egui::RichText::new(tr("anim.lock.unlock")).color(env.t.accent)).on_hover_text(tr("anim.lock.tip"));
+        env.note("canvas:unlock_key", b.rect);
+        if b.clicked() {
+            env.ed.anim.unlocked.insert(cel);
+        }
+    }
 }
 
 fn sep(ui: &mut Ui, t: &crate::theme::Tokens) {
@@ -450,6 +481,11 @@ fn touch_start_pressure(events: &[Event], idx: usize) -> Option<f32> {
 fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::PointerButton, mods: egui::Modifiers, space: bool, r_held: bool) {
     let xf = env.ed.view.xf(rect, ppp);
     let tool = *env.tool;
+    // douga: o cel-chave com desenho fica travado contra edição acidental (destrava na barra do canvas ou na linha do tempo)
+    let edits = matches!(tool, ToolId::Pen | ToolId::Brush | ToolId::Eraser | ToolId::Points | ToolId::Move);
+    if edits && matches!(button, egui::PointerButton::Primary) && !space && !r_held && !mods.alt && super::anim::edit_blocked(env) {
+        return;
+    }
     if tool == ToolId::Points && !space && matches!(button, egui::PointerButton::Primary | egui::PointerButton::Secondary) {
         // editar pontos: o tamanho de 1 px de tela em px do canvas dá a tolerância do clique
         super::nodes::press(env, xf.to_canvas(pos), 1.0 / xf.scale.max(1e-3), button, mods);
@@ -838,6 +874,8 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
             painter.add(quad(shown.tex.id(), sp, uv));
         }
     }
+    // mesa de luz: os desenhos vizinhos, tingidos, por baixo das linhas do desenho atual (só visão)
+    super::anim::paint_onion(env.ed, painter, sp, cut);
     painter.add(Shape::closed_line(sp.to_vec(), Stroke::new(1.0, t.canvas_frame_stroke)));
 
     // grade de pixels em zoom alto (1 pixel do desenho ≥ 8 pixels físicos)

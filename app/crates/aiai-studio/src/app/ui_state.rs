@@ -271,7 +271,8 @@ impl StudioApp {
             "points_mode": format!("{:?}", ed.opts.points_mode),
             "audio": json!({ "live": ed.live.enabled(), "starts": ed.live.starts, "scrubs": ed.live.scrubs, "error": ed.live.last_error }),
             "tool_options": json!({ "pen_width": o.pen_width, "brush_size": o.brush_size, "brush_opacity": o.brush_opacity, "eraser_size": o.eraser_size, "fill_gap": o.fill_gap, "fill_expand": o.fill_expand, "fill_close_leftovers": o.fill_close_leftovers }),
-            "timeline": { "cell_w": ed.tl_cell_w, "scroll": [round(ed.tl_scroll.x), round(ed.tl_scroll.y)], "header_w": super::panels::timeline::HEADER_W, "ruler_h": super::panels::timeline::RULER_H, "row_h": super::panels::timeline::ROW_H },
+            "timeline": { "cell_w": ed.tl_cell_w, "scroll": [round(ed.tl_scroll.x), round(ed.tl_scroll.y)], "header_w": ed.anim.tl.header_w, "ruler_h": ed.anim.tl.ruler_h, "row_h": ed.anim.tl.row_h, "density": if ed.anim.density(self.ws) == super::anim::Density::Compact { "compact" } else { "normal" } },
+            "anim": { "onion": ed.anim.onion.on, "onion_visible": ed.anim.onion_visible(), "onion_renders": ed.anim.onion_renders, "phase": ed.cut.as_ref().map(|c| if super::anim::cut_phase(&self.core.project, c) == aiai_core::CutPhase::Douga { "douga" } else { "genga" }), "layout_variant": format!("{:?}", self.layouts.variant(crate::workspace::WorkspaceId::Animacao)) },
             "render": render,
         })
     }

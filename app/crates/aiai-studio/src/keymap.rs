@@ -28,6 +28,9 @@ impl Chord {
     pub const fn ctrl_shift(key: Key) -> Chord {
         Chord { ctrl: true, shift: true, alt: false, key }
     }
+    pub const fn alt(key: Key) -> Chord {
+        Chord { ctrl: false, shift: false, alt: true, key }
+    }
 
     pub fn modifiers(&self) -> Modifiers {
         let mut m = Modifiers::NONE;
@@ -132,10 +135,20 @@ pub enum Action {
     PointPrev,
     PointCorner,
     PointAutoHandle,
+    /// Animação: papel do cel atual (chave → breakdown → intercalação).
+    CelRoleCycle,
+    KeyNext,
+    KeyPrev,
+    DrawingNext,
+    DrawingPrev,
+    /// Mesa de luz (papel cebola) liga/desliga.
+    OnionToggle,
+    /// Linha do tempo normal/compacta.
+    TimelineDensity,
 }
 
 /// (ação, id guardado nas preferências, chave i18n do nome, atalho padrão), na ordem do editor de atalhos.
-pub const ACTIONS: [(Action, &str, &str, Chord); 30] = [
+pub const ACTIONS: [(Action, &str, &str, Chord); 37] = [
     (Action::ToolMove, "tool.move", "tool.move", Chord::plain(Key::V)),
     (Action::ToolBrush, "tool.brush", "tool.brush", Chord::plain(Key::B)),
     (Action::ToolPen, "tool.pen", "tool.pen", Chord::plain(Key::P)),
@@ -166,6 +179,13 @@ pub const ACTIONS: [(Action, &str, &str, Chord); 30] = [
     (Action::PointPrev, "point.prev", "keys.point_prev", Chord::plain(Key::Comma)),
     (Action::PointCorner, "point.corner", "keys.point_corner", Chord::plain(Key::C)),
     (Action::PointAutoHandle, "point.auto_handle", "keys.point_auto_handle", Chord::shift(Key::C)),
+    (Action::CelRoleCycle, "animation.cel_role", "keys.cel_role", Chord::plain(Key::K)),
+    (Action::KeyNext, "animation.key_next", "keys.key_next", Chord::ctrl(Key::ArrowRight)),
+    (Action::KeyPrev, "animation.key_prev", "keys.key_prev", Chord::ctrl(Key::ArrowLeft)),
+    (Action::DrawingNext, "animation.drawing_next", "keys.drawing_next", Chord::alt(Key::ArrowRight)),
+    (Action::DrawingPrev, "animation.drawing_prev", "keys.drawing_prev", Chord::alt(Key::ArrowLeft)),
+    (Action::OnionToggle, "animation.onion", "keys.onion", Chord::plain(Key::O)),
+    (Action::TimelineDensity, "animation.timeline_density", "keys.timeline_density", Chord::ctrl_shift(Key::T)),
 ];
 
 impl Action {

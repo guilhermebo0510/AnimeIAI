@@ -8,6 +8,7 @@
 //! Cores, Linha do tempo, Propriedades).
 
 mod actions;
+mod anim;
 mod audio_out;
 mod autosave;
 mod brushes;
@@ -282,8 +283,29 @@ impl StudioApp {
             return;
         }
         let saved = self.layouts.get(ws).and_then(|e| e.current.as_ref()).and_then(|s| layout::tree_from_saved(ws, s));
-        let tree = saved.unwrap_or_else(|| layout::default_tree(ws));
+        let tree = saved.unwrap_or_else(|| layout::default_tree_v(ws, self.layouts.variant(ws)));
         self.trees.insert(ws, tree);
+    }
+
+    /// Animação: a fase do corte ativo (Genga/Douga) escolhe a variante do layout. Ao trocar, a árvore da variante que
+    /// sai fica guardada (cada uma tem o seu layout personalizado) e a da outra entra.
+    fn sync_layout_variant(&mut self) {
+        let ws = self.ws;
+        if ws != WorkspaceId::Animacao {
+            return;
+        }
+        let want = anim::layout_variant(&self.core, &mut self.ed);
+        if self.layouts.variant(ws) == want {
+            return;
+        }
+        if let Some(tree) = self.trees.get(&ws) {
+            if self.layouts.record_current(ws, layout::saved_from_tree(tree)) {
+                self.layouts_dirty_at = Some(Instant::now());
+            }
+        }
+        self.layouts.set_variant(ws, want);
+        self.trees.remove(&ws);
+        self.ensure_tree(ws);
     }
 
     /// Mudanças na árvore do workspace atual (arrastar, fechar, redimensionar) vão para o `layouts.json`; o arquivo é
@@ -317,7 +339,7 @@ impl StudioApp {
 
     /// Volta o workspace ao layout de fábrica (os layouts com nome ficam).
     fn reset_layout(&mut self, ws: WorkspaceId) {
-        self.trees.insert(ws, layout::default_tree(ws));
+        self.trees.insert(ws, layout::default_tree_v(ws, self.layouts.variant(ws)));
         self.layouts.reset(ws);
         self.layouts_changed();
     }
@@ -990,6 +1012,8 @@ impl StudioApp {
         let before = self.tool;
         let mut notes = Vec::new();
         let mut env = ui_kit::Env { t, core: &mut self.core, ed: &mut self.ed, icons: &mut self.icons, notes: &mut notes, tool: &mut self.tool, ws };
+        // as teclas da animação antes (Ctrl+Shift+T não pode cair no Ctrl+T da transformação)
+        anim::shortcuts(ctx, &mut env);
         tools::shortcuts(ctx, &mut env);
         // a tecla de uma ferramenta que não está na prateleira deste workspace não troca a ferramenta
         if !profile.allows(self.tool) && self.tool != before {
@@ -1107,6 +1131,7 @@ impl StudioApp {
         }
         self.doc_shortcuts(&ctx);
         self.handle_close_request(&ctx);
+        self.sync_layout_variant();
 
         self.menu_bar(ui);
         self.workspace_bar(ui);
@@ -1265,6 +1290,9 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::SubView => panels::subview::show(&mut self.env, ui, body),
             PanelKind::Brushes => panels::brushes::show(&mut self.env, ui, body),
             PanelKind::Text => panels::text::show(&mut self.env, ui, body),
+            PanelKind::LightTable => panels::light_table::show(&mut self.env, ui, body),
+            PanelKind::SceneInfo => panels::scene_info::show(&mut self.env, ui, body),
+            PanelKind::CharRef => panels::char_ref::show(&mut self.env, ui, body),
             PanelKind::Characters => panels::characters::list(&mut self.env, ui, body),
             PanelKind::Sheet => panels::characters::sheet(&mut self.env, ui, body),
             PanelKind::Media => panels::edit::media(&mut self.env, ui, body),

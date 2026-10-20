@@ -771,12 +771,15 @@ pub(crate) struct Editor {
     pub want_workspace: Option<crate::workspace::WorkspaceId>,
     /// Corte de desenho aberto a partir de um painel do storyboard: o canvas mostra "Voltar ao storyboard".
     pub back_to_board: Option<NodeId>,
+    /// Animação: mesa de luz, densidade da linha do tempo, cels-chave destravados no douga, Cena e Referências.
+    pub anim: super::anim::AnimState,
 }
 
 impl Default for Editor {
     fn default() -> Self {
         Editor {
             back_to_board: None,
+            anim: Default::default(),
             live_stroke: Default::default(),
             move_live: Default::default(),
             text: Default::default(),

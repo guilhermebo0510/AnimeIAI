@@ -313,6 +313,25 @@ pub struct CutData {
     /// Clipes de áudio posicionados no corte (falas, SFX, BGM, ambiente).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub audio: Vec<AudioPlacement>,
+    /// Fase da animação do corte (原画 genga: poses-chave; 動画 douga: limpeza e intercalações). Muda o layout do
+    /// workspace Animação, o padrão da mesa de luz e trava os cels-chave contra edição acidental no douga.
+    #[serde(default, skip_serializing_if = "CutPhase::is_genga")]
+    pub phase: CutPhase,
+}
+
+/// Fase da animação de um corte.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CutPhase {
+    #[default]
+    Genga,
+    Douga,
+}
+
+impl CutPhase {
+    pub fn is_genga(&self) -> bool {
+        *self == CutPhase::Genga
+    }
 }
 
 /// Trilha de áudio (mixer).
@@ -370,6 +389,7 @@ impl CutData {
             storyboard_panel: None,
             camera: CameraData::default(),
             audio: Vec::new(),
+            phase: CutPhase::Genga,
         }
     }
 

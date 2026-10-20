@@ -44,7 +44,21 @@ impl Client {
     }
 
     fn center(&self, widget: &str) -> (f64, f64) {
-        let st = self.state();
+        let mut st = self.state();
+        // painel em aba atrás de outro (a Animação tem Mesa de luz/Cores e Camadas/Propriedades em abas): traz para a frente
+        if !st["widgets"][widget]["rect_logical"].is_array() {
+            let panel = match widget.split(':').next().unwrap_or("") {
+                "colors" => Some("palette"),
+                "layers" | "cels" => Some("layers"),
+                "project" => Some("project"),
+                "props" => Some("properties"),
+                _ => None,
+            };
+            if let Some(p) = panel {
+                self.ok("UI_ACTION", json!({"action": "open_panel", "panel": p}));
+                st = self.state();
+            }
+        }
         let r = &st["widgets"][widget]["rect_logical"];
         assert!(r.is_array(), "sem retângulo para {widget}: {}", st["widgets"].as_object().unwrap().keys().cloned().collect::<Vec<_>>().join(","));
         (r[0].as_f64().unwrap() + r[2].as_f64().unwrap() / 2.0, r[1].as_f64().unwrap() + r[3].as_f64().unwrap() / 2.0)

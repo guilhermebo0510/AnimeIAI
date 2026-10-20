@@ -169,6 +169,19 @@ impl RenderService {
         q.running.is_some() || !q.jobs.is_empty()
     }
 
+    /// Cópia do documento na revisão atual, a mesma que os renders do canvas usam (outras threads, como a da mesa de
+    /// luz, aproveitam a cópia em vez de clonar o projeto de novo).
+    pub(crate) fn snapshot(&mut self, core: &aiai_core::CoreSession) -> Arc<Snapshot> {
+        match &self.snapshot {
+            Some((c, s)) if *c == core.change_counter => Arc::clone(s),
+            _ => {
+                let s = Arc::new(Snapshot { project: core.project.clone(), blobs: core.blobs.clone() });
+                self.snapshot = Some((core.change_counter, Arc::clone(&s)));
+                s
+            }
+        }
+    }
+
     /// Substitui a fila de pedidos (ordem = prioridade). Chaves já no cache ou já em execução não entram; o que estava na
     /// fila e não foi pedido de novo é descartado (pedido velho).
     pub(crate) fn request(&mut self, core: &aiai_core::CoreSession, keys: &[FrameKey]) {

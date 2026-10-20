@@ -38,6 +38,12 @@ pub enum PanelKind {
     Modeling,
     /// Texto: fonte, tamanho, cor, alinhamento, contorno e sombra da camada de texto.
     Text,
+    /// Mesa de luz (papel cebola): desenhos vizinhos por baixo do atual no canvas.
+    LightTable,
+    /// Cena do corte: texto e falas do roteiro, painel do storyboard e tempo (só leitura).
+    SceneInfo,
+    /// Referências do personagem: folhas de modelo e paleta de settei dos personagens do corte.
+    CharRef,
 }
 
 /// Categoria do painel (agrupa o Exibir > Painéis e decide junto de quem um painel novo entra como aba).
@@ -115,7 +121,7 @@ use WorkspaceId as W;
 const DRAWING_WS: &[WorkspaceId] = &[W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Composicao];
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 25] = [
+    pub const ALL: [PanelKind; 28] = [
         PanelKind::Canvas,
         PanelKind::Layers,
         PanelKind::Properties,
@@ -141,6 +147,9 @@ impl PanelKind {
         PanelKind::Library,
         PanelKind::Modeling,
         PanelKind::Text,
+        PanelKind::LightTable,
+        PanelKind::SceneInfo,
+        PanelKind::CharRef,
     ];
 
     /// Identificador estável (bridge/UI_ACTION, `layouts.json`): `canvas`, `layers`, `timeline`...
@@ -180,6 +189,9 @@ impl PanelKind {
             PanelKind::Library => "panel.library.title",
             PanelKind::Modeling => "panel.modeling.title",
             PanelKind::Text => "panel.text.title",
+            PanelKind::LightTable => "panel.light_table.title",
+            PanelKind::SceneInfo => "panel.scene_info.title",
+            PanelKind::CharRef => "panel.char_ref.title",
         }
     }
 
@@ -211,6 +223,9 @@ impl PanelKind {
             PanelKind::Library => "panel.library.empty",
             PanelKind::Modeling => "panel.modeling.empty",
             PanelKind::Text => "panel.text.empty",
+            PanelKind::LightTable => "panel.light_table.empty",
+            PanelKind::SceneInfo => "panel.scene_info.empty",
+            PanelKind::CharRef => "panel.char_ref.empty",
         }
     }
 
@@ -244,6 +259,9 @@ impl PanelKind {
             PanelKind::Library => (C::Resources, Center, &[W::Biblioteca], false),
             PanelKind::Modeling => (C::Resources, Center, &[W::Modelagem], false),
             PanelKind::Text => (C::Drawing, Right, &[W::Layout, W::Cenario, W::Animacao, W::Composicao, W::Edicao], false),
+            PanelKind::LightTable => (C::Drawing, Right, &[W::Animacao, W::Pintura], false),
+            PanelKind::SceneInfo => (C::PreProduction, Left, &[W::Storyboard, W::Layout, W::Cenario, W::Animacao, W::Pintura], false),
+            PanelKind::CharRef => (C::Character, Left, &[W::Storyboard, W::Layout, W::Animacao, W::Pintura], false),
         };
         PanelMeta { key: self.key(), title_key: self.title_key(), category, dock_hint, workspaces, needs_canvas }
     }
@@ -266,13 +284,36 @@ enum Node {
 
 use Node::{Col, Pane, Row, Tabs as TabsOf};
 
+/// Variante do layout de fábrica de um workspace. Só a Animação tem duas (a fase do corte escolhe): Genga (a base:
+/// chaves, mesa de luz, referências e cena à vista) e Douga (intercalações com a mesa de luz grande). Cada variante
+/// guarda o seu próprio layout personalizado em `layouts.json` (`animacao` e `animacao.douga`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum LayoutVariant {
+    #[default]
+    Base,
+    Douga,
+}
+
+impl LayoutVariant {
+    /// Sufixo da chave em `layouts.json` (a base usa a chave do workspace sem nada).
+    pub fn suffix(self) -> &'static str {
+        match self {
+            LayoutVariant::Base => "",
+            LayoutVariant::Douga => ".douga",
+        }
+    }
+}
+
 /// Revisão do layout de fábrica de cada workspace. Mudou a fábrica (`default_node`), sobe a revisão: quem tem layout
 /// próprio guardado vê o aviso "o padrão foi atualizado" e escolhe (nada é sobrescrito sem pedir). O teste
 /// `factory_changes_bump_the_revision` lembra de subir.
 pub fn factory_rev(ws: WorkspaceId) -> u32 {
     match ws {
+        // S24: Animação com Cena, Referências do personagem e Mesa de luz no lugar de Projeto e Sub View, linha do tempo
+        // mais baixa (compacta) e a variante Douga
+        W::Animacao => 3,
         // S24: fábricas novas (cada etapa de desenho com a sua cara) e os workspaces novos
-        W::Layout | W::Cenario | W::Animacao | W::Pintura | W::Composicao | W::Biblioteca | W::Modelagem => 2,
+        W::Layout | W::Cenario | W::Pintura | W::Composicao | W::Biblioteca | W::Modelagem => 2,
         // S24: painel Texto (legendas) em aba com as Propriedades
         W::Edicao => 2,
         _ => 1,
@@ -280,8 +321,8 @@ pub fn factory_rev(ws: WorkspaceId) -> u32 {
 }
 
 /// Layout padrão de um workspace. Os de desenho seguem `S24-pesquisa/workspaces.md` (b), com os painéis que já existem:
-/// a Cena vira o Projeto (os cortes da cena), as Referências do personagem viram a Sub View e a fila de pintura vira a
-/// linha do tempo (os quadros do corte).
+/// fora da Animação, a Cena vira o Projeto (os cortes da cena), as Referências do personagem viram a Sub View e a fila
+/// de pintura vira a linha do tempo (os quadros do corte).
 fn default_node(ws: WorkspaceId) -> Node {
     use PanelKind as P;
     match ws {
@@ -309,14 +350,16 @@ fn default_node(ws: WorkspaceId) -> Node {
             (0.54, Pane(P::Canvas)),
             (0.29, Col(vec![(0.30, Pane(P::Palette)), (0.42, TabsOf(&[P::Layers, P::Project])), (0.28, TabsOf(&[P::Properties, P::Text]))])),
         ]),
-        // genga/douga: cena e pincéis com as referências embaixo, linha do tempo embaixo de tudo
+        // genga: a cena do roteiro/storyboard e os pincéis em cima à esquerda, as referências do personagem embaixo; à
+        // direita o navegador, a mesa de luz (com as cores pequenas em aba, para o balde de conferir linha) e camadas;
+        // a linha do tempo compacta embaixo de tudo (22 %)
         W::Animacao => Col(vec![
-            (0.72, Row(vec![
-                (0.17, Col(vec![(0.56, TabsOf(&[P::Project, P::Brushes])), (0.44, Pane(P::SubView))])),
-                (0.56, Pane(P::Canvas)),
-                (0.27, Col(vec![(0.18, Pane(P::Navigator)), (0.32, Pane(P::Palette)), (0.50, TabsOf(&[P::Layers, P::Properties]))])),
+            (0.78, Row(vec![
+                (0.18, Col(vec![(0.52, TabsOf(&[P::SceneInfo, P::Brushes])), (0.48, Pane(P::CharRef))])),
+                (0.55, Pane(P::Canvas)),
+                (0.27, Col(vec![(0.20, Pane(P::Navigator)), (0.30, TabsOf(&[P::LightTable, P::Palette])), (0.50, TabsOf(&[P::Layers, P::Properties]))])),
             ])),
-            (0.28, Pane(P::Timeline)),
+            (0.22, Pane(P::Timeline)),
         ]),
         // shiage: as cores (settei) em destaque à esquerda, referências à direita e os quadros do corte embaixo
         W::Pintura => Col(vec![
@@ -353,6 +396,24 @@ fn default_node(ws: WorkspaceId) -> Node {
     }
 }
 
+/// Fábrica de uma variante: a do Douga só existe na Animação (nos outros workspaces a variante cai na base).
+fn default_node_v(ws: WorkspaceId, v: LayoutVariant) -> Node {
+    use PanelKind as P;
+    match (ws, v) {
+        // douga: limpar e intercalar; a mesa de luz ganha painel próprio e mais altura, as referências e a cena ficam
+        // em aba (consulta) e os pincéis embaixo delas; a linha do tempo compacta embaixo
+        (W::Animacao, LayoutVariant::Douga) => Col(vec![
+            (0.80, Row(vec![
+                (0.17, Col(vec![(0.55, TabsOf(&[P::CharRef, P::SceneInfo])), (0.45, Pane(P::Brushes))])),
+                (0.56, Pane(P::Canvas)),
+                (0.27, Col(vec![(0.18, Pane(P::Navigator)), (0.36, Pane(P::LightTable)), (0.46, TabsOf(&[P::Layers, P::Properties, P::Palette]))])),
+            ])),
+            (0.20, Pane(P::Timeline)),
+        ]),
+        _ => default_node(ws),
+    }
+}
+
 fn build(tiles: &mut Tiles<PanelKind>, node: &Node) -> TileId {
     match node {
         Pane(k) => tiles.insert_pane(*k),
@@ -380,8 +441,13 @@ fn tree_id(ws: WorkspaceId) -> egui::Id {
 
 /// Árvore padrão do workspace.
 pub fn default_tree(ws: WorkspaceId) -> Tree<PanelKind> {
+    default_tree_v(ws, LayoutVariant::Base)
+}
+
+/// Árvore padrão de uma variante do workspace.
+pub fn default_tree_v(ws: WorkspaceId, v: LayoutVariant) -> Tree<PanelKind> {
     let mut tiles = Tiles::default();
-    let root = build(&mut tiles, &default_node(ws));
+    let root = build(&mut tiles, &default_node_v(ws, v));
     Tree::new(tree_id(ws), root, tiles)
 }
 
@@ -689,7 +755,12 @@ pub fn same_layout(a: &SavedNode, b: &SavedNode) -> bool {
 
 /// O layout de fábrica em forma guardável.
 pub fn factory_saved(ws: WorkspaceId) -> SavedNode {
-    saved_from_tree(&default_tree(ws)).expect("fábrica sem raiz")
+    factory_saved_v(ws, LayoutVariant::Base)
+}
+
+/// O layout de fábrica de uma variante em forma guardável.
+pub fn factory_saved_v(ws: WorkspaceId, v: LayoutVariant) -> SavedNode {
+    saved_from_tree(&default_tree_v(ws, v)).expect("fábrica sem raiz")
 }
 
 #[cfg(test)]
@@ -889,11 +960,50 @@ mod tests {
         assert_eq!(saved_from_tree(&tree_from_saved(WorkspaceId::Animacao, &saved).unwrap()).unwrap(), saved);
     }
 
+    #[test]
+    fn animation_factories_bring_the_animation_panels_in_two_variants() {
+        for v in [LayoutVariant::Base, LayoutVariant::Douga] {
+            let p = panels(&default_tree_v(WorkspaceId::Animacao, v));
+            for k in [PanelKind::Canvas, PanelKind::Timeline, PanelKind::LightTable, PanelKind::SceneInfo, PanelKind::CharRef, PanelKind::Layers] {
+                assert!(p.contains(&k), "{v:?} sem {k:?}");
+            }
+            // o usuário pediu: Projeto e Sub View não servem na Animação; as cores ficam (pequenas, em aba) por causa do balde
+            assert!(!p.contains(&PanelKind::Project) && !p.contains(&PanelKind::SubView), "{v:?}: {p:?}");
+            assert!(p.contains(&PanelKind::Palette));
+            let set: HashSet<_> = p.iter().collect();
+            assert_eq!(set.len(), p.len());
+            for k in &p {
+                assert!(k.meta().workspaces.contains(&WorkspaceId::Animacao), "{k:?}");
+            }
+            // ida e volta pelo JSON guardado
+            let saved = factory_saved_v(WorkspaceId::Animacao, v);
+            assert_eq!(saved_from_tree(&tree_from_saved(WorkspaceId::Animacao, &saved).unwrap()).unwrap(), saved);
+        }
+        assert!(!same_layout(&factory_saved_v(WorkspaceId::Animacao, LayoutVariant::Douga), &factory_saved(WorkspaceId::Animacao)), "Genga e Douga iguais");
+        // a mesa de luz tem painel próprio no Douga (no Genga divide aba com as cores)
+        let douga = default_tree_v(WorkspaceId::Animacao, LayoutVariant::Douga);
+        let lt = find_pane(&douga, PanelKind::LightTable).unwrap();
+        assert!(!panes_in_tabs(&douga).contains(&lt));
+        // variante sem fábrica própria cai na base
+        assert!(same_layout(&factory_saved_v(WorkspaceId::Pintura, LayoutVariant::Douga), &factory_saved(WorkspaceId::Pintura)));
+    }
+
     /// Assinatura da fábrica (FNV-1a do JSON guardável): mudar `default_node` muda a assinatura e obriga a rever a tabela
     /// abaixo junto com `factory_rev` (quem tem layout próprio precisa ser avisado do padrão novo).
     fn signature(ws: WorkspaceId) -> u64 {
-        let json = serde_json::to_string(&factory_saved(ws)).unwrap();
+        signature_v(ws, LayoutVariant::Base)
+    }
+
+    fn signature_v(ws: WorkspaceId, v: LayoutVariant) -> u64 {
+        let json = serde_json::to_string(&factory_saved_v(ws, v)).unwrap();
         json.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3))
+    }
+
+    /// A fábrica do Douga divide a revisão com a da Animação: mudou uma, sobe `factory_rev(Animacao)`.
+    #[test]
+    fn douga_factory_changes_bump_the_animation_revision() {
+        let (rev, sig) = (factory_rev(W::Animacao), signature_v(W::Animacao, LayoutVariant::Douga));
+        assert_eq!((rev, sig), (3, 0x2b930c446b4a9976), "a fábrica do Douga mudou; suba `factory_rev(Animacao)` e atualize: ({rev}, 0x{sig:016x})");
     }
 
     #[test]
@@ -904,7 +1014,7 @@ mod tests {
             (W::Storyboard, 1, 0x14d8a62efb1d9b23),
             (W::Layout, 2, 0xd1d0b0db8901276e),
             (W::Cenario, 2, 0x10fcc70dc9e4906a),
-            (W::Animacao, 2, 0xe5ae17e3e39b9662),
+            (W::Animacao, 3, 0x5d54281aba1d2f5c),
             (W::Pintura, 2, 0xfc53133a1f95cbd3),
             (W::Composicao, 2, 0xe373fff7d0e1aa31),
             (W::Biblioteca, 2, 0xf001e10a1c6ff92d),

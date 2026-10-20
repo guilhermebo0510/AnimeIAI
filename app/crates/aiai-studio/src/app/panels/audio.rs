@@ -74,7 +74,7 @@ fn asset_name(p: &Project, id: &Id) -> String {
 
 /// Duração usada do clipe em segundos (a explícita, ou a do WAV menos o corte do início).
 /// Picos a cada 10 ms (máximo absoluto entre os canais) do asset de áudio.
-fn wave_peaks<'a>(st: &'a mut AudioState, core: &CoreSession, asset: &Id) -> Option<&'a Vec<f32>> {
+pub(crate) fn wave_peaks<'a>(st: &'a mut AudioState, core: &CoreSession, asset: &Id) -> Option<&'a Vec<f32>> {
     st.waves
         .entry(asset.0.clone())
         .or_insert_with(|| {
@@ -86,7 +86,7 @@ fn wave_peaks<'a>(st: &'a mut AudioState, core: &CoreSession, asset: &Id) -> Opt
         .as_ref()
 }
 
-fn clip_seconds(st: &mut AudioState, core: &CoreSession, a: &AudioPlacement) -> f32 {
+pub(crate) fn clip_seconds(st: &mut AudioState, core: &CoreSession, a: &AudioPlacement) -> f32 {
     if let Some(d) = a.duration {
         return d;
     }

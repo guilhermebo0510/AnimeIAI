@@ -3,7 +3,7 @@
 //! layouts com nome. Com `--no-session` nada é lido nem gravado; com `--session-file x.json` o arquivo é
 //! `x-layouts.json` ao lado dele.
 
-use crate::layout::{self, SavedNode};
+use crate::layout::{self, LayoutVariant, SavedNode};
 use crate::workspace::WorkspaceId;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -34,23 +34,46 @@ pub struct WsLayouts {
 #[serde(default)]
 pub struct LayoutStore {
     pub version: u32,
-    /// Chave do workspace (`WorkspaceId::key`) → layouts dele.
+    /// Chave do workspace (`WorkspaceId::key`, com o sufixo da variante: `animacao.douga`) → layouts dele.
     pub workspaces: BTreeMap<String, WsLayouts>,
+    /// Variante em uso por workspace (vem da fase do corte; não é gravada).
+    #[serde(skip)]
+    variants: BTreeMap<String, LayoutVariant>,
 }
 
 impl Default for LayoutStore {
     fn default() -> Self {
-        LayoutStore { version: VERSION, workspaces: BTreeMap::new() }
+        LayoutStore { version: VERSION, workspaces: BTreeMap::new(), variants: BTreeMap::new() }
     }
 }
 
 impl LayoutStore {
+    /// Variante em uso no workspace (a base, se nunca foi trocada).
+    pub fn variant(&self, ws: WorkspaceId) -> LayoutVariant {
+        self.variants.get(ws.key()).copied().unwrap_or_default()
+    }
+
+    /// Troca a variante em uso: dali em diante `get`/`entry`/fábrica falam da variante nova.
+    pub fn set_variant(&mut self, ws: WorkspaceId, v: LayoutVariant) {
+        self.variants.insert(ws.key().to_owned(), v);
+    }
+
+    fn slot(&self, ws: WorkspaceId) -> String {
+        format!("{}{}", ws.key(), self.variant(ws).suffix())
+    }
+
+    /// Fábrica da variante em uso.
+    pub fn factory(&self, ws: WorkspaceId) -> SavedNode {
+        layout::factory_saved_v(ws, self.variant(ws))
+    }
+
     pub fn get(&self, ws: WorkspaceId) -> Option<&WsLayouts> {
-        self.workspaces.get(ws.key())
+        self.workspaces.get(&self.slot(ws))
     }
 
     pub fn entry(&mut self, ws: WorkspaceId) -> &mut WsLayouts {
-        self.workspaces.entry(ws.key().to_owned()).or_default()
+        let k = self.slot(ws);
+        self.workspaces.entry(k).or_default()
     }
 
     /// O usuário tem layout próprio feito sobre uma fábrica mais velha que a atual: mostrar o aviso (nunca trocar sozinho).
@@ -62,7 +85,8 @@ impl LayoutStore {
     /// (o aviso continua até o usuário escolher). Devolve se algo mudou.
     pub fn record_current(&mut self, ws: WorkspaceId, saved: Option<SavedNode>) -> bool {
         let pending = self.factory_update_pending(ws);
-        let custom = saved.filter(|s| !layout::same_layout(s, &layout::factory_saved(ws)));
+        let factory = self.factory(ws);
+        let custom = saved.filter(|s| !layout::same_layout(s, &factory));
         let e = self.entry(ws);
         let changed = e.current != custom;
         if changed {
@@ -240,6 +264,31 @@ mod tests {
         assert_eq!(load(&p), LayoutStore::default());
         assert!(p.with_extension("json.bad").exists(), "o arquivo ilegível fica guardado");
         let _ = std::fs::remove_dir_all(p.parent().unwrap());
+    }
+
+    #[test]
+    fn each_variant_keeps_its_own_layout() {
+        let ws = WorkspaceId::Animacao;
+        let mut s = LayoutStore::default();
+        // a fábrica do Douga não vira layout próprio estando no Douga
+        s.set_variant(ws, LayoutVariant::Douga);
+        let douga = layout::default_tree_v(ws, LayoutVariant::Douga);
+        assert!(!s.record_current(ws, saved_from_tree(&douga)));
+        assert_eq!(s.label(ws), None);
+        // personalizar o Douga não mexe no Genga
+        let mut t = douga;
+        let id = find_pane(&t, PanelKind::Properties).unwrap();
+        t.tiles.set_visible(id, false);
+        let mine = saved_from_tree(&t).unwrap();
+        assert!(s.record_current(ws, Some(mine.clone())));
+        s.set_variant(ws, LayoutVariant::Base);
+        assert_eq!(s.label(ws), None, "o Genga continua de fábrica");
+        assert!(s.workspaces.contains_key("animacao.douga"));
+        s.set_variant(ws, LayoutVariant::Douga);
+        assert_eq!(s.get(ws).and_then(|e| e.current.as_ref()), Some(&mine));
+        // a variante não vai para o arquivo
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(!json.contains("variants"), "{json}");
     }
 
     #[test]

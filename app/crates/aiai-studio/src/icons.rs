@@ -74,6 +74,8 @@ pub enum IconId {
     NodeCut,
     NodeCharacter,
     NodeDocument,
+    /// Mesa de luz (papel cebola): folhas sobrepostas.
+    OnionSkin,
     /// Marca do app (colorida, não é recolorida).
     Logo,
     /// A marca para o tema claro.
@@ -83,7 +85,7 @@ pub enum IconId {
 }
 
 impl IconId {
-    pub const ALL: [IconId; 67] = [
+    pub const ALL: [IconId; 68] = [
         IconId::WsRoteiro,
         IconId::WsPersonagens,
         IconId::WsStoryboard,
@@ -148,6 +150,7 @@ impl IconId {
         IconId::NodeCut,
         IconId::NodeCharacter,
         IconId::NodeDocument,
+        IconId::OnionSkin,
         IconId::Logo,
         IconId::LogoLight,
         IconId::LogoSmall,
@@ -224,6 +227,7 @@ impl IconId {
             IconId::NodeCut => include_str!("../assets/icons/node-cut.svg"),
             IconId::NodeCharacter => include_str!("../assets/icons/node-character.svg"),
             IconId::NodeDocument => include_str!("../assets/icons/node-document.svg"),
+            IconId::OnionSkin => include_str!("../assets/icons/onion-skin.svg"),
             IconId::Logo => include_str!("../assets/brand/logo.svg"),
             IconId::LogoLight => include_str!("../assets/brand/logo-light.svg"),
             IconId::LogoSmall => include_str!("../assets/brand/logo-small.svg"),
