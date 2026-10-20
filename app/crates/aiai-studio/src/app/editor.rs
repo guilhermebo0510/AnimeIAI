@@ -618,7 +618,8 @@ pub(crate) enum Gesture {
     /// Caneta em forma de régua (linha, retângulo, elipse): do ponto de partida até o cursor.
     Shape { start: Vec2, cur: Vec2 },
     /// Caneta em curva por cliques: cada clique põe um ponto; Enter, duplo clique ou botão direito termina.
-    PolyCurve { pts: Vec<Vec2>, last_click: std::time::Instant },
+    /// `line` = linha encadeada (polilinha; forma Linha começada com um clique sem arrasto).
+    PolyCurve { pts: Vec<Vec2>, last_click: std::time::Instant, line: bool },
     /// Alça de canto do Mover: escala em volta do centro.
     ScaleSel { handle: usize, start_scale: Vec2, start_offset: Vec2, start_rotate: f32 },
     /// Alça de rotação do Mover.

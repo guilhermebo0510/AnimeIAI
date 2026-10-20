@@ -183,6 +183,7 @@ fn properties(env: &mut Env, ui: &mut Ui, r: &Ruler) {
     let t = env.t;
     let base = Id::new(("ruler_props", r.id.clone()));
     let mut edit: Option<Box<dyn FnOnce(&mut Ruler, (u32, u32))>> = None;
+    let mut convert = None;
     egui::Grid::new(("ruler_grid", r.id.clone())).num_columns(2).spacing([8.0, 5.0]).show(ui, |ui| {
         ui.label(tr("ruler.name"));
         let (resp, name) = super::text_commit(ui, base.with("name"), &r.name, 150.0);
@@ -202,18 +203,8 @@ fn properties(env: &mut Env, ui: &mut Ui, r: &Ruler) {
             }
         });
         env.note("rulers:type", resp.response.rect);
-        if let Some(k) = pick.filter(|k| *k != cur) {
-            edit = Some(Box::new(move |x, canvas| {
-                let (kind, n) = k.kind_points();
-                if kind == RulerKind::Perspective && x.kind == RulerKind::Perspective {
-                    rl::set_points(x, canvas, n);
-                } else {
-                    // tipo novo: os campos do tipo vêm do padrão, nome/cor/visibilidade ficam
-                    let p = Ruler::preset(kind, n, canvas, Some(x.center), &x.id, &x.name);
-                    *x = Ruler { id: x.id.clone(), name: x.name.clone(), visible: x.visible, snap: x.snap, locked: x.locked, ..p };
-                }
-            }));
-        }
+        // tipo novo: a régua é convertida no lugar (posição, horizonte e cor ficam onde fazem sentido)
+        convert = pick.filter(|k| *k != cur);
         ui.end_row();
         ui.label(tr("ruler.color"));
         let mut c = rgba_to_color32(r.rgba());
@@ -351,19 +342,32 @@ fn properties(env: &mut Env, ui: &mut Ui, r: &Ruler) {
     if let Some(f) = edit {
         rulers::edit_active(env, f);
     }
+    if let Some(k) = convert {
+        rulers::convert_active(env, k);
+    }
 }
 
 /// Opções da ferramenta Régua (barra do canvas e painel Ferramenta): o tipo da próxima régua e o encaixe.
 pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
     let t = env.t;
-    let cur = env.ed.rulers.new_kind;
+    // com uma régua escolhida, o tipo é o dela e trocar converte a régua no lugar; sem régua, é o tipo da próxima
+    let active = rulers::active_ruler(env);
+    let cur = active.as_ref().map(NewKind::of).unwrap_or(env.ed.rulers.new_kind);
+    let mut pick = None;
     let r = egui::ComboBox::from_id_salt(("ruler_new_kind", compact)).selected_text(tr(cur.key())).show_ui(ui, |ui| {
         for k in NewKind::ALL {
-            ui.selectable_value(&mut env.ed.rulers.new_kind, k, tr(k.key()));
+            if ui.selectable_label(k == cur, tr(k.key())).clicked() {
+                pick = Some(k);
+            }
         }
     });
     env.note("opt:ruler_kind", r.response.rect);
-    r.response.on_hover_text(tr("ruler.new_kind_tip"));
+    r.response.on_hover_text(tr(if active.is_some() { "ruler.kind_convert_tip" } else { "ruler.new_kind_tip" }));
+    if let Some(k) = pick.filter(|k| *k != cur) {
+        rulers::convert_active(env, k);
+    } else if let Some(k) = pick {
+        env.ed.rulers.new_kind = k;
+    }
     let mut snap = env.ed.rulers.snap;
     let r = ui.checkbox(&mut snap, tr("ruler.snap")).on_hover_text(format!("{} ({})", tr("ruler.snap_tip"), env.ed.keys.label(Action::RulerSnap)));
     env.note("opt:ruler_snap", r.rect);

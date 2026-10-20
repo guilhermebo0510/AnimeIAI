@@ -825,11 +825,16 @@ pub fn set_points(r: &mut Ruler, canvas: (u32, u32), n: usize) {
         let next = match (r.vps.len(), hz) {
             (0, _) => [w / 2.0, h * 0.45],
             (1, Some((p, d))) => {
-                // o segundo do outro lado do canvas, no mesmo horizonte
+                // o segundo no mesmo horizonte, espelhado em volta do meio do canvas; o primeiro perto do meio (1 ponto
+                // central) ganha o segundo a 1,2 largura para a direita, para os dois não caírem juntos
                 let c = [w / 2.0, h / 2.0];
                 let foot = project(p, d, c);
-                let side = if dot(sub(p, foot), d) < 0.0 { 1.0 } else { -1.0 };
-                add(foot, mul(d, side * 1.2 * w))
+                let off = dot(sub(p, foot), d);
+                if off.abs() >= 0.1 * w {
+                    add(foot, mul(d, -off))
+                } else {
+                    add(p, mul(d, 1.2 * w))
+                }
             }
             _ => {
                 // o vertical: abaixo do meio do canvas, longe (vista de cima)
@@ -839,6 +844,61 @@ pub fn set_points(r: &mut Ruler, canvas: (u32, u32), n: usize) {
         };
         r.vps.push(next);
     }
+}
+
+/// Ponto em volta do qual a régua está (onde a régua de outro tipo nasce numa conversão): o ponto de fuga do 1 ponto, o
+/// pé do meio do canvas no horizonte (2 e 3 pontos), o centro do quadrilátero da grade, o centro/origem dos outros.
+pub fn anchor(r: &Ruler, canvas: (u32, u32)) -> P {
+    let c = [canvas.0.max(1) as f32 / 2.0, canvas.1.max(1) as f32 / 2.0];
+    match r.kind {
+        RulerKind::Perspective if r.vps.len() == 1 => r.vps[0],
+        RulerKind::Perspective => horizon(r).map(|(p, d)| project(p, d, c)).unwrap_or(r.center),
+        RulerKind::Grid => mul(r.quad.iter().fold([0.0, 0.0], |a, q| add(a, *q)), 0.25),
+        _ => r.center,
+    }
+}
+
+/// A régua `r` convertida para o tipo `kind` (`points` = pontos de fuga da perspectiva) no mesmo lugar. Entre
+/// perspectivas o horizonte fica: 1 → 2 põe o segundo ponto espelhado em volta do meio do canvas, 2 → 3 soma o vertical,
+/// 3 → 2 tira o vertical, 2/3 → 1 deixa um ponto só no horizonte, no pé do meio do canvas (com a inclinação do
+/// horizonte). Perspectiva de 2/3 pontos → grade usa o chão coerente com os pontos de fuga. Os outros recomeçam com os
+/// padrões do tipo em volta de `anchor`. Ficam id, nome, olho, encaixe, cadeado e a cor que o usuário escolheu (a cor
+/// padrão do tipo antigo vira a padrão do novo).
+pub fn convert(r: &Ruler, kind: RulerKind, points: usize, canvas: (u32, u32)) -> Ruler {
+    let points = points.clamp(1, 3);
+    if kind == RulerKind::Perspective && r.kind == RulerKind::Perspective {
+        let mut x = r.clone();
+        if points == 1 && x.vps.len() > 1 {
+            let c = [canvas.0.max(1) as f32 / 2.0, canvas.1.max(1) as f32 / 2.0];
+            match horizon(&x) {
+                Some((p, d)) => {
+                    x.vps = vec![project(p, d, c)];
+                    x.horizon_angle = d[1].atan2(d[0]).to_degrees();
+                }
+                None => x.vps.truncate(1),
+            }
+        } else {
+            set_points(&mut x, canvas, points);
+        }
+        return x;
+    }
+    if kind == r.kind {
+        return r.clone();
+    }
+    let mut x = Ruler::preset(kind, points, canvas, Some(anchor(r, canvas)), &r.id, &r.name);
+    if kind == RulerKind::Grid {
+        if let Some(q) = floor_quad(r, canvas) {
+            x.quad = q;
+        }
+    }
+    let old_default = Ruler::preset(r.kind, 1, canvas, None, "", "x").color;
+    if !r.color.eq_ignore_ascii_case(&old_default) {
+        x.color = r.color.clone();
+    }
+    x.visible = r.visible;
+    x.snap = r.snap;
+    x.locked = r.locked;
+    x
 }
 
 // ------------------------------------------------------------------------------------------------ assar e bridge
@@ -984,7 +1044,14 @@ pub fn ruler_plan(p: &Project, req: &RulerRequest) -> ToolResult<RulerPlan> {
         }
         RulerOp::Edit => {
             let rid = need_id(&set)?;
-            let cur = set.get(&rid).cloned().expect("existe");
+            let mut cur = set.get(&rid).cloned().expect("existe");
+            // tipo novo: converte no lugar primeiro (como o app), depois aplica os campos dados
+            if let Some(k) = req.ruler.as_ref().and_then(|p| p.get("kind")) {
+                let kind: RulerKind = serde_json::from_value(k.clone()).map_err(|e| ToolError::Invalid(format!("ruler.kind: {e}")))?;
+                if kind != cur.kind {
+                    cur = convert(&cur, kind, req.points.unwrap_or(2) as usize, canvas);
+                }
+            }
             let mut r = match &req.ruler {
                 Some(patch) => merge_ruler(&cur, patch)?,
                 None => cur,
@@ -1234,5 +1301,47 @@ mod tests {
         assert_eq!(r.vps[1][1], 500.0);
         assert!(r.vps[1][0] > 960.0, "o segundo nasce do outro lado: {:?}", r.vps[1]);
         r.validate().unwrap();
+    }
+
+    #[test]
+    fn converting_the_type_keeps_the_place_horizon_and_colour() {
+        let canvas = (1920, 1080);
+        // 1 → 2: o segundo ponto espelhado em volta do meio, no mesmo horizonte
+        let mut one = Ruler::preset(RulerKind::Perspective, 1, canvas, Some([400.0, 450.0]), "r1", "Minha");
+        one.color = "#ff0000ff".into();
+        let two = convert(&one, RulerKind::Perspective, 2, canvas);
+        assert_eq!(two.vps.len(), 2);
+        assert_eq!(two.vps[0], [400.0, 450.0]);
+        assert!((two.vps[1][0] - 1520.0).abs() < 1e-3 && (two.vps[1][1] - 450.0).abs() < 1e-3, "espelho: {:?}", two.vps[1]);
+        assert_eq!((two.id.as_str(), two.name.as_str(), two.color.as_str()), ("r1", "Minha", "#ff0000ff"));
+        // 1 ponto no meio: o segundo não cai em cima do primeiro
+        let mid = Ruler::preset(RulerKind::Perspective, 1, canvas, Some([960.0, 450.0]), "r1", "");
+        let m2 = convert(&mid, RulerKind::Perspective, 2, canvas);
+        assert!((m2.vps[1][0] - m2.vps[0][0]).abs() > 1000.0 && m2.vps[1][1] == 450.0);
+        // 2 → 3 soma o vertical; 3 → 2 tira
+        let three = convert(&two, RulerKind::Perspective, 3, canvas);
+        assert_eq!(&three.vps[..2], &two.vps[..]);
+        assert!(three.vps[2][1] > 2000.0);
+        assert_eq!(convert(&three, RulerKind::Perspective, 2, canvas).vps, two.vps);
+        // 2 → 1: um ponto no horizonte, no pé do meio do canvas
+        let back = convert(&two_point(), RulerKind::Perspective, 1, canvas);
+        assert_eq!(back.vps, vec![[960.0, 500.0]]);
+        assert_eq!(back.horizon_angle, 0.0);
+        // perspectiva → paralelas: padrões do tipo em volta do horizonte; cor padrão vira a do tipo novo
+        let par = convert(&two_point(), RulerKind::Parallel, 2, canvas);
+        assert_eq!((par.kind, par.center), (RulerKind::Parallel, [960.0, 500.0]));
+        assert_eq!(par.color, Ruler::preset(RulerKind::Parallel, 2, canvas, None, "", "x").color);
+        // perspectiva → grade: o chão coerente com os pontos de fuga
+        let grid = convert(&two_point(), RulerKind::Grid, 2, canvas);
+        assert_eq!(Some(grid.quad), floor_quad(&two_point(), canvas));
+        // radial → simetria no mesmo centro, cor escolhida fica
+        let mut rad = Ruler::preset(RulerKind::Radial, 2, canvas, Some([300.0, 200.0]), "r4", "");
+        rad.color = "#112233ff".into();
+        rad.locked = true;
+        let sym = convert(&rad, RulerKind::Symmetry, 2, canvas);
+        assert_eq!((sym.center, sym.color.as_str(), sym.locked), ([300.0, 200.0], "#112233ff", true));
+        for r in [two, three, back, par, grid, sym] {
+            r.validate().unwrap();
+        }
     }
 }

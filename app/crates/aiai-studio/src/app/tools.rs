@@ -165,6 +165,7 @@ pub(crate) fn begin_stroke(env: &mut Env, tool: ToolId, p: Vec2, pressure: f32, 
     let mode = if tool == ToolId::Eraser { StabMode::Off } else { o.stab_mode };
     let stab = Stabilizer::new(mode, o.stab_window as usize, o.stab_radius / scale.max(1e-3));
     let snap = super::rulers::stroke_snap(env, tool, p, scale);
+    super::pen::clip_notice(env, &t.layer);
     // camada que se move neste quadro: o traço é gravado no espaço do cel para aparecer embaixo do cursor
     let fwd = cmds::layer_placement(&env.core.project, &t.cut, &t.layer, t.frame);
     let inv = fwd.and_then(|a| a.inverse());
@@ -274,7 +275,9 @@ fn commit_pen(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant
         Ok(Command::InsertStrokes { cel, items })
     });
     let color = ghost_color(env, 1.0);
-    commit(env, planned, released_at, "pen", Some((ghost_pts, ghost_radii, width, color)));
+    // camada com Recortar: sem fantasma (ele mostraria o traço inteiro até o render recortado chegar)
+    let ghost = super::pen::clip_base(&env.core.project, &layer).is_none().then_some((ghost_pts, ghost_radii, width, color));
+    commit(env, planned, released_at, "pen", ghost);
 }
 
 /// Pontos (canvas) da forma da caneta de `a` até `b`; com `shift`, linha a cada 15°, quadrado, círculo.
@@ -862,6 +865,8 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
     }
     use crate::keymap::Action as A;
     use egui::{Key, Modifiers};
+    // curva/linha por cliques: Enter termina, Esc/Backspace tiram o último ponto (antes dos atalhos gerais)
+    super::pen::shortcuts(ctx, env);
     let none = Modifiers::NONE;
     let keys = env.ed.keys.clone();
     // Editar pontos com um ponto escolhido: Delete apaga, . e , passam de ponto, C alterna canto/suave,
@@ -981,8 +986,8 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
         }
     }
     if enter {
-        if let Gesture::PolyCurve { pts, .. } = std::mem::replace(&mut env.ed.gesture, Gesture::None) {
-            commit_vector_shape(env, pts, StrokeGeometry::Spline, false);
+        if matches!(env.ed.gesture, Gesture::PolyCurve { .. }) {
+            super::pen::finish(env, false);
         } else {
             commit_move(env);
         }

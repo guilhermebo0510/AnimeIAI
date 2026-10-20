@@ -102,6 +102,10 @@ pub(crate) struct Snap {
     pub decided: bool,
     /// Distância (px do canvas) que o primeiro trecho precisa andar para escolher a direção.
     pub decide: f32,
+    /// Caneta (vetor): o traço só avança na reta (a mão que volta não dobra o traço sobre si); o pincel vai e volta.
+    pub forward: bool,
+    /// Quanto o traço já avançou na reta desde a partida (px do canvas, no sentido do primeiro trecho).
+    pub reach: f32,
 }
 
 fn v(p: rl::P) -> Vec2 {
@@ -112,6 +116,10 @@ fn a(p: Vec2) -> rl::P {
 }
 
 impl Snap {
+    pub(crate) fn new(ruler: Ruler, start: Vec2, decide: f32, forward: bool) -> Snap {
+        Snap { ruler, start, dir: None, decided: false, decide, forward, reach: 0.0 }
+    }
+
     /// O ponto do traço depois do encaixe.
     pub(crate) fn filter(&mut self, p: Vec2) -> Vec2 {
         if self.ruler.kind == RulerKind::Symmetry {
@@ -121,10 +129,16 @@ impl Snap {
             if (p - self.start).length() < self.decide {
                 return self.start;
             }
-            self.dir = rl::pick_dir(&self.ruler, a(self.start), a(p - self.start)).map(v);
+            // a direção aponta para onde o primeiro trecho foi
+            self.dir = rl::pick_dir(&self.ruler, a(self.start), a(p - self.start)).map(|d| if (p - self.start).dot(v(d)) < 0.0 { -v(d) } else { v(d) });
             self.decided = true;
         }
         match self.dir {
+            Some(d) if self.forward => {
+                // ponto exato na reta (partida + d·t), sem o arredondamento da projeção, e só para a frente
+                self.reach = self.reach.max((p - self.start).dot(d));
+                self.start + d * self.reach
+            }
             Some(d) => v(rl::project(a(self.start), a(d), a(p))),
             None => p,
         }
@@ -236,6 +250,35 @@ pub(crate) fn edit_active(env: &mut Env, f: impl FnOnce(&mut Ruler, (u32, u32)))
     }
 }
 
+/// Converte a régua ativa (a escolhida) para o tipo `k` no lugar (`rl::convert`: posição, horizonte e cor ficam onde fazem
+/// sentido), num passo de undo; o nome padrão do tipo antigo vira o do novo. Também passa a ser o tipo das réguas novas.
+/// `false` = não há régua ativa (nada mudou).
+pub(crate) fn convert_active(env: &mut Env, k: NewKind) -> bool {
+    env.ed.rulers.new_kind = k;
+    if active_ruler(env).is_none() {
+        return false;
+    }
+    edit_active(env, |x, canvas| {
+        let old = NewKind::of(x);
+        if old == k {
+            return;
+        }
+        let (kind, n) = k.kind_points();
+        let mut c = rl::convert(x, kind, n, canvas);
+        if x.name == tr(old.key()) || x.name == rl::default_name(x.kind, x.vps.len()) {
+            c.name = tr(k.key()).to_owned();
+        }
+        *x = c;
+    });
+    true
+}
+
+/// A régua ativa (escolhida) da camada das réguas.
+pub(crate) fn active_ruler(env: &mut Env) -> Option<Ruler> {
+    let layer = ruler_layer(env)?;
+    layer_set(&env.core.project, &layer).ok()?.active_ruler().cloned()
+}
+
 /// Régua ativa da camada das réguas, quando ela encaixa traços agora (encaixe geral e da régua ligados, régua e camada à
 /// mostra).
 pub(crate) fn snap_ruler(env: &mut Env) -> Option<Ruler> {
@@ -257,7 +300,7 @@ pub(crate) fn stroke_snap(env: &mut Env, tool: ToolId, p: Vec2, scale: f32) -> O
         return None;
     }
     let ruler = snap_ruler(env)?;
-    Some(Snap { ruler, start: p, dir: None, decided: false, decide: 6.0 / scale.max(1e-3) })
+    Some(Snap::new(ruler, p, 6.0 / scale.max(1e-3), tool == ToolId::Pen))
 }
 
 /// Ponta da linha da caneta (forma Linha) encaixada na régua ativa: a direção mais perto do arrasto atual.
@@ -635,7 +678,7 @@ mod tests {
     fn a_stroke_waits_for_its_first_segment_then_follows_the_vanishing_line() {
         let r = two_point();
         let s = Vec2::new(1000.0, 800.0);
-        let mut snap = Snap { ruler: r.clone(), start: s, dir: None, decided: false, decide: 6.0 };
+        let mut snap = Snap::new(r.clone(), s, 6.0, false);
         assert_eq!(snap.filter(Vec2::new(1002.0, 799.0)), s, "antes de decidir fica na partida");
         let p = snap.filter(Vec2::new(990.0, 797.0));
         let to_vp1 = (Vec2::new(-1000.0, 500.0) - s).normalized();
@@ -647,7 +690,7 @@ mod tests {
         }
         // simetria não mexe no ponto
         let sym = Ruler::preset(RulerKind::Symmetry, 2, (1920, 1080), None, "r2", "");
-        let mut ss = Snap { ruler: sym, start: s, dir: None, decided: false, decide: 6.0 };
+        let mut ss = Snap::new(sym, s, 6.0, true);
         assert_eq!(ss.filter(Vec2::new(1234.0, 567.0)), Vec2::new(1234.0, 567.0));
     }
 

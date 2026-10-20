@@ -310,6 +310,8 @@ impl Live {
 struct Above {
     img: Option<aiai_paint::Image>,
     fx: Vec<(Vec<aiai_fx::EffectInstance>, f32)>,
+    /// Camada com Recortar: alfa da base do recorte no canvas (o traço só aparece sobre ela, como no render).
+    clip: Option<aiai_paint::Image>,
 }
 
 fn worker(spec: StartSpec, slot: Option<Slot>, sh: Arc<(Mutex<State>, Condvar)>, tx: crossbeam_channel::Sender<Out>, ctx: egui::Context) {
@@ -432,12 +434,14 @@ fn above_of(p: &Project, blobs: &BlobStore, cut: &NodeId, frame: u32, guides: bo
         .filter(|(_, l)| matches!(l.kind, LayerType::Effect | LayerType::Adjustment))
         .filter_map(|(_, l)| aiai_fx::stack_from_params(&l.params).ok().map(|st| (st, l.keys.eval("opacity", frame as f32).unwrap_or(l.opacity))))
         .collect();
-    Above { img: render_only(p, blobs, cut, frame, guides, reference, ids), fx }
+    Above { img: render_only(p, blobs, cut, frame, guides, reference, ids), fx, clip: None }
 }
 
 fn render_above(p: &Project, spec: &StartSpec) -> Above {
     let (_, above) = split_at_layer(p, &spec.cut, &spec.layer);
-    above_of(p, &spec.blobs, &spec.cut, spec.frame, spec.guides, spec.reference, &above)
+    let mut ab = above_of(p, &spec.blobs, &spec.cut, spec.frame, spec.guides, spec.reference, &above);
+    ab.clip = super::pen::clip_alpha(p, &spec.blobs, &spec.cut, &spec.layer, spec.frame, spec.guides, spec.reference);
+    ab
 }
 
 /// Base da borracha: o quadro de baixo e o de cima renderizados em paralelo, e como a camada entra neles.
@@ -686,6 +690,10 @@ fn dress(spec: &StartSpec, origin: [i32; 2], crop: aiai_paint::Image, mask: &[bo
 /// Como [`dress`], com `fwd` = pixel da área → canvas (`None` = a área já está no canvas).
 fn dress_at(spec: &StartSpec, fwd: Option<&Affine>, origin: [i32; 2], mut crop: aiai_paint::Image, mask: &[bool], above: Option<&Above>) -> Out {
     let (cw, ch) = (crop.width as usize, crop.height as usize);
+    // camada com Recortar: o traço só aparece sobre o desenho da base do recorte (como o render vai mostrar)
+    if let Some(base) = above.and_then(|ab| ab.clip.as_ref()) {
+        super::pen::clip_pixels(&mut crop, mask, origin, fwd, base);
+    }
     // as camadas de cima ficam na frente do traço (a cerca na frente da casa)
     if let Some(img) = above.and_then(|ab| ab.img.as_ref()) {
         for y in 0..ch {
