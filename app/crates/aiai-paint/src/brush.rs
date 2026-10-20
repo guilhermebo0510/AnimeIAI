@@ -360,6 +360,33 @@ pub struct BrushPreset {
     /// Duas cores no carimbo (só pontas de forma: rosa, nuvem, folha, pétala, grama).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub two_tone: Option<TwoTone>,
+    /// Cor em degradê AO LONGO DO TRAÇO: no lugar da cor do pincel, cada dab pega a cor do degradê na distância já
+    /// percorrida (`length` px = uma passada de 0 a 1; `extend` do degradê decide o que vem depois: prender, repetir,
+    /// espelhar). As cores de paleta já chegam resolvidas (o pincel não enxerga o projeto; paleta = magenta).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_ramp: Option<ColorRamp>,
+}
+
+/// Degradê do pincel ao longo do comprimento do traço.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ColorRamp {
+    pub gradient: aiai_core::Gradient,
+    /// Px do caminho para ir de 0 a 1.
+    #[serde(default = "d_ramp_len")]
+    pub length: f32,
+}
+
+fn d_ramp_len() -> f32 {
+    400.0
+}
+
+impl ColorRamp {
+    fn resolved(&self) -> aiai_core::ResolvedGradient {
+        self.gradient.resolve(|c| match c {
+            aiai_core::ColorRef::Direct { rgba } => rgba.0,
+            aiai_core::ColorRef::Palette { .. } => [1.0, 0.0, 1.0, 1.0],
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema, Default)]
@@ -425,6 +452,7 @@ impl BrushPreset {
             mode: BrushMode::Normal,
             aliased: false,
             two_tone: None,
+            color_ramp: None,
         }
     }
 
@@ -745,6 +773,8 @@ struct Dab {
     y: f32,
     pr: f32,
     dir: f32,
+    /// Distância percorrida no caminho até este dab (px), para o degradê ao longo do traço.
+    s: f32,
 }
 
 /// Traço de pincel em andamento, alimentado aos pedaços: guarda o buffer do traço (em tiles), o gerador aleatório, o
@@ -774,6 +804,10 @@ pub struct StrokeBuffer {
     acc: f32,
     sdir: Option<f32>,
     pending: Option<Dab>,
+    /// Degradê ao longo do traço (`BrushPreset::color_ramp`) e o comprimento de uma passada.
+    ramp: Option<(aiai_core::ResolvedGradient, f32)>,
+    /// Comprimento do caminho já percorrido (px).
+    travel: f32,
 }
 
 impl StrokeBuffer {
@@ -796,6 +830,8 @@ impl StrokeBuffer {
             pending: None,
             dirty: None,
             max_a: 0.0,
+            ramp: preset.color_ramp.as_ref().map(|r| (r.resolved(), r.length.max(1.0))),
+            travel: 0.0,
         }
     }
 
@@ -827,7 +863,7 @@ impl StrokeBuffer {
     pub fn add(&mut self, layer: Option<&Image>, pts: &[BrushPoint]) {
         for &p in pts {
             match self.prev {
-                None => self.pending = Some(Dab { x: p.x, y: p.y, pr: p.pressure, dir: 0.0 }),
+                None => self.pending = Some(Dab { x: p.x, y: p.y, pr: p.pressure, dir: 0.0, s: 0.0 }),
                 Some(a) => self.segment(layer, a, p),
             }
             self.prev = Some(p);
@@ -902,15 +938,19 @@ impl StrokeBuffer {
             if let Some(d) = self.pending.take() {
                 self.stamp(layer, d);
             }
-            self.stamp(layer, Dab { x: a.x + dx * f, y: a.y + dy * f, pr: a.pressure + (b.pressure - a.pressure) * f, dir });
+            self.stamp(layer, Dab { x: a.x + dx * f, y: a.y + dy * f, pr: a.pressure + (b.pressure - a.pressure) * f, dir, s: self.travel + t });
         }
+        self.travel += len;
     }
 
     fn stamp(&mut self, layer: Option<&Image>, d: Dab) {
         let preset = self.preset.clone();
         let (cx, cy, dir) = (d.x, d.y, d.dir);
         let pr = d.pr.clamp(0.0, 1.0);
-        let color = self.color;
+        let color = match &self.ramp {
+            Some((g, len)) => g.color_at(d.s / len),
+            None => self.color,
+        };
         for _ in 0..preset.count {
             let mut size = preset.size * (preset.size_pressure_min + (1.0 - preset.size_pressure_min) * pr);
             if preset.size_jitter > 0.0 {
@@ -1173,39 +1213,27 @@ fn box_blur(src: &[f32], w: usize, h: usize, r: i32) -> Vec<f32> {
     out
 }
 
-/// Degradê linear ou radial com paradas (t, cor sRGB não pré-multiplicada), opcionalmente limitado por máscara.
+/// Degradê linear/radial/angular/diamante entre dois pontos do canvas, paradas sRGB (t, cor não pré-multiplicada),
+/// preso nas pontas: a ferramenta Degradê de sempre, agora pelo avaliador único de `aiai_core::paint`.
 pub fn gradient_fill(layer: &mut Image, kind: GradientKind, p0: [f32; 2], p1: [f32; 2], stops: &[(f32, [f32; 4])], mode: BlendMode, opacity: f32) {
     if stops.is_empty() {
         return;
     }
-    let (dx, dy) = (p1[0] - p0[0], p1[1] - p0[1]);
-    let len2 = (dx * dx + dy * dy).max(1e-6);
-    let radius = len2.sqrt();
-    let sample = |t: f32| -> [f32; 4] {
-        let t = t.clamp(0.0, 1.0);
-        if t <= stops[0].0 {
-            return stops[0].1;
-        }
-        for w in stops.windows(2) {
-            if t <= w[1].0 {
-                let f = (t - w[0].0) / (w[1].0 - w[0].0).max(1e-6);
-                let mut c = [0.0; 4];
-                for k in 0..4 {
-                    c[k] = w[0].1[k] + (w[1].1[k] - w[0].1[k]) * f;
-                }
-                return c;
-            }
-        }
-        stops[stops.len() - 1].1
-    };
+    let g = aiai_core::ResolvedGradient::simple(stops, kind.shape(), p0, p1);
+    let bbox = [0.0, 0.0, layer.width as f32, layer.height as f32];
+    gradient_fill_resolved(layer, &g, bbox, mode, opacity);
+}
+
+/// Pinta a camada inteira com um degradê resolvido (geometria relativa a `bbox` ou absoluta).
+pub fn gradient_fill_resolved(layer: &mut Image, g: &aiai_core::ResolvedGradient, bbox: [f32; 4], mode: BlendMode, opacity: f32) {
+    if g.stops.is_empty() {
+        return;
+    }
+    let m = g.mapper(bbox);
     let wdt = layer.width as usize;
     for (i, px) in layer.data.iter_mut().enumerate() {
         let (x, y) = ((i % wdt) as f32 + 0.5, (i / wdt) as f32 + 0.5);
-        let t = match kind {
-            GradientKind::Linear => ((x - p0[0]) * dx + (y - p0[1]) * dy) / len2,
-            GradientKind::Radial => ((x - p0[0]).powi(2) + (y - p0[1]).powi(2)).sqrt() / radius,
-        };
-        let c = sample(t);
+        let c = g.sample(&m, [x, y]);
         blend_pixel(px, [c[0] * c[3], c[1] * c[3], c[2] * c[3], c[3]], mode, opacity);
     }
 }
@@ -1215,6 +1243,21 @@ pub fn gradient_fill(layer: &mut Image, kind: GradientKind, p0: [f32; 2], p1: [f
 pub enum GradientKind {
     Linear,
     Radial,
+    /// Cônico em volta de `from`, começando na direção de `to`.
+    Angular,
+    /// Losango em volta de `from` (raio = distância até `to`).
+    Diamond,
+}
+
+impl GradientKind {
+    pub fn shape(self) -> aiai_core::GradientShape {
+        match self {
+            GradientKind::Linear => aiai_core::GradientShape::Linear,
+            GradientKind::Radial => aiai_core::GradientShape::Radial,
+            GradientKind::Angular => aiai_core::GradientShape::Angular,
+            GradientKind::Diamond => aiai_core::GradientShape::Diamond,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1349,5 +1392,44 @@ mod tests {
             paint_stroke(&mut img, p, &path, [0.15, 0.35, 0.6, 1.0], 9);
         }
         img.save_png(&std::path::Path::new(&dir).join("pinceis_prancha.png")).unwrap();
+    }
+
+    #[test]
+    fn color_ramp_runs_along_the_stroke_length_and_feeds_in_chunks_the_same() {
+        let mut p = BrushPreset::round("r", 10.0, 1.0);
+        p.color_ramp = Some(ColorRamp { gradient: aiai_core::Gradient::from_colors(&[[1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0]], 0.0), length: 100.0 });
+        let path: Vec<BrushPoint> = (0..=40).map(|i| BrushPoint { x: 20.0 + i as f32 * 4.0, y: 50.0, pressure: 1.0 }).collect();
+        let mut a = Image::new(220, 100);
+        paint_stroke(&mut a, &p, &path, [0.0, 1.0, 0.0, 1.0], 3).unwrap();
+        let un = |q: [f32; 4]| [q[0] / q[3].max(1e-6), q[1] / q[3].max(1e-6), q[2] / q[3].max(1e-6)];
+        let start = un(a.get(21, 50));
+        let mid = un(a.get(70, 50));
+        let end = un(a.get(170, 50));
+        assert!(start[0] > 0.85 && start[2] < 0.15, "começo vermelho: {start:?}");
+        assert!(mid[0] > 0.3 && mid[2] > 0.3, "meio misturado: {mid:?}");
+        assert!(end[2] > 0.95 && end[1] < 0.01, "depois de 100 px fica azul (pad), e a cor do pincel não entra: {end:?}");
+        // aos pedaços: o mesmo resultado
+        let mut sb = StrokeBuffer::new(&p, [0.0, 1.0, 0.0, 1.0], 3, 220, 100, [0, 0]);
+        for chunk in path.chunks(7) {
+            sb.add(None, chunk);
+        }
+        sb.finish(None);
+        let mut b = Image::new(220, 100);
+        sb.composite(&mut b, [0, 0]);
+        let d = a.data.iter().zip(&b.data).map(|(x, y)| (0..4).map(|k| (x[k] - y[k]).abs()).fold(0.0, f32::max)).fold(0.0, f32::max);
+        assert!(d < 1e-4, "pedaços = inteiro: {d}");
+    }
+
+    #[test]
+    fn gradient_fill_kinds_cover_the_layer() {
+        let stops = [(0.0, [0.0, 0.0, 0.0, 1.0]), (1.0, [1.0, 1.0, 1.0, 1.0])];
+        for kind in [GradientKind::Linear, GradientKind::Radial, GradientKind::Angular, GradientKind::Diamond] {
+            let mut img = Image::new(64, 64);
+            gradient_fill(&mut img, kind, [32.0, 32.0], [64.0, 32.0], &stops, BlendMode::Normal, 1.0);
+            assert!(img.data.iter().all(|q| q[3] > 0.999), "{kind:?} cobre tudo");
+            let vals: Vec<f32> = img.data.iter().map(|q| q[0]).collect();
+            let (mn, mx) = (vals.iter().cloned().fold(1.0, f32::min), vals.iter().cloned().fold(0.0, f32::max));
+            assert!(mx - mn > 0.5, "{kind:?} varia: {mn}..{mx}");
+        }
     }
 }

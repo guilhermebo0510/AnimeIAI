@@ -28,6 +28,8 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
         }
         ui.add_space(4.0);
         color_wheel(env, ui);
+        ui.add_space(4.0);
+        super::gradient_edit::colors_section(env, ui);
     });
 }
 
@@ -171,6 +173,11 @@ fn current_color(env: &mut Env, ui: &mut Ui) {
         let (r, _) = ui.allocate_exact_size(egui::vec2(38.0, 38.0), Sense::hover());
         env.note("colors:current", r);
         ui.painter().rect(r, 6.0, c32, Stroke::new(1.5, t.border), StrokeKind::Inside);
+        if env.ed.grad.active {
+            // o degradê é a cor atual (pincel e balde)
+            let g = env.ed.grad.gradient.resolve(|c| cmds::resolve_color(&env.core.project, c).0);
+            super::gradient_edit::paint_strip(&ui.painter_at(r.shrink(2.0)), r.shrink(2.0), &g);
+        }
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
             let (label, tip) = match &env.ed.color {

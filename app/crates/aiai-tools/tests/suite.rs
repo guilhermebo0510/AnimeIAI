@@ -35,6 +35,7 @@ fn draw_fill_lint_render() {
                 .map(|(id, hex)| NamedColor { id: Id::from(*id), name: id.to_string(), group: id.to_string(), role: "normal".into(), rgba: Rgba::from_hex(hex).unwrap(), variants: Default::default() })
                 .collect(),
             active_variant: String::new(),
+            gradients: Vec::new(),
         }),
     );
     let c = |id: &str| ColorRef::Palette { palette: pal.clone(), color: Id::from(id) };
@@ -142,6 +143,7 @@ fn paint_sky_study_with_brushes() {
     let g = GradientRequest {
         cut: cut.clone(), frame: 0, layer: sky.clone(), kind: GradientKind::Linear, from: [0.0, 0.0], to: [0.0, 540.0],
         stops: vec![(0.0, "#3c7fd9ff".into()), (0.7, "#8ec5f2ff".into()), (1.0, "#d8ecfaff".into())], blend: BlendMode::Normal, opacity: 1.0,
+        gradient: None,
     };
     { let c = gradient_command(&s.project, &mut s.blobs, &g).unwrap(); s.apply(c).unwrap(); }
     // nuvens: massa macia branca + borda de aquarela + sombra azulada na base

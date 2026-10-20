@@ -81,6 +81,7 @@ fn build_scene() -> (CoreSession, Id) {
                 NamedColor { id: Id::from("linha"), name: "Linha".into(), group: "linha".into(), role: "linha".into(), rgba: Rgba::from_hex("#3a2a2a").unwrap(), variants: Default::default() },
             ],
             active_variant: String::new(),
+            gradients: Vec::new(),
         }),
     );
     let pref = |c: &str| ColorRef::Palette { palette: pal.clone(), color: Id::from(c) };
@@ -118,7 +119,7 @@ fn build_scene() -> (CoreSession, Id) {
     let mh = s.blobs.put(mask.encode());
     s.apply(Command::ReplaceFills {
         cel: fill_cel,
-        fills: vec![FillRegion { id: Id::from(""), seed: [256.0, 150.0], color: pref("pele"), mask: Some(mh), bounds: [cov.x0, cov.y0, cov.width as i32, cov.height as i32] }],
+        fills: vec![FillRegion { id: Id::from(""), seed: [256.0, 150.0], color: pref("pele"), mask: Some(mh), bounds: [cov.x0, cov.y0, cov.width as i32, cov.height as i32], gradient: None }],
     })
     .unwrap();
     // sombra multiplicada recortada pela cor

@@ -247,7 +247,8 @@ pub fn palette_data_of(pal: &Palette, ids: &mut IdGen) -> PaletteData {
             })
         })
         .collect();
-    PaletteData { colors, active_variant: String::new() }
+    let gradients = pal.gradients.iter().map(|g| NamedGradient { id: ids.next(), name: g.name.clone(), gradient: g.gradient.clone() }).collect();
+    PaletteData { colors, active_variant: String::new(), gradients }
 }
 
 /// Paleta do documento → paleta da biblioteca.
@@ -267,6 +268,19 @@ pub fn palette_of(name: &str, pd: &PaletteData) -> Palette {
             })
             .collect(),
         warnings: Vec::new(),
+        // as paradas de paleta viram cores diretas (o id da paleta não existe em outro projeto)
+        gradients: pd
+            .gradients
+            .iter()
+            .map(|g| NamedGradient {
+                id: Id(String::new()),
+                name: g.name.clone(),
+                gradient: g.gradient.with_direct_colors(|c| match c {
+                    ColorRef::Direct { rgba } => rgba.0,
+                    ColorRef::Palette { color, .. } => pd.resolve(color).map(|c| c.0).unwrap_or([1.0, 0.0, 1.0, 1.0]),
+                }),
+            })
+            .collect(),
     }
 }
 
@@ -281,7 +295,7 @@ fn save(root: &Path, p: &Project, blobs: &BlobStore, r: &LibraryRequest) -> Tool
             let id = r.palette.as_ref().ok_or_else(|| ToolError::Invalid("save from=palette precisa de `palette` (id da paleta do projeto)".into()))?;
             let n = p.node(id).ok_or_else(|| ToolError::NotFound(format!("paleta {id}")))?;
             let NodeKind::Palette(pd) = &n.data else { return invalid(format!("{id} não é uma paleta")) };
-            if pd.colors.is_empty() {
+            if pd.colors.is_empty() && pd.gradients.is_empty() {
                 return invalid(format!("a paleta '{}' não tem cores", n.name));
             }
             if o.name.as_deref().is_none_or(|s| s.trim().is_empty()) {
@@ -437,7 +451,7 @@ fn use_item(root: &Path, p: &Project, ids: &mut IdGen, blobs: &mut BlobStore, r:
         Kind::Texture => invalid(format!("'{}' não é uma imagem que o app leia", e.env.name)),
         Kind::Palette => {
             let pal = Palette::from_payload(&e.env.payload).map_err(ToolError::Invalid)?;
-            if pal.colors.is_empty() {
+            if pal.colors.is_empty() && pal.gradients.is_empty() {
                 return invalid(format!("a paleta '{}' não tem cores", e.env.name));
             }
             let data = palette_data_of(&pal, ids);

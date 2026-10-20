@@ -66,7 +66,7 @@ fn every_basic_command_undoes_and_redoes_exactly() {
         Command::AddTrack { cut: cut.clone(), index: None, track },
         Command::InsertStrokes { cel: cel.clone(), items: vec![IndexedStroke { index: 0, stroke: stroke("", 0.0) }, IndexedStroke { index: 1, stroke: stroke("", 5.0) }] },
         Command::SetTiles { cel: cel.clone(), tiles: vec![TileEdit { x: 0, y: 0, blob: Some(blob.clone()) }, TileEdit { x: -1, y: 2, blob: Some(blob.clone()) }] },
-        Command::ReplaceFills { cel: cel.clone(), fills: vec![FillRegion { id: Id::from(""), seed: [3.0, 4.0], color: ColorRef::default(), mask: Some(blob.clone()), bounds: [0, 0, 10, 10] }] },
+        Command::ReplaceFills { cel: cel.clone(), fills: vec![FillRegion { id: Id::from(""), seed: [3.0, 4.0], color: ColorRef::default(), mask: Some(blob.clone()), bounds: [0, 0, 10, 10], gradient: None }] },
         Command::CreateNode { id: None, parent: None, index: None, name: "Settei".into(), data: NodeKind::Palette(PaletteData::default()) },
     ];
     for c in commands {

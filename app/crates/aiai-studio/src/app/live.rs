@@ -835,6 +835,8 @@ struct ArtFill {
     bounds: [i32; 4],
     premul: [f32; 4],
     mask: Option<aiai_paint::Mask>,
+    /// Degradê da região (como o render: na caixa da máscara).
+    grad: Option<(aiai_core::ResolvedGradient, aiai_core::paint::GradientMapper)>,
 }
 
 impl ArtFill {
@@ -874,7 +876,13 @@ impl CelArt {
             .map(|f| {
                 let c = resolve_rgba(p, &f.color);
                 let mask = f.mask.as_ref().and_then(|h| blobs.get(h)).and_then(|b| aiai_paint::Mask::decode(&b).ok());
-                ArtFill { bounds: f.bounds, premul: [c[0] * c[3], c[1] * c[3], c[2] * c[3], c[3]], mask }
+                let grad = f.gradient.as_ref().map(|g| {
+                    let r = g.resolve(|c| resolve_rgba(p, c));
+                    let [bx, by, bw, bh] = f.bounds;
+                    let m = r.mapper([bx as f32, by as f32, (bx + bw) as f32, (by + bh) as f32]);
+                    (r, m)
+                });
+                ArtFill { bounds: f.bounds, premul: [c[0] * c[3], c[1] * c[3], c[2] * c[3], c[3]], mask, grad }
             })
             .collect();
         let hide_trace = match p.node(layer).map(|n| &n.data) {
@@ -902,7 +910,11 @@ impl CelArt {
                     let cov = m.get((x - fx) as u32, (y - fy) as u32);
                     if cov > 0.0 {
                         let i = img.idx((x - b[0]) as u32, (y - b[1]) as u32);
-                        aiai_paint::Image::over(&mut img.data[i], f.premul, cov);
+                        let src = match &f.grad {
+                            Some((g, gm)) => g.sample_premul(gm, [x as f32 + 0.5, y as f32 + 0.5]),
+                            None => f.premul,
+                        };
+                        aiai_paint::Image::over(&mut img.data[i], src, cov);
                     }
                 }
             }

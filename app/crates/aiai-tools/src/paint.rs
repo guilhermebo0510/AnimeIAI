@@ -42,12 +42,18 @@ pub struct GradientRequest {
     pub kind: GradientKind,
     pub from: [f32; 2],
     pub to: [f32; 2],
-    /// Paradas: [t, "#rrggbbaa"]
+    /// Paradas: [t, "#rrggbbaa"]. Ignoradas com `gradient`.
+    #[serde(default)]
     pub stops: Vec<(f32, String)>,
     #[serde(default)]
     pub blend: BlendMode,
     #[serde(default = "one")]
     pub opacity: f32,
+    /// Degradê completo (paradas com cor de paleta e opacidade, repetição `extend`, espaço `space` srgb|linear|oklab).
+    /// A forma vem de `kind` e a geometria de `from`/`to` (os campos `angle`/`center`/`scale`/`absolute` dele são
+    /// ignorados aqui). Sem ele, `stops` em sRGB preso nas pontas (o de sempre).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gradient: Option<Gradient>,
 }
 
 fn one() -> f32 {
@@ -381,6 +387,23 @@ pub fn paint_region(blobs: &BlobStore, cel: Option<&CelData>, w: u32, h: u32, sb
 pub fn gradient_command(p: &Project, blobs: &mut BlobStore, req: &GradientRequest) -> ToolResult<Command> {
     let (node, cel, w, h) = raster_cel(p, &req.cut, &req.layer, req.frame)?;
     let mut img = cel_raster(blobs, cel, w, h)?;
+    if let Some(g) = &req.gradient {
+        g.validate().map_err(ToolError::Invalid)?;
+        let mut err = None;
+        let g = Gradient { shape: req.kind.shape(), absolute: Some([req.from, req.to]), ..g.clone() };
+        let r = g.resolve(|c| resolve_color(p, c).unwrap_or_else(|e| {
+            err = Some(e);
+            [1.0, 0.0, 1.0, 1.0]
+        }));
+        if let Some(e) = err {
+            return Err(e);
+        }
+        aiai_paint::brush::gradient_fill_resolved(&mut img, &r, [0.0, 0.0, w as f32, h as f32], req.blend, req.opacity);
+        return Ok(Command::SetTiles { cel: node.id.clone(), tiles: tiles_for_region(blobs, &img, [0, 0, w as i32, h as i32]) });
+    }
+    if req.stops.is_empty() {
+        return Err(ToolError::Invalid("degradê sem `stops` nem `gradient`".into()));
+    }
     let stops = req
         .stops
         .iter()
@@ -427,6 +450,9 @@ pub struct FillShapeRequest {
     pub roughness_wavelength: f32,
     #[serde(default)]
     pub seed: u32,
+    /// Degradê no lugar de `color`, mapeado na caixa das formas (ângulo/centro/escala relativos a ela).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gradient: Option<Gradient>,
 }
 
 fn d_one_f() -> f32 {
@@ -471,11 +497,39 @@ pub fn fill_shape_command(p: &Project, blobs: &mut BlobStore, req: &FillShapeReq
     let c = resolve_color(p, &req.color)?;
     let a = c[3] * req.opacity;
     let src = [c[0] * a, c[1] * a, c[2] * a, a];
+    let grad = match &req.gradient {
+        Some(g) => {
+            g.validate().map_err(ToolError::Invalid)?;
+            let mut err = None;
+            let r = g.resolve(|c| resolve_color(p, c).unwrap_or_else(|e| {
+                err = Some(e);
+                [1.0, 0.0, 1.0, 1.0]
+            }));
+            if let Some(e) = err {
+                return Err(e);
+            }
+            let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+            for q in contours.iter().flatten() {
+                (x0, y0, x1, y1) = (x0.min(q[0]), y0.min(q[1]), x1.max(q[0]), y1.max(q[1]));
+            }
+            let m = r.mapper([x0, y0, x1, y1]);
+            Some((r, m))
+        }
+        None => None,
+    };
     for y in 0..cov.height {
         for x in 0..cov.width {
             let v = cov.cov[(y * cov.width + x) as usize];
             if v > 0.0 {
                 let i = img.idx(cov.x0 as u32 + x, cov.y0 as u32 + y);
+                let src = match &grad {
+                    Some((g, m)) => {
+                        let q = g.sample(m, [(cov.x0 as u32 + x) as f32 + 0.5, (cov.y0 as u32 + y) as f32 + 0.5]);
+                        let a = q[3] * req.opacity;
+                        [q[0] * a, q[1] * a, q[2] * a, a]
+                    }
+                    None => src,
+                };
                 aiai_paint::blend::blend_pixel(&mut img.data[i], src, req.blend, v);
             }
         }

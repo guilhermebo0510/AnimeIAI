@@ -230,6 +230,7 @@ impl StudioApp {
         app.ed.comp.user_files = !app.cli.no_session;
         app.ed.m3d.user_files = !app.cli.no_session;
         app.ed.modeling.user_files = !app.cli.no_session;
+        app.ed.text.panel.user_files = !app.cli.no_session;
         if !cli_no_autosave {
             if let Some(root) = autosave::recovery_root() {
                 app.recoveries = autosave::leftovers(&root, app.autosave.dir.as_deref());

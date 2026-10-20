@@ -4,7 +4,8 @@
 
 use crate::context::*;
 use aiai_core::*;
-use aiai_paint::text_layer::{TextAlign, TextParams, TextShadow, TextStroke, canvas_bounds, layout};
+use aiai_paint::text_layer::{TextAlign, TextEffect, TextParams, TextShadow, TextStroke, TextWarp, WarpStyle, canvas_bounds, layout};
+use aiai_paint::text_style::{TextStyle, builtin_styles};
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Value, json};
@@ -77,12 +78,39 @@ pub struct TextLayerRequest {
     #[serde(default, deserialize_with = "double_option")]
     #[schemars(with = "Option<TextShadow>")]
     pub shadow: Option<Option<TextShadow>>,
+    /// Tinta do preenchimento no lugar de `color`: {"type":"gradient","gradient":{...}} (degradê na caixa das letras),
+    /// {"type":"pattern","image":"<blob>","scale":1} ou {"type":"solid","color":...}; `null` volta a `color`.
+    #[serde(default, deserialize_with = "double_option")]
+    #[schemars(with = "Option<Paint>")]
+    pub fill: Option<Option<Paint>>,
+    /// Pilha de estilos (substitui a lista inteira; `[]` tira todos). Cada item é plano: {"type": "stroke"|"drop_shadow"|
+    /// "inner_shadow"|"outer_glow"|"inner_glow"|"bevel_emboss"|"satin"|"gradient_overlay"|"color_overlay"|
+    /// "pattern_overlay"|"long_shadow", "enabled", "blend", "opacity", ...campos do efeito}.
+    #[serde(default)]
+    pub effects: Option<Vec<TextEffect>>,
+    /// Distorção {style: arc|arch|wave|flag|bulge|rise|path, bend -1..1, distort -1..1, path [[x,y]...], path_offset};
+    /// `null` tira.
+    #[serde(default, deserialize_with = "double_option")]
+    #[schemars(with = "Option<TextWarp>")]
+    pub warp: Option<Option<TextWarp>>,
+    /// Texto no caminho de um traço vetorial (id do traço em qualquer cel): vira `warp` {style: path} com os pontos dele.
+    #[serde(default)]
+    pub warp_path_stroke: Option<Id>,
+    /// Aplica um estilo pronto pelo nome (ver `list_styles`) antes dos outros campos (as medidas escalam com `size`).
+    #[serde(default)]
+    pub style: Option<String>,
+    /// Aplica um estilo de um arquivo `.aiaistyle` (caminho absoluto).
+    #[serde(default)]
+    pub style_file: Option<String>,
     /// Opacidade da camada (0..1).
     #[serde(default)]
     pub opacity: Option<f32>,
     /// Só lista as fontes disponíveis (não altera nada).
     #[serde(default)]
     pub list_fonts: bool,
+    /// Só lista os estilos prontos (não altera nada).
+    #[serde(default)]
+    pub list_styles: bool,
 }
 
 pub struct TextLayerPlan {
@@ -118,6 +146,38 @@ fn check_font(f: &str) -> ToolResult<()> {
     let names: Vec<String> = cat.families().into_iter().filter(|n| n.to_lowercase().contains(&f.to_lowercase())).take(12).collect();
     let hint = if names.is_empty() { "use list_fonts para ver as famílias".to_owned() } else { format!("parecidas: {}", names.join(", ")) };
     Err(ToolError::Invalid(format!("fonte '{f}' não encontrada ({hint})")))
+}
+
+/// Estilos prontos: nome e o que cada um traz.
+pub fn list_styles() -> Value {
+    let all: Vec<Value> = builtin_styles()
+        .iter()
+        .map(|s| json!({ "name": s.name, "effects": s.effects.iter().map(|e| e.kind.key()).collect::<Vec<_>>(), "fill": s.fill.as_ref().map(|f| match f { Paint::Solid { .. } => "solid", Paint::Gradient { .. } => "gradient", Paint::Pattern { .. } => "pattern" }), "warp": s.warp.as_ref().map(|w| w.style.key()) }))
+        .collect();
+    json!({ "styles": all })
+}
+
+/// Pontos (amostrados como o render desenha) do traço vetorial `id`, procurado em todos os cels.
+fn stroke_points(p: &Project, id: &Id) -> ToolResult<Vec<[f32; 2]>> {
+    for n in p.nodes.values() {
+        if let NodeKind::Cel(c) = &n.data {
+            if let Some(s) = c.strokes.iter().find(|s| &s.id == id) {
+                let pts: Vec<[f32; 2]> = aiai_paint::sample_stroke(s).iter().map(|q| [q.x, q.y]).collect();
+                if pts.len() < 2 {
+                    return Err(ToolError::Invalid(format!("o traço {id} é curto demais para caminho")));
+                }
+                return Ok(pts);
+            }
+        }
+    }
+    Err(ToolError::NotFound(format!("traço {id}")))
+}
+
+fn validate_paint(pt: &Paint) -> ToolResult<()> {
+    if let Paint::Gradient { gradient } = pt {
+        gradient.validate().map_err(ToolError::Invalid)?;
+    }
+    Ok(())
 }
 
 /// Posição e tamanho do texto depois da mudança (para o agente conferir sem renderizar).
@@ -157,6 +217,30 @@ pub fn text_layer_command(p: &Project, ids: &mut IdGen, req: &TextLayerRequest) 
     if let Some(v) = &req.text {
         params.content = v.clone();
     }
+    if let Some(sz) = req.size {
+        // o estilo escala com o tamanho final
+        params.size = sz;
+    }
+    if let Some(name) = &req.style {
+        let all = builtin_styles();
+        let st = all.iter().find(|s| s.name.eq_ignore_ascii_case(name.trim()) || s.name.to_lowercase().starts_with(&name.trim().to_lowercase()));
+        match st {
+            Some(st) => st.apply(&mut params),
+            None => return Err(ToolError::Invalid(format!("estilo '{name}' não existe; prontos: {}", all.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(", ")))),
+        }
+    }
+    if let Some(path) = &req.style_file {
+        let text = std::fs::read_to_string(path).map_err(|e| ToolError::Invalid(format!("{path}: {e}")))?;
+        TextStyle::from_json(&text).map_err(ToolError::Invalid)?.apply(&mut params);
+    }
+    if let Some(Some(f)) = &req.fill {
+        validate_paint(f)?;
+    }
+    for e in req.effects.iter().flatten() {
+        if let aiai_paint::text_layer::TextEffectKind::Stroke(s) = &e.kind {
+            validate_paint(&s.paint)?;
+        }
+    }
     if let Some(f) = &req.font {
         check_font(f)?;
         params.font = f.trim().to_owned();
@@ -181,6 +265,15 @@ pub fn text_layer_command(p: &Project, ids: &mut IdGen, req: &TextLayerRequest) 
     set!(rotation);
     set!(stroke);
     set!(shadow);
+    set!(fill);
+    set!(effects);
+    set!(warp);
+    if let Some(sid) = &req.warp_path_stroke {
+        let pts = stroke_points(p, sid)?;
+        let w = params.warp.get_or_insert_with(TextWarp::default);
+        w.style = WarpStyle::Path;
+        w.path = Some(pts);
+    }
     let params = params.sanitized();
     let opacity = match req.opacity {
         Some(o) if !(0.0..=1.0).contains(&o) => return Err(ToolError::Invalid("opacity fora de 0..1".into())),
@@ -228,6 +321,20 @@ mod tests {
 
     fn req(json: Value) -> TextLayerRequest {
         serde_json::from_value(json).unwrap()
+    }
+
+    #[test]
+    fn styles_effects_and_warp_reach_the_params() {
+        let r = req(json!({
+            "text": "Título",
+            "style": "shōnen",
+            "effects": [{"type": "outer_glow", "size": 10}, {"type": "stroke", "width": 3, "position": "inside"}],
+            "warp": {"style": "wave", "bend": 0.3},
+            "fill": {"type": "gradient", "gradient": {"stops": [{"pos": 0, "color": {"type": "direct", "rgba": [1, 0, 0, 1]}}, {"pos": 1, "color": {"type": "direct", "rgba": [0, 0, 1, 1]}}]}}
+        }));
+        assert_eq!(r.effects.as_ref().unwrap().len(), 2);
+        assert!(matches!(r.warp, Some(Some(_))) && matches!(r.fill, Some(Some(_))));
+        assert!(list_styles()["styles"].as_array().unwrap().len() >= 6);
     }
 
     #[test]

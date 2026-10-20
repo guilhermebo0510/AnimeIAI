@@ -880,7 +880,9 @@ impl<'a> Renderer<'a> {
             shadow: p.shadow.as_ref().map(|s| self.resolve_color(&s.color)).unwrap_or([0.0; 4]),
         };
         let xf = self.placement_affine(layer, frame, [0.0, 0.0, 1.0, 0.0]);
-        crate::text::render_text_layer(&p, &lay, &colors, xf, self.out_w, self.out_h)
+        let (out_w, out_h) = (self.out_w, self.out_h);
+        let mut res = TextPaintResolver { r: self, images: std::collections::HashMap::new(), layer: &node.name };
+        crate::text::render_text_layer_with(&p, &lay, &colors, &mut res, xf, out_w, out_h)
     }
 
     /// Camada 3D: o modelo desenhado no canvas do corte pelo renderizador registrado (GPU no app, CPU no headless), com
@@ -973,6 +975,13 @@ impl<'a> Renderer<'a> {
         for f in &cel.fills {
             let Some(hash) = &f.mask else { continue };
             let color = self.resolve_color(&f.color);
+            // degradê da região: mapeado na caixa da máscara
+            let grad = f.gradient.as_ref().map(|g| {
+                let r = g.resolve(|c| self.resolve_color(c));
+                let [bx, by, bw, bh] = f.bounds;
+                let m = r.mapper([bx as f32, by as f32, (bx + bw) as f32, (by + bh) as f32]);
+                (r, m)
+            });
             match self.blobs.get(hash).map(|b| Mask::decode(&b)) {
                 Some(Ok(m)) => {
                     let [bx, by, _, _] = f.bounds;
@@ -990,7 +999,11 @@ impl<'a> Renderer<'a> {
                             let cov = m.get(mx, my);
                             if cov > 0.0 {
                                 let i = img.idx(x as u32, y as u32);
-                                Image::over(&mut img.data[i], premul, cov);
+                                let src = match &grad {
+                                    Some((g, gm)) => g.sample_premul(gm, [x as f32 + 0.5, y as f32 + 0.5]),
+                                    None => premul,
+                                };
+                                Image::over(&mut img.data[i], src, cov);
                             }
                         }
                     }
@@ -1058,5 +1071,37 @@ impl<'a> Renderer<'a> {
                 })
                 .collect(),
         )
+    }
+}
+
+/// Cores de paleta e imagens de padrão dos estilos de texto, pelo projeto e pelos blobs do render.
+struct TextPaintResolver<'r, 'a> {
+    r: &'r mut Renderer<'a>,
+    images: std::collections::HashMap<String, Option<Arc<Image>>>,
+    layer: &'r str,
+}
+
+impl crate::text_fx::PaintResolver for TextPaintResolver<'_, '_> {
+    fn color(&mut self, c: &ColorRef) -> [f32; 4] {
+        self.r.resolve_color(c)
+    }
+
+    fn image(&mut self, h: &BlobHash) -> Option<Arc<Image>> {
+        if let Some(v) = self.images.get(&h.0) {
+            return v.clone();
+        }
+        let v = match self.r.blobs.get(h).map(|b| Image::decode(&b)) {
+            Some(Ok(img)) => Some(Arc::new(img)),
+            Some(Err(e)) => {
+                self.r.warnings.push(format!("{}: imagem do padrão ilegível: {e}", self.layer));
+                None
+            }
+            None => {
+                self.r.warnings.push(format!("{}: imagem do padrão ausente {}", self.layer, h.0));
+                None
+            }
+        };
+        self.images.insert(h.0.clone(), v.clone());
+        v
     }
 }

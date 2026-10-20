@@ -690,6 +690,9 @@ pub struct FillRegion {
     /// Retângulo da máscara em pixels do canvas [x, y, w, h].
     #[serde(default)]
     pub bounds: [i32; 4],
+    /// Degradê no lugar da cor chapada (mapeado na caixa `bounds` da região); `None` = `color`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gradient: Option<crate::paint::Gradient>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -903,6 +906,9 @@ pub struct PaletteData {
     /// Variante ativa ("" = normal).
     #[serde(default)]
     pub active_variant: String,
+    /// Degradês guardados na paleta (vão para a biblioteca com ela).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gradients: Vec<crate::paint::NamedGradient>,
 }
 
 impl PaletteData {
@@ -925,6 +931,9 @@ impl PaletteData {
             if !c.rgba.is_valid() || !c.variants.values().all(|v| v.is_valid()) {
                 return Err(format!("cor fora de 0..1 em {}", c.name));
             }
+        }
+        for g in &self.gradients {
+            g.gradient.validate().map_err(|e| format!("degradê '{}': {e}", g.name))?;
         }
         Ok(())
     }

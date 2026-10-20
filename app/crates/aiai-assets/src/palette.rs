@@ -36,12 +36,14 @@ pub struct Palette {
     pub colors: Vec<PalColor>,
     /// Itens do arquivo que não deram para ler (linha e motivo).
     pub warnings: Vec<String>,
+    /// Degradês guardados com a paleta (cores sempre diretas no arquivo).
+    pub gradients: Vec<aiai_core::NamedGradient>,
 }
 
 impl Palette {
-    /// Payload do envelope: `{ "colors": [...] }`.
+    /// Payload do envelope: `{ "colors": [...] }` (+ `"gradients": [...]` quando há degradês).
     pub fn to_payload(&self) -> Value {
-        json!({ "colors": self.colors })
+        if self.gradients.is_empty() { json!({ "colors": self.colors }) } else { json!({ "colors": self.colors, "gradients": self.gradients }) }
     }
 
     pub fn from_payload(v: &Value) -> Result<Palette, String> {
@@ -55,6 +57,13 @@ impl Palette {
                 Ok(c) if c.rgba().is_some() => p.colors.push(c),
                 Ok(c) => p.warnings.push(format!("cor {}: '{}' não é #rrggbb", i + 1, c.hex)),
                 Err(e) => p.warnings.push(format!("cor {}: {e}", i + 1)),
+            }
+        }
+        for (i, g) in v.get("gradients").and_then(Value::as_array).map(|a| a.as_slice()).unwrap_or(&[]).iter().take(MAX_COLORS).enumerate() {
+            match serde_json::from_value::<aiai_core::NamedGradient>(g.clone()) {
+                Ok(g) if g.gradient.validate().is_ok() => p.gradients.push(g),
+                Ok(g) => p.warnings.push(format!("degradê {}: '{}' inválido", i + 1, g.name)),
+                Err(e) => p.warnings.push(format!("degradê {}: {e}", i + 1)),
             }
         }
         Ok(p)
@@ -476,7 +485,7 @@ mod tests {
         let mut c = color("Pele", [255, 224, 189, 255], "pele");
         c.role = "sombra".into();
         c.variants.insert("noite".into(), "#334466".into());
-        let p = Palette { name: "P".into(), colors: vec![c.clone()], warnings: vec![] };
+        let p = Palette { name: "P".into(), colors: vec![c.clone()], warnings: vec![], gradients: vec![] };
         let back = Palette::from_payload(&p.to_payload()).unwrap();
         assert_eq!(back.colors, vec![c]);
         assert_eq!(back.swatches(), vec![[255, 224, 189, 255]]);

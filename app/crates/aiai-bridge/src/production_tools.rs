@@ -36,6 +36,7 @@ use aiai_tools::context::{canvas_size, cut_data, layer_data};
 use aiai_tools::fx2d::{GagBgRequest, LinesRequest, TextRequest, gag_bg_command, lines_command, text_command};
 use aiai_tools::layer_merge::{LayerMergeRequest, layer_merge_command};
 use aiai_tools::text_layer::{TextLayerRequest, text_layer_command};
+use aiai_tools::gradient_paint::{GradientPaintRequest, gradient_paint};
 use aiai_tools::guide::{Guide3dRequest, PerspectiveRequest, guide3d_command, perspective_command, perspective_info};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -46,14 +47,14 @@ use std::time::Instant;
 
 pub const PRODUCTION_ACTIONS: &[&str] = &[
     "SKY", "PATTERN_FILL", "TEXT", "TEXT_LAYER", "LAYER_MERGE", "LINES", "GAG_BG", "PARTICLES", "GUIDE3D", "PERSPECTIVE", "MODEL_SHEET", "CHARACTER_MATERIAL", "CONSISTENCY", "INBETWEEN", "PROPAGATE_FILLS",
-    "TTS_LINE", "TTS_KOKORO", "VOICE_PROFILE", "LIPSYNC", "SFX", "BGM", "IMPORT_AUDIO", "IMPORT_IMAGE", "EXPORT_PSD", "EXPORT_XDTS", "EXPORT_SVG", "EXPORT_OTIO", "MIX_CUT", "LOUDNESS", "COMPARE", "PROBE_COLOR", "MEASURE_LINE", "MEASURE_EDGE", "FILL_SHAPE", "EDIT_SET", "EXPORT_VIDEO",
+    "TTS_LINE", "TTS_KOKORO", "VOICE_PROFILE", "LIPSYNC", "SFX", "BGM", "IMPORT_AUDIO", "IMPORT_IMAGE", "EXPORT_PSD", "EXPORT_XDTS", "EXPORT_SVG", "EXPORT_OTIO", "MIX_CUT", "LOUDNESS", "COMPARE", "PROBE_COLOR", "MEASURE_LINE", "MEASURE_EDGE", "FILL_SHAPE", "EDIT_SET", "EXPORT_VIDEO", "GRADIENT_PAINT",
 ];
 
 /// Ações que mudam o documento (o headless salva o projeto depois delas).
 pub fn is_mutating(action: &str) -> bool {
     matches!(
         action,
-        "SKY" | "PATTERN_FILL" | "TEXT" | "TEXT_LAYER" | "LAYER_MERGE" | "LINES" | "GAG_BG" | "PARTICLES" | "GUIDE3D" | "PERSPECTIVE" | "MODEL_SHEET" | "CHARACTER_MATERIAL" | "INBETWEEN" | "PROPAGATE_FILLS" | "TTS_LINE" | "TTS_KOKORO" | "VOICE_PROFILE" | "LIPSYNC" | "SFX" | "BGM" | "IMPORT_AUDIO" | "IMPORT_IMAGE" | "FILL_SHAPE" | "EDIT_SET"
+        "SKY" | "PATTERN_FILL" | "TEXT" | "TEXT_LAYER" | "LAYER_MERGE" | "LINES" | "GAG_BG" | "PARTICLES" | "GUIDE3D" | "PERSPECTIVE" | "MODEL_SHEET" | "CHARACTER_MATERIAL" | "INBETWEEN" | "PROPAGATE_FILLS" | "TTS_LINE" | "TTS_KOKORO" | "VOICE_PROFILE" | "LIPSYNC" | "SFX" | "BGM" | "IMPORT_AUDIO" | "IMPORT_IMAGE" | "FILL_SHAPE" | "EDIT_SET" | "GRADIENT_PAINT"
     )
 }
 
@@ -98,6 +99,9 @@ pub fn handle(session: &mut CoreSession, action: &str, params: &Value) -> Result
             if r.list_fonts {
                 return Ok(aiai_tools::text_layer::list_fonts());
             }
+            if r.list_styles {
+                return Ok(aiai_tools::text_layer::list_styles());
+            }
             let plan = text_layer_command(&session.project, &mut session.ids, &r).map_err(tool_error)?;
             let info = aiai_tools::text_layer::info(&plan.params);
             apply_with(session, params, plan.command, json!({ "layer": plan.layer, "created": plan.created, "text": info }))
@@ -107,6 +111,14 @@ pub fn handle(session: &mut CoreSession, action: &str, params: &Value) -> Result
             let plan = layer_merge_command(&session.project, &mut session.blobs, &mut session.ids, &r).map_err(tool_error)?;
             let info = json!({ "layer": plan.layer, "merged": plan.merged, "kind": plan.kind, "cels_changed": plan.cels_changed, "cels_created": plan.cels_created });
             apply_with(session, params, plan.command, info)
+        }
+        "GRADIENT_PAINT" => {
+            let r: GradientPaintRequest = request(params, action)?;
+            let plan = gradient_paint(&session.project, &session.blobs, &mut session.ids, &r).map_err(tool_error)?;
+            match plan.command {
+                Some(cmd) => apply_with(session, params, cmd, plan.value),
+                None => Ok(plan.value),
+            }
         }
         "LINES" => {
             let r: LinesRequest = request(params, action)?;

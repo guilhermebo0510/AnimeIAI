@@ -19,6 +19,7 @@ pub mod select;
 pub mod stroke_raster;
 pub mod text;
 pub mod text_layer;
+pub mod text_style;
 pub mod texture;
 pub mod tile;
 pub mod transform;

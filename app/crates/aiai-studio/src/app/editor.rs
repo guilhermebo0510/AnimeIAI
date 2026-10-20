@@ -745,6 +745,8 @@ pub(crate) struct Editor {
     pub move_live: super::move_live::MoveLive,
     /// Ferramenta Texto: estilo do próximo texto, sessão de digitação, arrasto e estado do painel Texto.
     pub text: super::text_tool::TextState,
+    /// Degradê do painel Cores (e se ele é a cor do pincel e do balde).
+    pub grad: super::panels::gradient_edit::GradState,
     /// Último valor real da cor do pincel (para não perder a cor quando a paleta some).
     pub color_seen: Rgba,
     pub palette: Option<NodeId>,
@@ -856,6 +858,7 @@ impl Default for Editor {
             live_stroke: Default::default(),
             move_live: Default::default(),
             text: Default::default(),
+            grad: Default::default(),
             color_seen: Rgba::BLACK,
             subview: Default::default(),
             node_stroke: None,

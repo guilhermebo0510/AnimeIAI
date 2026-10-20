@@ -140,6 +140,14 @@ fn compute_regions_uncached(
 
 /// Gera o comando que pinta as regiões das sementes. Regiões já pintadas que contêm a semente são substituídas.
 pub fn fill_command(p: &Project, blobs: &mut BlobStore, req: &FillRequest) -> ToolResult<Command> {
+    fill_command_paint(p, blobs, req, None)
+}
+
+/// `fill_command` com um degradê nas regiões novas das sementes (mapeado na caixa de cada região).
+pub fn fill_command_paint(p: &Project, blobs: &mut BlobStore, req: &FillRequest, gradient: Option<&Gradient>) -> ToolResult<Command> {
+    if let Some(g) = gradient {
+        g.validate().map_err(ToolError::Invalid)?;
+    }
     let cut = cut_data(p, &req.cut)?;
     let layer = layer_data(p, &req.layer)?;
     if layer.kind != LayerType::Fill && layer.kind != LayerType::Raster && layer.kind != LayerType::Vector {
@@ -171,7 +179,7 @@ pub fn fill_command(p: &Project, blobs: &mut BlobStore, req: &FillRequest) -> To
         // remove preenchimentos anteriores que cobrem a semente
         fills.retain(|f| !fill_covers(blobs, f, sx, sy));
         let hash = blobs.put(mask.encode());
-        fills.push(FillRegion { id: Id(String::new()), seed: [s.x, s.y], color: s.color.clone(), mask: Some(hash), bounds });
+        fills.push(FillRegion { id: Id(String::new()), seed: [s.x, s.y], color: s.color.clone(), mask: Some(hash), bounds, gradient: gradient.cloned() });
     }
     if let Some(max_area) = req.close_leftovers {
         let extra = leftover_fills(blobs, &lr, &fills, max_area as usize);
@@ -263,12 +271,12 @@ fn leftover_fills(blobs: &mut BlobStore, lr: &LineRegions, fills: &[FillRegion],
         let Some((bounds, mask)) = lr.regions.mask_of(l as u32) else { continue };
         let i = pixels[l][pixels[l].len() / 2];
         let hash = blobs.put(mask.encode());
-        out.push(FillRegion { id: Id(String::new()), seed: [(i % w) as f32 + 0.5, (i / w) as f32 + 0.5], color, mask: Some(hash), bounds });
+        out.push(FillRegion { id: Id(String::new()), seed: [(i % w) as f32 + 0.5, (i / w) as f32 + 0.5], color, mask: Some(hash), bounds, gradient: None });
     }
     out
 }
 
-fn fill_covers(blobs: &BlobStore, f: &FillRegion, x: u32, y: u32) -> bool {
+pub(crate) fn fill_covers(blobs: &BlobStore, f: &FillRegion, x: u32, y: u32) -> bool {
     let [bx, by, bw, bh] = f.bounds;
     let (xi, yi) = (x as i32, y as i32);
     if xi < bx || yi < by || xi >= bx + bw || yi >= by + bh {

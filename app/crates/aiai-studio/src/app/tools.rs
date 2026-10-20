@@ -444,6 +444,8 @@ fn brush_preset(env: &Env) -> BrushPreset {
     let mut p = o.brush_custom.clone().or_else(|| env.ed.brushes.get(o.brush_preset).cloned()).or_else(|| presets().first().cloned()).unwrap_or_else(|| BrushPreset::round("Pincel", 24.0, 0.9));
     p.size = o.brush_size.max(0.5);
     p.opacity = o.brush_opacity.clamp(0.0, 1.0);
+    // degradê como cor (painel Cores): ao longo do traço
+    p.color_ramp = super::panels::gradient_edit::brush_ramp(env);
     p
 }
 
@@ -700,9 +702,10 @@ pub(crate) fn do_fill(env: &mut Env, p: Vec2, released_at: Instant) {
     // frestas: até ~300 px num quadro 1080p (cantos de olho, entre dedos)
     let close = o.fill_close_leftovers.then_some(300u32);
     let color = env.ed.color.clone();
+    let grad = super::panels::gradient_edit::fill_gradient(env);
     let planned = cmds::plan_with_prep(env.core, &cut, &fill_layer, frame, pref, extra, |pr, blobs| {
         let req = tfill::FillRequest { cut: cut.clone(), frame, layer: fill_layer.clone(), seeds: vec![tfill::FillSeed { x: p.x, y: p.y, color }], line_layers: lines, gap, expand, line_threshold: 0.35, close_leftovers: close, skip_seeds_on_line: false, only_unpainted: false };
-        tfill::fill_command(pr, blobs, &req).map_err(|e| e.to_string())
+        tfill::fill_command_paint(pr, blobs, &req, grad.as_ref()).map_err(|e| e.to_string())
     });
     commit(env, planned, released_at, "fill", None);
 }

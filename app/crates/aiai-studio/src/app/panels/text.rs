@@ -20,13 +20,24 @@ pub(crate) struct PanelState {
     previews: HashMap<String, TextureHandle>,
     made_frame: u64,
     made_count: u32,
+    /// Prévias dos estilos guardados (prontos e do usuário).
+    pub style_previews: HashMap<String, TextureHandle>,
+    pub style_made_frame: u64,
+    pub style_made: u32,
+    /// Pode ler/gravar `Documentos\AnimeIAI\Estilos` (falso com `--no-session`).
+    pub user_files: bool,
+    /// Estilos do usuário lidos da pasta (`None` = ler de novo).
+    pub user_styles: Option<Vec<(std::path::PathBuf, aiai_paint::text_style::TextStyle)>>,
+    /// Nome para guardar o estilo atual.
+    pub style_name: String,
 }
 
 impl PanelState {
     /// Esquece as prévias de fonte (orçamento de VRAM, `gpu_owners`): voltam aos poucos quando o painel aparece.
     pub(crate) fn release_gpu(&mut self) -> bool {
-        let had = !self.previews.is_empty();
+        let had = !self.previews.is_empty() || !self.style_previews.is_empty();
         self.previews.clear();
+        self.style_previews.clear();
         had
     }
 }
@@ -229,15 +240,11 @@ pub(crate) fn controls(env: &mut Env, ui: &mut Ui, compact: bool) {
                     }
                 });
             }
-            if let Some(c) = color_button(env, ui, "stroke", &s.color, false, tr("text.stroke.color")) {
-                tt::edit(env, "text.cmd_style", |q| {
-                    if let Some(x) = q.stroke.as_mut() {
-                        x.color = ColorRef::Direct { rgba: c };
-                    }
-                });
-            }
         }
     });
+    if let Some(s) = &p.stroke {
+        super::text_styles::legacy_stroke_paint(env, ui, s);
+    }
     // ---- sombra
     section(ui, &t, "text.sec.shadow");
     ui.horizontal_wrapped(|ui| {
@@ -283,6 +290,12 @@ pub(crate) fn controls(env: &mut Env, ui: &mut Ui, compact: bool) {
             }
         });
     }
+    // ---- tinta, efeitos, distorção e estilos guardados
+    super::text_styles::fill_section(env, ui, &p);
+    super::text_styles::effects_section(env, ui, &p);
+    super::text_styles::warp_section(env, ui, &p);
+    ui.add_space(4.0);
+    super::text_styles::presets_section(env, ui, &p, has_target);
     ui.add_space(4.0);
     dim_label(ui, &t, tr("text.license_hint"));
 }

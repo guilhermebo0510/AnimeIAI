@@ -12,12 +12,12 @@
 
 use crate::fonts::{self, LoadedFont};
 use ab_glyph::{Font, FontRef, GlyphId, OutlineCurve};
-use aiai_core::ColorRef;
+use aiai_core::{BlendMode, ColorRef, Gradient, Paint};
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
-/// Versão atual do esquema de `params.text`.
-pub const TEXT_PARAMS_VERSION: u32 = 1;
+/// Versão atual do esquema de `params.text` (2: `fill`, `effects`, `warp`, `stroke.paint`).
+pub const TEXT_PARAMS_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -37,11 +37,13 @@ pub struct TextStroke {
     /// Espessura visível em px do canvas.
     pub width: f32,
     pub color: ColorRef,
+    /// Tinta no lugar de `color` (degradê na caixa do texto); `None` = `color`. Sempre serializado (merge patch).
+    pub paint: Option<Paint>,
 }
 
 impl Default for TextStroke {
     fn default() -> Self {
-        TextStroke { width: 4.0, color: ColorRef::Direct { rgba: aiai_core::Rgba::WHITE } }
+        TextStroke { width: 4.0, color: ColorRef::Direct { rgba: aiai_core::Rgba::WHITE }, paint: None }
     }
 }
 
@@ -60,6 +62,435 @@ pub struct TextShadow {
 impl Default for TextShadow {
     fn default() -> Self {
         TextShadow { offset: [4.0, 4.0], blur: 4.0, color: ColorRef::Direct { rgba: aiai_core::Rgba([0.0, 0.0, 0.0, 0.6]) } }
+    }
+}
+
+/// Teto de efeitos por camada.
+pub const MAX_EFFECTS: usize = 32;
+
+fn fin(v: f32, d: f32) -> f32 {
+    if v.is_finite() { v } else { d }
+}
+
+/// Onde o contorno fica em relação à borda da letra.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StrokePosition {
+    #[default]
+    Outside,
+    Inside,
+    Center,
+}
+
+/// Contorno (efeito; pode haver vários). Os contornos de dentro e do centro ficam por cima do preenchimento; os de
+/// fora, por baixo. Na lista, o primeiro fica por cima dos seguintes (o contorno duplo de título: um fino claro e um
+/// grosso escuro por fora dele).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
+pub struct FxStroke {
+    /// Espessura em px do canvas.
+    pub width: f32,
+    pub position: StrokePosition,
+    /// Cor ou degradê (na caixa do texto).
+    pub paint: Paint,
+}
+
+impl Default for FxStroke {
+    fn default() -> Self {
+        FxStroke { width: 6.0, position: StrokePosition::Outside, paint: Paint::solid([1.0, 1.0, 1.0, 1.0]) }
+    }
+}
+
+/// Sombra projetada ou interna.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
+pub struct FxShadow {
+    /// Deslocamento (x, y) em px do canvas.
+    pub offset: [f32; 2],
+    /// Desfoque (px).
+    pub blur: f32,
+    /// Espalhar (px): engrossa a forma antes de desfocar (na interna, "encolher").
+    pub spread: f32,
+    /// Ruído granulado no alfa (0..1).
+    pub noise: f32,
+    pub color: ColorRef,
+}
+
+impl Default for FxShadow {
+    fn default() -> Self {
+        FxShadow { offset: [5.0, 5.0], blur: 6.0, spread: 0.0, noise: 0.0, color: ColorRef::Direct { rgba: aiai_core::Rgba([0.0, 0.0, 0.0, 0.75]) } }
+    }
+}
+
+/// Brilho externo (ou interno).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
+pub struct FxGlow {
+    /// Alcance do brilho (px).
+    pub size: f32,
+    /// Parte sólida antes do esmaecimento (fração do tamanho, 0..1).
+    pub spread: f32,
+    /// Cor, ou degradê mapeado na distância à borda (0 = na borda, 1 = no fim do brilho).
+    pub paint: Paint,
+    /// Ruído no alfa (0..1).
+    pub noise: f32,
+    /// Só no brilho interno: parte do centro da letra em vez da borda.
+    pub from_center: bool,
+}
+
+impl Default for FxGlow {
+    fn default() -> Self {
+        FxGlow { size: 16.0, spread: 0.0, paint: Paint::solid([1.0, 0.95, 0.6, 0.9]), noise: 0.0, from_center: false }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BevelStyle {
+    /// Chanfro dentro da letra.
+    #[default]
+    Inner,
+    /// Fora da letra (em volta).
+    Outer,
+    /// Dentro e fora (a letra sai do fundo).
+    Emboss,
+    /// Borda afundada (dentro e fora invertidos).
+    Pillow,
+}
+
+/// Chanfro e relevo: altura a partir da distância à borda, normal, luz direcional (ângulo e altitude), realce e sombra.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
+pub struct FxBevel {
+    pub style: BevelStyle,
+    /// Largura do chanfro (px).
+    pub size: f32,
+    /// Força do relevo (0,05..10).
+    pub depth: f32,
+    /// Suavizar a altura (px).
+    pub soften: f32,
+    /// De onde a luz vem (graus, convenção do degradê: 0 = da esquerda... 225 = de cima à esquerda... ver o render).
+    pub angle: f32,
+    /// Altura da luz (graus, 0..90).
+    pub altitude: f32,
+    pub highlight: ColorRef,
+    pub highlight_opacity: f32,
+    pub shadow: ColorRef,
+    pub shadow_opacity: f32,
+    /// Inverte (afunda em vez de levantar).
+    pub down: bool,
+}
+
+impl Default for FxBevel {
+    fn default() -> Self {
+        FxBevel {
+            style: BevelStyle::Inner,
+            size: 6.0,
+            depth: 1.0,
+            soften: 0.0,
+            angle: 225.0,
+            altitude: 30.0,
+            highlight: ColorRef::Direct { rgba: aiai_core::Rgba::WHITE },
+            highlight_opacity: 0.75,
+            shadow: ColorRef::Direct { rgba: aiai_core::Rgba::BLACK },
+            shadow_opacity: 0.6,
+            down: false,
+        }
+    }
+}
+
+/// Cetim: a forma desfocada, deslocada nos dois sentidos, a diferença das duas (o brilho sedoso dentro das letras).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
+pub struct FxSatin {
+    pub color: ColorRef,
+    /// Graus.
+    pub angle: f32,
+    /// Px.
+    pub distance: f32,
+    /// Desfoque (px).
+    pub size: f32,
+    pub invert: bool,
+}
+
+impl Default for FxSatin {
+    fn default() -> Self {
+        FxSatin { color: ColorRef::Direct { rgba: aiai_core::Rgba([0.0, 0.0, 0.0, 1.0]) }, angle: 19.0, distance: 8.0, size: 10.0, invert: true }
+    }
+}
+
+/// Sobreposição de degradê (por cima do preenchimento, dentro das letras).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema, Default)]
+#[serde(default)]
+pub struct FxGradientOverlay {
+    pub gradient: Gradient,
+}
+
+/// Sobreposição de cor.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema, Default)]
+#[serde(default)]
+pub struct FxColorOverlay {
+    pub color: ColorRef,
+}
+
+/// Sobreposição de padrão (imagem do projeto em ladrilho).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema, Default)]
+#[serde(default)]
+pub struct FxPatternOverlay {
+    /// Uma tinta `pattern`.
+    pub paint: Paint,
+}
+
+/// Sombra longa / extrusão 3D (comum em títulos de anime): cópias da letra empilhadas na direção `angle` por
+/// `length` px; a tinta pode ser um degradê ao longo da profundidade (0 = junto da letra, 1 = no fim).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
+pub struct FxLongShadow {
+    /// Para onde a sombra vai (graus; 45 = para baixo e à direita).
+    pub angle: f32,
+    /// Px.
+    pub length: f32,
+    pub paint: Paint,
+    /// Some aos poucos no fim.
+    pub fade: bool,
+}
+
+impl Default for FxLongShadow {
+    fn default() -> Self {
+        FxLongShadow { angle: 45.0, length: 24.0, paint: Paint::solid([0.15, 0.1, 0.25, 1.0]), fade: false }
+    }
+}
+
+/// Um efeito da pilha de estilos.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TextEffectKind {
+    Stroke(FxStroke),
+    DropShadow(FxShadow),
+    InnerShadow(FxShadow),
+    OuterGlow(FxGlow),
+    InnerGlow(FxGlow),
+    BevelEmboss(FxBevel),
+    Satin(FxSatin),
+    GradientOverlay(FxGradientOverlay),
+    ColorOverlay(FxColorOverlay),
+    PatternOverlay(FxPatternOverlay),
+    LongShadow(FxLongShadow),
+}
+
+impl TextEffectKind {
+    /// Chaves que dá para criar sem dados extras (o padrão precisa de uma imagem).
+    pub const KEYS: [&'static str; 10] = ["stroke", "drop_shadow", "inner_shadow", "outer_glow", "inner_glow", "bevel_emboss", "satin", "gradient_overlay", "color_overlay", "long_shadow"];
+
+    /// Nome da chave (`stroke`, `drop_shadow`...).
+    pub fn key(&self) -> &'static str {
+        match self {
+            TextEffectKind::Stroke(_) => "stroke",
+            TextEffectKind::DropShadow(_) => "drop_shadow",
+            TextEffectKind::InnerShadow(_) => "inner_shadow",
+            TextEffectKind::OuterGlow(_) => "outer_glow",
+            TextEffectKind::InnerGlow(_) => "inner_glow",
+            TextEffectKind::BevelEmboss(_) => "bevel_emboss",
+            TextEffectKind::Satin(_) => "satin",
+            TextEffectKind::GradientOverlay(_) => "gradient_overlay",
+            TextEffectKind::ColorOverlay(_) => "color_overlay",
+            TextEffectKind::PatternOverlay(_) => "pattern_overlay",
+            TextEffectKind::LongShadow(_) => "long_shadow",
+        }
+    }
+
+    /// Efeito novo com os valores padrão, pela chave (`pattern_overlay` precisa de uma imagem: `None`).
+    pub fn new_by_key(key: &str) -> Option<TextEffectKind> {
+        Some(match key {
+            "stroke" => TextEffectKind::Stroke(FxStroke::default()),
+            "drop_shadow" => TextEffectKind::DropShadow(FxShadow::default()),
+            "inner_shadow" => TextEffectKind::InnerShadow(FxShadow { offset: [3.0, 3.0], blur: 4.0, ..FxShadow::default() }),
+            "outer_glow" => TextEffectKind::OuterGlow(FxGlow::default()),
+            "inner_glow" => TextEffectKind::InnerGlow(FxGlow { size: 8.0, paint: Paint::solid([1.0, 1.0, 0.85, 0.85]), ..FxGlow::default() }),
+            "bevel_emboss" => TextEffectKind::BevelEmboss(FxBevel::default()),
+            "satin" => TextEffectKind::Satin(FxSatin::default()),
+            "gradient_overlay" => TextEffectKind::GradientOverlay(FxGradientOverlay { gradient: Gradient::from_colors(&[[1.0, 1.0, 1.0, 0.0], [0.0, 0.0, 0.0, 0.6]], 90.0) }),
+            "color_overlay" => TextEffectKind::ColorOverlay(FxColorOverlay { color: ColorRef::Direct { rgba: aiai_core::Rgba([1.0, 0.3, 0.3, 1.0]) } }),
+            "long_shadow" => TextEffectKind::LongShadow(FxLongShadow::default()),
+            _ => return None,
+        })
+    }
+}
+
+/// Um efeito: liga/desliga, modo de mistura e opacidade (como cada estilo de camada do Photoshop) + o efeito.
+/// Em JSON é plano: `{"type": "outer_glow", "size": 12, "opacity": 0.8, ...}`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TextEffect {
+    #[serde(default = "yes")]
+    pub enabled: bool,
+    /// Mistura com o que já está pintado na camada de texto (preenchimento e efeitos abaixo).
+    #[serde(default)]
+    pub blend: BlendMode,
+    #[serde(default = "one_f")]
+    pub opacity: f32,
+    #[serde(flatten)]
+    pub kind: TextEffectKind,
+}
+
+fn yes() -> bool {
+    true
+}
+
+fn one_f() -> f32 {
+    1.0
+}
+
+impl TextEffect {
+    pub fn new(kind: TextEffectKind) -> TextEffect {
+        TextEffect { enabled: true, blend: BlendMode::Normal, opacity: 1.0, kind }
+    }
+
+    fn sanitize(&mut self) {
+        self.opacity = fin(self.opacity, 1.0).clamp(0.0, 1.0);
+        let px = |v: &mut f32| *v = fin(*v, 0.0).clamp(0.0, 1000.0);
+        match &mut self.kind {
+            TextEffectKind::Stroke(s) => px(&mut s.width),
+            TextEffectKind::DropShadow(s) | TextEffectKind::InnerShadow(s) => {
+                s.offset = [fin(s.offset[0], 0.0).clamp(-2000.0, 2000.0), fin(s.offset[1], 0.0).clamp(-2000.0, 2000.0)];
+                px(&mut s.blur);
+                px(&mut s.spread);
+                s.noise = fin(s.noise, 0.0).clamp(0.0, 1.0);
+            }
+            TextEffectKind::OuterGlow(g) | TextEffectKind::InnerGlow(g) => {
+                px(&mut g.size);
+                g.spread = fin(g.spread, 0.0).clamp(0.0, 1.0);
+                g.noise = fin(g.noise, 0.0).clamp(0.0, 1.0);
+            }
+            TextEffectKind::BevelEmboss(b) => {
+                px(&mut b.size);
+                px(&mut b.soften);
+                b.depth = fin(b.depth, 1.0).clamp(0.05, 10.0);
+                b.angle = fin(b.angle, 0.0);
+                b.altitude = fin(b.altitude, 30.0).clamp(0.0, 90.0);
+                b.highlight_opacity = fin(b.highlight_opacity, 0.0).clamp(0.0, 1.0);
+                b.shadow_opacity = fin(b.shadow_opacity, 0.0).clamp(0.0, 1.0);
+            }
+            TextEffectKind::Satin(s) => {
+                s.angle = fin(s.angle, 0.0);
+                px(&mut s.distance);
+                px(&mut s.size);
+            }
+            TextEffectKind::LongShadow(l) => {
+                l.angle = fin(l.angle, 45.0);
+                l.length = fin(l.length, 0.0).clamp(0.0, 600.0);
+            }
+            TextEffectKind::GradientOverlay(_) | TextEffectKind::ColorOverlay(_) | TextEffectKind::PatternOverlay(_) => {}
+        }
+    }
+
+    /// Multiplica as medidas em px por `k` (estilos guardados num tamanho de referência).
+    pub fn scale_px(&mut self, k: f32) {
+        match &mut self.kind {
+            TextEffectKind::Stroke(s) => s.width *= k,
+            TextEffectKind::DropShadow(s) | TextEffectKind::InnerShadow(s) => {
+                s.offset = [s.offset[0] * k, s.offset[1] * k];
+                s.blur *= k;
+                s.spread *= k;
+            }
+            TextEffectKind::OuterGlow(g) | TextEffectKind::InnerGlow(g) => g.size *= k,
+            TextEffectKind::BevelEmboss(b) => {
+                b.size *= k;
+                b.soften *= k;
+            }
+            TextEffectKind::Satin(s) => {
+                s.distance *= k;
+                s.size *= k;
+            }
+            TextEffectKind::LongShadow(l) => l.length *= k,
+            TextEffectKind::GradientOverlay(_) | TextEffectKind::ColorOverlay(_) | TextEffectKind::PatternOverlay(_) => {}
+        }
+    }
+
+    /// Quanto o efeito passa da borda das letras (px, antes da câmera), para o render reservar a margem.
+    pub fn reach(&self) -> f32 {
+        if !self.enabled {
+            return 0.0;
+        }
+        match &self.kind {
+            TextEffectKind::Stroke(s) => match s.position {
+                StrokePosition::Outside => s.width,
+                StrokePosition::Center => s.width / 2.0,
+                StrokePosition::Inside => 0.0,
+            },
+            TextEffectKind::DropShadow(s) => s.offset[0].abs().max(s.offset[1].abs()) + s.spread + s.blur * 1.5,
+            TextEffectKind::OuterGlow(g) => g.size,
+            TextEffectKind::BevelEmboss(b) if matches!(b.style, BevelStyle::Outer | BevelStyle::Emboss | BevelStyle::Pillow) => b.size + b.soften,
+            TextEffectKind::LongShadow(l) => l.length,
+            _ => 0.0,
+        }
+    }
+}
+
+/// Estilos de distorção (como "Distorcer texto" do Photoshop).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WarpStyle {
+    /// Arco: as letras giram em leque em volta de um círculo.
+    #[default]
+    Arc,
+    /// Ponte: a linha sobe no meio, as letras ficam em pé.
+    Arch,
+    /// Onda (1,5 ciclo, com as letras engrossando e afinando).
+    Wave,
+    /// Bandeira presa à esquerda (a ondulação cresce para a direita).
+    Flag,
+    /// Inchar: o meio do texto fica mais alto.
+    Bulge,
+    /// Subida em S.
+    Rise,
+    /// Texto num caminho (`path`, pontos do canvas; ex.: um traço vetorial).
+    Path,
+}
+
+impl WarpStyle {
+    pub const ALL: [WarpStyle; 7] = [WarpStyle::Arc, WarpStyle::Arch, WarpStyle::Wave, WarpStyle::Flag, WarpStyle::Bulge, WarpStyle::Rise, WarpStyle::Path];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            WarpStyle::Arc => "arc",
+            WarpStyle::Arch => "arch",
+            WarpStyle::Wave => "wave",
+            WarpStyle::Flag => "flag",
+            WarpStyle::Bulge => "bulge",
+            WarpStyle::Rise => "rise",
+            WarpStyle::Path => "path",
+        }
+    }
+}
+
+/// Distorção do texto.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default)]
+pub struct TextWarp {
+    pub style: WarpStyle,
+    /// Curvatura -1..1 (negativo inverte).
+    pub bend: f32,
+    /// Perspectiva horizontal -1..1 (as letras crescem para um lado).
+    pub distort: f32,
+    /// Caminho (estilo `path`): pontos [x, y] do canvas. Sempre serializado (merge patch).
+    pub path: Option<Vec<[f32; 2]>>,
+    /// Começo do texto no caminho (px a partir do primeiro ponto).
+    pub path_offset: f32,
+}
+
+impl Default for TextWarp {
+    fn default() -> Self {
+        TextWarp { style: WarpStyle::Arc, bend: 0.5, distort: 0.0, path: None, path_offset: 0.0 }
+    }
+}
+
+impl TextWarp {
+    /// Faz alguma diferença.
+    pub fn active(&self) -> bool {
+        match self.style {
+            WarpStyle::Path => self.path.as_ref().is_some_and(|p| p.len() >= 2),
+            _ => self.bend.abs() > 1e-4 || self.distort.abs() > 1e-4,
+        }
     }
 }
 
@@ -92,6 +523,12 @@ pub struct TextParams {
     pub rotation: f32,
     pub stroke: Option<TextStroke>,
     pub shadow: Option<TextShadow>,
+    /// Tinta do preenchimento no lugar de `color` (degradê ou padrão de imagem, na caixa do texto); `None` = `color`.
+    pub fill: Option<Paint>,
+    /// Estilos de camada (como no Photoshop); a ordem de pintura é a do tipo (ver `aiai_render::text`).
+    pub effects: Vec<TextEffect>,
+    /// Distorção do texto (arco, onda, bandeira...) ou texto num caminho.
+    pub warp: Option<TextWarp>,
 }
 
 impl Default for TextParams {
@@ -113,6 +550,9 @@ impl Default for TextParams {
             rotation: 0.0,
             stroke: None,
             shadow: None,
+            fill: None,
+            effects: Vec::new(),
+            warp: None,
         }
     }
 }
@@ -154,7 +594,25 @@ impl TextParams {
             s.offset = [fin(s.offset[0], 0.0), fin(s.offset[1], 0.0)];
             s.blur = fin(s.blur, 0.0).clamp(0.0, 400.0);
         }
+        self.effects.truncate(MAX_EFFECTS);
+        for e in &mut self.effects {
+            e.sanitize();
+        }
+        if let Some(w) = &mut self.warp {
+            w.bend = fin(w.bend, 0.0).clamp(-1.0, 1.0);
+            w.distort = fin(w.distort, 0.0).clamp(-1.0, 1.0);
+            w.path_offset = fin(w.path_offset, 0.0);
+            if let Some(path) = &mut w.path {
+                path.retain(|q| q[0].is_finite() && q[1].is_finite());
+                path.truncate(4096);
+            }
+        }
         self
+    }
+
+    /// Tem algo além do texto liso de sempre (efeitos, tinta especial ou distorção).
+    pub fn has_styles(&self) -> bool {
+        self.fill.is_some() || self.effects.iter().any(|e| e.enabled) || self.warp.as_ref().is_some_and(|w| w.active()) || self.stroke.as_ref().is_some_and(|s| s.paint.is_some())
     }
 
     /// Transformação local → canvas: rotação (horária, em graus) em torno da âncora e depois a translação até `pos`.
@@ -610,6 +1068,20 @@ impl TextLayout {
     /// `detail`: px de saída por px do canvas (escolhe quantos segmentos achatam as curvas).
     pub fn contours(&self, p: &TextParams, detail: f32) -> Vec<Vec<[f32; 2]>> {
         let p = p.clone().sanitized();
+        let mut local = self.local_contours(&p, detail);
+        if let Some(w) = p.warp.as_ref().filter(|w| w.active()) {
+            self.warp_local(&p, w, &mut local, detail);
+        }
+        for c in &mut local {
+            for q in c.iter_mut() {
+                *q = p.local_to_canvas(*q);
+            }
+        }
+        local
+    }
+
+    /// Contornos no espaço local (antes da distorção, da rotação e da âncora).
+    fn local_contours(&self, p: &TextParams, detail: f32) -> Vec<Vec<[f32; 2]>> {
         let parsed: Vec<Option<FontRef>> = self.faces.iter().map(|f| f.data.font()).collect();
         let mut out: Vec<Vec<[f32; 2]>> = Vec::new();
         let skew = if self.faces[0].synth_italic && !self.vertical { 0.2f32 } else { 0.0 };
@@ -634,7 +1106,8 @@ impl TextLayout {
                 } else {
                     [g.origin[0] + gx, g.origin[1] + gy]
                 };
-                p.local_to_canvas(l)
+                let _ = p;
+                l
             };
             let seg_n = |pts: &[[f32; 2]]| -> usize {
                 let len: f32 = pts.windows(2).map(|w| ((w[1][0] - w[0][0]).powi(2) + (w[1][1] - w[0][1]).powi(2)).sqrt()).sum();
@@ -687,6 +1160,62 @@ impl TextLayout {
         out
     }
 
+    /// Caixa local do texto com a distorção aplicada (para clique e moldura); sem distorção, `bounds`.
+    pub fn warped_bounds(&self, p: &TextParams) -> [f32; 4] {
+        let Some(w) = p.warp.as_ref().filter(|w| w.active()) else { return self.bounds };
+        let mut cs = self.local_contours(p, 0.25);
+        self.warp_local(p, w, &mut cs, 0.25);
+        let mut b = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+        for q in cs.iter().flatten() {
+            b = [b[0].min(q[0]), b[1].min(q[1]), b[2].max(q[0]), b[3].max(q[1])];
+        }
+        if b[0] > b[2] { self.bounds } else { b }
+    }
+
+    /// Aplica a distorção aos contornos locais. Os lados retos são subdivididos antes (uma reta comprida de um "T"
+    /// precisa curvar junto).
+    fn warp_local(&self, p: &TextParams, w: &TextWarp, cs: &mut [Vec<[f32; 2]>], detail: f32) {
+        let e = self.text_extent();
+        let max_seg = (self.size * 0.06).max(0.75) / detail.max(0.05).sqrt();
+        let baseline = self.lines.first().map(|l| l.baseline).unwrap_or(e[1] + self.size * 0.8);
+        let path: Option<(Vec<[f32; 2]>, Vec<f32>)> = match (w.style, &w.path) {
+            (WarpStyle::Path, Some(pts)) if pts.len() >= 2 => {
+                let local: Vec<[f32; 2]> = pts.iter().map(|q| p.canvas_to_local(*q)).collect();
+                let mut acc = vec![0.0f32];
+                for k in 1..local.len() {
+                    let d = ((local[k][0] - local[k - 1][0]).powi(2) + (local[k][1] - local[k - 1][1]).powi(2)).sqrt();
+                    acc.push(acc[k - 1] + d);
+                }
+                Some((local, acc))
+            }
+            _ => None,
+        };
+        for c in cs.iter_mut() {
+            if c.len() < 2 {
+                continue;
+            }
+            let mut dense: Vec<[f32; 2]> = Vec::with_capacity(c.len() * 2);
+            for k in 0..c.len() {
+                let a = c[k];
+                let b = c[(k + 1) % c.len()];
+                dense.push(a);
+                let d = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
+                let n = (d / max_seg).ceil() as usize;
+                for j in 1..n.min(256) {
+                    let f = j as f32 / n as f32;
+                    dense.push([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]);
+                }
+            }
+            for q in dense.iter_mut() {
+                *q = match &path {
+                    Some((pts, acc)) => warp_on_path(*q, pts, acc, e[0] - w.path_offset, baseline),
+                    None => warp_point(*q, w, e),
+                };
+            }
+            *c = dense;
+        }
+    }
+
     /// Negrito sintético: a fonte não tem a face e o render engrossa as letras.
     pub fn synth_bold(&self) -> bool {
         self.faces[0].synth_bold
@@ -698,9 +1227,66 @@ impl TextLayout {
     }
 }
 
+/// Distorção de um ponto local `q` dentro da extensão `e` = [x0, y0, x1, y1] do texto.
+pub fn warp_point(q: [f32; 2], w: &TextWarp, e: [f32; 4]) -> [f32; 2] {
+    use std::f32::consts::PI;
+    let (wd, ht) = ((e[2] - e[0]).max(1e-3), (e[3] - e[1]).max(1e-3));
+    let (cx, cy) = ((e[0] + e[2]) / 2.0, (e[1] + e[3]) / 2.0);
+    let u = (q[0] - e[0]) / wd;
+    let b = w.bend;
+    let (mut x, mut y) = (q[0], q[1]);
+    match w.style {
+        WarpStyle::Arc if b.abs() > 1e-4 => {
+            // o comprimento da linha do meio vira um arco de b·180°; as letras giram em leque
+            let theta = b.abs() * PI;
+            let r = wd / theta;
+            let phi = (q[0] - cx) / r;
+            if b > 0.0 {
+                let rr = r - (q[1] - cy);
+                x = cx + rr * phi.sin();
+                y = cy + r - rr * phi.cos();
+            } else {
+                let rr = r + (q[1] - cy);
+                x = cx + rr * phi.sin();
+                y = cy - r + rr * phi.cos();
+            }
+        }
+        WarpStyle::Arch => y -= b * 0.6 * ht * (PI * u).sin(),
+        WarpStyle::Wave => {
+            y = cy + (q[1] - cy) * (1.0 + 0.3 * b * (3.0 * PI * u).cos()) + b * 0.35 * ht * (3.0 * PI * u).sin();
+        }
+        WarpStyle::Flag => y += b * 0.45 * ht * (2.0 * PI * u).sin() * (0.25 + 0.75 * u),
+        WarpStyle::Bulge => y = cy + (q[1] - cy) * (1.0 + b * 0.8 * (PI * u).sin()),
+        WarpStyle::Rise => y -= b * 0.5 * ht * (PI * (u - 0.5)).sin(),
+        _ => {}
+    }
+    if w.distort.abs() > 1e-4 && w.style != WarpStyle::Path {
+        // perspectiva: a altura cresce para um lado
+        y = cy + (y - cy) * (1.0 + w.distort * (u - 0.5));
+    }
+    [x, y]
+}
+
+/// Texto num caminho: o eixo do fluxo vira o comprimento do caminho (a partir de `x_start`) e a distância à linha de
+/// base vira a distância à curva (para baixo da direção de avanço).
+fn warp_on_path(q: [f32; 2], pts: &[[f32; 2]], acc: &[f32], x_start: f32, baseline: f32) -> [f32; 2] {
+    let s = q[0] - x_start;
+    let total = *acc.last().unwrap_or(&0.0);
+    let n = pts.len();
+    // trecho do caminho que contém `s` (fora do caminho continua reto na direção da ponta)
+    let k = if s <= 0.0 { 0 } else if s >= total { n - 2 } else { acc.partition_point(|a| *a <= s).saturating_sub(1).min(n - 2) };
+    let (a, b) = (pts[k], pts[k + 1]);
+    let seg = (acc[k + 1] - acc[k]).max(1e-6);
+    let t = [(b[0] - a[0]) / seg, (b[1] - a[1]) / seg];
+    let along = s - acc[k];
+    let base = [a[0] + t[0] * along, a[1] + t[1] * along];
+    let d = q[1] - baseline;
+    [base[0] - t[1] * d, base[1] + t[0] * d]
+}
+
 /// Caixa do texto no canvas [x0, y0, x1, y1] (envolve a caixa local girada): para clique, moldura e alças.
 pub fn canvas_bounds(p: &TextParams, lay: &TextLayout) -> [f32; 4] {
-    let b = lay.bounds;
+    let b = lay.warped_bounds(p);
     let pts = [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]].map(|q| p.local_to_canvas(q));
     let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
     for q in pts {
@@ -891,5 +1477,101 @@ mod tests {
         let reg = layout(&p("A"));
         assert!(width(&l, 0) != width(&reg, 0), "a face Black tem outro avanço");
         assert!(!l.contours(&tp, 1.0).is_empty());
+    }
+
+    #[test]
+    fn old_documents_parse_without_styles_and_effects_round_trip_flat() {
+        // um params.text de antes (v1, sem fill/effects/warp e stroke sem paint)
+        let old = serde_json::json!({"text": {"v": 1, "content": "Olá", "size": 30, "stroke": {"width": 3, "color": {"type": "direct", "rgba": [1, 1, 1, 1]}}}});
+        let q = TextParams::from_layer_params(&old).unwrap().unwrap();
+        assert!(q.fill.is_none() && q.effects.is_empty() && q.warp.is_none() && q.stroke.as_ref().unwrap().paint.is_none());
+        assert!(!q.has_styles());
+        // efeitos em JSON plano
+        let fx = serde_json::json!({"type": "outer_glow", "size": 12, "opacity": 0.5, "blend": "screen"});
+        let e: TextEffect = serde_json::from_value(fx).unwrap();
+        assert!(e.enabled && e.opacity == 0.5 && e.blend == BlendMode::Screen);
+        let TextEffectKind::OuterGlow(g) = &e.kind else { panic!("{e:?}") };
+        assert_eq!(g.size, 12.0);
+        let tp = TextParams {
+            content: "x".into(),
+            fill: Some(Paint::Gradient { gradient: Gradient::default() }),
+            effects: TextEffectKind::KEYS.iter().map(|k| TextEffect::new(TextEffectKind::new_by_key(k).unwrap())).collect(),
+            warp: Some(TextWarp { style: WarpStyle::Path, path: Some(vec![[0.0, 0.0], [10.0, 0.0]]), ..Default::default() }),
+            ..Default::default()
+        };
+        let v = tp.to_value();
+        assert_eq!(serde_json::from_value::<TextParams>(v.clone()).unwrap(), tp);
+        assert_eq!(v["effects"][0]["type"], "stroke");
+        // os opcionais novos viajam como null (o merge patch apaga)
+        let plain = TextParams::default().to_value();
+        assert!(plain["fill"].is_null() && plain["warp"].is_null());
+        assert!(tp.has_styles());
+    }
+
+    fn bbox_of(cs: &[Vec<[f32; 2]>]) -> [f32; 4] {
+        let mut b = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+        for q in cs.iter().flatten() {
+            b = [b[0].min(q[0]), b[1].min(q[1]), b[2].max(q[0]), b[3].max(q[1])];
+        }
+        b
+    }
+
+    #[test]
+    fn warp_styles_bend_the_glyphs_as_described() {
+        let base = TextParams { content: "IIIIIIII".into(), size: 40.0, pos: [100.0, 100.0], ..Default::default() };
+        let flat = layout(&base).contours(&base, 1.0);
+        let fb = bbox_of(&flat);
+        let with = |style: WarpStyle, bend: f32| {
+            let p = TextParams { warp: Some(TextWarp { style, bend, ..Default::default() }), ..base.clone() };
+            layout(&p).contours(&p, 1.0)
+        };
+        // arco para cima: as pontas descem em relação ao meio (o meio fica no topo)
+        let arc = with(WarpStyle::Arc, 0.5);
+        let top_of = |cs: &[Vec<[f32; 2]>], x0: f32, x1: f32| cs.iter().flatten().filter(|q| q[0] >= x0 && q[0] <= x1).map(|q| q[1]).fold(f32::MAX, f32::min);
+        let ab = bbox_of(&arc);
+        let mid = (ab[0] + ab[2]) / 2.0;
+        assert!(top_of(&arc, ab[0], ab[0] + 6.0) > top_of(&arc, mid - 8.0, mid + 8.0) + 6.0, "arco: pontas abaixo do meio: {} vs {} ({ab:?} / {fb:?})", top_of(&arc, ab[0], ab[0] + 6.0), top_of(&arc, mid - 8.0, mid + 8.0));
+        assert!(ab[3] - ab[1] > fb[3] - fb[1] + 5.0, "o arco ganha altura");
+        // invertido: o meio fica embaixo
+        let inv = with(WarpStyle::Arc, -0.5);
+        let ib = bbox_of(&inv);
+        let imid = (ib[0] + ib[2]) / 2.0;
+        let avg_y = |cs: &[Vec<[f32; 2]>], x0: f32, x1: f32| {
+            let v: Vec<f32> = cs.iter().flatten().filter(|q| q[0] >= x0 && q[0] <= x1).map(|q| q[1]).collect();
+            v.iter().sum::<f32>() / v.len().max(1) as f32
+        };
+        assert!(avg_y(&inv, ib[0], ib[0] + 10.0) + 3.0 < avg_y(&inv, imid - 8.0, imid + 8.0), "invertido: pontas acima do meio {} vs {} {ib:?}", avg_y(&inv, ib[0], ib[0] + 10.0), avg_y(&inv, imid - 8.0, imid + 8.0));
+        // ponte: as letras sobem no meio e ficam em pé (mesma largura)
+        let arch = with(WarpStyle::Arch, 0.5);
+        let rb = bbox_of(&arch);
+        assert!((rb[2] - rb[0] - (fb[2] - fb[0])).abs() < 1.0 && rb[1] < fb[1] - 5.0);
+        // inchar: o meio fica mais alto que as pontas
+        let bul = with(WarpStyle::Bulge, 0.6);
+        let bb = bbox_of(&bul);
+        assert!(bb[3] - bb[1] > (fb[3] - fb[1]) * 1.3);
+        // onda e bandeira mudam a altura; subida inclina
+        for st in [WarpStyle::Wave, WarpStyle::Flag, WarpStyle::Rise] {
+            let b = bbox_of(&with(st, 0.5));
+            assert!(b[3] - b[1] > fb[3] - fb[1] + 2.0, "{st:?}: {b:?} vs {fb:?}");
+        }
+        // bend 0 = sem distorção
+        let none = with(WarpStyle::Wave, 0.0);
+        assert_eq!(none, flat);
+        // canvas_bounds acompanha a distorção
+        let p = TextParams { warp: Some(TextWarp { style: WarpStyle::Arch, bend: 0.8, ..Default::default() }), ..base.clone() };
+        let cb = canvas_bounds(&p, &layout(&p));
+        let ab2 = bbox_of(&layout(&p).contours(&p, 1.0));
+        assert!(cb[1] <= ab2[1] + 0.5, "a caixa cobre o que subiu: {cb:?} vs {ab2:?}");
+    }
+
+    #[test]
+    fn text_on_a_path_follows_the_curve() {
+        // caminho vertical descendo em x = 300: o texto deita na vertical
+        let path: Vec<[f32; 2]> = (0..=20).map(|i| [300.0, 50.0 + i as f32 * 20.0]).collect();
+        let p = TextParams { content: "ABCDEF".into(), size: 30.0, pos: [10.0, 10.0], warp: Some(TextWarp { style: WarpStyle::Path, path: Some(path), ..Default::default() }), ..Default::default() };
+        let b = bbox_of(&layout(&p).contours(&p, 1.0));
+        assert!(b[3] - b[1] > (b[2] - b[0]) * 2.0, "o texto corre para baixo: {b:?}");
+        assert!(b[0] > 300.0 - 40.0 && b[2] < 300.0 + 40.0, "colado no caminho: {b:?}");
+        assert!(b[1] >= 50.0 - 1.0, "começa no primeiro ponto: {b:?}");
     }
 }

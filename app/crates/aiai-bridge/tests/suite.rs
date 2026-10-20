@@ -1882,3 +1882,57 @@ fn comp_keyframe_interpolation_anchor_and_keyed_effect_params() {
     let l = act(&mut d.s, "EFFECTS", json!({"op": "list", "layer": line}));
     assert!(l["effects"][0]["instance"].get("keys").is_none(), "{l}");
 }
+
+#[test]
+fn gradient_paint_on_fill_regions_text_effects_and_palette_round_trip() {
+    let (mut s, cut, line, fill, _bg) = tool_doc();
+    let direct = |r: f32, g: f32, b: f32| json!({"type": "direct", "rgba": [r, g, b, 1.0]});
+    act(&mut s, "DRAW_CURVES", json!({"cut": cut, "frame": 0, "layer": line, "curves": [
+        {"points": [[60, 40], [260, 40], [260, 140], [60, 140]], "width": 3, "closed": true, "geometry": "polyline", "color": direct(0.0, 0.0, 0.0)}]}));
+    act(&mut s, "FILL", json!({"cut": cut, "frame": 0, "layer": fill, "seeds": [{"x": 160, "y": 90, "color": direct(0.5, 0.5, 0.5)}]}));
+    // presets: não muda nada
+    let p = act(&mut s, "GRADIENT_PAINT", json!({"op": "presets"}));
+    assert!(p["presets"].as_array().unwrap().len() >= 8);
+    // degradê vermelho → azul na região (esquerda → direita)
+    let rev = s.project.revision;
+    let g = json!({"stops": [{"pos": 0, "color": direct(1.0, 0.0, 0.0)}, {"pos": 1, "color": direct(0.0, 0.0, 1.0)}], "space": "oklab"});
+    let o = act(&mut s, "GRADIENT_PAINT", json!({"op": "fill_regions", "cut": cut, "layer": fill, "points": [[160, 90]], "gradient": g}));
+    assert!(o["revision"].as_u64().unwrap() > rev && o["regions"] == 1, "{o}");
+    let r = act(&mut s, "RENDER", json!({"cut": cut, "frame": 0, "layers": [fill], "background": "#ffffff"}));
+    let (l, rr) = (px(&r, 70, 90), px(&r, 250, 90));
+    assert!(l[0] > 200 && l[2] < 80, "esquerda vermelha: {l:?}");
+    assert!(rr[2] > 200 && rr[0] < 80, "direita azul: {rr:?}");
+    // undo volta ao cinza chapado
+    act(&mut s, "UNDO", json!({}));
+    let r = act(&mut s, "RENDER", json!({"cut": cut, "frame": 0, "layers": [fill], "background": "#ffffff"}));
+    let c = px(&r, 70, 90);
+    assert!((c[0] as i32 - c[2] as i32).abs() < 4 && c[0] > 100 && c[0] < 160, "cinza de novo: {c:?}");
+    // sem pontos nem `all`: erro
+    assert_eq!(act_err(&mut s, "GRADIENT_PAINT", json!({"op": "fill_regions", "cut": cut, "layer": fill, "gradient": g})).code, code::INVALID_PARAMS);
+    // paleta: guarda e tira
+    let pal = made(&mut s, "Pal", None, json!({"type": "palette", "colors": []}));
+    act(&mut s, "GRADIENT_PAINT", json!({"op": "palette_add", "palette": pal, "name": "Céu", "preset": "Céu de dia"}));
+    let q = act(&mut s, "QUERY", json!({"query": {"kind": "node", "id": pal}}));
+    assert!(q.to_string().contains("Céu"), "{q}");
+    act(&mut s, "GRADIENT_PAINT", json!({"op": "palette_remove", "palette": pal, "name": "Céu"}));
+    // texto com degradê, contorno duplo, brilho e arco: renderiza e passa da caixa do texto liso
+    let o = act(&mut s, "TEXT_LAYER", json!({"cut": cut, "text": "ANIME", "size": 50, "pos": [160, 60], "bold": true,
+        "fill": {"type": "gradient", "gradient": {"angle": 90, "stops": [{"pos": 0, "color": direct(1.0, 0.9, 0.2)}, {"pos": 1, "color": direct(1.0, 0.3, 0.0)}]}},
+        "effects": [{"type": "stroke", "width": 3, "paint": {"type": "solid", "color": direct(1.0, 1.0, 1.0)}}, {"type": "stroke", "width": 7, "paint": {"type": "solid", "color": direct(0.1, 0.0, 0.3)}}, {"type": "outer_glow", "size": 10}],
+        "warp": {"style": "arc", "bend": 0.4}}));
+    let tl = o["layer"].as_str().unwrap().to_string();
+    assert_eq!(o["text"]["params"]["effects"].as_array().unwrap().len(), 3);
+    let r = act(&mut s, "RENDER", json!({"cut": cut, "frame": 0, "layers": [tl], "background": "#000000"}));
+    let img = decode(r["png_base64"].as_str().unwrap());
+    let lit = img.pixels().filter(|p| p.0[0] > 200 && p.0[1] > 150 && p.0[2] < 120).count();
+    assert!(lit > 100, "letras amarelas/laranja: {lit}");
+    // estilo pronto e listagem
+    let st = act(&mut s, "TEXT_LAYER", json!({"list_styles": true}));
+    assert!(st["styles"].as_array().unwrap().len() >= 6);
+    let o = act(&mut s, "TEXT_LAYER", json!({"layer": tl, "style": "Neon"}));
+    assert!(o["text"]["params"]["effects"].as_array().unwrap().iter().any(|e| e["type"] == "outer_glow"));
+    // text_fill por gradient_paint e `null` volta à cor
+    act(&mut s, "GRADIENT_PAINT", json!({"op": "text_fill", "layer": tl, "preset": "Arco-íris"}));
+    let o = act(&mut s, "TEXT_LAYER", json!({"layer": tl, "fill": null, "effects": [], "warp": null}));
+    assert!(o["text"]["params"]["fill"].is_null() && o["text"]["params"]["warp"].is_null());
+}

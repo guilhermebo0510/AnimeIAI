@@ -552,7 +552,7 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
     assert!(plan("aiai_zzz", json!({})).is_err());
     // o catálogo é uma lista estável de ferramentas, todas com plano
     let defs = tools::definitions();
-    assert_eq!(defs.as_array().unwrap().len(), 84);
+    assert_eq!(defs.as_array().unwrap().len(), 85);
     // todas as ferramentas de produção: descrição com exemplo de uma linha, schema de objeto, plano com a ação certa e frame 0 por padrão
     for t in defs.as_array().unwrap() {
         let n = t["name"].as_str().unwrap();
@@ -567,6 +567,7 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
         ("aiai_text", json!({"cut": "c", "fill_layer": "l", "text": "ドン", "size": 80, "center": [1, 2], "color": {}}), "TEXT"),
         ("aiai_text_layer", json!({"cut": "c", "text": "Olá"}), "TEXT_LAYER"),
         ("aiai_layer_merge", json!({"layer": "l"}), "LAYER_MERGE"),
+        ("aiai_gradient_paint", json!({"op": "presets"}), "GRADIENT_PAINT"),
         ("aiai_lines", json!({"cut": "c", "layer": "l", "kind": {}, "count": 3, "length": [1, 2], "width": [1, 2], "color": {}}), "LINES"),
         ("aiai_gag_bg", json!({"cut": "c", "layer": "l", "pattern": {}}), "GAG_BG"),
         ("aiai_particles", json!({"layer": "l", "preset": "neve"}), "PARTICLES"),

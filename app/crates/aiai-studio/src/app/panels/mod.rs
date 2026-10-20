@@ -18,6 +18,7 @@ pub(crate) mod edit_panels;
 pub(crate) mod edit_timeline;
 pub(crate) mod effect_controls;
 pub(crate) mod effects_browser;
+pub(crate) mod gradient_edit;
 pub(crate) mod layers;
 pub(crate) mod library;
 pub(crate) mod light_table;
@@ -38,6 +39,7 @@ pub(crate) mod script;
 pub(crate) mod shots;
 pub(crate) mod subview;
 pub(crate) mod text;
+pub(crate) mod text_styles;
 pub(crate) mod timeline;
 
 use egui::{Id, Response, Ui};

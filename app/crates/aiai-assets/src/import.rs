@@ -219,7 +219,7 @@ fn import_image(root: &Path, src: &Path, o: &ImportOpts) -> Result<Imported, Str
 
 /// Grava uma paleta como `.aiaipal` na pasta Paletas. Usado pela importação e por "Salvar na biblioteca".
 pub fn add_palette(root: &Path, p: &Palette, o: &ImportOpts, src_name: &str) -> Result<Imported, String> {
-    if p.colors.is_empty() {
+    if p.colors.is_empty() && p.gradients.is_empty() {
         return Err("a paleta não tem cores".into());
     }
     let nm = o.name.clone().filter(|n| !n.trim().is_empty()).or_else(|| Some(p.name.clone()).filter(|n| !n.trim().is_empty())).unwrap_or_else(|| "Paleta".into());

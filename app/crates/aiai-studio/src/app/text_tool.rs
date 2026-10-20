@@ -250,7 +250,8 @@ fn hit_layer(env: &Env, cut: &NodeId, c: Vec2) -> Option<NodeId> {
         let lay = tl::layout(&p);
         let aff = cmds::layer_placement(&env.core.project, cut, id, env.ed.frame);
         let local = to_local(&p, aff, c);
-        let b = lay.bounds;
+        // com distorção, a caixa das letras distorcidas
+        let b = lay.warped_bounds(&p);
         let pad = 3.0;
         if local[0] >= b[0] - pad && local[0] <= b[2] + pad && local[1] >= b[1] - pad && local[1] <= b[3] + pad {
             return Some(id.clone());
@@ -813,7 +814,7 @@ pub(crate) fn paint(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeI
                     if let Some(Ok(p)) = cmds::layer_data(&env.core.project, &l).and_then(|ld| TextParams::from_layer_params(&ld.params)) {
                         let aff = cmds::layer_placement(&env.core.project, cut, &l, frame_no);
                         let lay = tl::layout(&p);
-                        let q = quad_screen(&p, aff, xf, lay.bounds);
+                        let q = quad_screen(&p, aff, xf, lay.warped_bounds(&p));
                         painter.add(Shape::closed_line(q.to_vec(), Stroke::new(1.0, accent.gamma_multiply(0.7))));
                     }
                 }

@@ -18,6 +18,7 @@ pub mod erase;
 pub mod export;
 pub mod fill;
 pub mod fx2d;
+pub mod gradient_paint;
 pub mod guide;
 pub mod import;
 pub mod layer_merge;
