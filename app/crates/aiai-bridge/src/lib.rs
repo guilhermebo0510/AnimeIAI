@@ -10,6 +10,7 @@
 //! * [`core_ops`] — ações de documento que só precisam da `CoreSession` ([`core_ops::handle_core_action`]);
 //! * [`core_tools`] — RENDER, DRAW_CURVES, FILL, LINT, PAINT, GRADIENT, TRANSFORM, REPEAT, BRUSH_PRESETS, READ_POINTS, EDIT_POINTS (também só o documento);
 //! * [`preview_tools`] — prévia e entrega: RENDER_SHEET, EDIT_PREVIEW, EDIT_MIX, TTS_REGENERATE;
+//! * [`audio_tools`] — edição e análise de áudio (S24): AUDIO_EDIT, AUDIO_ANALYZE;
 //! * [`preprod_tools`] — pré-produção (S16): SCRIPT, BEATS, STORYBOARD, ANIMATIC, CUTS_FROM_STORYBOARD;
 //! * [`satsuei_tools`] — satsuei, câmera e cor tipados (S13/S15): EFFECTS, GRADE, CAMERA, LAYER_MOTION;
 //! * [`review_tools`] — produção e revisão (S19): PRODUCTION, CORRECTION, RETAKE;
@@ -21,6 +22,7 @@
 //! responder cada `HostRequest` do `BridgeReceiver` (documento e ferramentas via `core_ops::handle_core_action`;
 //! SCREENSHOT, INPUT, GET_UI_STATE, UI_ACTION, COMPARE, GET_STATUS pelo app).
 
+pub mod audio_tools;
 pub mod core_ops;
 pub mod core_tools;
 pub mod discovery;

@@ -86,7 +86,7 @@ def default_timeout(action: str) -> float:
     """Prazo de leitura por ação (um pouco acima do que o app dá à UI): ferramentas de produção demoram mais."""
     if action == "EXPORT_VIDEO":
         return 1200.0
-    if action in ("BGM", "TTS_LINE", "TTS_KOKORO", "MIX_CUT", "LOUDNESS"):
+    if action in ("BGM", "TTS_LINE", "TTS_KOKORO", "MIX_CUT", "LOUDNESS", "AUDIO_EDIT", "AUDIO_ANALYZE"):
         return 130.0
     if action in ("SKY", "PATTERN_FILL", "FILL_SHAPE", "EDIT_SET", "TEXT", "GAG_BG", "GUIDE3D", "MODEL_SHEET", "INBETWEEN", "PROPAGATE_FILLS", "LIPSYNC", "COMPARE", "RENDER"):
         return 65.0
@@ -97,7 +97,7 @@ def call(action: str, params: dict[str, Any] | None = None, timeout: float | Non
     """Uma ação pela bridge (HTTP ``POST /rpc`` com token Bearer). Devolve ``data``; levanta ``BridgeError`` em erro.
 
     Qualquer ação de ferramenta vale (SKY, PATTERN_FILL, TEXT, LINES, GAG_BG, PARTICLES, GUIDE3D, PERSPECTIVE, MODEL_SHEET,
-    CONSISTENCY, INBETWEEN, PROPAGATE_FILLS, FILL_SHAPE, TTS_LINE, TTS_KOKORO, VOICE_PROFILE, LIPSYNC, SFX, BGM, MIX_CUT, LOUDNESS,
+    CONSISTENCY, INBETWEEN, PROPAGATE_FILLS, FILL_SHAPE, TTS_LINE, TTS_KOKORO, VOICE_PROFILE, LIPSYNC, SFX, BGM, MIX_CUT, LOUDNESS, AUDIO_EDIT, AUDIO_ANALYZE,
     COMPARE, PROBE_COLOR, MEASURE_LINE, MEASURE_EDGE, EDIT_SET, EXPORT_VIDEO...). ``timeout`` omitido = ``default_timeout(action)``."""
     if timeout is None:
         timeout = default_timeout(action)

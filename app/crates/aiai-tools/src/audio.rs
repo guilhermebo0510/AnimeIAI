@@ -117,7 +117,7 @@ fn append_placement(p: &Project, cut: &Id, placement: AudioPlacement) -> ToolRes
 }
 
 #[allow(clippy::too_many_arguments)]
-fn finish_clip(
+pub(crate) fn finish_clip(
     p: &Project,
     idgen: &mut IdGen,
     blobs: &mut BlobStore,

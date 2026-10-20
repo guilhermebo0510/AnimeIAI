@@ -4,6 +4,7 @@
 
 pub mod anim;
 pub mod audio;
+pub mod audio_edit;
 pub mod background;
 pub mod calib;
 pub mod character;

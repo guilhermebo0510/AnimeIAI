@@ -78,7 +78,7 @@ impl Ctx {
             "TEXT" => &["font"],
             "BGM" => &["soundfont"],
             "EXPORT_VIDEO" => &["srt"],
-            "LOUDNESS" | "IMPORT_AUDIO" | "IMPORT_IMAGE" => &["path"],
+            "LOUDNESS" | "AUDIO_ANALYZE" | "IMPORT_AUDIO" | "IMPORT_IMAGE" => &["path"],
             _ => &[],
         };
         for key in read_keys {

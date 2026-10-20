@@ -32,7 +32,7 @@ Cola dos comandos principais (campo `kind`):\n\
 - set_tiles {cel, tiles:[{x,y,blob}]} (raster; blob = hash já gravado).\n\
 - add_track {cut, track:{\"id\":\"\",\"name\":\"A\",\"kind\":\"drawing\",\"layer\":\"<id da camada>\"}}; set_cells {cut, track, cells:[{frame, cell:{\"type\":\"cel\",\"number\":1}|{\"type\":\"empty\"}|null}]} (quadro 0-based).\n\
 - batch {commands:[...], label?}: vários comandos num único passo de undo (ids dados explicitamente em create_node permitem referenciar dentro do lote).\n\
-Ferramentas de alto nível (açúcar sobre estes comandos, com validação e exemplo; prefira-as quando existirem): desenho aiai_draw_curves, aiai_fill, aiai_lint, aiai_paint, aiai_gradient, aiai_transform, aiai_repeat, aiai_erase; cenário e efeitos aiai_sky, aiai_pattern_fill, aiai_text, aiai_text_layer, aiai_lines, aiai_gag_bg, aiai_particles; guias aiai_guide3d, aiai_perspective; personagem aiai_model_sheet, aiai_consistency; animação aiai_inbetween, aiai_propagate_fills; áudio aiai_tts_line, aiai_tts_kokoro, aiai_voice_profile, aiai_lipsync, aiai_sfx, aiai_bgm, aiai_import_audio, aiai_mix, aiai_loudness; forma preenchida aiai_fill_shape; calibração aiai_compare, aiai_probe_color, aiai_measure_line, aiai_measure_edge; edição aiai_edit; saída aiai_render e aiai_export_video. Use aiai_apply para o que não tem ferramenta (criar nós, mover, timesheet, props cruas).\n\
+Ferramentas de alto nível (açúcar sobre estes comandos, com validação e exemplo; prefira-as quando existirem): desenho aiai_draw_curves, aiai_fill, aiai_lint, aiai_paint, aiai_gradient, aiai_transform, aiai_repeat, aiai_erase; cenário e efeitos aiai_sky, aiai_pattern_fill, aiai_text, aiai_text_layer, aiai_lines, aiai_gag_bg, aiai_particles; guias aiai_guide3d, aiai_perspective; personagem aiai_model_sheet, aiai_consistency; animação aiai_inbetween, aiai_propagate_fills; áudio aiai_tts_line, aiai_tts_kokoro, aiai_voice_profile, aiai_lipsync, aiai_sfx, aiai_bgm, aiai_import_audio, aiai_mix, aiai_loudness, aiai_audio_edit, aiai_audio_analyze; forma preenchida aiai_fill_shape; calibração aiai_compare, aiai_probe_color, aiai_measure_line, aiai_measure_edge; edição aiai_edit; saída aiai_render e aiai_export_video. Use aiai_apply para o que não tem ferramenta (criar nós, mover, timesheet, props cruas).\n\
 `aiai_schema {\"which\":\"commands\"}` devolve o JSON Schema completo de todos os comandos.";
 
 const RENDER_DESC: &str = r##"Renderiza um quadro de um corte com o motor CPU real (a MESMA imagem que o app mostra) e devolve a imagem como conteúdo de imagem MCP (reduzida a 1280 px no lado maior) e/ou grava o PNG em `out`. É a forma de VER o que você desenhou: renderize depois de cada passo importante e olhe a imagem.
@@ -322,13 +322,14 @@ Só grava em pastas permitidas (AIAI_MCP_ALLOWED_DIRS; padrão producoes/, calib
 }
 
 /// Catálogo completo: ferramentas genéricas + curadas de desenho + de produção (`tools_production`) + de pré-produção
-/// (`tools_preprod`) + de satsuei/câmera/cor (`tools_satsuei`) + de prévia/entrega (`tools_preview`).
+/// (`tools_preprod`) + de satsuei/câmera/cor (`tools_satsuei`) + de prévia/entrega (`tools_preview`) + de edição e análise de áudio (`tools_audio`).
 pub fn definitions() -> Value {
     let mut list = base_definitions().as_array().cloned().unwrap_or_default();
     list.extend(crate::tools_production::definitions());
     list.extend(crate::tools_preprod::definitions());
     list.extend(crate::tools_satsuei::definitions());
     list.extend(crate::tools_preview::definitions());
+    list.extend(crate::tools_audio::definitions());
     Value::Array(list)
 }
 
@@ -388,6 +389,9 @@ pub fn plan(name: &str, args: &Value) -> Result<Plan, ToolError> {
         return p;
     }
     if let Some(p) = crate::tools_preview::plan(name, &m) {
+        return p;
+    }
+    if let Some(p) = crate::tools_audio::plan(name, &m) {
         return p;
     }
     match name {

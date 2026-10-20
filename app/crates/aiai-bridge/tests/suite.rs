@@ -1571,3 +1571,83 @@ fn points_are_read_and_edited_by_stroke_and_index_behind_a_revision_guard() {
     assert_eq!(undone["stroke_rev"], rev0.as_str());
     assert_eq!(undone["point_count"], 3);
 }
+
+#[test]
+fn audio_edit_and_analyze_actions() {
+    let mut d = prod_doc();
+    let cut = d.cut.clone();
+    let src = act(&mut d.s, "SFX", json!({"preset": "wind", "seed": 7, "duration": 2.0}));
+    let src_id = src["asset"].as_str().unwrap().to_string();
+    let blob_of = |s: &CoreSession, id: &str| match &s.project.node(&id.into()).unwrap().data {
+        aiai_core::NodeKind::Asset(x) => x.blob.clone().unwrap(),
+        _ => panic!(),
+    };
+    let src_blob = blob_of(&d.s, &src_id);
+    let src_dur = src["duration_s"].as_f64().unwrap();
+
+    // aparar + redução de ruído (perfil dos primeiros 0,3 s) + passa-altas + fade: novo asset, a fonte intacta
+    let steps = json!([
+        {"op": "trim", "start_s": 0.0, "end_s": 1.5},
+        {"op": "fx", "fx": {"type": "noise_reduction", "reduction_db": 12.0}, "profile_start_s": 0.0, "profile_end_s": 0.3},
+        {"op": "fx", "fx": {"type": "filter", "kind": "high_pass", "freq_hz": 80.0}},
+        {"op": "fade", "dir": "out", "start_s": 1.2, "end_s": 1.5, "curve": "s_curve"}
+    ]);
+    let rev = d.s.project.revision;
+    let e = act(&mut d.s, "AUDIO_EDIT", json!({"asset": src_id, "steps": steps, "name": "Vento limpo", "cut": cut, "track": "ambience", "start_frame": 2}));
+    assert_ne!(e["asset"], json!(src_id), "resultado é um asset novo");
+    assert_eq!((e["source"].clone(), e["steps_applied"].as_u64(), e["can_undo"].clone()), (json!(src_id), Some(4), json!(true)), "{e}");
+    assert!((e["duration_s"].as_f64().unwrap() - 1.5).abs() < 0.01 && src_dur > 1.9, "{e}");
+    assert!(e["placement"].is_string() && e["sample_rate"].is_number() && d.s.project.revision > rev);
+    assert_eq!(blob_of(&d.s, &src_id), src_blob, "a fonte não é sobrescrita");
+    assert_ne!(blob_of(&d.s, e["asset"].as_str().unwrap()), src_blob);
+    let node = d.s.project.node(&e["asset"].as_str().unwrap().into()).unwrap();
+    match &node.data {
+        aiai_core::NodeKind::Asset(a) => assert!(a.params["edited_from"] == json!(src_id) && a.params["steps"].as_array().unwrap().len() == 4 && a.source == "audio_edit", "{:?}", a.params),
+        _ => panic!(),
+    }
+    // um desfazer remove asset e clipe
+    act(&mut d.s, "UNDO", json!({}));
+    assert!(d.s.project.node(&e["asset"].as_str().unwrap().into()).is_none());
+
+    // erros: chave desconhecida (no pedido e no passo), passo vazio/inválido, asset que não é áudio
+    let id = src_id.as_str();
+    assert_eq!(act_err(&mut d.s, "AUDIO_EDIT", json!({"asset": id, "steps": [{"op": "mono"}], "stepss": 1})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "AUDIO_EDIT", json!({"asset": id, "steps": [{"op": "trim", "start_s": 0.0, "end_s": 1.0, "oops": 1}]})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "AUDIO_EDIT", json!({"asset": id, "steps": []})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "AUDIO_EDIT", json!({"asset": id, "steps": [{"op": "trim", "start_s": 5.0, "end_s": 6.0}]})).code, code::INVALID_PARAMS, "fora do clipe");
+    assert_eq!(act_err(&mut d.s, "AUDIO_EDIT", json!({"asset": id, "steps": [{"op": "fx", "fx": {"type": "noise_reduction"}}]})).code, code::INVALID_PARAMS, "sem perfil");
+    assert_eq!(act_err(&mut d.s, "AUDIO_EDIT", json!({"asset": id, "steps": [{"op": "fx", "fx": {"type": "compressor", "ratio": 0.2}}]})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "AUDIO_EDIT", json!({"asset": cut, "steps": [{"op": "mono"}]})).code, code::INVALID_PARAMS, "corte não é áudio");
+    assert_eq!(act_err(&mut d.s, "AUDIO_EDIT", json!({"asset": id, "steps": [{"op": "mono"}], "cut": cut, "start_frame": 9999})).code, code::INVALID_PARAMS);
+
+    // efeito que muda a duração e rack com bypass
+    let t = act(&mut d.s, "AUDIO_EDIT", json!({"asset": id, "steps": [{"op": "fx", "fx": {"type": "time_stretch", "ratio": 1.5}}, {"op": "stereo"},
+        {"op": "rack", "rack": {"slots": [{"fx": {"type": "eq", "bands": [{"freq_hz": 1000.0, "gain_db": 3.0, "q": 1.0}]}}, {"fx": {"type": "limiter", "ceiling_db": -6.0}}, {"fx": {"type": "reverb"}, "bypass": true}]}}]}));
+    assert!((t["duration_s"].as_f64().unwrap() - src_dur * 1.5).abs() < 0.1 && t["channels"] == 2, "{t}");
+
+    // AUDIO_ANALYZE: medidores, forma de onda e espectrograma na resolução pedida; não muda o documento
+    let rev = d.s.project.revision;
+    let a = act(&mut d.s, "AUDIO_ANALYZE", json!({"asset": t["asset"], "waveform_pixels": 50, "series_points": 20, "spectrogram": {"width": 32, "height": 16, "fft_size": 1024}}));
+    assert_eq!(d.s.project.revision, rev);
+    let m = &a["meters"];
+    assert!(m["integrated_lufs"].is_number() || m["integrated_lufs"].is_null());
+    assert!(m["true_peak_dbtp"].as_f64().unwrap() <= -5.0, "limiter -6 dB: {}", m["true_peak_dbtp"]);
+    assert!(m["momentary_series"].as_array().unwrap().len() <= 20 && m["channel_peak_dbfs"].as_array().unwrap().len() == 2);
+    let w = &a["waveform"]["channels"];
+    assert_eq!((w.as_array().unwrap().len(), w[0]["min"].as_array().unwrap().len(), w[1]["rms"].as_array().unwrap().len()), (2, 50, 50));
+    assert!(w[0]["max"].as_array().unwrap().iter().any(|v| v.as_f64().unwrap() > 0.01));
+    let rows = a["spectrogram"]["rows"].as_array().unwrap();
+    assert_eq!((rows.len(), rows[0].as_array().unwrap().len()), (16, 32));
+    // intervalo, sem medidores, e a mesma consulta de novo (pirâmide em cache)
+    let b = act(&mut d.s, "AUDIO_ANALYZE", json!({"asset": id, "start_s": 0.5, "end_s": 1.0, "meters": false, "waveform_pixels": 10}));
+    assert!(b.get("meters").is_none() && (b["range"]["frames"].as_u64().unwrap() as f64 - 0.5 * b["sample_rate"].as_f64().unwrap()).abs() < 2.0, "{b}");
+    assert!(act(&mut d.s, "AUDIO_ANALYZE", json!({"cut": cut}))["meters"].is_object());
+    // erros
+    assert_eq!(act_err(&mut d.s, "AUDIO_ANALYZE", json!({})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "AUDIO_ANALYZE", json!({"asset": id, "cut": cut})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "AUDIO_ANALYZE", json!({"asset": id, "waveform_pixels": 0})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "AUDIO_ANALYZE", json!({"asset": id, "spectrogram": {"fft_size": 1000}})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "AUDIO_ANALYZE", json!({"asset": id, "spectrogram": {"widht": 4}})).code, code::INVALID_PARAMS, "chave desconhecida dentro de spectrogram");
+    assert_eq!(act_err(&mut d.s, "AUDIO_ANALYZE", json!({"asset": id, "start_s": 1.5, "end_s": 1.0})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut d.s, "AUDIO_ANALYZE", json!({"path": "relativo.wav"})).code, code::INVALID_PARAMS);
+}
