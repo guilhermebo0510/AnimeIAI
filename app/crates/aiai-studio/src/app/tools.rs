@@ -22,15 +22,51 @@ pub(crate) fn presets() -> &'static [BrushPreset] {
     P.get_or_init(BrushPreset::defaults)
 }
 
-fn eraser_preset(size: f32, hardness: f32) -> BrushPreset {
-    let mut p = presets().iter().find(|p| p.mode == BrushMode::Erase).or_else(|| presets().iter().find(|p| p.name == "Borracha")).cloned().unwrap_or_else(|| {
-        let mut e = BrushPreset::round("Borracha", size, 0.9);
-        e.mode = BrushMode::Erase;
-        e
+/// Preset da borracha raster pelos controles da barra (como a borracha do Photoshop): tamanho, dureza 0..1,
+/// opacidade, fluxo, pressão → tamanho/opacidade e a ponta (Pincel macio, Lápis duro sem antisserrilhado, Bloco
+/// quadrado). Com `brush` (usar o pincel atual), a ponta, a textura e a dinâmica do pincel apagam no lugar da redonda.
+pub(crate) fn eraser_preset(o: &ToolOptions, brush: Option<BrushPreset>) -> BrushPreset {
+    use aiai_paint::brush::{BrushTip, TipShape};
+    let from_brush = brush.is_some();
+    let mut p = brush.unwrap_or_else(|| {
+        presets().iter().find(|p| p.mode == BrushMode::Erase).or_else(|| presets().iter().find(|p| p.name == "Borracha")).cloned().unwrap_or_else(|| BrushPreset::round("Borracha", 30.0, 0.9))
     });
-    p.size = size;
-    if let aiai_paint::brush::BrushTip::Round { hardness: h, .. } = &mut p.tip {
-        *h = hardness.clamp(0.0, 1.0);
+    p.mode = BrushMode::Erase;
+    p.size = o.eraser_size.max(0.5);
+    p.opacity = o.eraser_opacity.clamp(0.01, 1.0);
+    p.flow = if from_brush { p.flow * o.eraser_flow } else { o.eraser_flow }.clamp(0.01, 1.0);
+    // pressão: o mínimo do pincel (ou o padrão) quando ligada; 1 = a pressão não muda nada
+    let own = |v: f32, dflt: f32| if from_brush && v < 1.0 { v } else { dflt };
+    p.size_pressure_min = if o.eraser_pressure_size { own(p.size_pressure_min, 0.2) } else { 1.0 };
+    p.opacity_pressure_min = if o.eraser_pressure_opacity { own(p.opacity_pressure_min, 0.0) } else { 1.0 };
+    // apagar não tem cor: nada de duas cores, mistura, borda molhada nem variação de cor
+    p.two_tone = None;
+    p.mix = 0.0;
+    p.smudge_carry = 0.0;
+    p.wet_edges = 0.0;
+    (p.hue_jitter, p.saturation_jitter, p.value_jitter) = (0.0, 0.0, 0.0);
+    match o.eraser_tip {
+        EraserTip::Brush => {
+            if !from_brush {
+                p.tip = BrushTip::Round { hardness: o.eraser_hardness.clamp(0.0, 1.0), roundness: 1.0, angle: 0.0 };
+                p.aliased = false;
+            }
+        }
+        EraserTip::Pencil => {
+            if !from_brush {
+                p.tip = BrushTip::Round { hardness: 1.0, roundness: 1.0, angle: 0.0 };
+            }
+            p.aliased = true;
+        }
+        EraserTip::Block => {
+            // o quadrado da forma cobre 90% do diâmetro: o lado do bloco fica igual ao tamanho escolhido
+            p.tip = BrushTip::Shape { shape: TipShape::Square, aspect: 1.0 };
+            p.size = o.eraser_size.max(0.5) / 0.9;
+            p.aliased = true;
+            p.size_pressure_min = 1.0;
+            (p.scatter, p.size_jitter, p.angle_jitter, p.follow_direction, p.count, p.dual, p.texture) = (0.0, 0.0, 0.0, false, 1, None, None);
+            p.spacing = p.spacing.min(0.1);
+        }
     }
     p
 }
@@ -395,13 +431,19 @@ fn brush_points(samples: &[Sample]) -> Vec<Vec<f32>> {
 pub(crate) fn stroke_preset(env: &Env, erase: bool) -> BrushPreset {
     let o = &env.ed.opts;
     if erase {
-        eraser_preset(o.eraser_size, o.eraser_hardness)
+        eraser_preset(o, o.eraser_use_brush.then(|| brush_preset(env)))
     } else {
-        let mut p = o.brush_custom.clone().or_else(|| env.ed.brushes.get(o.brush_preset).cloned()).or_else(|| presets().first().cloned()).unwrap_or_else(|| BrushPreset::round("Pincel", 24.0, 0.9));
-        p.size = o.brush_size.max(0.5);
-        p.opacity = o.brush_opacity.clamp(0.0, 1.0);
-        p
+        brush_preset(env)
     }
+}
+
+/// O pincel atual com o tamanho e a opacidade da barra.
+fn brush_preset(env: &Env) -> BrushPreset {
+    let o = &env.ed.opts;
+    let mut p = o.brush_custom.clone().or_else(|| env.ed.brushes.get(o.brush_preset).cloned()).or_else(|| presets().first().cloned()).unwrap_or_else(|| BrushPreset::round("Pincel", 24.0, 0.9));
+    p.size = o.brush_size.max(0.5);
+    p.opacity = o.brush_opacity.clamp(0.0, 1.0);
+    p
 }
 
 /// Seleção que limita pincel e borracha raster: uma área de verdade (não "a camada inteira", não traços escolhidos),
@@ -424,6 +466,7 @@ pub(crate) fn start_live(env: &mut Env, ctx: &egui::Context, g: &StrokeGesture, 
         (ToolId::Brush, LayerType::Raster) => super::live::Mode::Brush,
         (ToolId::Eraser, LayerType::Raster) => super::live::Mode::EraseRaster,
         (ToolId::Eraser, LayerType::Vector) => super::live::Mode::EraseVector,
+        (ToolId::Eraser, LayerType::Fill) => super::live::Mode::EraseFill,
         _ => return,
     };
     let erase = g.tool == ToolId::Eraser;
@@ -465,6 +508,30 @@ pub(crate) fn start_live(env: &mut Env, ctx: &egui::Context, g: &StrokeGesture, 
         },
     };
     env.ed.live_stroke.start(ctx, spec, g.t0);
+}
+
+/// Borracha escolhida e nada em andamento: prepara a base da prévia ao vivo (o quadro abaixo e acima da camada
+/// ativa) depois que o render da tela alcançou o documento, para o primeiro movimento já apagar como o commit.
+pub(crate) fn erase_prefetch(env: &mut Env) {
+    if *env.tool != ToolId::Eraser {
+        env.ed.live_stroke.drop_prefetch();
+        return;
+    }
+    if !matches!(env.ed.gesture, Gesture::None) {
+        return;
+    }
+    let (Some(cut), Some(layer)) = (env.ed.cut.clone(), env.ed.layer.clone()) else { return };
+    let Some(l) = cmds::layer_data(&env.core.project, &layer) else { return };
+    if !matches!(l.kind, LayerType::Raster | LayerType::Vector | LayerType::Fill) || !l.visible || l.locked {
+        return;
+    }
+    // o render da tela primeiro: os dois disputam a mesma CPU
+    if env.ed.shown.as_ref().map(|s| s.rendered.key.counter) != Some(env.core.change_counter) {
+        return;
+    }
+    let key = super::live::BaseKey { revision: env.core.project.revision, cut, layer, frame: env.ed.frame, guides: env.ed.show_guides, reference: env.ed.show_reference };
+    let (p, b) = (&env.core.project, &env.core.blobs);
+    env.ed.live_stroke.prefetch_erase(key, || (p.clone(), b.clone()));
 }
 
 /// Manda o traço até aqui para a prévia ao vivo.
@@ -512,10 +579,6 @@ fn commit_brush(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Insta
 }
 
 fn commit_erase_vector(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant) {
-    let ids = eraser_hits(env.core, &t.cut, &t.layer, t.frame, &g.path, env.ed.opts.eraser_size / 2.0);
-    if ids.is_empty() {
-        return;
-    }
     // trecho / até a interseção / traço inteiro (o caminho já está no espaço do cel)
     let req = aiai_tools::erase::EraseVectorRequest {
         cut: t.cut.clone(),
@@ -525,7 +588,12 @@ fn commit_erase_vector(env: &mut Env, t: &Target, g: &StrokeGesture, released_at
         radius: env.ed.opts.eraser_size / 2.0,
         mode: env.ed.opts.eraser_mode,
     };
-    let planned = aiai_tools::erase::erase_vector_command(&env.core.project, &req).map_err(|e| e.to_string());
+    // a prévia ao vivo usa este mesmo comando; o erro só vira aviso se a borracha passou por algum traço
+    let planned = match aiai_tools::erase::erase_vector_command(&env.core.project, &req) {
+        Ok(c) => Ok(c),
+        Err(_) if eraser_hits(env.core, &t.cut, &t.layer, t.frame, &g.path, env.ed.opts.eraser_size / 2.0).is_empty() => return,
+        Err(e) => Err(e.to_string()),
+    };
     commit(env, planned, released_at, "erase_vector", None);
 }
 
@@ -1150,6 +1218,58 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
 mod tests {
     use super::*;
     use crate::app::commands::{add_layer, quick_start};
+
+    /// Quanto um carimbo da borracha (raio 20) tira de uma camada opaca, do centro para a borda (px 0..32).
+    fn erased_profile(o: &ToolOptions, brush: Option<BrushPreset>) -> Vec<f32> {
+        let p = eraser_preset(o, brush);
+        let mut img = aiai_paint::Image::filled(64, 64, [0.2, 0.3, 0.4, 1.0]);
+        aiai_paint::brush::paint_stroke(&mut img, &p, &[aiai_paint::brush::BrushPoint { x: 32.0, y: 32.0, pressure: 1.0 }], [0.0, 0.0, 0.0, 1.0], 1);
+        (0..32).map(|i| 1.0 - img.get(32 + i, 32)[3]).collect()
+    }
+
+    /// Dureza contínua 0..1 (o controle de 0–100%): miolo apagado por inteiro até a fração `h` do raio e queda em
+    /// cosseno até a borda; mais dura apaga sempre pelo menos tanto quanto mais macia.
+    #[test]
+    fn eraser_hardness_curve() {
+        let prof = |h: f32| erased_profile(&ToolOptions { eraser_size: 40.0, eraser_hardness: h, ..Default::default() }, None);
+        let (hard, mid, soft) = (prof(1.0), prof(0.5), prof(0.0));
+        for (name, p) in [("dura", &hard), ("média", &mid), ("macia", &soft)] {
+            assert!(p.windows(2).all(|w| w[1] <= w[0] + 1e-4), "{name}: o quanto sai só cai para a borda: {p:?}");
+            assert!(p[0] > 0.99, "{name}: o centro sai inteiro: {}", p[0]);
+            assert!(p[25] < 1e-3, "{name}: fora do raio nada sai");
+        }
+        assert!(hard[18] > 0.99, "dura: até a borda");
+        // h = 0,5: inteiro até meio raio (d = 9,5/20), metade da queda perto de 3/4 do raio, quase nada na borda
+        assert!(mid[9] > 0.99 && (0.35..0.75).contains(&mid[14]) && mid[19] < 0.1, "média: {mid:?}");
+        // macia: cai desde o centro
+        assert!(soft[10] < 0.6 && soft[10] > 0.3, "macia: {soft:?}");
+        for i in 0..32 {
+            assert!(hard[i] + 1e-4 >= mid[i] && mid[i] + 1e-4 >= soft[i], "px {i}: dura ≥ média ≥ macia");
+        }
+        // opacidade limita o quanto sai
+        let half = erased_profile(&ToolOptions { eraser_size: 40.0, eraser_opacity: 0.5, ..Default::default() }, None);
+        assert!((half[0] - 0.5).abs() < 0.02, "opacidade 50%: {}", half[0]);
+    }
+
+    /// Lápis: borda dura sem antisserrilhado (só tudo ou nada); Bloco: quadrado do tamanho escolhido; pincel atual:
+    /// a ponta do pincel apagando.
+    #[test]
+    fn eraser_tips_and_brush_as_eraser() {
+        let pencil = erased_profile(&ToolOptions { eraser_size: 40.0, eraser_tip: EraserTip::Pencil, ..Default::default() }, None);
+        assert!(pencil.iter().all(|v| *v < 1e-4 || *v > 0.999), "lápis sem meio-termo: {pencil:?}");
+        let block = ToolOptions { eraser_size: 20.0, eraser_tip: EraserTip::Block, ..Default::default() };
+        let p = eraser_preset(&block, None);
+        let mut img = aiai_paint::Image::filled(64, 64, [0.2, 0.3, 0.4, 1.0]);
+        aiai_paint::brush::paint_stroke(&mut img, &p, &[aiai_paint::brush::BrushPoint { x: 32.0, y: 32.0, pressure: 1.0 }], [0.0, 0.0, 0.0, 1.0], 1);
+        assert!(img.get(40, 40)[3] < 1e-3, "o canto do quadrado sai (a redonda deixaria)");
+        assert!(img.get(43, 32)[3] > 0.999 && img.get(32, 43)[3] > 0.999, "nada além do lado de 20 px");
+        let grass = presets().iter().find(|b| matches!(b.tip, aiai_paint::brush::BrushTip::Shape { shape: aiai_paint::brush::TipShape::GrassBlade, .. })).cloned().expect("pincel de grama");
+        let o = ToolOptions { eraser_size: 33.0, eraser_use_brush: true, ..Default::default() };
+        let e = eraser_preset(&o, Some(grass.clone()));
+        assert_eq!((e.mode, e.size, e.tip.clone(), e.two_tone.is_none()), (BrushMode::Erase, 33.0, grass.tip, true));
+        let pressure_off = eraser_preset(&ToolOptions { eraser_pressure_size: false, ..Default::default() }, None);
+        assert_eq!(pressure_off.size_pressure_min, 1.0, "sem pressão no tamanho");
+    }
 
     fn doc() -> (CoreSession, NodeId, NodeId, NodeId, NodeId) {
         let mut core = CoreSession::for_tests("t");

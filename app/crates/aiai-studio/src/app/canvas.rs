@@ -95,6 +95,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
     if *env.tool == ToolId::Move && env.ws != crate::workspace::WorkspaceId::Composicao {
         tools::move_prefetch(env, &ctx);
     }
+    tools::erase_prefetch(env);
     env.ed.move_live.poll(&ctx, shown_counter);
 
     let painter = ui.painter().with_clip_rect(rect);
@@ -769,51 +770,194 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
     }
 }
 
-/// Contorno da ponta do pincel em pontos da tela (raio `r`, sem giro), como segmentos: a elipse da ponta redonda
-/// (achatamento e ângulo) ou o contorno da forma de cenário, tirado da própria cobertura do motor (quadrados
-/// marchantes numa grade, calculado uma vez por forma). `None` = círculo comum.
-fn tip_outline(tip: &aiai_paint::brush::BrushTip, two_tone: bool, r: f32) -> Option<Vec<[Vec2; 2]>> {
+/// Diâmetro na tela abaixo do qual o contorno da ponta some e a mira entra no lugar (px lógicos).
+pub(crate) const OUTLINE_MIN_PX: f32 = 7.0;
+/// Contorno a partir deste diâmetro ganha uma marca pequena no centro (onde a tinta cai).
+pub(crate) const CENTER_MARK_PX: f32 = 24.0;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum CenterMark {
+    None,
+    /// Mira fina (contorno pequeno demais, ou modo preciso).
+    Cross,
+    /// Marca pequena no centro de um contorno grande.
+    Dot,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct CursorLook {
+    pub outline: bool,
+    pub center: CenterMark,
+}
+
+/// Como o cursor da ponta aparece pelo diâmetro dela na tela (px lógicos): contorno quando dá para ver, mira quando
+/// não dá (ou sempre no modo preciso), marca de centro nos contornos grandes.
+pub(crate) fn cursor_look(diameter_px: f32, precise: bool) -> CursorLook {
+    let outline = diameter_px >= OUTLINE_MIN_PX;
+    let center = if precise || !outline {
+        CenterMark::Cross
+    } else if diameter_px >= CENTER_MARK_PX {
+        CenterMark::Dot
+    } else {
+        CenterMark::None
+    };
+    CursorLook { outline, center }
+}
+
+/// Diâmetro da ponta (px do desenho) e o preset dela (para o contorno da forma) da ferramenta de pintura atual.
+fn cursor_tip(env: &Env) -> Option<(f32, Option<aiai_paint::brush::BrushPreset>)> {
+    let o = &env.ed.opts;
+    match *env.tool {
+        ToolId::Pen => Some((o.pen_width, None)),
+        ToolId::Brush => {
+            let sp = tools::stroke_preset(env, false);
+            Some((sp.size, Some(sp)))
+        }
+        ToolId::Eraser => match env.ed.layer.as_ref().and_then(|l| cmds::layer_data(&env.core.project, l)).map(|l| l.kind) {
+            // vetor: o raio que toca os traços; preenchimento: tira a região sob o ponto (só a mira)
+            Some(LayerType::Vector) => Some((o.eraser_size, None)),
+            Some(LayerType::Fill) => Some((0.0, None)),
+            _ => {
+                let sp = tools::stroke_preset(env, true);
+                Some((sp.size, Some(sp)))
+            }
+        },
+        _ => None,
+    }
+}
+
+/// Caps Lock ligado (o modo preciso do Photoshop).
+fn caps_lock() -> bool {
+    #[cfg(windows)]
+    {
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn GetKeyState(vk: i32) -> i16;
+        }
+        // SAFETY: GetKeyState só lê o estado do teclado da thread (VK_CAPITAL = 0x14; bit 0 = ligado)
+        unsafe { GetKeyState(0x14) & 1 != 0 }
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// Linhas em duas cores (escura larga embaixo, clara fina em cima): aparecem sobre desenho claro e escuro.
+fn two_tone_segments(painter: &egui::Painter, segs: &[[Pos2; 2]]) {
+    for s in segs {
+        painter.line_segment(*s, Stroke::new(2.5, Color32::from_black_alpha(150)));
+    }
+    for s in segs {
+        painter.line_segment(*s, Stroke::new(1.0, Color32::from_white_alpha(225)));
+    }
+}
+
+/// Mira em `p` com vão `gap` e braços `arm` (px lógicos); vão 0 = cruz cheia.
+fn crosshair(painter: &egui::Painter, p: Pos2, (gap, arm): (f32, f32)) {
+    let segs: Vec<[Pos2; 2]> = [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)].iter().map(|&(dx, dy)| [p + egui::vec2(dx, dy) * gap, p + egui::vec2(dx, dy) * (gap + arm)]).collect();
+    for s in &segs {
+        painter.line_segment(*s, Stroke::new(3.0, Color32::from_black_alpha(150)));
+    }
+    for s in &segs {
+        painter.line_segment(*s, Stroke::new(1.0, Color32::WHITE));
+    }
+}
+
+/// Contorno da ponta com raio `rc` (px do desenho) em volta de `p`, no giro/espelho da visão: a elipse da ponta
+/// redonda, a forma de cenário ou a máscara da ponta de imagem; a ponta redonda comum é um círculo.
+fn paint_tip_outline(painter: &egui::Painter, p: Pos2, xf: &Xf, rc: f32, preset: Option<&aiai_paint::brush::BrushPreset>, blobs: &BlobStore) {
+    match preset.and_then(|sp| tip_outline_unit(sp, blobs)) {
+        Some(segs) => {
+            let m = xf.m;
+            let map = |v: Vec2| {
+                let w = v * rc;
+                p + egui::vec2(m[0] * w.x + m[1] * w.y, m[2] * w.x + m[3] * w.y)
+            };
+            let segs: Vec<[Pos2; 2]> = segs.iter().map(|[a, b]| [map(*a), map(*b)]).collect();
+            two_tone_segments(painter, &segs);
+        }
+        None => {
+            let r = rc * xf.scale;
+            painter.circle_stroke(p, r + 0.5, Stroke::new(1.5, Color32::from_black_alpha(150)));
+            painter.circle_stroke(p, r - 0.5, Stroke::new(1.0, Color32::from_white_alpha(225)));
+        }
+    }
+}
+
+/// Contorno da ponta em raio 1 (px do desenho ÷ raio, sem o giro da visão), como segmentos: a elipse da ponta
+/// redonda achatada/girada, ou o contorno da forma/máscara tirado da própria cobertura do motor. `None` = círculo.
+fn tip_outline_unit(sp: &aiai_paint::brush::BrushPreset, blobs: &BlobStore) -> Option<Vec<[Vec2; 2]>> {
     use aiai_paint::brush::BrushTip;
-    match tip {
+    match &sp.tip {
         BrushTip::Round { roundness, angle, .. } if *roundness < 0.98 || angle.abs() > 0.5 => {
             let (s, c) = angle.to_radians().sin_cos();
-            let n = 48;
+            let n = 64;
             let pt = |k: usize| {
                 let a = k as f32 / n as f32 * std::f32::consts::TAU;
-                let (x, y) = (a.cos() * r, a.sin() * r * roundness.clamp(0.05, 1.0));
+                let (x, y) = (a.cos(), a.sin() * roundness.clamp(0.05, 1.0));
                 Vec2::new(x * c - y * s, x * s + y * c)
             };
             Some((0..n).map(|k| [pt(k), pt(k + 1)]).collect())
         }
         BrushTip::Shape { shape, aspect } => {
-            let unit = shape_outline_unit(*shape, two_tone);
+            let two = sp.two_tone.is_some();
             let a = aspect.clamp(0.1, 4.0);
-            Some(unit.iter().map(|[p, q]| [Vec2::new(p.x * r * a, p.y * r), Vec2::new(q.x * r * a, q.y * r)]).collect())
+            let unit = outline_cached(&format!("{shape:?}{two}"), |u, v| aiai_paint::brush::shape_coverage_tone(*shape, u, v, 0.02, two));
+            Some(unit.iter().map(|[p, q]| [Vec2::new(p.x * a, p.y), Vec2::new(q.x * a, q.y)]).collect())
+        }
+        BrushTip::Image { blob, .. } => {
+            let key = format!("img:{blob}");
+            if let Some(v) = outline_cache_get(&key) {
+                return Some(v);
+            }
+            let loaded = aiai_tools::paint::load_tip_mask(blobs, sp).ok()?;
+            let BrushTip::Image { mask: Some(m), .. } = &loaded.tip else { return None };
+            // a máscara ocupa o quadrado do diâmetro: (u, v) ∈ [-1, 1] → pixel da máscara
+            Some(outline_cached(&key, |u, v| {
+                let (x, y) = ((u * 0.5 + 0.5) * m.width as f32, (v * 0.5 + 0.5) * m.height as f32);
+                if x < 0.0 || y < 0.0 || x >= m.width as f32 || y >= m.height as f32 { 0.0 } else { m.get(x as u32, y as u32) }
+            }))
         }
         _ => None,
     }
 }
 
-/// Contorno (coordenadas da forma, -1..1) da forma de ponta, em cache.
-fn shape_outline_unit(shape: aiai_paint::brush::TipShape, two_tone: bool) -> Vec<[Vec2; 2]> {
-    use std::collections::HashMap;
-    use std::sync::{Mutex, OnceLock};
-    static CACHE: OnceLock<Mutex<HashMap<String, Vec<[Vec2; 2]>>>> = OnceLock::new();
-    let key = format!("{shape:?}{two_tone}");
-    let cache = CACHE.get_or_init(Default::default);
-    if let Some(v) = cache.lock().ok().and_then(|c| c.get(&key).cloned()) {
+type OutlineCache = std::sync::Mutex<std::collections::HashMap<String, Vec<[Vec2; 2]>>>;
+
+fn outline_cache() -> &'static OutlineCache {
+    static CACHE: std::sync::OnceLock<OutlineCache> = std::sync::OnceLock::new();
+    CACHE.get_or_init(Default::default)
+}
+
+fn outline_cache_get(key: &str) -> Option<Vec<[Vec2; 2]>> {
+    outline_cache().lock().ok().and_then(|c| c.get(key).cloned())
+}
+
+/// Contorno no nível 0,5 de `f(u, v)` em [-1,25; 1,25]² (grade 96), em cache por `key`.
+fn outline_cached(key: &str, f: impl Fn(f32, f32) -> f32) -> Vec<[Vec2; 2]> {
+    if let Some(v) = outline_cache_get(key) {
         return v;
     }
-    // grade de amostras da cobertura e quadrados marchantes no nível 0,5
-    let n = 64usize;
-    let (lo, hi) = (-1.25f32, 1.25f32);
-    let step = (hi - lo) / n as f32;
-    let at = |i: usize, j: usize| Vec2::new(lo + i as f32 * step, lo + j as f32 * step);
-    let f: Vec<f32> = (0..=n).flat_map(|j| (0..=n).map(move |i| (i, j))).map(|(i, j)| {
-        let p = at(i, j);
-        aiai_paint::brush::shape_coverage_tone(shape, p.x, p.y, step, two_tone) - 0.5
-    }).collect();
-    let v = |i: usize, j: usize| f[j * (n + 1) + i];
+    let segs = marching_squares(f, 96, 1.25);
+    if let Ok(mut c) = outline_cache().lock() {
+        c.insert(key.to_owned(), segs.clone());
+    }
+    segs
+}
+
+/// Quadrados marchantes no nível 0,5 de `f` numa grade `n`×`n` em [-half, half]².
+pub(crate) fn marching_squares(f: impl Fn(f32, f32) -> f32, n: usize, half: f32) -> Vec<[Vec2; 2]> {
+    let step = 2.0 * half / n as f32;
+    let at = |i: usize, j: usize| Vec2::new(-half + i as f32 * step, -half + j as f32 * step);
+    let vals: Vec<f32> = (0..=n)
+        .flat_map(|j| (0..=n).map(move |i| (i, j)))
+        .map(|(i, j)| {
+            let p = at(i, j);
+            f(p.x, p.y) - 0.5
+        })
+        .collect();
+    let v = |i: usize, j: usize| vals[j * (n + 1) + i];
     let mut segs = Vec::new();
     for j in 0..n {
         for i in 0..n {
@@ -836,15 +980,38 @@ fn shape_outline_unit(shape: aiai_paint::brush::TipShape, two_tone: bool) -> Vec
             }
         }
     }
-    if let Ok(mut c) = cache.lock() {
-        c.insert(key, segs.clone());
-    }
     segs
 }
 
 /// Ferramentas cuja mira o canvas desenha (no mesmo quadro do contorno do pincel).
 fn own_cursor(tool: ToolId) -> bool {
     matches!(tool, ToolId::Pen | ToolId::Brush | ToolId::Eraser | ToolId::Fill | ToolId::Eyedropper | ToolId::Lasso)
+}
+
+/// Cursor próprio das ferramentas sem ponta (o sistema não tem estes ícones): conta-gotas com a ponta no ponto de
+/// leitura, balde com a mira no ponto em que derrama, mira de seleção.
+fn tool_glyph(painter: &egui::Painter, p: Pos2, tool: ToolId) {
+    let both = |pts: Vec<Pos2>, closed: bool| {
+        for s in [Stroke::new(3.5, Color32::from_black_alpha(160)), Stroke::new(1.5, Color32::WHITE)] {
+            painter.add(if closed { Shape::closed_line(pts.clone(), s) } else { Shape::line(pts.clone(), s) });
+        }
+    };
+    match tool {
+        ToolId::Eyedropper => {
+            let d = egui::vec2(1.0, -1.0).normalized();
+            let n = egui::vec2(d.y, -d.x);
+            both(vec![p, p + d * 9.0], false);
+            both(vec![p + d * 9.0 + n * 2.5, p + d * 15.0 + n * 2.5, p + d * 15.0 - n * 2.5, p + d * 9.0 - n * 2.5], true);
+            both(vec![p + d * 15.0, p + d * 19.0], false);
+        }
+        ToolId::Fill => {
+            crosshair(painter, p, (2.0, 4.0));
+            let o = p + egui::vec2(9.0, -16.0);
+            both(vec![o, o + egui::vec2(10.0, 0.0), o + egui::vec2(8.5, 10.0), o + egui::vec2(1.5, 10.0)], true);
+            both(vec![o, o + egui::vec2(-3.0, 5.0)], false);
+        }
+        _ => crosshair(painter, p, (2.5, 7.0)),
+    }
 }
 
 fn set_cursor(env: &Env, ctx: &egui::Context, resp: &egui::Response, tool: ToolId) {
@@ -972,47 +1139,31 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
         super::comp_viewer::paint_overlay(env, painter, rect, xf, cut, canvas);
     }
 
-    // ponta/pincel sob o cursor
+    // cursor das ferramentas de pintura (como o Photoshop e o Clip Studio): o contorno da ponta no tamanho de verdade;
+    // a mira fina só quando o contorno fica pequeno demais para ver (ou sempre, no modo preciso: preferência ou Caps
+    // Lock); com o contorno grande, uma marca pequena no centro. Tudo em volta do mesmo ponto, o pixel do ponteiro.
     if let Some(p) = env.ed.cursor {
         let ring = matches!(env.ed.gesture, Gesture::None | Gesture::Stroke(_));
         // espaço/R = mão/girar (o set_cursor mostra o ícone do sistema): sem a mira própria
         let nav = matches!(env.ed.gesture, Gesture::Pan { .. } | Gesture::Rotate { .. }) || painter.ctx().input(|i| i.key_down(egui::Key::Space) || i.key_down(egui::Key::R));
-        if rect.contains(p) {
-            let o = &env.ed.opts;
-            let d = match *env.tool {
-                ToolId::Pen => Some(o.pen_width),
-                ToolId::Brush => Some(o.brush_size),
-                ToolId::Eraser => Some(o.eraser_size),
-                _ => None,
-            };
-            if let Some(d) = d.filter(|_| ring && !nav) {
-                let r = (d * xf.scale / 2.0).max(1.5);
-                // pincel: o contorno da ponta de verdade (forma de cenário ou elipse da ponta redonda)
-                let tip = (*env.tool == ToolId::Brush).then(|| tools::stroke_preset(env, false).tip);
-                let segs = tip.as_ref().and_then(|t| tip_outline(t, tools::stroke_preset(env, false).two_tone.is_some(), r));
-                match segs {
-                    Some(segs) => {
-                        for [a, b] in &segs {
-                            painter.line_segment([p + *a, p + *b], Stroke::new(2.5, Color32::from_black_alpha(150)));
-                        }
-                        for [a, b] in &segs {
-                            painter.line_segment([p + *a, p + *b], Stroke::new(1.0, Color32::from_white_alpha(220)));
-                        }
+        if rect.contains(p) && !nav {
+            let p = Pos2::new(painter.round_to_pixel_center(p.x), painter.round_to_pixel_center(p.y));
+            let precise = env.ed.cursor_precise || caps_lock();
+            let tip = if ring { cursor_tip(env) } else { None };
+            match tip {
+                Some((d, preset)) => {
+                    let look = cursor_look(d * xf.scale, precise);
+                    if look.outline {
+                        paint_tip_outline(painter, p, xf, d / 2.0, preset.as_ref(), &env.core.blobs);
                     }
-                    None => {
-                        painter.circle_stroke(p, r + 0.5, Stroke::new(1.0, Color32::from_black_alpha(160)));
-                        painter.circle_stroke(p, r - 0.5, Stroke::new(1.0, Color32::from_white_alpha(200)));
+                    match look.center {
+                        CenterMark::Cross => crosshair(painter, p, if precise { (2.5, 7.0) } else { (2.0, 5.0) }),
+                        CenterMark::Dot => crosshair(painter, p, (0.0, 2.5)),
+                        CenterMark::None => {}
                     }
                 }
-            }
-            if own_cursor(*env.tool) && !nav {
-                // mira fina em duas cores (aparece em fundo claro e escuro), com um vão no meio para ver o ponto
-                let (gap, arm) = (2.5, 7.0);
-                for (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
-                    let (a, b) = (p + egui::vec2(dx, dy) * gap, p + egui::vec2(dx, dy) * (gap + arm));
-                    painter.line_segment([a, b], Stroke::new(3.0, Color32::from_black_alpha(150)));
-                    painter.line_segment([a, b], Stroke::new(1.0, Color32::WHITE));
-                }
+                None if own_cursor(*env.tool) => tool_glyph(painter, p, *env.tool),
+                None => {}
             }
         }
     }
@@ -1329,10 +1480,11 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
                     polyline(painter, &pts, env.ed.opts.brush_size, super::ui_kit::rgba_to_color32(Rgba([c.0[0], c.0[1], c.0[2], a])), xf);
                 }
                 ToolId::Eraser if has_live => {}
+                // prévia ao vivo ainda não chegou: nada por cima do desenho (a faixa branca de antes cobria o traço
+                // pela metade e não era o resultado)
+                ToolId::Eraser if env.ed.live_stroke.active() => {}
                 _ => {
-                    let path: Vec<Vec2> = g.path.iter().map(|p| g.to_canvas(*p)).collect();
-                    polyline(painter, &path, env.ed.opts.eraser_size, Color32::from_white_alpha(70), xf);
-                    // traços vetoriais que a borracha apagaria agora
+                    // sem prévia ao vivo para esta camada: os traços vetoriais que a borracha apagaria agora
                     if let Some(cel) = cmds::exposed_cel(&env.core.project, cut, &g.layer, env.ed.frame).and_then(|c| cmds::cel_data(&env.core.project, &c)) {
                         for s in cel.strokes.iter().filter(|s| g.hits.contains(&s.id)) {
                             let sp: Vec<Vec2> = aiai_paint::sample_stroke(s).iter().map(|q| g.to_canvas(Vec2::new(q.x, q.y))).collect();
@@ -1404,6 +1556,50 @@ fn readout(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, c: Vec2)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Contorno pequeno demais vira mira; contorno visível sem nada no meio; contorno grande com marca de centro;
+    /// modo preciso sempre com a mira.
+    #[test]
+    fn cursor_look_by_screen_size() {
+        assert_eq!(cursor_look(2.0, false), CursorLook { outline: false, center: CenterMark::Cross });
+        assert_eq!(cursor_look(OUTLINE_MIN_PX - 0.1, false).outline, false);
+        assert_eq!(cursor_look(12.0, false), CursorLook { outline: true, center: CenterMark::None });
+        assert_eq!(cursor_look(300.0, false), CursorLook { outline: true, center: CenterMark::Dot });
+        assert_eq!(cursor_look(300.0, true), CursorLook { outline: true, center: CenterMark::Cross });
+        assert_eq!(cursor_look(3.0, true), CursorLook { outline: false, center: CenterMark::Cross });
+        // pincel de 24 px: 10% = 2,4 px (mira), 100% = 24 px (contorno + marca), 400% = 96 px
+        assert_eq!(cursor_look(24.0 * 0.1, false).center, CenterMark::Cross);
+        assert!(cursor_look(24.0, false).outline && cursor_look(96.0, false).center == CenterMark::Dot);
+    }
+
+    /// O contorno das pontas de forma fica em volta do mesmo ponto em que o motor carimba (o centro da mira): a caixa
+    /// do contorno bate com a caixa da tinta de um carimbo no ponto.
+    #[test]
+    fn tip_outline_sits_on_the_dab_hotspot() {
+        use aiai_paint::brush::{BrushPreset, BrushTip, TipShape};
+        for shape in [TipShape::GrassBlade, TipShape::Rose, TipShape::CloudPuff, TipShape::Leaf, TipShape::Square] {
+            let mut p = BrushPreset::round("forma", 60.0, 1.0);
+            p.tip = BrushTip::Shape { shape, aspect: 1.0 };
+            let mut img = aiai_paint::Image::new(128, 128);
+            aiai_paint::brush::paint_stroke(&mut img, &p, &[aiai_paint::brush::BrushPoint { x: 64.0, y: 64.0, pressure: 1.0 }], [0.0, 0.0, 0.0, 1.0], 1);
+            let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+            for y in 0..128u32 {
+                for x in 0..128u32 {
+                    if img.get(x, y)[3] >= 0.5 {
+                        let (u, v) = ((x as f32 + 0.5 - 64.0) / 30.0, (y as f32 + 0.5 - 64.0) / 30.0);
+                        (x0, y0, x1, y1) = (x0.min(u), y0.min(v), x1.max(u), y1.max(v));
+                    }
+                }
+            }
+            let segs = tip_outline_unit(&p, &BlobStore::default()).expect("contorno da forma");
+            let (mut a0, mut b0, mut a1, mut b1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+            for q in segs.iter().flatten() {
+                (a0, b0, a1, b1) = (a0.min(q.x), b0.min(q.y), a1.max(q.x), b1.max(q.y));
+            }
+            let tol = 0.08;
+            assert!((x0 - a0).abs() < tol && (x1 - a1).abs() < tol && (y0 - b0).abs() < tol && (y1 - b1).abs() < tol, "{shape:?}: tinta [{x0:.2},{y0:.2}..{x1:.2},{y1:.2}] × contorno [{a0:.2},{b0:.2}..{a1:.2},{b1:.2}]");
+        }
+    }
 
     fn touch(phase: egui::TouchPhase, f: f32) -> Event {
         Event::Touch { device_id: egui::TouchDeviceId(1), id: egui::TouchId(1), phase, pos: Pos2::ZERO, force: Some(f) }

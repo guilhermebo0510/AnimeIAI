@@ -433,10 +433,18 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
             }
         }
         ToolId::Eraser => {
+            let brush_name = env.ed.brushes.get(env.ed.opts.brush_preset).map(|p| p.name.clone()).unwrap_or_default();
             let o = &mut env.ed.opts;
             row(ui, &t, compact, "opt.size", |ui| {
                 ui.add(egui::DragValue::new(&mut o.eraser_size).range(1.0..=600.0).speed(0.5).max_decimals(0).suffix(" px"));
             });
+            // borracha raster como a do Photoshop: ponta (Pincel/Lápis/Bloco), dureza, opacidade, fluxo e pressão
+            let mut hard_rect = None;
+            eraser_rows(ui, &t, compact, o, &brush_name, &mut hard_rect);
+            if let Some(r) = hard_rect.filter(|_| !compact) {
+                env.notes.push(("opt:eraser_hardness".into(), r));
+            }
+            let o = &mut env.ed.opts;
             if !panel {
             row(ui, &t, compact, "opt.eraser_mode", |ui| {
                 use aiai_tools::erase::EraseMode;
@@ -669,6 +677,53 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
         }
         // Modelagem: as opções ficam no cabeçalho do viewport 3D
         _ => {}
+    }
+}
+
+/// Controles da borracha raster: ponta, dureza 0–100% (só na ponta Pincel redonda), opacidade, fluxo, pressão e
+/// "usar o pincel atual". `hard_rect` recebe o retângulo do controle de dureza (bridge).
+fn eraser_rows(ui: &mut Ui, t: &crate::theme::Tokens, compact: bool, o: &mut ToolOptions, brush_name: &str, hard_rect: &mut Option<egui::Rect>) {
+    use crate::app::editor::EraserTip;
+    let key = |m: EraserTip| match m {
+        EraserTip::Brush => "eraser.tip.brush",
+        EraserTip::Pencil => "eraser.tip.pencil",
+        EraserTip::Block => "eraser.tip.block",
+    };
+    row(ui, t, compact, "opt.eraser_tip", |ui| {
+        egui::ComboBox::from_id_salt(("eraser_tip", compact)).selected_text(tr(key(o.eraser_tip))).show_ui(ui, |ui| {
+            for m in [EraserTip::Brush, EraserTip::Pencil, EraserTip::Block] {
+                ui.selectable_value(&mut o.eraser_tip, m, tr(key(m)));
+            }
+        })
+        .response
+        .on_hover_text(tr("opt.eraser_tip.tip"));
+    });
+    let sw = if compact { 64.0 } else { 120.0 };
+    let pct = |v: f64, _: std::ops::RangeInclusive<usize>| format!("{:.0}%", v);
+    let hard_on = o.eraser_tip == EraserTip::Brush && !o.eraser_use_brush;
+    row(ui, t, compact, "brush.hardness", |ui| {
+        ui.spacing_mut().slider_width = sw;
+        let mut v = o.eraser_hardness * 100.0;
+        let r = ui.add_enabled(hard_on, egui::Slider::new(&mut v, 0.0..=100.0).show_value(!compact).custom_formatter(pct).trailing_fill(true));
+        if r.changed() {
+            o.eraser_hardness = (v / 100.0).clamp(0.0, 1.0);
+        }
+        *hard_rect = Some(r.rect);
+        r.on_hover_text(tr("opt.eraser_hardness.tip"));
+    });
+    for (k, val) in [("opt.opacity", &mut o.eraser_opacity), ("opt.flow", &mut o.eraser_flow)] {
+        row(ui, t, compact, k, |ui| {
+            ui.spacing_mut().slider_width = sw;
+            let mut v = *val * 100.0;
+            if ui.add(egui::Slider::new(&mut v, 1.0..=100.0).show_value(!compact).custom_formatter(pct).trailing_fill(true)).on_hover_text(tr(k)).changed() {
+                *val = (v / 100.0).clamp(0.01, 1.0);
+            }
+        });
+    }
+    if !compact {
+        ui.checkbox(&mut o.eraser_pressure_size, tr("opt.pressure_size"));
+        ui.checkbox(&mut o.eraser_pressure_opacity, tr("opt.pressure_opacity"));
+        ui.checkbox(&mut o.eraser_use_brush, format!("{} ({brush_name})", tr("opt.eraser_use_brush"))).on_hover_text(tr("opt.eraser_use_brush.tip"));
     }
 }
 

@@ -207,6 +207,16 @@ impl StudioApp {
                 ui.label(egui::RichText::new(tr(if self.ed.pen_seen { "prefs.pen_seen" } else { "prefs.pen_none" })).size(11.0).color(t.text_dim));
             });
             ui.end_row();
+
+            ui.label(tr("prefs.cursor"));
+            let mut precise = self.prefs.cursor_precise;
+            let c = ui.checkbox(&mut precise, tr("prefs.cursor_precise"));
+            self.rects.note("prefs:cursor_precise", c.rect);
+            if c.changed() {
+                self.prefs.cursor_precise = precise;
+                self.mark_dirty();
+            }
+            ui.end_row();
         });
     }
 

@@ -5,7 +5,7 @@
 //! Escolher uma ferramenta traz este painel para a frente.
 
 use crate::app::brushes::{CATEGORIES, cat_label, cat_of};
-use crate::app::editor::{PenShape, PointsMode, SelMode};
+use crate::app::editor::{EraserTip, PenShape, PointsMode, SelMode};
 use crate::app::ui_kit::{Env, body_ui, section};
 use crate::i18n::tr;
 use crate::workspace::ToolId;
@@ -54,6 +54,10 @@ enum Act {
     PenTip(VectorTip),
     PenShape(PenShape),
     EraserRaster(u8),
+    /// Lápis / Bloco da borracha raster.
+    EraserTip(EraserTip),
+    /// A borracha apaga com a ponta do pincel atual.
+    EraserBrush,
     EraserVector(EraseMode),
     Fill(u8),
     Select(SelMode),
@@ -396,6 +400,11 @@ fn items_for(env: &Env, tool: ToolId) -> Vec<Item> {
         }
         ToolId::Eraser => {
             let mut v: Vec<Item> = ERASERS.iter().enumerate().map(|(i, (k, _))| it(tr(k).to_owned(), "tc.raster", Act::EraserRaster(i as u8), Thumb::Tex(if i == 0 { "erase:hard" } else { "erase:soft" }))).collect();
+            v.extend([(EraserTip::Pencil, "eraser.tip.pencil", "erase:pencil"), (EraserTip::Block, "eraser.tip.block", "erase:block")].into_iter().map(|(m, k, tex)| it(tr(k).to_owned(), "tc.raster", Act::EraserTip(m), Thumb::Tex(tex))));
+            // qualquer pincel da biblioteca apaga (forma, textura, dinâmica): o escolhido na ferramenta Pincel
+            let bi = env.ed.opts.brush_preset;
+            let bname = env.ed.brushes.get(bi).map(|p| p.name.clone()).unwrap_or_default();
+            v.push(it(format!("{}: {bname}", tr("eraser.brush_item")), "tc.raster", Act::EraserBrush, Thumb::Brush(bi)));
             v.extend([(EraseMode::Segment, "opt.erase_segment"), (EraseMode::Intersection, "opt.erase_intersection"), (EraseMode::Whole, "opt.erase_whole")].into_iter().map(|(m, k)| it(tr(k).to_owned(), "tc.vector", Act::EraserVector(m), Thumb::Erase(m))));
             v
         }
@@ -412,7 +421,9 @@ fn is_selected(env: &Env, a: Act) -> bool {
         Act::Brush(i) => o.brush_preset == i,
         Act::PenTip(t) => o.pen_tip == t,
         Act::PenShape(s) => o.pen_shape == s,
-        Act::EraserRaster(i) => (o.eraser_hardness - ERASERS[i as usize].1).abs() < 1e-3,
+        Act::EraserRaster(i) => o.eraser_tip == EraserTip::Brush && !o.eraser_use_brush && (o.eraser_hardness - ERASERS[i as usize].1).abs() < 1e-3,
+        Act::EraserTip(m) => o.eraser_tip == m && !o.eraser_use_brush,
+        Act::EraserBrush => o.eraser_use_brush,
         Act::EraserVector(m) => o.eraser_mode == m,
         Act::Fill(i) => {
             let (_, gap, expand, left) = FILLS[i as usize];
@@ -437,7 +448,12 @@ fn apply(env: &mut Env, a: Act) {
         }
         Act::PenTip(t) => env.ed.opts.pen_tip = t,
         Act::PenShape(s) => env.ed.opts.pen_shape = s,
-        Act::EraserRaster(i) => env.ed.opts.eraser_hardness = ERASERS[i as usize].1,
+        Act::EraserRaster(i) => {
+            let o = &mut env.ed.opts;
+            (o.eraser_hardness, o.eraser_tip, o.eraser_use_brush) = (ERASERS[i as usize].1, EraserTip::Brush, false);
+        }
+        Act::EraserTip(m) => (env.ed.opts.eraser_tip, env.ed.opts.eraser_use_brush) = (m, false),
+        Act::EraserBrush => (env.ed.opts.eraser_tip, env.ed.opts.eraser_use_brush) = (EraserTip::Brush, true),
         Act::EraserVector(m) => env.ed.opts.eraser_mode = m,
         Act::Fill(i) => {
             let (_, gap, expand, left) = FILLS[i as usize];
@@ -493,8 +509,13 @@ fn ensure_thumbs(env: &mut Env, ui: &Ui) {
         }
         m.insert(name.to_owned(), tex(ui, name, &img));
     }
-    // borrachas raster: uma faixa da cor do texto apagada pelo próprio pincel de borracha
-    for (i, name) in ["erase:hard", "erase:soft"].iter().enumerate() {
+    // borrachas raster: uma faixa da cor do texto apagada pelo próprio preset da borracha (dura, macia, lápis, bloco)
+    let eraser = |tip: EraserTip, hardness: f32| {
+        let o = crate::app::editor::ToolOptions { eraser_size: 26.0, eraser_hardness: hardness, eraser_tip: tip, ..Default::default() };
+        crate::app::tools::eraser_preset(&o, None)
+    };
+    let kinds = [("erase:hard", eraser(EraserTip::Brush, ERASERS[0].1)), ("erase:soft", eraser(EraserTip::Brush, ERASERS[1].1)), ("erase:pencil", eraser(EraserTip::Pencil, 1.0)), ("erase:block", eraser(EraserTip::Block, 1.0))];
+    for (name, p) in kinds.iter() {
         let mut img = aiai_paint::Image::new(w, h);
         for y in 12..44 {
             for x in 10..w - 10 {
@@ -502,15 +523,13 @@ fn ensure_thumbs(env: &mut Env, ui: &Ui) {
                 img.data[k] = ink;
             }
         }
-        let mut p = aiai_paint::brush::BrushPreset::round("borracha", 26.0, ERASERS[i].1);
-        p.mode = aiai_paint::brush::BrushMode::Erase;
         let path: Vec<aiai_paint::brush::BrushPoint> = (0..40)
             .map(|k| {
                 let f = k as f32 / 39.0;
                 aiai_paint::brush::BrushPoint { x: 24.0 + f * (w as f32 - 48.0), y: h as f32 / 2.0 + 9.0 * (f * std::f32::consts::TAU).sin(), pressure: 1.0 }
             })
             .collect();
-        aiai_paint::brush::paint_stroke(&mut img, &p, &path, [0.0, 0.0, 0.0, 1.0], 3);
+        aiai_paint::brush::paint_stroke(&mut img, p, &path, [0.0, 0.0, 0.0, 1.0], 3);
         // o que a borracha tirou mostra o fundo do cartão
         for px in img.data.iter_mut() {
             let a = px[3];

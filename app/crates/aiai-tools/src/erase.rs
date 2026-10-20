@@ -120,9 +120,12 @@ pub fn erase_vector_command(p: &Project, req: &EraseVectorRequest) -> ToolResult
     let mut inserted = Vec::new();
     for (si, s) in cel.strokes.iter().enumerate() {
         let pts = &flat[si];
-        // raio do toque inclui a meia largura do traço
-        let hit_r = r + s.width * 0.5;
-        let hit: Vec<bool> = pts.iter().map(|q| dist_to_path(q.0, q.1, &req.path) <= hit_r).collect();
+        // raio do toque inclui o raio do traço em cada ponto (pressão, afinamento, largura do ponto: o mesmo das
+        // amostras do render, uma por ponto achatado), como o destaque do canvas: o que a borracha cobre na tela sai
+        // inteiro, e a ponta afinada só sai quando a borracha chega nela
+        let smp = aiai_paint::sample_stroke(s);
+        let local = |i: usize| if smp.len() == pts.len() { smp[i].r } else { s.width * 0.5 };
+        let hit: Vec<bool> = pts.iter().enumerate().map(|(i, q)| dist_to_path(q.0, q.1, &req.path) <= r + local(i)).collect();
         if !hit.iter().any(|&h| h) {
             continue;
         }

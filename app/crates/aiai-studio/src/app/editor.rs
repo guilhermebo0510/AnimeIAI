@@ -450,6 +450,18 @@ pub(crate) fn point_in_polygon(p: Vec2, poly: &[Vec2]) -> bool {
 
 // ------------------------------------------------------------------------------------------------ opções, gestos, reprodução
 
+/// Ponta da borracha raster (os modos da borracha do Photoshop).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum EraserTip {
+    /// Pincel: ponta redonda com a dureza escolhida (borda macia).
+    #[default]
+    Brush,
+    /// Lápis: borda dura, sem antisserrilhado.
+    Pencil,
+    /// Bloco: quadrado duro, do tamanho escolhido.
+    Block,
+}
+
 pub(crate) struct ToolOptions {
     pub pen_width: f32,
     pub pen_tip: VectorTip,
@@ -468,8 +480,18 @@ pub(crate) struct ToolOptions {
     /// Ajustes finos do pincel (cópia editada do preset escolhido); escolher outro preset descarta.
     pub brush_custom: Option<aiai_paint::brush::BrushPreset>,
     pub eraser_size: f32,
-    /// Dureza da borracha raster (dura 0,9; macia 0).
+    /// Dureza da borracha raster, 0..1 (o controle mostra 0–100%; os presets Dura = 0,9 e Macia = 0).
     pub eraser_hardness: f32,
+    /// Opacidade e fluxo da borracha raster (como no Photoshop: opacidade limita o traço, fluxo é cada carimbo).
+    pub eraser_opacity: f32,
+    pub eraser_flow: f32,
+    /// Pressão da caneta muda o tamanho / a opacidade da borracha.
+    pub eraser_pressure_size: bool,
+    pub eraser_pressure_opacity: bool,
+    /// Ponta da borracha raster: Pincel (macia), Lápis (dura sem antisserrilhado), Bloco (quadrada).
+    pub eraser_tip: EraserTip,
+    /// Apaga com a ponta do pincel atual (forma, textura, dinâmica), como a borracha do Photoshop.
+    pub eraser_use_brush: bool,
     /// Propriedades do pincel: todas (em vez de só as que o pincel usa).
     pub brush_show_all: bool,
     /// Borracha em camada vetorial: traço inteiro, trecho coberto ou até a interseção.
@@ -505,6 +527,12 @@ impl Default for ToolOptions {
             brush_custom: None,
             eraser_size: 20.0,
             eraser_hardness: 0.9,
+            eraser_opacity: 1.0,
+            eraser_flow: 1.0,
+            eraser_pressure_size: true,
+            eraser_pressure_opacity: false,
+            eraser_tip: EraserTip::Brush,
+            eraser_use_brush: false,
             brush_show_all: false,
             eraser_mode: aiai_tools::erase::EraseMode::Segment,
             fill_gap: 3.0,
@@ -727,6 +755,8 @@ pub(crate) struct Editor {
     pub pressure: f32,
     /// Curva de pressão das preferências (mínimo, expoente), aplicada a toda pressão de caneta lida.
     pub pressure_curve: (f32, f32),
+    /// Cursor preciso das preferências: a mira fina sempre, junto com o contorno da ponta (no Photoshop, Caps Lock).
+    pub cursor_precise: bool,
     /// Já chegou pressão de caneta nesta sessão (mostrado nas Preferências).
     pub pen_seen: bool,
     pub toast: Option<String>,
@@ -848,6 +878,7 @@ impl Default for Editor {
             cursor: None,
             pressure: 1.0,
             pressure_curve: (0.0, 1.0),
+            cursor_precise: false,
             pen_seen: false,
             toast: None,
             pending_latency: None,

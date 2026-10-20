@@ -1146,6 +1146,7 @@ impl StudioApp {
         }
         self.bridge_tick(&ctx);
         self.ed.pressure_curve = (self.prefs.pen_pressure_min, self.prefs.pen_pressure_gamma);
+        self.ed.cursor_precise = self.prefs.cursor_precise;
         self.autosave_tick();
         panels::timeline::tick(&self.core, &mut self.ed, &ctx);
         panels::deliver::tick(&self.core, &mut self.ed, &ctx);
