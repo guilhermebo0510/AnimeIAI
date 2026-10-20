@@ -120,16 +120,16 @@ pub struct StudioApp {
 
 impl StudioApp {
     pub fn new(cc: &eframe::CreationContext<'_>, cli: Cli) -> Self {
-        Self::build(&cc.egui_ctx, cli)
-    }
         // ícones pequeno e grande da janela, na grade de pixels e na variante do tema do Windows (brand.rs)
         crate::brand::init_window_icons(cc);
+        Self::build(&cc.egui_ctx, cli)
+    }
 
     /// Monta o app a partir de um contexto egui (o eframe passa o dele; os testes, um contexto solto).
     pub fn build(ctx: &egui::Context, cli: Cli) -> Self {
+        crate::splash::status(tr("splash.fonts"));
         theme::install_fonts(ctx);
         let prefs_path = if cli.no_session { None } else { cli.session_file.clone().map(PathBuf::from).or_else(prefs::default_path) };
-        crate::splash::status(tr("splash.fonts"));
         let mut prefs = prefs_path.as_deref().map(prefs::load).unwrap_or_default();
         let layouts_path = layout_store::path_for(cli.no_session, cli.session_file.as_deref());
         let layouts = layouts_path.as_deref().map(layout_store::load).unwrap_or_default();
@@ -197,16 +197,16 @@ impl StudioApp {
         app.ed.keys = crate::keymap::Keymap::from_overrides(&app.prefs.shortcuts);
         app.fit_tool_to_workspace();
         // pincéis de fábrica + os .aiaibrush da pasta do usuário (sem sessão: só os de fábrica, nada é lido nem gravado)
+        crate::splash::status(tr("splash.library"));
         app.ed.brushes = brushes::BrushLibrary::open(!app.cli.no_session, &app.prefs.brush_author);
         // biblioteca de recursos em Documentos\AnimeIAI (com --no-session nada é lido nem gravado, salvo AIAI_LIBRARY_DIR)
-        crate::splash::status(tr("splash.library"));
         aiai_assets::enable_user_folders(!app.cli.no_session);
         if let Some(dir) = app.cli.project.clone() {
-            app.doc_open_path(std::path::Path::new(&dir));
-        } else {
             // diário (wal.ndjson) com comandos: a abertura vai reaplicá-los
             let has_wal = std::fs::metadata(std::path::Path::new(&dir).join("wal.ndjson")).is_ok_and(|m| m.len() > 0);
             crate::splash::status(tr(if has_wal { "splash.wal" } else { "splash.open_project" }));
+            app.doc_open_path(std::path::Path::new(&dir));
+        } else {
             // sem projeto na linha de comando: tela inicial (nunca nas execuções de teste/captura)
             app.start.open = app.prefs.show_start && !app.cli.no_session && app.cli.screenshot.is_none();
         }
@@ -1137,13 +1137,13 @@ impl StudioApp {
     /// Um quadro inteiro da interface (o `eframe::App::ui` só acrescenta o que depende do `Frame`).
     pub fn frame(&mut self, ui: &mut egui::Ui) {
         self.frame_count += 1;
-        let ctx = ui.ctx().clone();
-        self.sample_frame(&ctx);
         crate::brand::tick_window_icons();
         if self.frame_count == 2 {
             // a interface já desenhou: a tela de abertura pode sair
             crate::splash::finish();
         }
+        let ctx = ui.ctx().clone();
+        self.sample_frame(&ctx);
         self.bridge_tick(&ctx);
         self.ed.pressure_curve = (self.prefs.pen_pressure_min, self.prefs.pen_pressure_gamma);
         self.ed.cursor_precise = self.prefs.cursor_precise;

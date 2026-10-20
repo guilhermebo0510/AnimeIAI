@@ -1065,6 +1065,7 @@ dependencies = [
  "winreg",
 ]
 
+[[package]]
 name = "enumn"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
