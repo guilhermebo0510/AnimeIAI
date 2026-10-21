@@ -6,6 +6,7 @@
   Operacoes (separadas por ';' ou quebra de linha):
     foco                       traz a janela do app (processo aiai-studio) para a frente e CONFERE o foco e o titulo "AnimeIAI..."
     max                        maximiza (SW_MAXIMIZE) e foca
+    (parametros: -Process nome, -TitlePrefix inicio do titulo, -ProcessId PID para mirar uma instancia entre varias)
     title                      imprime o titulo da janela e falha se nao comecar com "AnimeIAI"
     rect                       imprime os retangulos fisicos da janela (visivel e area cliente)
     cap <arquivo.png>          captura a janela (bounds visiveis do DWM) para PNG; confere a barra de titulo antes
@@ -26,7 +27,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$S,
     [string]$Process = 'aiai-studio',
-    [string]$TitlePrefix = 'AnimeIAI'
+    [string]$TitlePrefix = 'AnimeIAI',
+    [int]$ProcessId = 0
 )
 $ErrorActionPreference = 'Stop'
 
@@ -92,7 +94,9 @@ if ([AiaiIn]::Size() -ne 40) { Write-Error "sizeof(INPUT) = $([AiaiIn]::Size()),
 function Chk($n, $what) { if ($n -ne 1) { throw "SendInput falhou ($what): retorno $n" } }
 
 function Get-AppHandle {
-    $proc = Get-Process $Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } | Select-Object -First 1
+    # -ProcessId mira uma instancia (ex.: o app de teste) quando ha duas do mesmo programa abertas
+    if ($ProcessId -ne 0) { $proc = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } }
+    else { $proc = Get-Process $Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } | Select-Object -First 1 }
     if (-not $proc) { throw "processo '$Process' nao esta rodando (ou sem janela principal)" }
     return $proc.MainWindowHandle
 }
