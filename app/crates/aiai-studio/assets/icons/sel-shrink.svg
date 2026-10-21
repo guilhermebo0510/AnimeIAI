@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="9.500" y="9.500" width="5" height="5" stroke-dasharray="2 1.500"/>
+  <path d="M4 4l3.500 3.500M7.500 7.500H4.800M7.500 7.500V4.800M20 4l-3.500 3.500M16.500 7.500h2.700M16.500 7.500V4.800M4 20l3.500-3.500M7.500 16.500H4.800M7.500 16.500v2.700M20 20l-3.500-3.500M16.500 16.500h2.700M16.500 16.500v2.700"/>
+</svg>

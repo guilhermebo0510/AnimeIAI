@@ -103,6 +103,58 @@ pub enum IconId {
     Stopwatch,
     /// Favorito.
     Star,
+    /// Arquivo novo.
+    FileNew,
+    /// Abrir arquivo.
+    FileOpen,
+    /// Salvar.
+    FileSave,
+    /// Desfazer.
+    Undo,
+    /// Refazer.
+    Redo,
+    /// Limpar a camada (ou o que está dentro da seleção).
+    ClearLayer,
+    /// Limpar fora da seleção.
+    ClearOutside,
+    /// Preencher a seleção com a cor atual.
+    FillSelection,
+    /// Transformação livre (Ctrl+T).
+    Transform,
+    /// Cancelar a seleção.
+    Deselect,
+    /// Inverter a seleção.
+    SelectInvert,
+    /// Mostrar a borda da seleção.
+    SelectionBorder,
+    /// Filtros (efeitos da camada).
+    Filter,
+    /// Visão sem rotação.
+    RotateReset,
+    /// Espelho vertical da visão.
+    FlipV,
+    /// Recortar na camada de baixo.
+    ClipBelow,
+    /// Histórico (passos de desfazer).
+    History,
+    /// Biblioteca: texturas.
+    Texture,
+    /// Biblioteca: padrões (texturas que repetem).
+    Pattern,
+    /// Biblioteca: materiais 3D.
+    Material,
+    /// Biblioteca: paletas e degradês.
+    Palette,
+    /// Biblioteca: imagens.
+    Image,
+    /// Biblioteca: poses.
+    Pose,
+    /// Expandir a seleção.
+    SelGrow,
+    /// Contrair a seleção.
+    SelShrink,
+    /// Copiar a seleção para uma camada nova.
+    CopyToLayer,
     /// Marca do app (colorida, não é recolorida).
     Logo,
     /// A marca para o tema claro.
@@ -110,7 +162,7 @@ pub enum IconId {
 }
 
 impl IconId {
-    pub const ALL: [IconId; 83] = [
+    pub const ALL: [IconId; 109] = [
         IconId::WsRoteiro,
         IconId::WsPersonagens,
         IconId::WsStoryboard,
@@ -192,6 +244,32 @@ impl IconId {
         IconId::ToolCamera,
         IconId::Stopwatch,
         IconId::Star,
+        IconId::FileNew,
+        IconId::FileOpen,
+        IconId::FileSave,
+        IconId::Undo,
+        IconId::Redo,
+        IconId::ClearLayer,
+        IconId::ClearOutside,
+        IconId::FillSelection,
+        IconId::Transform,
+        IconId::Deselect,
+        IconId::SelectInvert,
+        IconId::SelectionBorder,
+        IconId::Filter,
+        IconId::RotateReset,
+        IconId::FlipV,
+        IconId::ClipBelow,
+        IconId::History,
+        IconId::Texture,
+        IconId::Pattern,
+        IconId::Material,
+        IconId::Palette,
+        IconId::Image,
+        IconId::Pose,
+        IconId::SelGrow,
+        IconId::SelShrink,
+        IconId::CopyToLayer,
         IconId::Logo,
         IconId::LogoLight,
     ];
@@ -284,6 +362,32 @@ impl IconId {
             IconId::ToolCamera => include_str!("../assets/icons/tool-camera.svg"),
             IconId::Stopwatch => include_str!("../assets/icons/stopwatch.svg"),
             IconId::Star => include_str!("../assets/icons/star.svg"),
+            IconId::FileNew => include_str!("../assets/icons/file-new.svg"),
+            IconId::FileOpen => include_str!("../assets/icons/file-open.svg"),
+            IconId::FileSave => include_str!("../assets/icons/file-save.svg"),
+            IconId::Undo => include_str!("../assets/icons/undo.svg"),
+            IconId::Redo => include_str!("../assets/icons/redo.svg"),
+            IconId::ClearLayer => include_str!("../assets/icons/clear-layer.svg"),
+            IconId::ClearOutside => include_str!("../assets/icons/clear-outside.svg"),
+            IconId::FillSelection => include_str!("../assets/icons/fill-selection.svg"),
+            IconId::Transform => include_str!("../assets/icons/transform.svg"),
+            IconId::Deselect => include_str!("../assets/icons/deselect.svg"),
+            IconId::SelectInvert => include_str!("../assets/icons/select-invert.svg"),
+            IconId::SelectionBorder => include_str!("../assets/icons/selection-border.svg"),
+            IconId::Filter => include_str!("../assets/icons/filter.svg"),
+            IconId::RotateReset => include_str!("../assets/icons/rotate-reset.svg"),
+            IconId::FlipV => include_str!("../assets/icons/flip-v.svg"),
+            IconId::ClipBelow => include_str!("../assets/icons/clip-below.svg"),
+            IconId::History => include_str!("../assets/icons/history.svg"),
+            IconId::Texture => include_str!("../assets/icons/texture.svg"),
+            IconId::Pattern => include_str!("../assets/icons/pattern.svg"),
+            IconId::Material => include_str!("../assets/icons/material.svg"),
+            IconId::Palette => include_str!("../assets/icons/palette.svg"),
+            IconId::Image => include_str!("../assets/icons/image.svg"),
+            IconId::Pose => include_str!("../assets/icons/pose.svg"),
+            IconId::SelGrow => include_str!("../assets/icons/sel-grow.svg"),
+            IconId::SelShrink => include_str!("../assets/icons/sel-shrink.svg"),
+            IconId::CopyToLayer => include_str!("../assets/icons/copy-to-layer.svg"),
             IconId::Logo => include_str!("../assets/brand/logo.svg"),
             IconId::LogoLight => include_str!("../assets/brand/logo-light.svg"),
         }
