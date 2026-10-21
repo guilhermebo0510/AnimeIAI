@@ -365,7 +365,49 @@ pub struct BrushPreset {
     /// espelhar). As cores de paleta já chegam resolvidas (o pincel não enxerga o projeto; paleta = magenta).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color_ramp: Option<ColorRamp>,
+    /// Grupo de ferramenta (abas da prateleira, como no Clip Studio): `caneta`, `marcador`, `lapis`, `pincel`,
+    /// `aerografo`, `decoracao`, `borracha`, `mistura` (ou vazio = sem grupo: pincel antigo do usuário).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub group: String,
+    /// Suavização de serrilhado em 4 níveis (0 sem, 1 fraca, 2 média, 3 forte, como no Clip Studio); `None` = a borda de
+    /// ~1 px de sempre. Com nível, a ponta redonda usa a distância real à borda da elipse (ponta chata fica nítida).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub antialias: Option<u8>,
+    /// Dinâmicas (pressão/inclinação/velocidade/aleatório com mínimo e curva). Quando presentes, substituem o
+    /// `*_pressure_min` do mesmo parâmetro.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_dyn: Option<crate::brush_dyn::Dynamics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flow_dyn: Option<crate::brush_dyn::Dynamics>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity_dyn: Option<crate::brush_dyn::Dynamics>,
+    /// Espessura da ponta (achatamento da redonda: multiplica `roundness`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thickness_dyn: Option<crate::brush_dyn::Dynamics>,
+    /// Velocidade (px/s) que conta como 100% nas dinâmicas e no afinamento pela velocidade; 0 = 2500.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub velocity_full: f32,
+    /// Entrada e saída (afinamento das pontas do traço).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub taper: Option<crate::brush_dyn::Taper>,
+    /// Estabilização do traço deste pincel (0..100, "pela velocidade"); quem desenha à mão usa no lugar da do painel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stabilization: Option<crate::brush_dyn::Stabilization>,
+    /// Borda áspera da ponta redonda (canetas texturizada, rugosa, G real).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge: Option<crate::brush_dyn::EdgeNoise>,
+    /// Tinta pelo máximo: dentro do traço, cada pixel fica com o MAIOR alfa dos carimbos que o tocaram, em vez de somar
+    /// camadas (canetas: a borda tem o perfil da ponta e não engrossa nem endurece com a sobreposição dos carimbos).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub max_ink: bool,
 }
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+
+/// Velocidade padrão (px/s) que conta como 100%.
+pub const VELOCITY_FULL_DEFAULT: f32 = 2500.0;
 
 /// Degradê do pincel ao longo do comprimento do traço.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -453,7 +495,28 @@ impl BrushPreset {
             aliased: false,
             two_tone: None,
             color_ramp: None,
+            group: String::new(),
+            antialias: None,
+            size_dyn: None,
+            flow_dyn: None,
+            opacity_dyn: None,
+            thickness_dyn: None,
+            velocity_full: 0.0,
+            taper: None,
+            stabilization: None,
+            edge: None,
+            max_ink: false,
         }
+    }
+
+    /// Pixels por segundo que contam como velocidade 100%.
+    pub fn velocity_full(&self) -> f32 {
+        if self.velocity_full > 0.0 { self.velocity_full } else { VELOCITY_FULL_DEFAULT }
+    }
+
+    /// Caneta de pixel: 1 px sem antisserrilhado, linha sem degraus duplos (pixel-perfect).
+    pub fn is_pixel_pen(&self) -> bool {
+        (self.aliased || self.antialias == Some(0)) && self.size <= 1.0 && matches!(self.tip, BrushTip::Round { .. }) && self.mode != BrushMode::Erase
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -480,6 +543,26 @@ impl BrushPreset {
         }
         if self.count == 0 || self.count > 64 {
             return Err("count deve estar entre 1 e 64".into());
+        }
+        if self.antialias.is_some_and(|a| a > 3) {
+            return Err("antialias: 0 (sem), 1 (fraca), 2 (média) ou 3 (forte)".into());
+        }
+        for (n, d) in [("size_dyn", &self.size_dyn), ("flow_dyn", &self.flow_dyn), ("opacity_dyn", &self.opacity_dyn), ("thickness_dyn", &self.thickness_dyn)] {
+            if let Some(d) = d {
+                d.validate(n)?;
+            }
+        }
+        if !(self.velocity_full.is_finite() && (0.0..=100_000.0).contains(&self.velocity_full)) {
+            return Err(format!("velocity_full fora de 0..100000 px/s: {}", self.velocity_full));
+        }
+        if let Some(t) = &self.taper {
+            t.validate()?;
+        }
+        if self.stabilization.is_some_and(|s| s.level > 100) {
+            return Err("stabilization.level fora de 0..100".into());
+        }
+        if let Some(e) = &self.edge {
+            e.validate()?;
         }
         Ok(())
     }
@@ -610,7 +693,116 @@ impl BrushPreset {
                 _ => "cenario",
             }
             .into();
+            p.group = match p.name.as_str() {
+                "Lápis de rascunho" | "Carvão" => "lapis",
+                "Aerógrafo" => "aerografo",
+                "Borrador" => "mistura",
+                "Redondo duro" | "Redondo macio" | "Aquarela" | "Guache seco" | "Textura de papel" => "pincel",
+                _ => "decoracao",
+            }
+            .into();
         }
+        v.extend(Self::pens());
+        v
+    }
+
+    /// Canetas e marcadores de fábrica (S25): o resultado calibrado nas canetas de fábrica do Clip Studio Paint 5.1.5
+    /// (folha de teste em 3, 10 e 30 px; `tools/csp/calib_compare.py`), com os números do banco de ferramentas dele
+    /// (tamanho padrão, curvas de pressão, mínimos, velocidade, espessura e ângulo da ponta, suavização de serrilhado,
+    /// estabilização). Nomes das penas reais; pontas e bordas desenhadas pelo nosso motor.
+    pub fn pens() -> Vec<BrushPreset> {
+        use crate::brush_dyn::{DynInput, Dynamics, EdgeNoise, Stabilization};
+        let curve = |min: f32, pts: &[[f32; 2]]| DynInput { min, curve: pts.to_vec() };
+        let stab = |level: u8| Some(Stabilization { level, by_speed: true });
+        let pen = |name: &str, size: f32, group: &str| {
+            let mut p = BrushPreset::round(name, size, 1.0);
+            p.group = group.into();
+            p.category = "lapis".into();
+            p.antialias = Some(2);
+            p.spacing = 0.08;
+            p.size_pressure_min = 1.0;
+            p.max_ink = true;
+            p
+        };
+        let mut v = Vec::new();
+        // pena G: pressão do zero ao tamanho cheio, linear
+        let mut g = pen("Pena G", 10.0, "caneta");
+        g.size_dyn = Some(Dynamics::pressure(0.0));
+        g.stabilization = stab(6);
+        v.push(g);
+        // pena G real: ponta levemente achatada girando ao acaso, borda granulada; a espessura também cai com pouca pressão
+        let mut gr = pen("Pena G real", 10.0, "caneta");
+        gr.tip = BrushTip::Round { hardness: 1.0, roundness: 0.85, angle: 0.0 };
+        gr.angle_jitter = 180.0;
+        gr.size_dyn = Some(Dynamics { pressure: Some(curve(0.0, &[[0.0, 0.0], [0.745, 0.255], [1.0, 1.0]])), ..Default::default() });
+        gr.thickness_dyn = Some(Dynamics { pressure: Some(curve(0.5, &[[0.0, 0.0], [0.345, 0.0], [0.664, 0.955], [1.0, 1.0]])), ..Default::default() });
+        gr.edge = Some(EdgeNoise { amount: 0.22, grain: 4.0, seed: 0 });
+        gr.stabilization = stab(6);
+        v.push(gr);
+        // pena de mapeamento: linha fina que só engorda com pressão forte
+        let mut m = pen("Pena de mapeamento", 10.0, "caneta");
+        m.size_dyn = Some(Dynamics { pressure: Some(curve(0.0, &[[0.0, 0.0], [0.5, 0.245], [0.927, 0.709], [1.0, 1.0]])), ..Default::default() });
+        m.stabilization = stab(10);
+        v.push(m);
+        // pena nabo: engorda logo no começo da pressão
+        let mut t = pen("Pena nabo", 8.0, "caneta");
+        t.size_dyn = Some(Dynamics { pressure: Some(curve(0.0, &[[0.0, 0.0], [0.182, 0.4], [0.7, 0.964], [1.0, 1.0]])), ..Default::default() });
+        t.stabilization = stab(2);
+        v.push(t);
+        // caligrafia: ponta chata fina inclinada (fino na diagonal "/", grosso na "\"), sem pressão
+        let mut c = pen("Caligrafia", 50.0, "caneta");
+        c.tip = BrushTip::Round { hardness: 1.0, roundness: 0.2, angle: 148.0 };
+        c.stabilization = stab(6);
+        v.push(c);
+        // caneta texturizada: ponta macia achatada girando ao acaso (borda em gomos, desfocada), tinta que soma
+        let mut tx = pen("Caneta texturizada", 12.0, "caneta");
+        tx.tip = BrushTip::Round { hardness: 0.8, roundness: 0.6, angle: 0.0 };
+        tx.angle_jitter = 180.0;
+        tx.antialias = Some(1);
+        tx.max_ink = false;
+        tx.size_dyn = Some(Dynamics::pressure(0.0));
+        tx.stabilization = stab(6);
+        v.push(tx);
+        // caneta rugosa: fita áspera que segue a direção, largura variando aos trechos, afina um pouco quando rápida
+        let mut r = pen("Caneta rugosa", 1.2, "caneta");
+        r.follow_direction = true;
+        r.antialias = Some(1);
+        r.size_dyn = Some(Dynamics { pressure: Some(DynInput::linear(0.0)), velocity: Some(DynInput::slower_is_bigger(0.5)), random: Some(0.8), random_len: 40.0, ..Default::default() });
+        r.thickness_dyn = Some(Dynamics { velocity: Some(DynInput::slower_is_bigger(0.5)), random: Some(0.85), random_len: 30.0, ..Default::default() });
+        r.velocity_full = 25000.0;
+        r.edge = Some(EdgeNoise { amount: 0.3, grain: 4.0, seed: 0 });
+        r.stabilization = stab(6);
+        v.push(r);
+        // caneta milimétrica: espessura quase fixa, afina um pouco no traço rápido
+        let mut mm = pen("Caneta milimétrica", 10.0, "marcador");
+        mm.size_dyn = Some(Dynamics { pressure: Some(curve(0.8, &[[0.0, 0.0], [0.718, 0.309], [1.0, 1.0]])), velocity: Some(DynInput::slower_is_bigger(0.6)), ..Default::default() });
+        mm.velocity_full = 13000.0;
+        v.push(mm);
+        // caneta de feltro: ponta larga deitada; rápida fica fina e falhada (pouca tinta), lenta fica cheia
+        let mut f = pen("Caneta de feltro", 20.0, "marcador");
+        f.tip = BrushTip::Round { hardness: 1.0, roundness: 0.8, angle: 0.0 };
+        f.antialias = Some(1);
+        f.size_dyn = Some(Dynamics { pressure: Some(DynInput::linear(0.7)), velocity: Some(DynInput::slower_is_bigger(0.7)), random: Some(0.9), ..Default::default() });
+        f.flow_dyn = Some(Dynamics { velocity: Some(DynInput::slower_is_bigger(0.18)), ..Default::default() });
+        f.velocity_full = 2500.0;
+        f.max_ink = false;
+        f.spacing = 0.3;
+        f.stabilization = stab(6);
+        v.push(f);
+        // caneta de pixel: 1 px sem antisserrilhado, sem degrau dobrado
+        let mut px = pen("Caneta de pixel", 1.0, "marcador");
+        px.aliased = true;
+        px.antialias = Some(0);
+        px.spacing = 0.1;
+        v.push(px);
+        // marcador chato: ponta chata deitada (traço horizontal fino, vertical largo); a pressão mexe no tamanho e na opacidade
+        let mut fm = pen("Marcador chato", 50.0, "marcador");
+        fm.tip = BrushTip::Round { hardness: 1.0, roundness: 0.3, angle: 0.0 };
+        fm.antialias = Some(1);
+        fm.spacing = 0.03;
+        fm.size_dyn = Some(Dynamics { pressure: Some(curve(0.6, &[[0.0, 0.0], [0.557, 0.061], [0.934, 0.601], [1.0, 1.0]])), ..Default::default() });
+        fm.opacity_dyn = Some(Dynamics { pressure: Some(curve(0.0, &[[0.0, 0.0], [0.588, 0.0], [0.921, 0.675], [1.0, 1.0]])), ..Default::default() });
+        v.push(fm);
         v
     }
 }
@@ -707,6 +899,36 @@ fn tip_alpha_tone(tip: &BrushTip, dx: f32, dy: f32, radius: f32, extra_angle: f3
     }
 }
 
+/// Ponta redonda do modelo de caneta (S25): borda pela distância real à elipse (a ponta chata fica nítida na lateral fina),
+/// rampa do antisserrilhado no nível pedido (`aa_ramp`), dureza, espessura extra (`thick` multiplica a redondeza) e borda
+/// áspera. `None` para pontas que não são redondas (seguem a cobertura de sempre).
+fn tip_alpha_pen(tip: &BrushTip, dx: f32, dy: f32, radius: f32, extra_angle: f32, aa: u8, thick: f32, edge_k: f32, rough: bool) -> Option<f32> {
+    let BrushTip::Round { hardness, roundness, angle } = tip else { return None };
+    let a = (angle + extra_angle).to_radians();
+    let (s, c) = a.sin_cos();
+    let lx = dx * c + dy * s;
+    let ly = -dx * s + dy * c;
+    let mut rr = radius.max(0.25);
+    let rho = (roundness * thick).clamp(0.02, 1.0).max((crate::brush_dyn::min_semi_axis() / rr).min(1.0));
+    rr *= edge_k;
+    let (ux, uy) = (lx / rr, ly / (rr * rho));
+    let q = (ux * ux + uy * uy).sqrt();
+    // distância (px) à borda da elipse ≈ (q - 1) / |∇q|
+    let g = ((lx / (rr * rr)).powi(2) + (ly / (rr * rr * rho * rho)).powi(2)).sqrt() / q.max(1e-6);
+    let sd = if q < 1e-6 { -rr * rho } else { (q - 1.0) / g.max(1e-6) };
+    let edge_cov = if aa == 0 {
+        if sd <= 0.0 { 1.0 } else { 0.0 }
+    } else {
+        // ponta áspera (no Clip Studio é uma imagem amostrada): a borda não recua, só a rampa
+        let (w, shift) = crate::brush_dyn::aa_ramp(aa);
+        let shift = if edge_k < 1.0 || rough { 0.0 } else { shift };
+        ((-sd - shift) / w + 0.5).clamp(0.0, 1.0)
+    };
+    let h = hardness.clamp(0.0, 1.0);
+    let inner = if q <= h || h >= 1.0 { 1.0 } else { let t = ((q - h) / (1.0 - h).max(1e-4)).clamp(0.0, 1.0); 0.5 + 0.5 * (t * std::f32::consts::PI).cos() };
+    Some(inner * edge_cov)
+}
+
 fn rgb_to_hsv(c: [f32; 3]) -> [f32; 3] {
     let (r, g, b) = (c[0], c[1], c[2]);
     let mx = r.max(g).max(b);
@@ -773,8 +995,12 @@ struct Dab {
     y: f32,
     pr: f32,
     dir: f32,
-    /// Distância percorrida no caminho até este dab (px), para o degradê ao longo do traço.
+    /// Distância percorrida no caminho até este dab (px), para o degradê ao longo do traço e o afinamento.
     s: f32,
+    /// Velocidade normalizada (0..1) no momento do dab.
+    v: f32,
+    /// Fator de afinamento já conhecido (entrada); a saída multiplica ao carimbar.
+    taper: f32,
 }
 
 /// Traço de pincel em andamento, alimentado aos pedaços: guarda o buffer do traço (em tiles), o gerador aleatório, o
@@ -800,7 +1026,7 @@ pub struct StrokeBuffer {
     /// Maior alfa do buffer (o nível da borda molhada; o alfa de um pixel do traço só sobe).
     max_a: f32,
     carry: Option<(i32, Vec<[f32; 4]>)>,
-    prev: Option<BrushPoint>,
+    prev: Option<(BrushPoint, f32)>,
     acc: f32,
     sdir: Option<f32>,
     pending: Option<Dab>,
@@ -808,6 +1034,15 @@ pub struct StrokeBuffer {
     ramp: Option<(aiai_core::ResolvedGradient, f32)>,
     /// Comprimento do caminho já percorrido (px).
     travel: f32,
+    /// Velocidade do traço (só com amostras com tempo; sem tempo, conta como parado).
+    speed: crate::brush_dyn::SpeedEstimator,
+    /// Dabs dos últimos `taper.end` px, à espera de saber onde o traço termina (saída).
+    held: std::collections::VecDeque<Dab>,
+    /// Caneta de pixel: pixels ainda não carimbados (o do meio de um degrau em L sai).
+    pix: Vec<(i32, i32)>,
+    pix_last: Option<(i32, i32)>,
+    /// Semente do aleatório suave ao longo do traço.
+    noise_seed: u32,
 }
 
 impl StrokeBuffer {
@@ -832,6 +1067,11 @@ impl StrokeBuffer {
             max_a: 0.0,
             ramp: preset.color_ramp.as_ref().map(|r| (r.resolved(), r.length.max(1.0))),
             travel: 0.0,
+            speed: Default::default(),
+            held: Default::default(),
+            pix: Vec::new(),
+            pix_last: None,
+            noise_seed: (seed ^ (seed >> 32)) as u32,
         }
     }
 
@@ -859,25 +1099,100 @@ impl StrokeBuffer {
         &mut std::sync::Arc::make_mut(t)[(y.rem_euclid(STS) * STS + x.rem_euclid(STS)) as usize]
     }
 
-    /// Mais pontos do caminho (coordenadas locais). `layer` = a camada antes do traço, só para o borrador (mix > 0).
+    /// Mais pontos do caminho (coordenadas locais), sem tempo (a velocidade conta como parada). `layer` = a camada antes
+    /// do traço, só para o borrador (mix > 0).
     pub fn add(&mut self, layer: Option<&Image>, pts: &[BrushPoint]) {
         for &p in pts {
-            match self.prev {
-                None => self.pending = Some(Dab { x: p.x, y: p.y, pr: p.pressure, dir: 0.0, s: 0.0 }),
-                Some(a) => self.segment(layer, a, p),
+            self.push_point(layer, p, f32::NAN);
+        }
+        self.flush_held(layer);
+    }
+
+    /// Como [`add`](Self::add), com o tempo (s desde o começo do traço) de cada ponto: liga as dinâmicas de velocidade
+    /// e o afinamento pela velocidade. `times` tem o mesmo tamanho de `pts`.
+    pub fn add_timed(&mut self, layer: Option<&Image>, pts: &[BrushPoint], times: &[f32]) {
+        for (i, &p) in pts.iter().enumerate() {
+            self.push_point(layer, p, times.get(i).copied().unwrap_or(f32::NAN));
+        }
+        self.flush_held(layer);
+    }
+
+    fn push_point(&mut self, layer: Option<&Image>, p: BrushPoint, t: f32) {
+        match self.prev {
+            None => {
+                self.pending = Some(Dab { x: p.x, y: p.y, pr: p.pressure, dir: 0.0, s: 0.0, v: 0.0, taper: self.start_taper(0.0, 0.0) });
+                if t.is_finite() {
+                    self.speed.push(0.0, t);
+                }
             }
-            self.prev = Some(p);
+            Some((a, ta)) => self.segment(layer, a, ta, p, t),
+        }
+        self.prev = Some((p, t));
+    }
+
+    /// Fim do caminho: carimba o primeiro dab se o caminho não andou e os dabs da saída com o afinamento.
+    pub fn finish(&mut self, layer: Option<&Image>) {
+        if let Some(d) = self.pending.take() {
+            self.emit(layer, d);
+        }
+        if let Some(tp) = self.preset.taper.clone().filter(|t| t.end > 0.0) {
+            let len = if tp.by_speed { tp.end * self.vnorm(self.speed.speed()) } else { tp.end };
+            let total = self.travel;
+            while let Some(mut d) = self.held.pop_front() {
+                d.taper *= tp.ramp(total - d.s, len);
+                self.stamp(layer, d);
+            }
+        }
+        for c in std::mem::take(&mut self.pix) {
+            self.stamp_pixel(c);
         }
     }
 
-    /// Fim do caminho: carimba o primeiro dab se o caminho não andou.
-    pub fn finish(&mut self, layer: Option<&Image>) {
-        if let Some(d) = self.pending.take() {
+    fn vnorm(&self, speed: f32) -> f32 {
+        (speed / self.preset.velocity_full()).clamp(0.0, 1.0)
+    }
+
+    /// Fator da entrada na distância `s` do começo (velocidade normalizada `v` para "pela velocidade").
+    fn start_taper(&self, s: f32, v: f32) -> f32 {
+        match &self.preset.taper {
+            Some(tp) if tp.start > 0.0 => {
+                let len = if tp.by_speed { tp.start * v } else { tp.start };
+                tp.ramp(s, len)
+            }
+            _ => 1.0,
+        }
+    }
+
+    /// Dab pronto: carimba, ou espera a saída (os últimos `taper.end` px).
+    fn emit(&mut self, layer: Option<&Image>, d: Dab) {
+        if self.preset.taper.as_ref().is_some_and(|t| t.end > 0.0) {
+            self.held.push_back(d);
+        } else {
             self.stamp(layer, d);
         }
     }
 
-    fn segment(&mut self, layer: Option<&Image>, a: BrushPoint, b: BrushPoint) {
+    /// Carimba os dabs que já estão longe o bastante do fim para não pegar a saída.
+    fn flush_held(&mut self, layer: Option<&Image>) {
+        let Some(end) = self.preset.taper.as_ref().map(|t| t.end).filter(|e| *e > 0.0) else { return };
+        while self.held.front().is_some_and(|d| self.travel - d.s > end) {
+            let d = self.held.pop_front().expect("há dab");
+            self.stamp(layer, d);
+        }
+    }
+
+    /// Tamanho do dab sem o aleatório (espaçamento entre carimbos).
+    fn base_diam(&self, pr: f32, v: f32, taper: f32) -> f32 {
+        let p = &self.preset;
+        let f = match &p.size_dyn {
+            Some(d) => d.base(pr, v),
+            None => p.size_pressure_min + (1.0 - p.size_pressure_min) * pr.clamp(0.0, 1.0),
+        };
+        let tsz = if p.taper.as_ref().is_some_and(|t| t.size) { taper } else { 1.0 };
+        p.size * f * tsz
+    }
+
+    fn segment(&mut self, layer: Option<&Image>, a: BrushPoint, ta: f32, b: BrushPoint, tb: f32) {
         let (dx, dy) = (b.x - a.x, b.y - a.y);
         let len = (dx * dx + dy * dy).sqrt();
         // pincel duplo: segunda ponta ao longo do caminho (máximo das coberturas); o traço só aparece onde ela cobre
@@ -908,6 +1223,21 @@ impl StrokeBuffer {
         if len <= 1e-6 {
             return;
         }
+        let sp = if ta.is_finite() && tb.is_finite() { self.speed.push(len, tb) } else { self.speed.speed() };
+        let v = self.vnorm(sp);
+        // caneta de pixel: os pixels por onde o caminho passa, um por vez, sem o degrau duplo
+        if self.preset.is_pixel_pen() {
+            if let Some(d) = self.pending.take() {
+                self.pixel_at(d.x, d.y);
+            }
+            let n = (len * 4.0).ceil().max(1.0) as usize;
+            for k in 1..=n {
+                let f = k as f32 / n as f32;
+                self.pixel_at(a.x + dx * f, a.y + dy * f);
+            }
+            self.travel += len;
+            return;
+        }
         // direção com passa-baixa (≈ meio diâmetro de memória): a ponta elíptica não gira aos trancos nas microparadas
         let memory = (self.preset.size * 0.5).max(1.0);
         let raw = dy.atan2(dx).to_degrees();
@@ -922,11 +1252,14 @@ impl StrokeBuffer {
         if let Some(pd) = &mut self.pending {
             pd.dir = dir;
         }
+        // com saída, os dabs do fim encolhem: o passo acompanha o menor tamanho possível (sem contas)
+        let end_k = self.preset.taper.as_ref().filter(|t| t.end > 0.0 && t.size).map(|t| t.min.max(0.2)).unwrap_or(1.0);
         let mut t = 0.0f32;
         loop {
             let pr = a.pressure + (b.pressure - a.pressure) * (t / len);
-            let diam = self.preset.size * (self.preset.size_pressure_min + (1.0 - self.preset.size_pressure_min) * pr.clamp(0.0, 1.0));
-            let step = (diam * self.preset.spacing).max(0.5);
+            let s_here = self.travel + t;
+            let diam = self.base_diam(pr, v, self.start_taper(s_here, v));
+            let step = (diam * end_k * self.preset.spacing).max(0.5);
             let need = step - self.acc;
             if t + need > len {
                 self.acc += len - t;
@@ -936,23 +1269,112 @@ impl StrokeBuffer {
             self.acc = 0.0;
             let f = t / len;
             if let Some(d) = self.pending.take() {
-                self.stamp(layer, d);
+                self.emit(layer, d);
             }
-            self.stamp(layer, Dab { x: a.x + dx * f, y: a.y + dy * f, pr: a.pressure + (b.pressure - a.pressure) * f, dir, s: self.travel + t });
+            let s = self.travel + t;
+            let d = Dab { x: a.x + dx * f, y: a.y + dy * f, pr: a.pressure + (b.pressure - a.pressure) * f, dir, s, v, taper: self.start_taper(s, v) };
+            self.emit(layer, d);
         }
         self.travel += len;
+    }
+
+    /// Caneta de pixel: o pixel sob (x, y) entra na fila; pulos viram linha de Bresenham e o pixel do meio de um degrau em
+    /// L sai (linha de 1 px sem pixel dobrado).
+    fn pixel_at(&mut self, x: f32, y: f32) {
+        let c = (x.floor() as i32, y.floor() as i32);
+        if self.pix_last == Some(c) {
+            return;
+        }
+        let mut cells = Vec::new();
+        match self.pix_last {
+            Some(l) if (c.0 - l.0).abs() > 1 || (c.1 - l.1).abs() > 1 => {
+                let (mut x0, mut y0) = l;
+                let (dx, dy) = ((c.0 - x0).abs(), -(c.1 - y0).abs());
+                let (sx, sy) = (if c.0 > x0 { 1 } else { -1 }, if c.1 > y0 { 1 } else { -1 });
+                let mut err = dx + dy;
+                while (x0, y0) != c {
+                    let e2 = 2 * err;
+                    if e2 >= dy {
+                        err += dy;
+                        x0 += sx;
+                    }
+                    if e2 <= dx {
+                        err += dx;
+                        y0 += sy;
+                    }
+                    cells.push((x0, y0));
+                }
+            }
+            _ => cells.push(c),
+        }
+        self.pix_last = Some(c);
+        for c in cells {
+            if let [.., a, b] = self.pix[..] {
+                let orth = |p: (i32, i32), q: (i32, i32)| (p.0 - q.0).abs() + (p.1 - q.1).abs() == 1;
+                if orth(a, b) && orth(b, c) && (a.0 - c.0).abs() == 1 && (a.1 - c.1).abs() == 1 {
+                    self.pix.pop();
+                }
+            }
+            self.pix.push(c);
+            while self.pix.len() > 2 {
+                let p = self.pix.remove(0);
+                self.stamp_pixel(p);
+            }
+        }
+    }
+
+    fn stamp_pixel(&mut self, (x, y): (i32, i32)) {
+        if x < 0 || y < 0 || x >= self.w || y >= self.h {
+            return;
+        }
+        let p = &self.preset;
+        let da = (p.flow * self.color[3]).clamp(0.0, 1.0);
+        let rgb = [self.color[0], self.color[1], self.color[2]];
+        self.mark([x, y, x + 1, y + 1]);
+        let d = self.buf_mut(x, y);
+        let k = 1.0 - da;
+        for c in 0..3 {
+            d[c] = rgb[c] * da + d[c] * k;
+        }
+        d[3] = da + d[3] * k;
+        let a = d[3];
+        self.max_a = self.max_a.max(a);
+    }
+
+    /// Sorteio do aleatório de uma dinâmica: por carimbo, ou suave ao longo do caminho (`random_len`).
+    fn dyn_rnd(&mut self, dy: &crate::brush_dyn::Dynamics, s: f32, k: u32) -> f32 {
+        if !dy.uses_random() {
+            0.0
+        } else if dy.random_len > 0.0 {
+            crate::brush_dyn::smooth_random(s, dy.random_len, self.noise_seed.wrapping_add(k.wrapping_mul(0x51ED)))
+        } else {
+            self.rng.f32()
+        }
     }
 
     fn stamp(&mut self, layer: Option<&Image>, d: Dab) {
         let preset = self.preset.clone();
         let (cx, cy, dir) = (d.x, d.y, d.dir);
         let pr = d.pr.clamp(0.0, 1.0);
+        let v = d.v;
         let color = match &self.ramp {
             Some((g, len)) => g.color_at(d.s / len),
             None => self.color,
         };
+        let csp_tip = preset.antialias.is_some() || preset.edge.is_some() || preset.thickness_dyn.is_some();
+        let (taper_size, taper_op) = match &preset.taper {
+            Some(t) => (if t.size { d.taper } else { 1.0 }, if t.opacity { d.taper } else { 1.0 }),
+            None => (1.0, 1.0),
+        };
         for _ in 0..preset.count {
-            let mut size = preset.size * (preset.size_pressure_min + (1.0 - preset.size_pressure_min) * pr);
+            let mut size = match &preset.size_dyn {
+                Some(dy) => {
+                    let rnd = self.dyn_rnd(dy, d.s, 1);
+                    preset.size * dy.factor(pr, v, rnd)
+                }
+                None => preset.size * (preset.size_pressure_min + (1.0 - preset.size_pressure_min) * pr),
+            };
+            size *= taper_size;
             if preset.size_jitter > 0.0 {
                 size *= 1.0 + preset.size_jitter * self.rng.signed();
             }
@@ -971,8 +1393,29 @@ impl StrokeBuffer {
             if preset.angle_jitter > 0.0 {
                 angle += preset.angle_jitter * self.rng.signed();
             }
-            let dab_opacity = preset.opacity_pressure_min + (1.0 - preset.opacity_pressure_min) * pr;
-            let flow = preset.flow * (preset.flow_pressure_min + (1.0 - preset.flow_pressure_min) * pr);
+            let thick = match &preset.thickness_dyn {
+                Some(dy) => {
+                    let rnd = self.dyn_rnd(dy, d.s, 2);
+                    dy.factor(pr, v, rnd)
+                }
+                None => 1.0,
+            };
+            let edge = preset.edge.clone();
+            let mut dab_opacity = match &preset.opacity_dyn {
+                Some(dy) => {
+                    let rnd = self.dyn_rnd(dy, d.s, 3);
+                    dy.factor(pr, v, rnd)
+                }
+                None => preset.opacity_pressure_min + (1.0 - preset.opacity_pressure_min) * pr,
+            };
+            dab_opacity *= taper_op;
+            let flow = match &preset.flow_dyn {
+                Some(dy) => {
+                    let rnd = self.dyn_rnd(dy, d.s, 4);
+                    preset.flow * dy.factor(pr, v, rnd)
+                }
+                None => preset.flow * (preset.flow_pressure_min + (1.0 - preset.flow_pressure_min) * pr),
+            };
             let mut rgb = [color[0], color[1], color[2]];
             if preset.hue_jitter > 0.0 || preset.saturation_jitter > 0.0 || preset.value_jitter > 0.0 {
                 let mut hsv = rgb_to_hsv(rgb);
@@ -1006,15 +1449,23 @@ impl StrokeBuffer {
                     _ => (pr_i, sample),
                 });
             }
-            let (bx0, by0) = (((px - r - 1.0).floor() as i32).max(0), ((py - r - 1.0).floor() as i32).max(0));
-            let (bx1, by1) = (((px + r + 1.0).ceil() as i32).min(self.w), ((py + r + 1.0).ceil() as i32).min(self.h));
+            // a rampa do antisserrilhado forte passa um pouco do raio
+            let pad = 1.0 + preset.antialias.map(|l| crate::brush_dyn::aa_ramp(l).0 * 0.5).unwrap_or(0.0);
+            let (bx0, by0) = (((px - r - pad).floor() as i32).max(0), ((py - r - pad).floor() as i32).max(0));
+            let (bx1, by1) = (((px + r + pad).ceil() as i32).min(self.w), ((py + r + pad).ceil() as i32).min(self.h));
             if bx0 < bx1 && by0 < by1 {
                 self.mark([bx0, by0, bx1, by1]);
             }
             for y in by0..by1 {
                 for x in bx0..bx1 {
                     let (dx, dy) = (x as f32 + 0.5 - px, y as f32 + 0.5 - py);
-                    let mut a = tip_alpha_tone(&preset.tip, dx, dy, r, angle, preset.aliased, two.is_some());
+                    let mut a = if csp_tip {
+                        let ek = edge.as_ref().map(|e| e.radius_at((x + self.tex_origin[0]) as f32 + 0.5, (y + self.tex_origin[1]) as f32 + 0.5)).unwrap_or(1.0);
+                        tip_alpha_pen(&preset.tip, dx, dy, r, angle, preset.antialias.unwrap_or(if preset.aliased { 0 } else { 1 }), thick, ek, edge.is_some())
+                            .unwrap_or_else(|| tip_alpha_tone(&preset.tip, dx, dy, r, angle, preset.aliased, two.is_some()))
+                    } else {
+                        tip_alpha_tone(&preset.tip, dx, dy, r, angle, preset.aliased, two.is_some())
+                    };
                     if a <= 0.0 {
                         continue;
                     }
@@ -1046,10 +1497,19 @@ impl StrokeBuffer {
                             }
                         }
                     }
+                    let max_ink = preset.max_ink;
                     let d = self.buf_mut(x, y);
-                    let k = 1.0 - da;
-                    for c in 0..4 {
-                        d[c] = src[c] * da + d[c] * k;
+                    if max_ink {
+                        if da > d[3] {
+                            for c in 0..4 {
+                                d[c] = src[c] * da;
+                            }
+                        }
+                    } else {
+                        let k = 1.0 - da;
+                        for c in 0..4 {
+                            d[c] = src[c] * da + d[c] * k;
+                        }
                     }
                     let a = d[3];
                     self.max_a = self.max_a.max(a);

@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PaintStrokeSpec {
-    /// Pontos [x, y] ou [x, y, pressão].
+    /// Pontos [x, y], [x, y, pressão] ou [x, y, pressão, tempo em s desde o começo do traço] (com tempo, o pincel vê a
+    /// velocidade: dinâmicas de velocidade e afinamento pela velocidade).
     pub points: Vec<Vec<f32>>,
     /// Interpola os pontos como spline suave (recomendado para poucos pontos).
     #[serde(default = "yes")]
@@ -199,6 +200,55 @@ pub fn spline_segment(pts: &[BrushPoint], i: usize) -> Vec<BrushPoint> {
     out
 }
 
+/// Como [`spline_segment`], com o tempo de cada amostra (interpolado entre `times[i]` e `times[i + 1]` como a pressão).
+pub fn spline_segment_timed(pts: &[BrushPoint], times: &[f32], i: usize) -> (Vec<BrushPoint>, Vec<f32>) {
+    let seg = spline_segment(pts, i);
+    let n = seg.len().max(1);
+    let (t1, t2) = (times[i.min(times.len() - 1)], times[(i + 1).min(times.len() - 1)]);
+    let ts = (0..seg.len()).map(|k| t1 + (t2 - t1) * k as f32 / n as f32).collect();
+    (seg, ts)
+}
+
+/// Caminho suave com tempo (ver [`spline_path`]).
+pub fn spline_path_timed(pts: &[BrushPoint], times: &[f32]) -> (Vec<BrushPoint>, Vec<f32>) {
+    if pts.len() < 3 {
+        return (pts.to_vec(), times.to_vec());
+    }
+    let (mut out, mut ts) = (Vec::new(), Vec::new());
+    for i in 0..pts.len() - 1 {
+        let (a, b) = spline_segment_timed(pts, times, i);
+        out.extend(a);
+        ts.extend(b);
+    }
+    out.push(pts[pts.len() - 1]);
+    ts.push(times[times.len() - 1]);
+    (out, ts)
+}
+
+/// Pontos do pincel a partir das amostras da mão `[x, y, pressão, tempo]` (~1,5 px entre eles, sempre com a última):
+/// o motor de dab cuida do espaçamento fino. A ferramenta Pincel do app (commit e prévia) e o calibrador usam esta.
+pub fn brush_points_from_samples(samples: &[[f32; 4]]) -> Vec<Vec<f32>> {
+    let mut pts: Vec<Vec<f32>> = Vec::new();
+    let mut last: Option<[f32; 2]> = None;
+    for s in samples {
+        if last.is_none_or(|l| (l[0] - s[0]).hypot(l[1] - s[1]) >= 1.5) {
+            pts.push(s.to_vec());
+            last = Some([s[0], s[1]]);
+        }
+    }
+    if let Some(s) = samples.last() {
+        if last != Some([s[0], s[1]]) {
+            pts.push(s.to_vec());
+        }
+    }
+    if pts.len() == 1 {
+        let mut q = pts[0].clone();
+        q[0] += 0.01;
+        pts.push(q);
+    }
+    pts
+}
+
 #[cfg(test)]
 mod spline_tests {
     use super::*;
@@ -311,7 +361,7 @@ pub struct PaintedRegion {
 /// pincel/borracha raster usa e que a prévia ao vivo do app roda a cada movimento (a prévia sai igual ao traço gravado).
 #[allow(clippy::too_many_arguments)]
 pub fn paint_on_cel(blobs: &BlobStore, cel: Option<&CelData>, w: u32, h: u32, preset: &BrushPreset, color: [f32; 4], strokes: &[PaintStrokeSpec], seed: u64, keep_before: bool) -> ToolResult<PaintedRegion> {
-    let paths = brush_paths(strokes)?;
+    let paths = brush_paths_timed(strokes)?;
     // o borrador lê a camada inteira de antes do traço
     let full = if preset.mix > 0.0 {
         Some(match cel {
@@ -322,9 +372,12 @@ pub fn paint_on_cel(blobs: &BlobStore, cel: Option<&CelData>, w: u32, h: u32, pr
         None
     };
     let mut sbs = Vec::new();
-    for (k, path) in paths.iter().enumerate() {
+    for (k, (path, times)) in paths.iter().enumerate() {
         let mut sb = StrokeBuffer::new(preset, color, seed.wrapping_add(k as u64 * 7919), w, h, [0, 0]);
-        sb.add(full.as_ref(), path);
+        match times {
+            Some(ts) => sb.add_timed(full.as_ref(), path, ts),
+            None => sb.add(full.as_ref(), path),
+        }
         sb.finish(full.as_ref());
         sbs.push(sb);
     }
@@ -340,13 +393,30 @@ pub fn brush_paths(strokes: &[PaintStrokeSpec]) -> ToolResult<Vec<Vec<BrushPoint
             .iter()
             .map(|q| match q.as_slice() {
                 [x, y] => Ok(BrushPoint { x: *x, y: *y, pressure: 1.0 }),
-                [x, y, pr] => Ok(BrushPoint { x: *x, y: *y, pressure: pr.clamp(0.0, 1.0) }),
-                _ => Err(ToolError::Invalid("cada ponto é [x, y] ou [x, y, pressão]".into())),
+                [x, y, pr] | [x, y, pr, _] => Ok(BrushPoint { x: *x, y: *y, pressure: pr.clamp(0.0, 1.0) }),
+                _ => Err(ToolError::Invalid("cada ponto é [x, y], [x, y, pressão] ou [x, y, pressão, tempo]".into())),
             })
             .collect::<ToolResult<_>>()?;
         paths.push(if s.smooth { spline_path(&pts) } else { pts });
     }
     Ok(paths)
+}
+
+/// Como [`brush_paths`], com o tempo de cada amostra quando TODOS os pontos do traço trazem tempo (`[x, y, p, t]`).
+pub fn brush_paths_timed(strokes: &[PaintStrokeSpec]) -> ToolResult<Vec<(Vec<BrushPoint>, Option<Vec<f32>>)>> {
+    let mut out = Vec::new();
+    for s in strokes {
+        let timed = !s.points.is_empty() && s.points.iter().all(|q| q.len() == 4 && q[3].is_finite());
+        if !timed {
+            out.push((brush_paths(std::slice::from_ref(s))?.remove(0), None));
+            continue;
+        }
+        let pts: Vec<BrushPoint> = s.points.iter().map(|q| BrushPoint { x: q[0], y: q[1], pressure: q[2].clamp(0.0, 1.0) }).collect();
+        let ts: Vec<f32> = s.points.iter().map(|q| q[3]).collect();
+        let (p, t) = if s.smooth { spline_path_timed(&pts, &ts) } else { (pts, ts) };
+        out.push((p, Some(t)));
+    }
+    Ok(out)
 }
 
 /// Compõe traços já carimbados na camada: o recorte (alinhado aos tiles) do que eles tocaram, antes e depois.
