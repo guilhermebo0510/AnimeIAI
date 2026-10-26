@@ -10,6 +10,7 @@ use super::ui_kit::{Env, body_ui};
 use crate::i18n::tr;
 use crate::icons::IconId;
 use crate::theme::CARD_RADIUS;
+use crate::behavior_prefs::{CursorShape, SmallCursor, ToolCursor};
 use crate::workspace::ToolId;
 use aiai_core::*;
 use egui::{Color32, CornerRadius, Event, Mesh, Pos2, Rect, Sense, Shape, Stroke, TextureOptions, Ui, UiBuilder, Vec2, epaint::PathStroke};
@@ -204,11 +205,11 @@ fn toolbar(env: &mut Env, ui: &mut Ui, has_cut: bool) {
             return;
         }
         if env.icon_button_sized(ui, IconId::RotateView, "canvas.rotate_left", false, has_cut, "canvas:rot_left", 24.0, true).clicked() {
-            env.ed.view.rotate_by(-super::panels::navigator::ROT_STEP_DEG.to_radians());
+            env.ed.view.rotate_by(-env.ed.beh.prefs.rotate_step_deg.to_radians());
             env.ed.auto_fit = false;
         }
         if env.icon_button(ui, IconId::RotateView, "canvas.rotate_right", false, has_cut, "canvas:rot_right").clicked() {
-            env.ed.view.rotate_by(super::panels::navigator::ROT_STEP_DEG.to_radians());
+            env.ed.view.rotate_by(env.ed.beh.prefs.rotate_step_deg.to_radians());
             env.ed.auto_fit = false;
         }
         let rotated = super::panels::navigator::user_rotation_deg(&env.ed.view, env.ed.workbar.flip_v).abs() > 0.05;
@@ -292,8 +293,10 @@ fn update_render(env: &mut Env, ctx: &egui::Context, cut: &NodeId, canvas: (u32,
     let core = &*env.core;
     let ed = &mut *env.ed;
     let dark = ctx.theme() == egui::Theme::Dark;
-    if ed.checker.is_none() || ed.checker_dark != dark {
-        let [a, b] = checker_colors(dark);
+    // xadrez: as cores das Preferências > Tela de pintura (ou as do tema); refaz a textura quando qualquer coisa muda
+    if ed.checker.is_none() || ed.checker_dark != dark || ed.beh.checker_key != Some(ed.beh.prefs.checker) {
+        let [a, b] = ed.beh.prefs.checker_colors().unwrap_or_else(|| checker_colors(dark));
+        ed.beh.checker_key = Some(ed.beh.prefs.checker);
         let img = egui::ColorImage::new([2, 2], vec![a, b, b, a]);
         ed.checker = Some(ctx.load_texture("canvas-checker", img, TextureOptions { magnification: egui::TextureFilter::Nearest, minification: egui::TextureFilter::Nearest, wrap_mode: egui::TextureWrapMode::Repeat, mipmap_mode: None }));
         ed.checker_dark = dark;
@@ -472,6 +475,9 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
         }
     }
     // soltou fora da janela sem o evento de soltar: termina o gesto
+    if !any_down {
+        env.ed.beh.size_drag = None;
+    }
     if !any_down && env.ed.comp.drag.is_some() {
         super::comp_viewer::release(env);
     }
@@ -487,9 +493,34 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
     }
 }
 
+/// Tamanho da ponta da ferramenta (px do desenho) e os limites dele; `None` nas ferramentas sem ponta.
+fn tip_size(env: &Env, tool: ToolId) -> Option<(f32, (f32, f32))> {
+    let o = &env.ed.opts;
+    match tool {
+        ToolId::Pen => Some((o.pen_width, (0.5, 200.0))),
+        ToolId::Brush => Some((o.brush_size, (1.0, 600.0))),
+        ToolId::Eraser => Some((o.eraser_size, (1.0, 600.0))),
+        _ => None,
+    }
+}
+
+fn set_tip_size(env: &mut Env, tool: ToolId, v: f32) {
+    let o = &mut env.ed.opts;
+    match tool {
+        ToolId::Pen => o.pen_width = v,
+        ToolId::Brush => o.brush_size = v,
+        ToolId::Eraser => o.eraser_size = v,
+        _ => {}
+    }
+}
+
 /// Pressão do `Touch Start` mais próximo do evento `idx` no mesmo quadro.
 /// Pressão bruta da caneta → pressão do traço pela curva das Preferências.
 fn curve(env: &Env, force: f32) -> f32 {
+    // Preferências > Tablet: com a pressão desligada, a caneta desenha como o mouse (sempre cheia)
+    if !env.ed.beh.prefs.pen_pressure {
+        return 1.0;
+    }
     let (min, gamma) = env.ed.pressure_curve;
     crate::prefs::pressure_curve(force, min, gamma)
 }
@@ -510,6 +541,16 @@ fn touch_start_pressure(events: &[Event], idx: usize) -> Option<f32> {
 fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::PointerButton, mods: egui::Modifiers, space: bool, r_held: bool) {
     let xf = env.ed.view.xf(rect, ppp);
     let tool = *env.tool;
+    // arrasto mínimo (Preferências > Ferramentas): de onde o botão foi apertado
+    env.ed.beh.drag_origin = Some(pos);
+    env.ed.beh.drag_armed = false;
+    // Ctrl+Alt+arrastar: muda o tamanho da ponta (pincel, caneta, borracha) pelo deslocamento horizontal
+    if button == egui::PointerButton::Primary && !space && !r_held && mods.alt && (mods.ctrl || mods.command) && env.ed.beh.prefs.size_drag {
+        if let Some((start, _)) = tip_size(env, tool) {
+            env.ed.beh.size_drag = Some(crate::behavior_prefs::SizeDrag { origin: pos, start, tool });
+            return;
+        }
+    }
     // douga: o cel-chave com desenho fica travado contra edição acidental (destrava na barra do canvas ou na linha do tempo)
     let edits = matches!(tool, ToolId::Pen | ToolId::Brush | ToolId::Eraser | ToolId::Points | ToolId::Move);
     if edits && matches!(button, egui::PointerButton::Primary) && !space && !r_held && !mods.alt && super::anim::edit_blocked(env) {
@@ -614,9 +655,29 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
 fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
     let xf = env.ed.view.xf(rect, ppp);
     let c = xf.to_canvas(pos);
+    if let Some(sd) = env.ed.beh.size_drag {
+        if let Some((_, range)) = tip_size(env, sd.tool) {
+            let v = crate::behavior_prefs::size_from_drag(sd.start, pos.x - sd.origin.x, xf.scale, range);
+            set_tip_size(env, sd.tool, v);
+        }
+        return;
+    }
     if super::text_tool::dragging(env) {
         super::text_tool::drag(env, c);
         return;
+    }
+    // arrasto mínimo: os arrastos de objeto só começam depois que o ponteiro anda a distância das Preferências
+    let object_drag = match &env.ed.gesture {
+        Gesture::Select { tool, .. } => *tool != super::selection::SelTool::Lasso,
+        Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } | Gesture::StrokePick { .. } | Gesture::Shape { .. } | Gesture::DragNode { .. } | Gesture::DragHandle { .. } | Gesture::RulerDrag { .. } | Gesture::RulerCreate { .. } => true,
+        _ => false,
+    };
+    if object_drag && !env.ed.beh.drag_armed {
+        let min = env.ed.beh.prefs.min_drag_px;
+        match env.ed.beh.drag_origin {
+            Some(o) if !crate::behavior_prefs::drag_armed(o, pos, min) => return,
+            _ => env.ed.beh.drag_armed = true,
+        }
     }
     if super::model3d::dragging(env) {
         super::model3d::drag(env, &xf, pos);
@@ -694,6 +755,9 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
     let at = Instant::now();
     let xf = env.ed.view.xf(rect, ppp);
     let c = xf.to_canvas(pos);
+    if button == egui::PointerButton::Primary && env.ed.beh.size_drag.take().is_some() {
+        return;
+    }
     if button == egui::PointerButton::Primary && super::text_tool::dragging(env) {
         super::text_tool::release(env, c, xf.scale);
         return;
@@ -778,6 +842,8 @@ pub(crate) enum CenterMark {
     Cross,
     /// Marca pequena no centro de um contorno grande.
     Dot,
+    /// Ponto cheio (preferência "Ponto" do cursor).
+    Point,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -787,11 +853,24 @@ pub(crate) struct CursorLook {
 }
 
 /// Como o cursor da ponta aparece pelo diâmetro dela na tela (px lógicos): contorno quando dá para ver, mira quando
-/// não dá (ou sempre no modo preciso), marca de centro nos contornos grandes.
-pub(crate) fn cursor_look(diameter_px: f32, precise: bool) -> CursorLook {
+/// não dá (ou sempre no modo preciso), marca de centro nos contornos grandes. Com as Preferências > Cursor: a forma
+/// escolhida para o tipo de ferramenta e o que mostrar quando a ponta fica pequena demais para o contorno (nada, ponto
+/// ou mira). Ponta de tamanho 0 (borracha de preenchimento) nunca fica sem mira.
+pub(crate) fn cursor_look_with(diameter_px: f32, precise: bool, shape: CursorShape, small: SmallCursor) -> CursorLook {
+    match shape {
+        CursorShape::Cross => return CursorLook { outline: false, center: CenterMark::Cross },
+        CursorShape::Dot => return CursorLook { outline: false, center: CenterMark::Point },
+        CursorShape::Tip => {}
+    }
     let outline = diameter_px >= OUTLINE_MIN_PX;
-    let center = if precise || !outline {
+    let center = if precise || diameter_px <= 0.0 {
         CenterMark::Cross
+    } else if !outline {
+        match small {
+            SmallCursor::None => CenterMark::None,
+            SmallCursor::Dot => CenterMark::Point,
+            SmallCursor::Cross => CenterMark::Cross,
+        }
     } else if diameter_px >= CENTER_MARK_PX {
         CenterMark::Dot
     } else {
@@ -858,6 +937,12 @@ fn crosshair(painter: &egui::Painter, p: Pos2, (gap, arm): (f32, f32)) {
     for s in &segs {
         painter.line_segment(*s, Stroke::new(1.0, Color32::WHITE));
     }
+}
+
+/// Ponto cheio de 2 px de raio com borda escura (aparece sobre desenho claro e escuro).
+fn point_mark(painter: &egui::Painter, p: Pos2) {
+    painter.circle(p, 2.5, Color32::from_black_alpha(170), Stroke::NONE);
+    painter.circle(p, 1.6, Color32::WHITE, Stroke::NONE);
 }
 
 /// Contorno da ponta com raio `rc` (px do desenho) em volta de `p`, no giro/espelho da visão: a elipse da ponta
@@ -1124,7 +1209,8 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
 
     // grade de pixels em zoom alto (1 pixel do desenho ≥ 8 pixels físicos)
     if env.ed.show_grid || env.ed.view.zoom >= 8.0 {
-        paint_grid(painter, rect, xf, env.ed.view.zoom, canvas, env.ed.show_grid);
+        let bp = &env.ed.beh.prefs;
+        paint_grid(painter, rect, xf, env.ed.view.zoom, canvas, env.ed.show_grid, crate::behavior_prefs::rgb(bp.grid_color), bp.grid_alpha);
     }
 
     // quadro de câmera e área segura
@@ -1147,7 +1233,19 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
     // cursor das ferramentas de pintura (como o Photoshop e o Clip Studio): o contorno da ponta no tamanho de verdade;
     // a mira fina só quando o contorno fica pequeno demais para ver (ou sempre, no modo preciso: preferência ou Caps
     // Lock); com o contorno grande, uma marca pequena no centro. Tudo em volta do mesmo ponto, o pixel do ponteiro.
-    if let Some(p) = env.ed.cursor {
+    // Ctrl+Alt+arrastar: o círculo do tamanho novo em volta de onde o arrasto começou, com o valor
+    if let Some(sd) = env.ed.beh.size_drag.filter(|_| env.ed.beh.prefs.size_drag_preview) {
+        if let Some((v, _)) = tip_size(env, sd.tool) {
+            let r = (v * xf.scale / 2.0).max(1.0);
+            painter.circle_stroke(sd.origin, r, Stroke::new(3.0, Color32::from_black_alpha(150)));
+            painter.circle_stroke(sd.origin, r, Stroke::new(1.0, Color32::WHITE));
+            let g = painter.layout_no_wrap(format!("{v:.1} px"), egui::FontId::proportional(12.0), Color32::WHITE);
+            let at = sd.origin + egui::vec2(-g.size().x / 2.0, r + 6.0);
+            painter.rect_filled(Rect::from_min_size(at, g.size()).expand(3.0), 3.0, Color32::from_black_alpha(170));
+            painter.galley(at, g, Color32::WHITE);
+        }
+    }
+    if let Some(p) = env.ed.cursor.filter(|_| env.ed.beh.size_drag.is_none()) {
         let ring = matches!(env.ed.gesture, Gesture::None | Gesture::Stroke(_));
         // espaço/R = mão/girar (o set_cursor mostra o ícone do sistema): sem a mira própria
         let nav = matches!(env.ed.gesture, Gesture::Pan { .. } | Gesture::Rotate { .. }) || painter.ctx().input(|i| i.key_down(egui::Key::Space) || i.key_down(egui::Key::R));
@@ -1155,18 +1253,26 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
             let p = Pos2::new(painter.round_to_pixel_center(p.x), painter.round_to_pixel_center(p.y));
             let precise = env.ed.cursor_precise || caps_lock();
             let tip = if ring { cursor_tip(env) } else { None };
+            let bp = env.ed.beh.prefs.clone();
             match tip {
                 Some((d, preset)) => {
-                    let look = cursor_look(d * xf.scale, precise);
+                    let shape = match *env.tool {
+                        ToolId::Brush => bp.cursor_brush,
+                        ToolId::Pen => bp.cursor_pen,
+                        _ => bp.cursor_eraser,
+                    };
+                    let look = cursor_look_with(d * xf.scale, precise, shape, bp.cursor_small);
                     if look.outline {
                         paint_tip_outline(painter, p, xf, d / 2.0, preset.as_ref(), &env.core.blobs);
                     }
                     match look.center {
                         CenterMark::Cross => crosshair(painter, p, if precise { (2.5, 7.0) } else { (2.0, 5.0) }),
                         CenterMark::Dot => crosshair(painter, p, (0.0, 2.5)),
+                        CenterMark::Point => point_mark(painter, p),
                         CenterMark::None => {}
                     }
                 }
+                None if own_cursor(*env.tool) && bp.cursor_other == ToolCursor::Cross => crosshair(painter, p, (2.5, 7.0)),
                 None if own_cursor(*env.tool) => tool_glyph(painter, p, *env.tool),
                 None => {}
             }
@@ -1175,7 +1281,7 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
     let _ = ppp;
 }
 
-fn paint_grid(painter: &egui::Painter, rect: Rect, xf: &Xf, zoom: f32, canvas: (u32, u32), forced: bool) {
+fn paint_grid(painter: &egui::Painter, rect: Rect, xf: &Xf, zoom: f32, canvas: (u32, u32), forced: bool, tint: Color32, alpha: u8) {
     // pixel a pixel só em zoom alto; com a grade ligada em zoom baixo, a cada 64 pixels do desenho
     let step = if zoom >= 8.0 { 1.0 } else if forced { if zoom >= 2.0 { 8.0 } else { 64.0 } } else { return };
     let (cw, ch) = (canvas.0 as f32, canvas.1 as f32);
@@ -1191,7 +1297,9 @@ fn paint_grid(painter: &egui::Painter, rect: Rect, xf: &Xf, zoom: f32, canvas: (
     if x1 <= x0 || y1 <= y0 {
         return;
     }
-    let color = Color32::from_white_alpha(if step == 1.0 { 38 } else { 28 });
+    // a grade grossa (zoom baixo) é um pouco mais fraca que a de pixel (padrão 38 e 28 de 255)
+    let a = if step == 1.0 { alpha } else { (alpha as f32 * 28.0 / 38.0).round() as u8 };
+    let color = Color32::from_rgba_unmultiplied(tint.r(), tint.g(), tint.b(), a);
     let s = Stroke::new(1.0, color);
     let mut n = 0;
     let mut x = (x0 / step).floor() * step;
@@ -1486,6 +1594,7 @@ mod tests {
     /// modo preciso sempre com a mira.
     #[test]
     fn cursor_look_by_screen_size() {
+        let cursor_look = |d: f32, precise: bool| cursor_look_with(d, precise, CursorShape::Tip, SmallCursor::Cross);
         assert_eq!(cursor_look(2.0, false), CursorLook { outline: false, center: CenterMark::Cross });
         assert_eq!(cursor_look(OUTLINE_MIN_PX - 0.1, false).outline, false);
         assert_eq!(cursor_look(12.0, false), CursorLook { outline: true, center: CenterMark::None });
@@ -1495,6 +1604,25 @@ mod tests {
         // pincel de 24 px: 10% = 2,4 px (mira), 100% = 24 px (contorno + marca), 400% = 96 px
         assert_eq!(cursor_look(24.0 * 0.1, false).center, CenterMark::Cross);
         assert!(cursor_look(24.0, false).outline && cursor_look(96.0, false).center == CenterMark::Dot);
+    }
+
+    /// Preferências > Cursor: a forma por tipo de ferramenta e o que mostrar quando a ponta é pequena demais.
+    #[test]
+    fn cursor_look_follows_the_preferences() {
+        use CenterMark as M;
+        // forma da ponta com a mira como padrão: ponta pequena vira mira, contorno visível fica sozinho
+        assert_eq!(cursor_look_with(2.0, false, CursorShape::Tip, SmallCursor::Cross), CursorLook { outline: false, center: M::Cross });
+        assert_eq!(cursor_look_with(12.0, false, CursorShape::Tip, SmallCursor::None), CursorLook { outline: true, center: M::None });
+        // ponta pequena: o que as preferências escolhem aparece no lugar do contorno
+        assert_eq!(cursor_look_with(2.0, false, CursorShape::Tip, SmallCursor::None), CursorLook { outline: false, center: M::None });
+        assert_eq!(cursor_look_with(2.0, false, CursorShape::Tip, SmallCursor::Dot), CursorLook { outline: false, center: M::Point });
+        // ponta de tamanho 0 (borracha de preenchimento) nunca fica sem mira
+        assert_eq!(cursor_look_with(0.0, false, CursorShape::Tip, SmallCursor::None).center, M::Cross);
+        // mira e ponto valem para qualquer tamanho, sem contorno
+        assert_eq!(cursor_look_with(300.0, false, CursorShape::Cross, SmallCursor::None), CursorLook { outline: false, center: M::Cross });
+        assert_eq!(cursor_look_with(300.0, false, CursorShape::Dot, SmallCursor::Cross), CursorLook { outline: false, center: M::Point });
+        // o modo preciso continua mandando na forma da ponta
+        assert_eq!(cursor_look_with(300.0, true, CursorShape::Tip, SmallCursor::None).center, M::Cross);
     }
 
     /// O contorno das pontas de forma fica em volta do mesmo ponto em que o motor carimba (o centro da mira): a caixa

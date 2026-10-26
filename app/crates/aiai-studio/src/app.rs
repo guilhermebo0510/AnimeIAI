@@ -42,6 +42,7 @@ mod sel_ops;
 mod selection;
 mod shelf;
 mod text_tool;
+mod tool_hold;
 mod tools;
 mod ui_kit;
 mod ui_state;
@@ -1130,8 +1131,11 @@ impl StudioApp {
         }
         anim::shortcuts(ctx, &mut env);
         // letras da prateleira das áreas de desenho (a mesma letra passa para a próxima ferramenta que a divide)
+        let pressed = tool_hold::pressed(ctx);
         shelf::shortcuts(ctx, &mut env);
         tools::shortcuts(ctx, &mut env);
+        // segurar a tecla da ferramenta a usa só enquanto apertada (Preferências > Ferramentas)
+        tool_hold::after_shortcuts(ctx, &mut env, before, &pressed);
         // a tecla de uma ferramenta que não está na prateleira deste workspace não troca a ferramenta
         if !profile.allows(self.tool) && self.tool != before {
             self.tool = before;
@@ -1234,6 +1238,7 @@ impl StudioApp {
         self.bridge_tick(&ctx);
         self.ed.pressure_curve = (self.prefs.pen_pressure_min, self.prefs.pen_pressure_gamma);
         self.ed.cursor_precise = self.prefs.cursor_precise;
+        self.sync_behavior(&ctx);
         self.autosave_tick();
         panels::colors::tick(&self.core, &mut self.ed);
         // tamanhos prontos, olhos e histórico de cores vão para as preferências quando mudam

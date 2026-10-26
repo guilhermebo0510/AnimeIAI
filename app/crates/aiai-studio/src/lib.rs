@@ -5,6 +5,7 @@
 //! O canvas real, o projeto e a bridge entram nas sprints seguintes.
 
 pub mod app;
+pub mod behavior_prefs;
 pub mod brand;
 pub mod cli;
 pub mod dock_float;

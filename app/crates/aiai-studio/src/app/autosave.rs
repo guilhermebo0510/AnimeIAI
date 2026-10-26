@@ -43,6 +43,9 @@ pub(crate) struct Autosave {
     doc_job: Option<JoinHandle<Result<(), String>>>,
     /// Miniatura `thumbnail.png` gravada depois de salvar.
     thumb_job: Option<JoinHandle<Result<(), String>>>,
+    /// Intervalos das cópias (Preferências > Arquivo); começam nos padrões [`INTERVAL`] e [`DOC_INTERVAL`].
+    interval: Duration,
+    doc_interval: Duration,
 }
 
 /// Cópia do documento em memória enquanto há alterações não salvas num projeto com pasta (os blobs já estão no disco
@@ -55,7 +58,13 @@ impl Autosave {
             let unix = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
             r.join(format!("{unix}-{}.aiai", std::process::id()))
         });
-        Autosave { dir, last: Instant::now(), job: None, wrote: false, doc_last: Instant::now(), doc_job: None, thumb_job: None }
+        Autosave { dir, last: Instant::now(), job: None, wrote: false, doc_last: Instant::now(), doc_job: None, thumb_job: None, interval: INTERVAL, doc_interval: DOC_INTERVAL }
+    }
+
+    /// Intervalos das Preferências (minutos): da cópia de recuperação (sem pasta) e da do documento (com pasta).
+    pub(crate) fn set_intervals(&mut self, recovery_minutes: u32, backup_minutes: u32) {
+        self.interval = Duration::from_secs(recovery_minutes.max(1) as u64 * 60);
+        self.doc_interval = Duration::from_secs(backup_minutes.max(1) as u64 * 60);
     }
 
     /// Chamado a cada quadro. `project_dir` = pasta do projeto quando ele tem pasta, trava e alterações não salvas.
@@ -82,7 +91,7 @@ impl Autosave {
             None => self.doc_last = Instant::now(),
             Some(_) if self.dir.is_none() => self.doc_last = Instant::now(),
             Some(dir) => {
-                if self.doc_job.is_none() && self.doc_last.elapsed() >= DOC_INTERVAL {
+                if self.doc_job.is_none() && self.doc_last.elapsed() >= self.doc_interval {
                     self.doc_last = Instant::now();
                     let (p, dir) = (project.clone(), dir.to_path_buf());
                     self.doc_job = Some(std::thread::spawn(move || persist::backup_document(&dir, &p).map(|_| ()).map_err(|e| e.to_string())));
@@ -113,7 +122,7 @@ impl Autosave {
             }
         }
         let Some(dir) = self.dir.clone() else { return err };
-        if needed && self.job.is_none() && self.last.elapsed() >= INTERVAL {
+        if needed && self.job.is_none() && self.last.elapsed() >= self.interval {
             self.last = Instant::now();
             let (p, b) = (project.clone(), blobs.clone());
             self.job = Some(std::thread::spawn(move || persist::snapshot(&p, &b, &dir).map_err(|e| e.to_string())));

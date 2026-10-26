@@ -387,7 +387,7 @@ fn apply_act(env: &mut Env, list: &[CharMaterial], id: &Id, a: Act) {
     match a {
         Act::Rename => env.ed.chars.rename = Some((id.clone(), name)),
         Act::Duplicate => {
-            if let Some(v) = call(env, json!({ "action": "duplicate", "material": id, "name": format!("{name} {}", tr("char.copy_suffix")) })) {
+            if let Some(v) = call(env, json!({ "action": "duplicate", "material": id, "name": crate::behavior_prefs::copy_name_tr(&name, env.ed.beh.prefs.copy_name) })) {
                 if let Some(n) = id_of(&v, "material") {
                     env.ed.chars.open = Some(n);
                 }

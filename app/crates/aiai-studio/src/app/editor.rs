@@ -804,6 +804,9 @@ pub(crate) struct Editor {
     pub pressure_curve: (f32, f32),
     /// Cursor preciso das preferências: a mira fina sempre, junto com o contorno da ponta (no Photoshop, Caps Lock).
     pub cursor_precise: bool,
+    /// Comportamento ajustável nas Preferências (troca temporária de ferramenta, arrasto mínimo, tamanho arrastando, cursor…)
+    /// e o estado transitório dele.
+    pub beh: crate::behavior_prefs::BehaviorRt,
     /// Cursor pedido ao sistema no último quadro sobre o canvas ("hand", "grabbing", "crosshair"...; para a bridge).
     pub cursor_kind: String,
     /// Já chegou pressão de caneta nesta sessão (mostrado nas Preferências).
@@ -900,10 +903,10 @@ impl Default for Editor {
             alt: false,
             brushes: Default::default(),
             brush_panel: Default::default(),
+            draw_ui: Default::default(),
             library: Default::default(),
             want_panel: None,
             live: super::audio_out::AudioOut::new(false),
-            draw_ui: Default::default(),
             keys: crate::keymap::Keymap::default(),
             cut: None,
             layer: None,
@@ -935,6 +938,7 @@ impl Default for Editor {
             pressure: 1.0,
             pressure_curve: (0.0, 1.0),
             cursor_precise: false,
+            beh: Default::default(),
             cursor_kind: String::new(),
             pen_seen: false,
             toast: None,

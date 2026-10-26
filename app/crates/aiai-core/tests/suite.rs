@@ -524,3 +524,17 @@ fn corrupt_settings_file_gets_one_backup_copy_before_overwrite() {
     assert_eq!(std::fs::read(&c1).unwrap(), b"[{\"name\": \"Nuvem\", \"size\": 3", "a cópia sobrevive à regravação");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn lowering_the_undo_limit_drops_the_excess_at_once() {
+    // Preferências > Desempenho > níveis de desfazer: baixar o limite com histórico cheio não deixa o excesso para trás
+    let mut s = CoreSession::for_tests("undo-limit");
+    let (_ep, _cut, _layer, cel) = build_basic(&mut s);
+    for i in 0..30u32 {
+        s.apply(Command::SetProps { id: cel.clone(), name: Some(format!("c{i}")), data: json!({}) }).unwrap();
+    }
+    assert!(s.history().0.len() >= 30);
+    s.undo_limit = 10;
+    s.apply(Command::SetProps { id: cel.clone(), name: Some("ultimo".into()), data: json!({}) }).unwrap();
+    assert_eq!(s.history().0.len(), 10, "o histórico foi cortado de uma vez no limite novo");
+}

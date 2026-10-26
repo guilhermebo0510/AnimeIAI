@@ -868,6 +868,91 @@ fn merge_script(c: &Client) {
     assert_eq!(layers().len(), 3, "recusou");
 }
 
+/// Preferências (S25): as categorias abrem, os ajustes mudam o estado e agem de verdade no canvas e nas ferramentas.
+fn prefs_script(c: &Client) {
+    c.ok("NEW_PROJECT", json!({"name": "prefs", "settings": {"width": 320, "height": 180}}));
+    c.ok("UI_ACTION", json!({"action": "set_workspace", "workspace": "animacao"}));
+    c.ok("UI_ACTION", json!({"action": "open_panel", "panel": "project"}));
+    c.click_widget("project:quick_start");
+    c.click_widget("layers:add");
+    c.click_widget("layers:add.vector");
+    let b = |c: &Client| c.state()["behavior"].clone();
+    // padrões de uma preferência nova
+    let d = b(c);
+    assert_eq!((d["tool_hold"].clone(), d["tool_hold_ms"].clone(), d["undo_levels"].clone(), d["cursor_small"].clone()), (json!(true), json!(500), json!(500), json!("cross")));
+
+    // cada categoria abre pela lista da esquerda
+    c.ok("UI_ACTION", json!({"action": "open_dialog", "dialog": "prefs", "tab": "general"}));
+    c.input(json!([{"kind": "wait", "frames": 3}]));
+    for tab in ["tools", "tablet", "cursor", "layer", "canvas", "keys", "folders", "performance", "general"] {
+        c.click_widget(&format!("prefs:tab:{tab}"));
+        assert_eq!(c.state()["prefs_tab"], tab, "a categoria {tab} abre");
+    }
+
+    // Tablet: com a pressão desligada, a caneta desenha como o mouse (pressão cheia)
+    c.click_widget("prefs:tab:tablet");
+    c.click_widget("prefs:pen_pressure");
+    assert_eq!(b(c)["pen_pressure"], false);
+    c.ok("UI_ACTION", json!({"action": "close_dialog", "dialog": "prefs"}));
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "pen"}));
+    c.click_widget("layers:row:0");
+    let n = c.latency_count();
+    c.drag_canvas(&[(60.0, 40.0), (140.0, 40.0), (220.0, 60.0)], true);
+    c.wait_canvas(n);
+    let st = c.state();
+    let layer = st["editor"]["layer"].as_str().unwrap().to_string();
+    let cel = c.ok("QUERY", json!({"query": {"kind": "tree", "id": layer}}))["children"][0]["id"].as_str().unwrap().to_string();
+    let pts = c.strokes(&cel)[0]["points"].as_array().unwrap().clone();
+    assert!(pts.iter().all(|p| (p["pressure"].as_f64().unwrap() - 1.0).abs() < 1e-3), "pressão desligada: todas as amostras em 1,0");
+    c.ok("UI_ACTION", json!({"action": "open_dialog", "dialog": "prefs", "tab": "tablet"}));
+    c.click_widget("prefs:pen_pressure");
+    assert_eq!(b(c)["pen_pressure"], true);
+    c.ok("UI_ACTION", json!({"action": "close_dialog", "dialog": "prefs"}));
+    let strokes_before = c.strokes(&cel).len();
+
+    // Ctrl+Alt+arrastar na horizontal muda o tamanho da ponta e não desenha nada
+    let width0 = c.state()["editor"]["tool_options"]["pen_width"].as_f64().unwrap();
+    let scale = c.state()["editor"]["canvas"]["m"][0].as_f64().unwrap();
+    let (x0, y0) = c.canvas_pt(160.0, 120.0);
+    c.input(json!([
+        {"kind": "mouse_move", "x": x0, "y": y0}, {"kind": "wait", "frames": 1},
+        {"kind": "mouse_down", "x": x0, "y": y0, "button": "primary", "modifiers": ["ctrl", "alt"]},
+        {"kind": "mouse_move", "x": x0 + 20.0, "y": y0}, {"kind": "mouse_move", "x": x0 + 40.0, "y": y0},
+        {"kind": "mouse_up", "x": x0 + 40.0, "y": y0, "button": "primary"}, {"kind": "wait", "frames": 2}]));
+    let width1 = c.state()["editor"]["tool_options"]["pen_width"].as_f64().unwrap();
+    assert!((width1 - (width0 + 40.0 / scale)).abs() < 0.2, "o tamanho acompanhou os 40 px arrastados: {width0} -> {width1} (escala {scale})");
+    assert_eq!(c.strokes(&cel).len(), strokes_before, "arrastar o tamanho não risca o desenho");
+
+    // troca temporária: segurar a tecla da borracha por mais de 500 ms e soltar volta ao pen; um toque curto troca de vez
+    assert_eq!(c.state()["active_tool"], "pen");
+    c.input(json!([{"kind": "key", "key": "E", "pressed": true}, {"kind": "wait", "frames": 3}]));
+    assert_eq!(c.state()["active_tool"], "eraser", "a tecla E troca para a borracha");
+    std::thread::sleep(Duration::from_millis(700));
+    c.input(json!([{"kind": "key", "key": "E", "pressed": false}, {"kind": "wait", "frames": 3}]));
+    assert_eq!(c.state()["active_tool"], "pen", "segurou e soltou: volta para a ferramenta de antes");
+    c.input(json!([{"kind": "key", "key": "E"}, {"kind": "wait", "frames": 3}]));
+    assert_eq!(c.state()["active_tool"], "eraser", "toque curto: a borracha fica");
+
+    // Cursor: a escolha vai para o estado; Camada: cor própria das formigas; Tela de pintura: xadrez próprio
+    c.ok("UI_ACTION", json!({"action": "open_dialog", "dialog": "prefs", "tab": "cursor"}));
+    c.input(json!([{"kind": "wait", "frames": 3}]));
+    c.click_widget("prefs:cursor_small:prefs.cursor.small.none");
+    assert_eq!(b(c)["cursor_small"], "none");
+    c.click_widget("prefs:cursor_small:prefs.cursor.shape.cross");
+    assert_eq!(b(c)["cursor_small"], "cross");
+    c.click_widget("prefs:tab:layer");
+    c.click_widget("prefs:sel_color");
+    assert!(b(c)["sel_color"].is_array(), "cor própria ligada: {}", b(c));
+    c.click_widget("prefs:sel_color");
+    assert!(b(c)["sel_color"].is_null());
+    c.click_widget("prefs:tab:canvas");
+    c.click_widget("prefs:checker_custom");
+    assert!(b(c)["checker"].is_array(), "xadrez próprio ligado");
+    c.click_widget("prefs:checker_custom");
+    assert!(b(c)["checker"].is_null());
+    c.ok("UI_ACTION", json!({"action": "close_dialog", "dialog": "prefs"}));
+}
+
 #[test]
 fn the_app_serves_the_bridge_and_reacts_to_real_egui_input() {
     let dir = tempfile::tempdir().unwrap();
@@ -892,6 +977,7 @@ fn the_app_serves_the_bridge_and_reacts_to_real_egui_input() {
             editor_script(&client);
             editor_script2(&client);
             merge_script(&client);
+            prefs_script(&client);
         }));
         done2.store(true, Ordering::SeqCst);
         r

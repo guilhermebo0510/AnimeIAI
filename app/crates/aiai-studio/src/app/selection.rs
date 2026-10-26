@@ -694,7 +694,7 @@ fn outlines(sel: &Selection) -> Vec<Vec<Vec2>> {
     }
 }
 
-/// Formigas: contorno branco com traços pretos que andam (como o Photoshop).
+/// Formigas: contorno branco (ou da cor das Preferências) com traços pretos que andam (como o Photoshop).
 pub(crate) fn ants(painter: &egui::Painter, pts: &[Pos2], closed: bool, phase: f32) {
     if pts.len() < 2 {
         return;
@@ -703,7 +703,9 @@ pub(crate) fn ants(painter: &egui::Painter, pts: &[Pos2], closed: bool, phase: f
     if closed {
         v.push(pts[0]);
     }
-    painter.add(Shape::line(v.clone(), EStroke::new(1.3, Color32::WHITE)));
+    // Preferências > Camada e seleção: cor das formigas (padrão: branco com tracejado preto)
+    let base = crate::behavior_prefs::current(painter.ctx()).sel_color.map(crate::behavior_prefs::rgb).unwrap_or(Color32::WHITE);
+    painter.add(Shape::line(v.clone(), EStroke::new(1.3, base)));
     painter.extend(Shape::dashed_line_with_offset(&v, EStroke::new(1.3, Color32::BLACK), &[4.0], &[4.0], phase));
 }
 

@@ -215,6 +215,21 @@ pub fn apply(ctx: &egui::Context, kind: ThemeKind) {
     });
 }
 
+/// Densidade da interface (Preferências > Geral): espaço entre controles e enchimento dos botões. Só mexe no que mudou
+/// (compara com o estilo atual), então pode ser chamada a cada quadro e sobrevive à troca de tema, que volta ao normal.
+pub fn apply_density(ctx: &egui::Context, d: crate::behavior_prefs::UiDensity) {
+    let (item, pad) = d.spacing();
+    let (item, pad) = (egui::vec2(item[0], item[1]), egui::vec2(pad[0], pad[1]));
+    let s = ctx.global_style();
+    if s.spacing.item_spacing == item && s.spacing.button_padding == pad {
+        return;
+    }
+    ctx.all_styles_mut(|style| {
+        style.spacing.item_spacing = item;
+        style.spacing.button_padding = pad;
+    });
+}
+
 const NOTO_SANS: &[u8] = include_bytes!("../assets/fonts/NotoSans-Regular.ttf");
 const NOTO_SANS_JP: &[u8] = include_bytes!("../assets/fonts/NotoSansJP-Regular.otf");
 

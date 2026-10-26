@@ -254,7 +254,7 @@ pub(crate) fn copy_to_layer(env: &mut Env) {
         }
         None => (cut.clone(), None),
     };
-    let base = p.node(&layer).map(|n| format!("{} {}", n.name, tr("selop.copy_suffix"))).unwrap_or_else(|| tr(cmds::layer_type_key(l.kind)).to_owned());
+    let base = p.node(&layer).map(|n| crate::behavior_prefs::copy_name_tr(&n.name, env.ed.beh.prefs.copy_name)).unwrap_or_else(|| tr(cmds::layer_type_key(l.kind)).to_owned());
     let name = cmds::unique_layer_name(p, &parent, &base);
     let (id, cel_id) = (env.core.ids.next(), env.core.ids.next());
     let cmds_ = vec![

@@ -201,6 +201,8 @@ impl StudioApp {
             "dialogs": dialogs,
             "popup_open": egui::Popup::is_any_open(ctx),
             "prefs_tab": self.prefs_tab.key(),
+            // Preferências de comportamento (S25): troca temporária, cursor, cópias, cores da tela…
+            "behavior": serde_json::to_value(&self.prefs.behavior).unwrap_or_default(),
             "key_capture": self.key_capture.map(|a| a.id()),
             "shortcuts": crate::keymap::ACTIONS.iter().map(|a| (a.1.to_owned(), Value::from(self.ed.keys.label(a.0)))).collect::<Map<String, Value>>(),
             "focused": {

@@ -39,6 +39,8 @@ pub struct Prefs {
     pub gpu_budget_mb: u32,
     /// Lado esquerdo das áreas de desenho (S25): tamanhos prontos, olhos do painel de propriedades e histórico de cores.
     pub drawing: crate::drawing_prefs::DrawingPrefs,
+    /// Comportamento do editor ajustável (S25): troca temporária de ferramenta, cursor, cópias, cores da tela…
+    pub behavior: crate::behavior_prefs::BehaviorPrefs,
 }
 
 /// Autor e licença dos pincéis do usuário (dados do perfil de criador; vão no manifesto do `.aiaibrush`).
@@ -79,7 +81,7 @@ pub const MAX_RECENT: usize = 10;
 
 impl Default for Prefs {
     fn default() -> Self {
-        Prefs { theme: ThemeKind::Dark, lang: Lang::Pt, workspace: WorkspaceId::default(), ui_zoom: 1.0, recent: Vec::new(), show_start: true, shortcuts: BTreeMap::new(), projects_dir: None, gpu: GpuPref::Dedicated, pen_pressure_min: 0.0, pen_pressure_gamma: 1.0, brush_author: BrushAuthorPrefs::default(), cursor_precise: false, gpu_budget_mb: 0, drawing: Default::default() }
+        Prefs { theme: ThemeKind::Dark, lang: Lang::Pt, workspace: WorkspaceId::default(), ui_zoom: 1.0, recent: Vec::new(), show_start: true, shortcuts: BTreeMap::new(), projects_dir: None, gpu: GpuPref::Dedicated, pen_pressure_min: 0.0, pen_pressure_gamma: 1.0, brush_author: BrushAuthorPrefs::default(), cursor_precise: false, gpu_budget_mb: 0, drawing: Default::default(), behavior: Default::default() }
     }
 }
 
@@ -91,6 +93,7 @@ impl Prefs {
         self.pen_pressure_min = if self.pen_pressure_min.is_finite() { self.pen_pressure_min.clamp(0.0, 0.6) } else { 0.0 };
         self.pen_pressure_gamma = if self.pen_pressure_gamma.is_finite() { self.pen_pressure_gamma.clamp(0.3, 3.0) } else { 1.0 };
         self.drawing = self.drawing.sanitized();
+        self.behavior = self.behavior.sanitized();
         self
     }
 
@@ -148,7 +151,7 @@ mod tests {
     #[test]
     fn round_trip() {
         let p = tmp("rt");
-        let prefs = Prefs { theme: ThemeKind::Light, lang: Lang::En, workspace: WorkspaceId::Animacao, ui_zoom: 1.25, recent: vec![PathBuf::from(r"C:\x\a.aiai")], show_start: false, shortcuts: [("tool.fill".to_owned(), "K".to_owned())].into(), projects_dir: Some(PathBuf::from(r"D:\anim")), gpu: GpuPref::Integrated, pen_pressure_min: 0.1, pen_pressure_gamma: 1.5, brush_author: BrushAuthorPrefs { name: "Ana".into(), email: "ana@exemplo.com".into(), url: String::new(), license: "CC-BY-4.0".into() }, cursor_precise: true, gpu_budget_mb: 1024, drawing: crate::drawing_prefs::DrawingPrefs { sizes: vec![1.0, 5.0, 20.0], shown: [("pen:gpen".to_owned(), vec!["size".to_owned(), "taper".to_owned()])].into(), color_history: vec!["#336699".into()] } };
+        let prefs = Prefs { theme: ThemeKind::Light, lang: Lang::En, workspace: WorkspaceId::Animacao, ui_zoom: 1.25, recent: vec![PathBuf::from(r"C:\x\a.aiai")], show_start: false, shortcuts: [("tool.fill".to_owned(), "K".to_owned())].into(), projects_dir: Some(PathBuf::from(r"D:\anim")), gpu: GpuPref::Integrated, pen_pressure_min: 0.1, pen_pressure_gamma: 1.5, brush_author: BrushAuthorPrefs { name: "Ana".into(), email: "ana@exemplo.com".into(), url: String::new(), license: "CC-BY-4.0".into() }, cursor_precise: true, gpu_budget_mb: 1024, drawing: crate::drawing_prefs::DrawingPrefs { sizes: vec![1.0, 5.0, 20.0], shown: [("pen:gpen".to_owned(), vec!["size".to_owned(), "taper".to_owned()])].into(), color_history: vec!["#336699".into()] }, behavior: crate::behavior_prefs::BehaviorPrefs { tool_hold_ms: 800, cursor_brush: crate::behavior_prefs::CursorShape::Dot, copy_name: crate::behavior_prefs::CopyName::Prefix, sel_color: Some([255, 0, 128]), checker: Some([[10, 20, 30], [40, 50, 60]]), ..Default::default() } };
         save(&p, &prefs).unwrap();
         assert_eq!(load(&p), prefs);
         let _ = std::fs::remove_dir_all(p.parent().unwrap());

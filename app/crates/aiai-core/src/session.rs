@@ -163,7 +163,8 @@ impl CoreSession {
         self.record("apply", &description, author, Some(applied.command.clone()))?;
         self.undo.push(applied);
         self.blobs.tick();
-        if self.undo.len() > self.undo_limit {
+        // `while`: baixar o limite nas Preferências esvazia o excesso na próxima ação, não uma entrada por vez
+        while self.undo.len() > self.undo_limit && !self.undo.is_empty() {
             self.undo.remove(0);
             self.dropped_since_gc += 1;
         }

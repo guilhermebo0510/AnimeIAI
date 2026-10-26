@@ -14,9 +14,6 @@ use crate::icons::IconId;
 use egui::{Color32, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, Vec2};
 use std::f32::consts::{PI, TAU};
 
-/// Passo dos botões de girar.
-pub(crate) const ROT_STEP_DEG: f32 = 15.0;
-
 /// Cantos da área visível do canvas em coordenadas do desenho (na ordem do contorno).
 pub(crate) fn visible_quad(view: &View, canvas_rect: Rect, ppp: f32) -> [Vec2; 4] {
     let xf = view.xf(canvas_rect, ppp);
@@ -117,7 +114,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
         ui.set_height(row_h);
         let v = env.ed.workbar.flip_v;
         if env.icon_button_sized(ui, IconId::RotateView, "canvas.rotate_left", false, has, "nav:rot_left", 24.0, true).clicked() {
-            env.ed.view.rotate_by(-ROT_STEP_DEG.to_radians());
+            env.ed.view.rotate_by(-env.ed.beh.prefs.rotate_step_deg.to_radians());
             env.ed.auto_fit = false;
         }
         let mut deg = user_rotation_deg(&env.ed.view, v);
@@ -129,7 +126,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
             env.ed.auto_fit = false;
         }
         if env.icon_button(ui, IconId::RotateView, "canvas.rotate_right", false, has, "nav:rot_right").clicked() {
-            env.ed.view.rotate_by(ROT_STEP_DEG.to_radians());
+            env.ed.view.rotate_by(env.ed.beh.prefs.rotate_step_deg.to_radians());
             env.ed.auto_fit = false;
         }
         let rotated = deg.abs() > 0.05;
@@ -274,8 +271,9 @@ mod tests {
             }
             // girar pelos botões soma o passo
             set_user_rotation(&mut v, fv, 0.0);
-            v.rotate_by(ROT_STEP_DEG.to_radians());
-            assert!((user_rotation_deg(&v, fv) - ROT_STEP_DEG).abs() < 0.01);
+            let step = crate::behavior_prefs::BehaviorPrefs::default().rotate_step_deg;
+            v.rotate_by(step.to_radians());
+            assert!((user_rotation_deg(&v, fv) - step).abs() < 0.01);
         }
     }
 }
