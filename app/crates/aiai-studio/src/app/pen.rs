@@ -77,8 +77,8 @@ pub(crate) fn finish(env: &mut Env, closed: bool) {
     if pts.len() < 2 {
         return;
     }
-    let geometry = if line { StrokeGeometry::Polyline } else { StrokeGeometry::Spline };
-    super::tools::commit_vector_shape(env, pts, geometry, closed);
+    // a Figura grava (camada vetorial, raster ou de preenchimento; linha, preenchimento ou os dois)
+    super::figure::commit_clicks(env, pts, line, closed);
 }
 
 /// Esc/Backspace: tira o último ponto; sem pontos, cancela a forma.
@@ -95,8 +95,8 @@ pub(crate) fn back(env: &mut Env) {
 /// ferramenta ou de forma da caneta no meio grava o que já foi feito (aberto).
 pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
     let Gesture::PolyCurve { line, .. } = &env.ed.gesture else { return };
-    let want = if *line { PenShape::Line } else { PenShape::Curve };
-    if *env.tool != ToolId::Pen || env.ed.opts.pen_shape != want {
+    let want: &[PenShape] = if *line { &[PenShape::Line, PenShape::Polyline] } else { &[PenShape::Curve] };
+    if *env.tool != ToolId::Pen || !want.contains(&env.ed.opts.pen_shape) {
         return finish(env, false);
     }
     use egui::{Key, Modifiers};

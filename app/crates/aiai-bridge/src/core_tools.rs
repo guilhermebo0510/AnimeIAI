@@ -1,4 +1,4 @@
-//! Ações de ferramenta que só dependem do documento (sem UI): `RENDER`, `DRAW_CURVES`, `FILL`, `LINT`, `PAINT`, `GRADIENT`,
+//! Ações de ferramenta que só dependem do documento (sem UI): `RENDER`, `DRAW_CURVES`, `FILL`, `LINT`, `PAINT`, `GRADIENT`, `FIGURE`,
 //! `TRANSFORM`, `REPEAT`, `BRUSH_PRESETS`, `READ_POINTS` e `EDIT_POINTS`. Cada operação de `aiai-tools` devolve um `Command`; aqui ele é aplicado pela
 //! `CoreSession` (autor `agent:claude` por padrão, `author`/`if_revision` opcionais), então entra no undo/redo e no log e
 //! funciona igual no app, na bridge e no modo headless. As mutações devolvem o `Outcome` + `can_undo`/`can_redo`.
@@ -26,7 +26,7 @@ use aiai_render::{RenderOptions, render_frame};
 use aiai_tools::ToolError;
 use aiai_tools::draw::{DrawRequest, draw_command};
 use aiai_tools::fill::{FillRequest, fill_command, lint_with};
-use aiai_tools::paint::{GradientRequest, PaintRequest, gradient_command, paint_command};
+use aiai_tools::paint::{GradientRequest, PaintRequest, paint_command};
 use aiai_tools::points::{PointOp, PointsEditRequest, PointsRequest, cel_placement, describe, edit_points, read_points};
 use aiai_tools::transform::{RepeatRequest, TransformRequest, repeat_command, transform_command};
 use base64::Engine as _;
@@ -34,7 +34,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 use std::path::Path;
 
-pub const TOOL_ACTIONS: &[&str] = &["RENDER", "DRAW_CURVES", "FILL", "LINT", "PAINT", "GRADIENT", "TRANSFORM", "REPEAT", "ERASE_VECTOR", "BRUSH_PRESETS", "READ_POINTS", "EDIT_POINTS"];
+pub const TOOL_ACTIONS: &[&str] = &["RENDER", "DRAW_CURVES", "FILL", "LINT", "PAINT", "GRADIENT", "FIGURE", "TRANSFORM", "REPEAT", "ERASE_VECTOR", "BRUSH_PRESETS", "READ_POINTS", "EDIT_POINTS"];
 
 /// Todas as ações de ferramenta de documento: as de aqui + as de [`crate::production_tools`].
 pub fn is_tool_action(action: &str) -> bool {
@@ -53,7 +53,7 @@ pub fn is_tool_action(action: &str) -> bool {
 
 /// Ações de ferramenta que mudam o documento.
 pub fn is_mutating_tool(action: &str) -> bool {
-    matches!(action, "DRAW_CURVES" | "FILL" | "PAINT" | "GRADIENT" | "TRANSFORM" | "REPEAT" | "ERASE_VECTOR" | "EDIT_POINTS") || crate::production_tools::is_mutating(action) || crate::preprod_tools::is_mutating(action) || crate::review_tools::is_mutating(action)
+    matches!(action, "DRAW_CURVES" | "FILL" | "PAINT" | "GRADIENT" | "FIGURE" | "TRANSFORM" | "REPEAT" | "ERASE_VECTOR" | "EDIT_POINTS") || crate::production_tools::is_mutating(action) || crate::preprod_tools::is_mutating(action) || crate::review_tools::is_mutating(action)
         || crate::satsuei_tools::is_mutating(action)
         || crate::preview_tools::is_mutating(action)
         || crate::audio_tools::is_mutating(action)
@@ -103,7 +103,17 @@ pub fn handle_tool_action(session: &mut CoreSession, action: &str, params: &Valu
         }),
         "PAINT" => paint(session, params),
         "GRADIENT" => request::<GradientRequest>(params, "GRADIENT").and_then(|r| {
-            let cmd = gradient_command(&session.project, &mut session.blobs, &r).map_err(tool_error)?;
+            // pixels, camada de degradê editável (cria nós: ids da sessão) ou degradê livre
+            let plan = aiai_tools::grad_tool::gradient_action(&session.project, &mut session.blobs, &mut session.ids, &r, None).map_err(tool_error)?;
+            let extra = aiai_tools::grad_tool::plan_value(&plan);
+            let mut out = apply(session, params, plan.command)?;
+            if let (Some(o), Value::Object(e)) = (out.as_object_mut(), extra) {
+                o.extend(e);
+            }
+            Ok(out)
+        }),
+        "FIGURE" => request::<aiai_tools::figure::FigureRequest>(params, "FIGURE").and_then(|r| {
+            let cmd = aiai_tools::figure::figure_command(&session.project, &mut session.blobs, &r).map_err(tool_error)?;
             apply(session, params, cmd)
         }),
         "ERASE_VECTOR" => request::<aiai_tools::erase::EraseVectorRequest>(params, "ERASE_VECTOR").and_then(|r| {

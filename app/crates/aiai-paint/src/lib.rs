@@ -4,6 +4,7 @@
 //! - Coordenadas em pixels do canvas do corte; o centro do pixel (x, y) é (x + 0.5, y + 0.5).
 
 pub mod adjust;
+pub mod area;
 pub mod blend;
 pub mod brush;
 pub mod brush_dyn;

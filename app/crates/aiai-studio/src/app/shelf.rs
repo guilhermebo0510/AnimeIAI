@@ -191,8 +191,8 @@ impl Slot {
             Slot::Brush | Slot::Airbrush | Slot::Decoration | Slot::Blend => &[T::Brush],
             Slot::Eraser => &[T::Eraser],
             Slot::Fill => &[T::Fill],
-            // não há degradê por arrasto no canvas (o balde já preenche com degradê): a ferramenta aparece desabilitada
-            Slot::Gradient => &[],
+            // degradê por arrasto no canvas (S25): pixels, camada de degradê editável ou degradê livre
+            Slot::Gradient => &[T::Gradient],
             Slot::Figure => &[T::Pen],
             Slot::Ruler => &[T::Ruler],
             Slot::Text => &[T::Text],
@@ -221,8 +221,8 @@ impl Slot {
             Slot::Eraser => &[Tab { key: "raster", title_key: "shelf.tab.eraser", icon: IconId::ToolEraser, group: Some("borracha") }, Tab { key: "vector", title_key: "shelf.tab.eraser_vector", icon: IconId::LayerVector, group: None }],
             Slot::Blend => &[Tab { key: "mistura", title_key: "shelf.tab.blend", icon: IconId::ToolBlend, group: Some("mistura") }],
             Slot::Fill => &[Tab { key: "fill", title_key: "shelf.tab.fill", icon: IconId::ToolFill, group: None }],
-            Slot::Gradient => &[Tab { key: "gradient", title_key: "shelf.tab.gradient", icon: IconId::ToolGradient, group: None }],
-            Slot::Figure => &[Tab { key: "figure", title_key: "shelf.tab.figure", icon: IconId::ToolFigure, group: None }],
+            Slot::Gradient => &[Tab { key: "gradient", title_key: "shelf.tab.gradient", icon: IconId::ToolGradient, group: None }, Tab { key: "freeform", title_key: "grad.tab.freeform", icon: IconId::GradFreeform, group: None }],
+            Slot::Figure => &[Tab { key: "figure", title_key: "fig.tab.direct", icon: IconId::ToolFigure, group: None }, Tab { key: "speed", title_key: "fig.tab.speed", icon: IconId::FigSpeed, group: None }, Tab { key: "focus", title_key: "fig.tab.focus", icon: IconId::FigFocus, group: None }],
             Slot::Ruler => &[Tab { key: "ruler", title_key: "shelf.tab.ruler", icon: IconId::ToolRuler, group: None }],
             Slot::Text => &[Tab { key: "text", title_key: "shelf.tab.text", icon: IconId::ToolText, group: None }],
             Slot::CorrectLine => &[Tab { key: "points", title_key: "shelf.tab.correct", icon: IconId::ToolPoints, group: None }],
@@ -260,11 +260,7 @@ pub(crate) fn slots_for(ws: WorkspaceId) -> Vec<Slot> {
     Slot::ALL
         .into_iter()
         .filter(|s| !excluded.contains(s))
-        .filter(|s| match s {
-            // o degradê entra (desabilitado) onde há balde
-            Slot::Gradient => p.allows(ToolId::Fill),
-            _ => s.engines().iter().any(|t| p.allows(*t)),
-        })
+        .filter(|s| s.engines().iter().any(|t| p.allows(*t)))
         .collect()
 }
 
@@ -304,6 +300,8 @@ pub(crate) enum Sub {
     /// Tipo de régua que a ferramenta Régua cria (linear, curva, figura, caneta de régua, especiais, guia, perspectiva...).
     Ruler(super::rulers::NewKind),
     /// Ferramenta do motor sem variações (mover, objeto 3D, mão, zoom, conta-gotas, texto).
+    /// Degradê pronto, de paleta ou livre (ferramenta Degradê).
+    Gradient(super::gradient_tool::GradPick),
     Engine(ToolId),
 }
 
@@ -323,6 +321,7 @@ impl Sub {
             Sub::Points(_) => ToolId::Points,
             Sub::Ruler(_) => ToolId::Ruler,
             Sub::Engine(t) => *t,
+            Sub::Gradient(_) => ToolId::Gradient,
         }
     }
 
@@ -340,6 +339,7 @@ impl Sub {
             Sub::Select(m) => format!("select:{m:?}").to_lowercase(),
             Sub::Points(m) => format!("points:{m:?}").to_lowercase(),
             Sub::Ruler(k) => format!("ruler:{}", k.id()),
+            Sub::Gradient(g) => super::gradient_tool::pick_key(g),
             Sub::Engine(t) => t.key().to_owned(),
         }
     }
@@ -371,7 +371,11 @@ pub(crate) fn fixed_subs(slot: Slot, tab_key: &str) -> Vec<Sub> {
         (Slot::Eraser, "raster") => vec![Sub::EraserRaster(0), Sub::EraserRaster(1), Sub::EraserTip(EraserTip::Pencil), Sub::EraserTip(EraserTip::Block), Sub::EraserBrush],
         (Slot::Eraser, "vector") => [EraseMode::Segment, EraseMode::Intersection, EraseMode::Whole].into_iter().map(Sub::EraserVector).collect(),
         (Slot::Fill, _) => (0..FILLS.len() as u8).map(Sub::Fill).collect(),
-        (Slot::Figure, _) => [PenShape::Line, PenShape::Curve, PenShape::Rect, PenShape::Ellipse].into_iter().map(Sub::PenShape).collect(),
+        (Slot::Figure, "speed") => vec![Sub::PenShape(PenShape::SpeedLines)],
+        (Slot::Figure, "focus") => vec![Sub::PenShape(PenShape::FocusLines)],
+        (Slot::Figure, _) => super::figure::DIRECT.into_iter().map(Sub::PenShape).collect(),
+        (Slot::Gradient, "freeform") => vec![Sub::Gradient(super::gradient_tool::GradPick::Freeform)],
+        (Slot::Gradient, _) => super::gradient_tool::fixed_picks().into_iter().map(Sub::Gradient).collect(),
         (Slot::Ruler, _) => super::rulers::NewKind::ALL.into_iter().map(Sub::Ruler).collect(),
         (Slot::Text, _) => vec![Sub::Engine(T::Text)],
         (Slot::CorrectLine, _) => super::panels::properties::POINTS_MODES.iter().map(|m| Sub::Points(*m)).collect(),
@@ -411,6 +415,10 @@ pub(crate) fn preset_group(p: &BrushPreset) -> &'static str {
 fn explicit_group(p: &BrushPreset) -> Option<&'static str> {
     GROUPS.iter().find(|g| **g == p.group).copied()
 }
+    // degradês guardados nas paletas do projeto entram como prontos
+    if slot == Slot::Gradient && t.key == "gradient" && p.allows(ToolId::Gradient) {
+        v.extend(super::gradient_tool::palette_picks(env).into_iter().map(Sub::Gradient));
+    }
 
 /// Sub-ferramentas de uma aba neste workspace: as fixas cuja ferramenta do motor vale no perfil e os pincéis do grupo.
 pub(crate) fn subs(env: &Env, slot: Slot, t: &Tab) -> Vec<Sub> {
@@ -445,14 +453,7 @@ pub(crate) fn sub_label(env: &Env, s: &Sub) -> String {
             VectorTip::Pencil => "tip.pencil",
         })
         .to_owned(),
-        Sub::PenShape(m) => tr(match m {
-            PenShape::Freehand => "pen.freehand",
-            PenShape::Line => "pen.line",
-            PenShape::Curve => "pen.curve",
-            PenShape::Rect => "pen.rect",
-            PenShape::Ellipse => "pen.ellipse",
-        })
-        .to_owned(),
+        Sub::PenShape(m) => tr(super::figure::label_key(*m)).to_owned(),
         Sub::EraserRaster(i) => tr(ERASERS[*i as usize % ERASERS.len()].0).to_owned(),
         Sub::EraserTip(EraserTip::Pencil) => tr("eraser.item.pencil").to_owned(),
         Sub::EraserTip(EraserTip::Block) => tr("eraser.item.block").to_owned(),
@@ -466,6 +467,7 @@ pub(crate) fn sub_label(env: &Env, s: &Sub) -> String {
         .to_owned(),
         Sub::Fill(i) => tr(FILLS[*i as usize % FILLS.len()].0).to_owned(),
         Sub::Select(m) => tr(m.label_key()).to_owned(),
+        Sub::Gradient(g) => super::gradient_tool::pick_label(env, g),
         Sub::Points(m) => tr(super::panels::properties::points_mode_key(*m)).to_owned(),
         Sub::Ruler(k) => tr(k.key()).to_owned(),
         Sub::Engine(t) => tr(t.title_key()).to_owned(),
@@ -492,6 +494,7 @@ pub(crate) fn is_current(env: &Env, s: &Sub) -> bool {
             let (_, gap, expand, left) = FILLS[*i as usize % FILLS.len()];
             (o.fill_gap - gap).abs() < 1e-3 && o.fill_expand == expand && o.fill_close_leftovers == left
         }
+        Sub::Gradient(g) => env.ed.grad_tool.pick == *g,
         Sub::Select(m) => o.select_mode == *m,
         Sub::Points(m) => o.points_mode == *m,
         Sub::Ruler(k) => env.ed.rulers.new_kind == *k,
@@ -622,6 +625,7 @@ pub(crate) fn apply_sub(env: &mut Env, slot: Slot, s: &Sub) {
             let (_, gap, expand, left) = FILLS[*i as usize % FILLS.len()];
             let o = &mut env.ed.opts;
             (o.fill_gap, o.fill_expand, o.fill_close_leftovers) = (gap, expand, left);
+        Sub::Gradient(g) => env.ed.grad_tool.pick = g.clone(),
         }
         Sub::Select(m) => env.ed.opts.select_mode = *m,
         Sub::Points(m) => env.ed.opts.points_mode = *m,
@@ -843,8 +847,12 @@ mod tests {
         assert_eq!(cycle(&slots, Some(Slot::Brush), Action::ToolBrush), Some(Slot::Airbrush));
         assert_eq!(cycle(&slots, Some(Slot::Airbrush), Action::ToolBrush), Some(Slot::Decoration));
         assert_eq!(cycle(&slots, Some(Slot::Decoration), Action::ToolBrush), Some(Slot::Brush));
-        // G: o degradê ainda não existe no motor; o balde fica
-        assert_eq!(cycle(&slots, Some(Slot::Fill), Action::ToolFill), Some(Slot::Fill));
+        // G: Balde → Degradê → Balde (S25: o degradê existe no motor)
+        assert_eq!(cycle(&slots, Some(Slot::Fill), Action::ToolFill), Some(Slot::Gradient));
+        assert_eq!(cycle(&slots, Some(Slot::Gradient), Action::ToolFill), Some(Slot::Fill));
+        assert_eq!(cycle(&slots_for(WorkspaceId::Pintura), Some(Slot::Fill), Action::ToolFill), Some(Slot::Gradient));
+        assert_eq!(pick_slot(&slots, Some(Slot::Fill), ToolId::Gradient, &Owner::Other), Some(Slot::Gradient));
+        assert!(Slot::ALL.iter().all(|s| s.available()), "nenhuma ferramenta diz mais \"em breve\"");
         // U: Figura (a Animação não tem régua)
         assert_eq!(cycle(&slots, Some(Slot::Figure), Action::ToolRuler), Some(Slot::Figure));
         let lay = slots_for(WorkspaceId::Layout);

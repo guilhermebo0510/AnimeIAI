@@ -82,6 +82,8 @@ fn thumb_of(env: &Env, s: &Sub) -> Thumb {
         Sub::Fill(i) => Thumb::Fill(*i),
         Sub::Select(m) => Thumb::Select(*m),
         Sub::Points(m) => Thumb::Points(*m),
+        // degradês: a faixa é desenhada por `gradient_tool::paint_thumb` (ver a lista)
+        Sub::Gradient(_) => Thumb::Icon(ToolId::Gradient),
         Sub::Ruler(_) => Thumb::Icon(ToolId::Ruler),
         Sub::Engine(t) => Thumb::Icon(*t),
     }
@@ -159,7 +161,10 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
             let name_w = g.size().x.min(w * 0.5);
             let badge = if s.is_vector() { 14.0 } else { 0.0 };
             let thumb_r = Rect::from_min_max(egui::pos2(rect.left() + 4.0, rect.top() + 4.0), egui::pos2((rect.right() - name_w - badge - 14.0).max(rect.left() + 40.0), rect.bottom() - 4.0));
-            paint_thumb(env, &p, thumb_r, thumb_of(env, s));
+            match s {
+                Sub::Gradient(g) => crate::app::gradient_tool::paint_thumb(env, &p, thumb_r, g),
+                _ => paint_thumb(env, &p, thumb_r, thumb_of(env, s)),
+            }
             if !renaming {
                 let x = rect.right() - 6.0 - name_w;
                 p.with_clip_rect(Rect::from_min_max(egui::pos2(x, rect.top()), rect.max)).galley(egui::pos2(x, rect.center().y - g.size().y / 2.0), g, t.text);
@@ -523,6 +528,8 @@ fn paint_thumb(env: &mut Env, p: &egui::Painter, cell: Rect, th: Thumb) {
                     p.rect_filled(Rect::from_center_size(at(fx, fy), egui::vec2(4.0, 4.0)), 0.0, t.accent);
                 }
             }
+            // as outras formas da Figura (S25)
+            other => crate::app::figure::paint_thumb(env, p, r, other),
             PenShape::Rect => {
                 p.rect_stroke(Rect::from_min_max(at(0.25, 0.18), at(0.75, 0.82)), 0.0, ink, StrokeKind::Inside);
             }

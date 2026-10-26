@@ -245,6 +245,8 @@ impl Action {
             T::Points => Action::ToolPoints,
             T::Eraser => Action::ToolEraser,
             T::Fill => Action::ToolFill,
+            // o G alterna Balde ↔ Degradê na prateleira
+            T::Gradient => Action::ToolFill,
             T::Lasso => Action::ToolLasso,
             T::Eyedropper => Action::ToolEyedropper,
             T::Hand => Action::ToolHand,

@@ -336,15 +336,9 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
             let o = &mut env.ed.opts;
             if !panel {
             row(ui, &t, compact, "opt.pen_shape", |ui| {
-                let key = |m: PenShape| match m {
-                    PenShape::Freehand => "pen.freehand",
-                    PenShape::Line => "pen.line",
-                    PenShape::Curve => "pen.curve",
-                    PenShape::Rect => "pen.rect",
-                    PenShape::Ellipse => "pen.ellipse",
-                };
+                let key = crate::app::figure::label_key;
                 egui::ComboBox::from_id_salt(("pen_shape", compact)).selected_text(tr(key(o.pen_shape))).show_ui(ui, |ui| {
-                    for m in [PenShape::Freehand, PenShape::Line, PenShape::Curve, PenShape::Rect, PenShape::Ellipse] {
+                    for m in std::iter::once(PenShape::Freehand).chain(crate::app::figure::DIRECT) {
                         ui.selectable_value(&mut o.pen_shape, m, tr(key(m)));
                     }
                 })

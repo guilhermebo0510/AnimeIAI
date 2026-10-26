@@ -39,9 +39,14 @@ pub struct PaintRequest {
 pub struct GradientRequest {
     pub cut: Id,
     pub frame: u32,
+    /// Camada raster (pixels); com `editable`, a camada acima da qual a camada de degradê nasce (ou o corte = no topo),
+    /// ou uma camada de degradê existente a refazer.
     pub layer: Id,
+    #[serde(default = "d_kind")]
     pub kind: GradientKind,
+    #[serde(default)]
     pub from: [f32; 2],
+    #[serde(default)]
     pub to: [f32; 2],
     /// Paradas: [t, "#rrggbbaa"]. Ignoradas com `gradient`.
     #[serde(default)]
@@ -55,10 +60,36 @@ pub struct GradientRequest {
     /// ignorados aqui). Sem ele, `stops` em sRGB preso nas pontas (o de sempre).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gradient: Option<Gradient>,
+    /// Degradê pronto pelo nome no lugar de `stops`/`gradient` (ver `grad_tool::preset_names`): main_to_transparent,
+    /// main_to_sub, stripe, sub_stripe (usam `main_color`/`sub_color`), os do programa e os céus.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<String>,
+    /// Cor principal (prontos de cor).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub main_color: Option<ColorRef>,
+    /// Cor secundária (prontos de cor).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sub_color: Option<ColorRef>,
+    /// Repetição fora dos dois pontos (pad | repeat | reflect), por cima da do degradê.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extend: Option<GradientExtend>,
+    /// Camada de degradê editável no lugar dos pixels (ver `grad_tool`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub editable: bool,
+    /// Só dentro da seleção (px do canvas).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection: Option<aiai_paint::select::SelectShape>,
+    /// Degradê livre: pontos de cor soltos (ignora `kind`/`from`/`to`/`stops`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub freeform: Vec<crate::freeform::FreeformPoint>,
 }
 
 fn one() -> f32 {
     1.0
+}
+
+fn d_kind() -> GradientKind {
+    GradientKind::Linear
 }
 
 pub fn resolve_color(p: &Project, c: &ColorRef) -> ToolResult<[f32; 4]> {
@@ -455,6 +486,18 @@ pub fn paint_region(blobs: &BlobStore, cel: Option<&CelData>, w: u32, h: u32, sb
 }
 
 pub fn gradient_command(p: &Project, blobs: &mut BlobStore, req: &GradientRequest) -> ToolResult<Command> {
+    // pedidos da ferramenta Degradê (pronto, seleção, degradê livre, repetição): `grad_tool`; a camada editável cria nós
+    // (precisa de ids: `grad_tool::gradient_action`)
+    if req.editable {
+        return Err(ToolError::Invalid("camada de degradê editável: use grad_tool::gradient_action".into()));
+    }
+    if req.preset.is_some() || req.selection.is_some() || !req.freeform.is_empty() || req.extend.is_some() {
+        let mask = match &req.selection {
+            Some(shape) => Some(selection_mask(p, blobs, &req.cut, &req.layer, req.frame, shape)?),
+            None => None,
+        };
+        return crate::grad_tool::raster_command(p, blobs, req, mask.as_ref());
+    }
     let (node, cel, w, h) = raster_cel(p, &req.cut, &req.layer, req.frame)?;
     let mut img = cel_raster(blobs, cel, w, h)?;
     if let Some(g) = &req.gradient {

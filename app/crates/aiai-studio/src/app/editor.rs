@@ -301,13 +301,28 @@ pub(crate) enum SelMode {
     Mask,
 }
 
-/// Forma da caneta: à mão livre, ou formas de régua (linha, curva por cliques, retângulo, elipse).
+/// Forma da caneta: à mão livre, ou as formas da Figura (S25, à moda do Clip Studio; ver `figure`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum PenShape {
     #[default]
     Freehand,
+    /// Curva contínua: um clique por ponto, spline suave pelos pontos.
     Line,
     Curve,
+    /// Curva de dois passos: arrasta a reta, depois puxa a curva até o clique.
+    TwoStepCurve,
+    /// Polilinha: um clique por ponto, lados retos.
+    Polyline,
+    /// Curva de Bézier: clique = canto, clique e arrasto = ponto com alça.
+    Bezier,
+    /// Polígono regular (número de cantos nas opções).
+    Polygon,
+    /// Laço de preenchimento: contorno à mão, preenchido com a cor atual.
+    Lasso,
+    /// Linhas de velocidade: o arrasto dá a direção.
+    SpeedLines,
+    /// Linhas de foco: o arrasto dá o centro e a área livre.
+    FocusLines,
     Rect,
     Ellipse,
 }
@@ -640,6 +655,12 @@ pub(crate) enum Gesture {
     /// Editar pontos: arrasto de uma ponta da alça do ponto `idx` (`side` = +1 a de saída, -1 a de chegada).
     DragHandle { idx: usize, side: f32, cur: Vec2, t0: std::time::Instant },
     /// Caneta em forma de régua (linha, retângulo, elipse): do ponto de partida até o cursor.
+    /// Figura em vários passos (curva de dois passos, Bézier, laço de preenchimento): o estado fica em `figure.live`.
+    Figure,
+    /// Degradê: arrasto de `start` até `cur`; `handle` = arrastando a ponta 0/1 da camada de degradê ativa.
+    GradDrag { start: Vec2, cur: Vec2, handle: Option<u8> },
+    /// Degradê livre: arrastando o ponto `idx`.
+    GradFree { idx: usize },
     Shape { start: Vec2, cur: Vec2 },
     /// Caneta em curva por cliques: cada clique põe um ponto; Enter, duplo clique ou botão direito termina.
     /// `line` = linha encadeada (polilinha; forma Linha começada com um clique sem arrasto).
@@ -854,6 +875,10 @@ pub(crate) struct Editor {
     /// Workspace Entrega: preset, pedido e fila de exportação (uma por vez, em segundo plano).
     pub deliver: super::panels::deliver::DeliverState,
     /// Workspace Áudio: clipe selecionado, monitor do corte, durações dos WAV, última medição de loudness.
+    /// Figura (S25): opções e a forma em vários passos em andamento.
+    pub figure: super::figure::FigureState,
+    /// Ferramenta Degradê (S25): degradê escolhido, opções e os pontos do degradê livre.
+    pub grad_tool: super::gradient_tool::GradTool,
     pub audio: super::panels::audio::AudioState,
     /// Workspace Áudio (S24): forma de onda, rack, medidores, multipista, voz sintética e a reprodução deles.
     pub audio_ws: super::panels::audio_ws::AudioWsState,
@@ -862,6 +887,8 @@ pub(crate) struct Editor {
     /// Pedido de troca de workspace feito por um painel (o app atende no fim do quadro).
     pub want_workspace: Option<crate::workspace::WorkspaceId>,
     /// Corte de desenho aberto a partir de um painel do storyboard: o canvas mostra "Voltar ao storyboard".
+            figure: Default::default(),
+            grad_tool: Default::default(),
     pub back_to_board: Option<NodeId>,
     /// Animação: mesa de luz, densidade da linha do tempo, cels-chave destravados no douga, Cena e Referências.
     pub anim: super::anim::AnimState,

@@ -65,6 +65,12 @@ pub enum IconId {
     ToolGradient,
     /// Figura (linha, retângulo, elipse).
     ToolFigure,
+    /// Figura: linhas de velocidade (aba).
+    FigSpeed,
+    /// Figura: linhas de foco (aba).
+    FigFocus,
+    /// Degradê livre (aba).
+    GradFreeform,
     /// Importar arquivo.
     Import,
     /// Configurações avançadas da ferramenta.
@@ -211,7 +217,7 @@ pub enum IconId {
 }
 
 impl IconId {
-    pub const ALL: [IconId; 133] = [
+    pub const ALL: [IconId; 136] = [
         IconId::WsRoteiro,
         IconId::WsPersonagens,
         IconId::WsStoryboard,
@@ -254,6 +260,9 @@ impl IconId {
         IconId::ToolBlend,
         IconId::ToolGradient,
         IconId::ToolFigure,
+        IconId::FigSpeed,
+        IconId::FigFocus,
+        IconId::GradFreeform,
         IconId::Import,
         IconId::Wrench,
         IconId::ToolReset,
@@ -396,6 +405,9 @@ impl IconId {
             IconId::ToolBlend => include_str!("../assets/icons/tool-blend.svg"),
             IconId::ToolGradient => include_str!("../assets/icons/tool-gradient.svg"),
             IconId::ToolFigure => include_str!("../assets/icons/tool-figure.svg"),
+            IconId::FigSpeed => include_str!("../assets/icons/fig-speed.svg"),
+            IconId::FigFocus => include_str!("../assets/icons/fig-focus.svg"),
+            IconId::GradFreeform => include_str!("../assets/icons/grad-freeform.svg"),
             IconId::Import => include_str!("../assets/icons/import.svg"),
             IconId::Wrench => include_str!("../assets/icons/wrench.svg"),
             IconId::ToolReset => include_str!("../assets/icons/tool-reset.svg"),

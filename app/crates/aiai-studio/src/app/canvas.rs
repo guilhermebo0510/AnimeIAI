@@ -443,6 +443,11 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
                 let _ = modifiers;
                 let xf = env.ed.view.xf(rect, ppp);
                 super::pen::press(env, xf.to_canvas(*pos), xf.scale, *button);
+            // Figura em vários passos (curva de dois passos, Bézier): o clique continua a forma aberta
+            Event::PointerButton { pos, button, pressed: true, .. } if matches!(env.ed.gesture, Gesture::Figure) && over_canvas(ui, rect, *pos) => {
+                let xf = env.ed.view.xf(rect, ppp);
+                super::figure::press_open(env, xf.to_canvas(*pos), xf.scale, *button);
+            }
             }
             Event::PointerButton { pos, button, pressed: true, modifiers } => {
                 if matches!(env.ed.gesture, Gesture::None) && over_canvas(ui, rect, *pos) {
@@ -593,12 +598,9 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
                 env.ed.gesture = Gesture::Eyedrop;
             } else {
                 match tool {
-                    ToolId::Pen if env.ed.opts.pen_shape == PenShape::Curve => {
-                        env.ed.gesture = super::pen::begin(c, false);
-                    }
-                    ToolId::Pen if env.ed.opts.pen_shape != PenShape::Freehand => {
-                        env.ed.gesture = Gesture::Shape { start: c, cur: c };
-                    }
+                    // Figura: formas de arrastar, de cliques, curva de dois passos, Bézier, laço, linhas
+                    ToolId::Pen if env.ed.opts.pen_shape != PenShape::Freehand => super::figure::press(env, c),
+                    ToolId::Gradient => super::gradient_tool::press(env, c, xf.scale),
                     ToolId::Pen | ToolId::Brush | ToolId::Eraser => {
                         let pressure = env.ed.pressure;
                         env.ed.gesture = tools::begin_stroke(env, tool, c, pressure, xf.scale);
@@ -686,6 +688,10 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
     if env.ed.comp.drag.is_some() {
         let mods = egui::Modifiers { shift: env.ed.shift, alt: env.ed.alt, ..Default::default() };
         let ctrl = env.ed.comp.ctrl;
+    // Figura em vários passos e Degradê
+    if super::figure::moved(env, c) || super::gradient_tool::moved(env, c) {
+        return;
+    }
         super::comp_viewer::drag(env, &xf, pos, egui::Modifiers { ctrl, command: ctrl, ..mods });
         return;
     }
@@ -741,6 +747,7 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
         Gesture::RotateSel { start_angle, start_rot } => {
             if let Some(s) = env.ed.selection.as_mut() {
                 let d = c - (s.center() + s.offset);
+        Gesture::Figure | Gesture::GradDrag { .. } | Gesture::GradFree { .. } => {}
                 s.rotate = *start_rot + d.y.atan2(d.x).to_degrees() - *start_angle;
             }
         }
@@ -813,14 +820,13 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
             let counter = env.core.change_counter;
             env.ed.live_stroke.release(Some(counter));
         }
-        // forma Linha com um clique sem arrasto: começa a linha encadeada (cliques põem os pontos)
-        Gesture::Shape { start, .. } if env.ed.opts.pen_shape == PenShape::Line && (c - start).length() * xf.scale < super::pen::CLICK_PX => {
-            env.ed.gesture = super::pen::begin(start, true);
-        }
-        Gesture::Shape { start, .. } => {
-            let c = super::rulers::snap_line_end(env, start, c);
-            let (pts, geo, closed) = tools::shape_points(env.ed.opts.pen_shape, start, c, env.ed.shift);
-            tools::commit_vector_shape(env, pts, geo, closed);
+        // formas de arrastar da Figura (reta com um clique sem arrasto vira polilinha)
+        Gesture::GradFree { .. } => {}
+        Gesture::Shape { start, .. } => super::figure::release_shape(env, start, c, xf.scale),
+        Gesture::Figure => super::figure::release(env, c, xf.scale),
+        Gesture::GradDrag { start, handle, .. } => {
+            let end = if env.ed.shift { super::figure::snap_angle(start, c, env.ed.grad_tool.angle_step) } else { c };
+            super::gradient_tool::release(env, start, end, handle, xf.scale);
         }
         g @ Gesture::PolyCurve { .. } => env.ed.gesture = g, // a curva continua até Enter/duplo clique
         Gesture::Eyedrop => tools::do_eyedrop(env, c),
@@ -1218,6 +1224,7 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
         if let Some(cd) = cmds::cut_data(&env.core.project, cut).cloned() {
             paint_camera(env, painter, xf, &cd, canvas);
         }
+    super::gradient_tool::paint(env, painter, xf, cut);
     }
 
     // réguas da camada de guia (só visão) e, com a ferramenta Régua, as alças
@@ -1538,6 +1545,7 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
                 _ => {
                     // sem prévia ao vivo para esta camada: os traços vetoriais que a borracha apagaria agora
                     if let Some(cel) = cmds::exposed_cel(&env.core.project, cut, &g.layer, env.ed.frame).and_then(|c| cmds::cel_data(&env.core.project, &c)) {
+        // prévia da forma da Figura (com as opções: do centro, proporção, preenchimento) e das linhas
                         for s in cel.strokes.iter().filter(|s| g.hits.contains(&s.id)) {
                             let sp: Vec<Vec2> = aiai_paint::sample_stroke(s).iter().map(|q| g.to_canvas(Vec2::new(q.x, q.y))).collect();
                             polyline(painter, &sp, s.width.max(2.0), env.t.danger.gamma_multiply(0.8), xf);
@@ -1546,14 +1554,10 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
                 }
             }
         }
+        Gesture::Figure => super::figure::paint_live(env, painter, xf),
         Gesture::Shape { start, cur } => {
             let (start, cur) = (*start, *cur);
-            let cur = super::rulers::snap_line_end(env, start, cur);
-            let (pts, _, closed) = tools::shape_points(env.ed.opts.pen_shape, start, cur, env.ed.shift);
-            let c = cmds::resolve_color(&env.core.project, &env.ed.color);
-            let color = super::ui_kit::rgba_to_color32(Rgba([c.0[0], c.0[1], c.0[2], 1.0]));
-            let path: Vec<Vec2> = if closed { pts.iter().copied().chain(pts.first().copied()).collect() } else { pts };
-            polyline(painter, &path, env.ed.opts.pen_width, color, xf);
+            super::figure::paint_shape(env, painter, xf, start, cur);
         }
         // prévia da curva/linha por cliques (próximo trecho até o cursor, fechar no primeiro ponto)
         Gesture::PolyCurve { .. } => super::pen::paint(env, painter, xf),

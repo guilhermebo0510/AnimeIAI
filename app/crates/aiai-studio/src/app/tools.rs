@@ -860,6 +860,9 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
     use crate::keymap::Action as A;
     use egui::{Key, Modifiers};
     // curva/linha por cliques: Enter termina, Esc/Backspace tiram o último ponto (antes dos atalhos gerais)
+    // Figura em vários passos (Bézier, curva de dois passos) e degradê livre: Enter/Esc/Backspace/Delete deles
+    super::figure::shortcuts(ctx, env);
+    super::gradient_tool::shortcuts(ctx, env);
     super::pen::shortcuts(ctx, env);
     let none = Modifiers::NONE;
     let keys = env.ed.keys.clone();

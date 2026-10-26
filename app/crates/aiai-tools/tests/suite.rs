@@ -143,7 +143,7 @@ fn paint_sky_study_with_brushes() {
     let g = GradientRequest {
         cut: cut.clone(), frame: 0, layer: sky.clone(), kind: GradientKind::Linear, from: [0.0, 0.0], to: [0.0, 540.0],
         stops: vec![(0.0, "#3c7fd9ff".into()), (0.7, "#8ec5f2ff".into()), (1.0, "#d8ecfaff".into())], blend: BlendMode::Normal, opacity: 1.0,
-        gradient: None,
+        gradient: None, preset: None, main_color: None, sub_color: None, extend: None, editable: false, selection: None, freeform: vec![],
     };
     { let c = gradient_command(&s.project, &mut s.blobs, &g).unwrap(); s.apply(c).unwrap(); }
     // nuvens: massa macia branca + borda de aquarela + sombra azulada na base

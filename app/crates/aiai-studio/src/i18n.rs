@@ -110,6 +110,7 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("tool.brush", "Pincel", "Brush"),
     ("tool.pen", "Caneta vetorial", "Vector pen"),
     ("tool.eraser", "Borracha", "Eraser"),
+    ("tool.gradient", "Degradê", "Gradient"),
     ("tool.fill", "Balde de tinta", "Fill bucket"),
     ("tool.lasso", "Seleção", "Selection"),
     ("tool.eyedropper", "Conta-gotas", "Eyedropper"),

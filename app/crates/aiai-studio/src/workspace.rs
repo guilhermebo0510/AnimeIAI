@@ -189,26 +189,26 @@ impl WorkspaceId {
                 editor_keys: true,
             },
             W::Cenario => WorkspaceProfile {
-                tools: &[T::Lasso, T::Move, T::Brush, T::Eraser, T::Fill, T::Ruler, T::Model3d, T::Text, T::Eyedropper, T::Hand, T::Zoom],
+                tools: &[T::Lasso, T::Move, T::Brush, T::Eraser, T::Fill, T::Gradient, T::Ruler, T::Model3d, T::Text, T::Eyedropper, T::Hand, T::Zoom],
                 default_tool: T::Brush,
                 canvas: true,
                 editor_keys: true,
             },
             W::Animacao => WorkspaceProfile {
-                tools: &[T::Lasso, T::Move, T::Pen, T::Brush, T::Points, T::Eraser, T::Fill, T::Model3d, T::Text, T::Eyedropper, T::Hand, T::Zoom],
+                tools: &[T::Lasso, T::Move, T::Pen, T::Brush, T::Points, T::Eraser, T::Fill, T::Gradient, T::Model3d, T::Text, T::Eyedropper, T::Hand, T::Zoom],
                 default_tool: T::Pen,
                 canvas: true,
                 editor_keys: true,
             },
             W::Pintura => WorkspaceProfile {
-                tools: &[T::Lasso, T::Move, T::Fill, T::Brush, T::Eraser, T::Eyedropper, T::Hand, T::Zoom],
+                tools: &[T::Lasso, T::Move, T::Fill, T::Gradient, T::Brush, T::Eraser, T::Eyedropper, T::Hand, T::Zoom],
                 default_tool: T::Fill,
                 canvas: true,
                 editor_keys: true,
             },
             // pasta do personagem: desenha-se nos materiais (folha de modelo, expressões, boca...): linha, cor e conferência
             W::Personagens => WorkspaceProfile {
-                tools: &[T::Lasso, T::Move, T::Pen, T::Brush, T::Eraser, T::Fill, T::Model3d, T::Text, T::Eyedropper, T::Hand, T::Zoom],
+                tools: &[T::Lasso, T::Move, T::Pen, T::Brush, T::Eraser, T::Fill, T::Gradient, T::Model3d, T::Text, T::Eyedropper, T::Hand, T::Zoom],
                 default_tool: T::Pen,
                 canvas: true,
                 editor_keys: true,
@@ -241,6 +241,9 @@ pub enum ToolId {
     Points,
     Eraser,
     Fill,
+    /// Degradê (S25, à moda do Clip Studio): arrastar pinta um degradê (ou cria/refaz uma camada de degradê); a aba
+    /// "Degradê livre" põe pontos de cor soltos.
+    Gradient,
     Lasso,
     Eyedropper,
     Hand,
@@ -305,7 +308,7 @@ impl ToolId {
         }
     }
 
-    pub const ALL: [ToolId; 24] = [
+    pub const ALL: [ToolId; 25] = [
         ToolId::Lasso,
         ToolId::Move,
         ToolId::Brush,
@@ -313,6 +316,7 @@ impl ToolId {
         ToolId::Points,
         ToolId::Eraser,
         ToolId::Fill,
+        ToolId::Gradient,
         ToolId::Eyedropper,
         ToolId::Hand,
         ToolId::Zoom,
@@ -351,6 +355,7 @@ impl ToolId {
             ToolId::Points => "tool.points",
             ToolId::Eraser => "tool.eraser",
             ToolId::Fill => "tool.fill",
+            ToolId::Gradient => "tool.gradient",
             ToolId::Lasso => "tool.lasso",
             ToolId::Eyedropper => "tool.eyedropper",
             ToolId::Hand => "tool.hand",
@@ -380,6 +385,7 @@ impl ToolId {
             ToolId::Points => IconId::ToolPoints,
             ToolId::Eraser => IconId::ToolEraser,
             ToolId::Fill => IconId::ToolFill,
+            ToolId::Gradient => IconId::ToolGradient,
             ToolId::Lasso => IconId::ToolLasso,
             ToolId::Eyedropper => IconId::ToolEyedropper,
             ToolId::Hand => IconId::ToolHand,

@@ -32,7 +32,7 @@ Cola dos comandos principais (campo `kind`):\n\
 - set_tiles {cel, tiles:[{x,y,blob}]} (raster; blob = hash já gravado).\n\
 - add_track {cut, track:{\"id\":\"\",\"name\":\"A\",\"kind\":\"drawing\",\"layer\":\"<id da camada>\"}}; set_cells {cut, track, cells:[{frame, cell:{\"type\":\"cel\",\"number\":1}|{\"type\":\"empty\"}|null}]} (quadro 0-based).\n\
 - batch {commands:[...], label?}: vários comandos num único passo de undo (ids dados explicitamente em create_node permitem referenciar dentro do lote).\n\
-Ferramentas de alto nível (açúcar sobre estes comandos, com validação e exemplo; prefira-as quando existirem): desenho aiai_draw_curves, aiai_fill, aiai_lint, aiai_paint, aiai_gradient, aiai_gradient_paint, aiai_transform, aiai_repeat, aiai_erase; cenário e efeitos aiai_sky, aiai_pattern_fill, aiai_text, aiai_text_layer, aiai_layer_merge, aiai_lines, aiai_gag_bg, aiai_particles; guias aiai_guide3d, aiai_perspective; personagem aiai_model_sheet, aiai_character_material, aiai_consistency; animação aiai_inbetween, aiai_propagate_fills; áudio aiai_tts_line, aiai_tts_kokoro, aiai_voice_profile, aiai_lipsync, aiai_sfx, aiai_bgm, aiai_import_audio, aiai_mix, aiai_loudness, aiai_audio_edit, aiai_audio_analyze; forma preenchida aiai_fill_shape; calibração aiai_compare, aiai_probe_color, aiai_measure_line, aiai_measure_edge; edição aiai_edit, aiai_edit_ops, aiai_edit_captions, aiai_edit_preview, aiai_edit_mix; saída aiai_render e aiai_export_video. Use aiai_apply para o que não tem ferramenta (criar nós, mover, timesheet, props cruas).\n\
+Ferramentas de alto nível (açúcar sobre estes comandos, com validação e exemplo; prefira-as quando existirem): desenho aiai_draw_curves, aiai_fill, aiai_lint, aiai_paint, aiai_gradient, aiai_gradient_paint, aiai_figure, aiai_transform, aiai_repeat, aiai_erase; cenário e efeitos aiai_sky, aiai_pattern_fill, aiai_text, aiai_text_layer, aiai_layer_merge, aiai_lines, aiai_gag_bg, aiai_particles; guias aiai_guide3d, aiai_perspective; personagem aiai_model_sheet, aiai_character_material, aiai_consistency; animação aiai_inbetween, aiai_propagate_fills; áudio aiai_tts_line, aiai_tts_kokoro, aiai_voice_profile, aiai_lipsync, aiai_sfx, aiai_bgm, aiai_import_audio, aiai_mix, aiai_loudness, aiai_audio_edit, aiai_audio_analyze; forma preenchida aiai_fill_shape; calibração aiai_compare, aiai_probe_color, aiai_measure_line, aiai_measure_edge; edição aiai_edit, aiai_edit_ops, aiai_edit_captions, aiai_edit_preview, aiai_edit_mix; saída aiai_render e aiai_export_video. Use aiai_apply para o que não tem ferramenta (criar nós, mover, timesheet, props cruas).\n\
 `aiai_schema {\"which\":\"commands\"}` devolve o JSON Schema completo de todos os comandos.";
 
 const RENDER_DESC: &str = r##"Renderiza um quadro de um corte com o motor CPU real (a MESMA imagem que o app mostra) e devolve a imagem como conteúdo de imagem MCP (reduzida a 1280 px no lado maior) e/ou grava o PNG em `out`. É a forma de VER o que você desenhou: renderize depois de cada passo importante e olhe a imagem.
@@ -58,7 +58,11 @@ const PAINT_DESC: &str = r##"Pintura raster com pincel (aquarela, guache, aeróg
 - strokes: [{points: [[x,y] ou [x,y,pressão], ...], smooth (padrão true: spline suave)}]; coordenadas em pixels do canvas (origem no canto superior esquerdo, y para baixo). seed: semente do ruído do pincel (mesma entrada = mesma pintura).
 Confirme com aiai_render."##;
 
-const GRADIENT_DESC: &str = r##"Preenche o cel de uma camada RASTER com um degradê (céu, fundo, luz). `kind`: linear (de `from` para `to`), radial (centro `from`, raio até `to`), angular (cônico em volta de `from`, começando na direção de `to`) ou diamond (losango em volta de `from`); `stops`: lista de [t de 0 a 1, "#rrggbbaa"]; ou `gradient` completo (paradas com cor de paleta e opacidade, `extend` pad|repeat|reflect, `space` srgb|linear|oklab; a geometria continua `kind`/`from`/`to`). Degradê como cor de regiões de balde/texto: aiai_gradient_paint; `blend` (padrão normal) e `opacity`. Coordenadas em pixels do canvas (origem no canto superior esquerdo, y para baixo). Entra no undo. Confirme com aiai_render."##;
+const GRADIENT_DESC: &str = r##"Degradê de dois pontos (ferramenta Degradê, como no Clip Studio). Pinta o cel de uma camada RASTER, ou cria uma CAMADA DE DEGRADÊ editável com `editable: true` (camada de preenchimento nova logo acima de `layer`, ou no topo com `layer` = o corte; devolve `layer`; com `layer` = uma camada de degradê, refaz os pontos dela e, se vier degradê, as paradas; `opacity`/`blend` viram os da camada). `kind`: linear (de `from` para `to`), radial (centro `from`, raio até `to`), angular (cônico em volta de `from`, começando na direção de `to`) ou diamond (losango em volta de `from`). O degradê: `stops` [[t 0..1, "#rrggbbaa"]...], ou `gradient` completo (paradas com cor de paleta e opacidade, `extend`, `space` srgb|linear|oklab), ou `preset` pelo nome: main_to_transparent, main_to_sub, stripe, sub_stripe (usam `main_color`/`sub_color`), os prontos de aiai_gradient_paint op presets, "Céu noturno", "Fim de tarde", "Céu azul". `extend` pad|repeat|reflect por cima. `selection` {type: rect|ellipse {rect:[x,y,w,h]}, lasso {points}, wand, color_range}: só dentro dela (na camada editável, a área da camada). Degradê livre: `freeform` [{at:[x,y], color}] (pontos de cor soltos, mistura suave no OKLab; ignora kind/from/to; sempre pixels: na raster, ou numa raster nova com `editable`). Degradê como cor de regiões de balde/texto: aiai_gradient_paint; `blend` (padrão normal) e `opacity`. Coordenadas em pixels do canvas (origem no canto superior esquerdo, y para baixo). Entra no undo. Confirme com aiai_render."##;
+
+const FIGURE_DESC: &str = r##"Figura (como no Clip Studio): forma direta numa camada VETORIAL (linha = traço editável, preenchimento = região de preenchimento do cel embaixo dos traços), RASTER (pixels; `selection` limita) ou de PREENCHIMENTO (tudo vira região). `shape` (campo `type`): line {from,to} | curve {from,to,through} (curva de dois passos: passa por `through`) | polyline {points, closed} | continuous_curve {points, closed} (spline suave) | bezier {anchors:[{at:[x,y], handle?:[dx,dy]}], closed} (sem alça = canto) | rect {rect:[x,y,w,h], radius (cantos arredondados), angle} | ellipse {rect, angle} | polygon {center, radius:[rx,ry], sides 3..64, angle} | lasso {points} (laço de preenchimento: sempre preenche). `mode`: line | fill | line_fill (formas abertas só têm linha); `width` px, `color`, `fill_color` (padrão = color; o Clip Studio pinta o preenchimento de line_fill com a cor secundária), `tip` (padrão marker), `opacity`, `aliased`. Linhas de velocidade/foco: aiai_lines. Coordenadas em pixels do canvas. Um passo de undo. Confirme com aiai_render.
+Exemplo: {"cut":"<corte>","layer":"<vetorial>","shape":{"type":"polygon","center":[960,540],"radius":[200,200],"sides":5},"mode":"line_fill","width":4,"color":{"type":"direct","rgba":[0,0,0,1]},"fill_color":{"type":"direct","rgba":[1,0.8,0.2,1]}}"##;
+
 
 const TRANSFORM_DESC: &str = r##"Transforma o conteúdo de uma camada (vetorial: traços; raster: pixels), opcionalmente só dentro de uma `selection`. `deform` (campo `type`): affine {translate:[dx,dy], scale:[sx,sy], rotate (graus, horário positivo), shear:[x,y], pivot:[x,y]} | perspective {from:[4 cantos], to:[4 cantos]} (cantos: sup-esq, sup-dir, inf-dir, inf-esq) | mesh | liquify | flip {horizontal, axis}.
 `selection`: {type: rect|ellipse {rect:[x,y,w,h]}, lasso {points}, wand {seed,tolerance}, color_range}. Vetor: `strokes` restringe a ids de traços; scale_width escala a largura junto. Coordenadas em pixels do canvas (y para baixo). Entra no undo. Confirme com aiai_render."##;
@@ -284,6 +288,11 @@ Só grava em pastas permitidas (AIAI_MCP_ALLOWED_DIRS; padrão producoes/, calib
             "inputSchema": paint_schema()
         },
         {
+            "name": "aiai_figure",
+            "description": FIGURE_DESC,
+            "inputSchema": schema_of::<aiai_tools::figure::FigureRequest>()
+        },
+        {
             "name": "aiai_gradient",
             "description": GRADIENT_DESC,
             "inputSchema": schema_of::<aiai_tools::paint::GradientRequest>()
@@ -467,6 +476,10 @@ pub fn plan(name: &str, args: &Value) -> Result<Plan, ToolError> {
         }
         "aiai_lint" => {
             required(&m, &["cut", "layer"])?;
+        "aiai_figure" => {
+            required(&m, &["cut", "layer", "shape", "color"])?;
+            simple("FIGURE", with_frame(m))
+        }
             simple("LINT", Value::Object(m))
         }
         "aiai_paint" => {
@@ -474,7 +487,7 @@ pub fn plan(name: &str, args: &Value) -> Result<Plan, ToolError> {
             simple("PAINT", with_frame(m))
         }
         "aiai_gradient" => {
-            required(&m, &["cut", "layer", "kind", "from", "to", "stops"])?;
+            required(&m, &["cut", "layer"])?;
             simple("GRADIENT", with_frame(m))
         }
         "aiai_transform" => {
