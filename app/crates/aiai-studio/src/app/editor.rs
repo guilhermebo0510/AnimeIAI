@@ -33,6 +33,33 @@ impl Default for View {
     }
 }
 
+/// Um buraco do Verificar, já em coordenadas do desenho: o ponto (semente do balde) e o contorno da caixa.
+#[derive(Debug, Clone)]
+pub(crate) struct LintHole {
+    pub point: Vec2,
+    pub corners: [Vec2; 4],
+    pub area: usize,
+    /// Toca a borda do quadro (manga ou cabelo cortados pelo enquadramento).
+    pub border: bool,
+    /// Parcialmente pintado (cobertura entre 0 e 95%).
+    pub partial: bool,
+}
+
+/// Resultado do Verificar guardado para as marcas (vale para o corte e o quadro em que rodou).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct LintMarks {
+    pub cut: Option<aiai_core::Id>,
+    pub frame: u32,
+    pub holes: Vec<LintHole>,
+    pub current: usize,
+}
+
+impl LintMarks {
+    pub(crate) fn visible_for(&self, cut: Option<&aiai_core::Id>, frame: u32) -> bool {
+        !self.holes.is_empty() && self.cut.as_ref() == cut && self.frame == frame
+    }
+}
+
 /// Transformação desenho → tela (pontos lógicos do egui): `tela = origin + M · desenho`, com M = R(rot) · diag(±s, s).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Xf {
@@ -860,6 +887,8 @@ pub(crate) struct Editor {
     pub tl_cell_w: f32,
     pub tl_ctx_cell: Option<(NodeId, u32)>,
     pub lint_report: Option<String>,
+    /// Buracos achados pelo Verificar (auditoria 2.9): marcas piscando no canvas e navegação de buraco em buraco.
+    pub lint_marks: LintMarks,
     /// Nós da árvore do projeto recolhidos (o padrão é aberto).
     pub tree_closed: std::collections::HashSet<NodeId>,
     // ---- pré-produção (Roteiro e Storyboard): o documento aberto e a seleção (corrigidos por `actions::sync_*`)
@@ -990,6 +1019,7 @@ impl Default for Editor {
             tl_cell_w: 14.0,
             tl_ctx_cell: None,
             lint_report: None,
+            lint_marks: LintMarks::default(),
             tree_closed: Default::default(),
             sel_script: None,
             sel_scene: None,

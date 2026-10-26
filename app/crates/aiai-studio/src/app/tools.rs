@@ -234,9 +234,41 @@ fn commit_pen(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant
         let q = points[0];
         points.push(StrokePoint { x: q.x + 0.01, ..q });
     }
+    // seleção de área (auditoria 2.15): a caneta só desenha dentro dela; o traço sai em pedaços nas bordas
+    let pieces: Vec<Vec<StrokePoint>> = match paint_clip_mask(env) {
+        Some((cov, w, h)) => {
+            let inside = |q: &StrokePoint| {
+                let c = g.to_canvas(Vec2::new(q.x, q.y));
+                let (x, y) = (c.x.floor() as i64, c.y.floor() as i64);
+                x >= 0 && y >= 0 && (x as u32) < w && (y as u32) < h && cov[(y as u32 * w + x as u32) as usize] >= 0.5
+            };
+            let mut out = Vec::new();
+            let mut cur = Vec::new();
+            for q in &points {
+                if inside(q) {
+                    cur.push(*q);
+                } else if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            if !cur.is_empty() {
+                out.push(cur);
+            }
+            out.into_iter().filter(|r: &Vec<StrokePoint>| r.len() >= 2).collect()
+        }
+        None => vec![points.clone()],
+    };
+    if pieces.is_empty() {
+        env.ed.notify(tr("pen.outside_selection"));
+        return;
+    }
+    let clipped = pieces.len() != 1 || pieces[0].len() != points.len();
+    let mut pieces = pieces.into_iter();
+    let mut points = pieces.next().expect("há pedaço");
+    let rest: Vec<Vec<StrokePoint>> = pieces.collect();
     let o = &env.ed.opts;
     // volta ao ponto de partida: fecha o traço (sem as pontas afinadas abrindo um vão que o balde não vê)
-    let closed = o.pen_autoclose && should_close(&points, o.pen_width, g.screen_scale);
+    let closed = !clipped && o.pen_autoclose && should_close(&points, o.pen_width, g.screen_scale);
     if closed {
         let (a, b) = (points[0], points[points.len() - 1]);
         if (a.x - b.x).hypot(a.y - b.y) < 1.0 {
@@ -264,6 +296,7 @@ fn commit_pen(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant
         s.points.iter_mut().zip(c).for_each(|(q, p)| (q.x, q.y) = (p.x, p.y));
         s
     }).collect();
+    let extra: Vec<Stroke> = rest.into_iter().map(|pts| Stroke { points: pts, ..stroke.clone() }).collect();
     let (cut, layer, frame, pref) = (t.cut.clone(), t.layer.clone(), t.frame, env.ed.cel_number);
     let width = stroke.width;
     // o fantasma é a mesma geometria do traço gravado (afinamento, fechamento), não a polilinha do arrasto
@@ -274,12 +307,12 @@ fn commit_pen(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant
     let planned = cmds::plan_with_prep(env.core, &cut, &layer, frame, pref, vec![], |p, _| {
         let cel = cmds::exposed_cel(p, &cut, &layer, frame).ok_or_else(|| tr("err.no_cel").to_owned())?;
         let index = cmds::cel_data(p, &cel).map(|c| c.strokes.len()).unwrap_or(0);
-        let items = std::iter::once(stroke).chain(copies).enumerate().map(|(i, stroke)| IndexedStroke { index: index + i, stroke }).collect();
+        let items = std::iter::once(stroke).chain(extra).chain(copies).enumerate().map(|(i, stroke)| IndexedStroke { index: index + i, stroke }).collect();
         Ok(Command::InsertStrokes { cel, items })
     });
     let color = ghost_color(env, 1.0);
     // camada com Recortar: sem fantasma (ele mostraria o traço inteiro até o render recortado chegar)
-    let ghost = super::pen::clip_base(&env.core.project, &layer).is_none().then_some((ghost_pts, ghost_radii, width, color));
+    let ghost = (!clipped && super::pen::clip_base(&env.core.project, &layer).is_none()).then_some((ghost_pts, ghost_radii, width, color));
     commit(env, planned, released_at, "pen", ghost);
 }
 
@@ -752,17 +785,87 @@ pub(crate) fn do_fill(env: &mut Env, p: Vec2, released_at: Instant) {
 pub(crate) fn run_lint(env: &mut Env) {
     let Some(cut) = env.ed.active_cut(env.core) else { return };
     let Some(active) = env.ed.active_layer(env.core) else { return };
-    let Some((fill_layer, lines, _)) = fill_plan(&env.core.project, &cut, &active) else {
+    let Some((fill_layer, lines, persist)) = fill_plan(&env.core.project, &cut, &active) else {
         env.ed.lint_report = Some(tr("err.no_fill_layer").to_owned());
         return;
     };
     let _ = lines;
+    // camada de cor ainda sem a linha ligada (nunca passou pelo balde): liga a linha mais perto, como o primeiro clique
+    // do balde faria (senão o Verificar só funcionava depois de pintar uma vez)
+    if let Some(v) = persist {
+        if let Err(e) = cmds::run(env.core, Command::SetProps { id: fill_layer.clone(), name: None, data: serde_json::json!({ "line_refs": [v] }) }) {
+            env.ed.lint_report = Some(e);
+            return;
+        }
+    }
     let o = &env.ed.opts;
-    let msg = match tfill::lint(&env.core.project, &env.core.blobs, &cut, env.ed.frame, &fill_layer, o.fill_gap, 40) {
-        Ok(r) => tr("fill.lint_result").replace("{n}", &r.unpainted.len().to_string()).replace("{total}", &r.regions_total.to_string()),
-        Err(e) => e.to_string(),
+    let frame = env.ed.frame;
+    let msg = match tfill::lint(&env.core.project, &env.core.blobs, &cut, frame, &fill_layer, o.fill_gap, 40) {
+        Ok(r) => {
+            // as regiões vêm na camada de preenchimento: para o desenho pela posição dela no quadro
+            let place = cmds::layer_placement(&env.core.project, &cut, &fill_layer, frame);
+            let to = |x: f32, y: f32| match &place {
+                Some(a) => {
+                    let (cx, cy) = a.apply(x, y);
+                    Vec2::new(cx, cy)
+                }
+                None => Vec2::new(x, y),
+            };
+            let hole = |g: &tfill::LintRegion, border: bool| {
+                // caixa da região: [x, y, largura, altura]
+                let [x0, y0, bw, bh] = g.bounds.map(|v| v as f32);
+                let (x1, y1) = (x0 + bw, y0 + bh);
+                super::editor::LintHole {
+                    point: to(g.point[0] as f32 + 0.5, g.point[1] as f32 + 0.5),
+                    corners: [to(x0, y0), to(x1, y0), to(x1, y1), to(x0, y1)],
+                    area: g.area,
+                    border,
+                    partial: g.coverage > 0.0,
+                }
+            };
+            let mut holes: Vec<_> = r.unpainted.iter().map(|g| hole(g, false)).collect();
+            holes.extend(r.border_unpainted.iter().map(|g| hole(g, true)));
+            // ordem de leitura: de cima para baixo, da esquerda para a direita
+            holes.sort_by(|a, b| (a.point.y / 64.0).floor().total_cmp(&(b.point.y / 64.0).floor()).then(a.point.x.total_cmp(&b.point.x)));
+            let n_border = r.border_unpainted.len();
+            env.ed.lint_marks = super::editor::LintMarks { cut: Some(cut.clone()), frame, holes, current: 0 };
+            let mut m = tr("fill.lint_result").replace("{n}", &r.unpainted.len().to_string()).replace("{total}", &r.regions_total.to_string());
+            if n_border > 0 {
+                m.push_str(&tr("fill.lint_border").replace("{n}", &n_border.to_string()));
+            }
+            m
+        }
+        Err(e) => {
+            env.ed.lint_marks = Default::default();
+            e.to_string()
+        }
     };
     env.ed.lint_report = Some(msg);
+}
+
+/// Vai para o buraco seguinte (`step` = 1) ou anterior (-1) do Verificar e centraliza a visão nele.
+pub(crate) fn lint_go(env: &mut Env, step: i32) {
+    let m = &mut env.ed.lint_marks;
+    if m.holes.is_empty() {
+        return;
+    }
+    let n = m.holes.len() as i32;
+    m.current = (m.current as i32 + step).rem_euclid(n) as usize;
+    let h = &m.holes[m.current];
+    let c = h.corners.iter().fold(Vec2::ZERO, |a, p| a + *p) / 4.0;
+    env.ed.view.center = c;
+}
+
+/// Pinta o buraco atual do Verificar com a cor ativa (o mesmo balde do clique) e confere de novo.
+pub(crate) fn lint_fill_current(env: &mut Env) {
+    let Some(h) = env.ed.lint_marks.holes.get(env.ed.lint_marks.current).cloned() else { return };
+    let cur = env.ed.lint_marks.current;
+    do_fill(env, h.point, Instant::now());
+    run_lint(env);
+    let n = env.ed.lint_marks.holes.len();
+    if n > 0 {
+        env.ed.lint_marks.current = cur.min(n - 1);
+    }
 }
 
 // ------------------------------------------------------------------------------------------------ conta-gotas

@@ -17,7 +17,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from csp_sheet import sheet  # noqa: E402
+from csp_sheet import sheet, mix_sheet, COR_A, COR_B  # noqa: E402
 from calib_render import GROUPS  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -108,10 +108,14 @@ def to_screen(cv, x, y):
     return o[0] + m[0] * x + m[1] * y, o[1] + m[2] * x + m[3] * y
 
 
-def draw_sheet(cut, layer, size, quant, rev_wait=20.0):
+def hexc(rgb):
+    return "#%02x%02x%02x" % tuple(rgb)
+
+
+def draw_sheet(cut, layer, size, quant, rev_wait=20.0, strokes=None):
     st = aiai.call("GET_UI_STATE")
     cv = st["editor"]["canvas"]
-    for stroke in sheet(size):
+    for stroke in (strokes if strokes is not None else sheet(size)):
         pts = stroke["points"]
         evs = []
         for i, (x, y, p) in enumerate(pts):
@@ -179,6 +183,13 @@ def main():
                 assert_test_project()
                 layer = made(f"{pen}_s{s}", cut, {"type": "layer", "kind": "raster"})
                 made("c1", layer, {"type": "cel", "number": 1})
+                if a.group == "mistura":
+                    # base dos misturadores: a grade vermelha/azul com a Pena G 30 (pelo motor, como a do Clip Studio)
+                    base, cruz = mix_sheet(30)
+                    for group, rgb in ((base, COR_A), (cruz, COR_B)):
+                        aiai.call("PAINT", {"cut": cut, "frame": 0, "layer": layer, "preset": "Pena G", "preset_overrides": {"size": 30},
+                                            "color": {"type": "direct", "rgba": [c / 255 for c in rgb] + [1.0]},
+                                            "strokes": [{"points": [[x, y] for x, y, _ in st["points"]], "smooth": False} for st in group]})
                 if eraser:
                     # folha das borrachas: a camada começa preta
                     aiai.call("PAINT", {"cut": cut, "frame": 0, "layer": layer, "preset": "redondo duro", "preset_overrides": {"size": 400},
@@ -194,6 +205,22 @@ def main():
                     f.write(base64.b64decode(r["png_base64"]))
                 done += 1
                 print(f"{pen} s{s} ok")
+                if a.group == "pincel" and s == 30:
+                    # folha de mistura: faixas na COR_A, verticais na COR_B por cima, na mesma camada
+                    layer = made(f"{pen}_mix_s30", cut, {"type": "layer", "kind": "raster"})
+                    made("c1", layer, {"type": "cel", "number": 1})
+                    aiai.call("UI_ACTION", {"action": "select_layer", "layer": layer})
+                    aiai.call("UI_ACTION", {"action": "set_brush", "preset": factory[pen], "size": 30})
+                    base, cruz = mix_sheet(30)
+                    for group, rgb in ((base, COR_A), (cruz, COR_B)):
+                        aiai.call("UI_ACTION", {"action": "set_color", "color": hexc(rgb)})
+                        settle()
+                        draw_sheet(cut, layer, 30, quant, strokes=group)
+                    aiai.call("UI_ACTION", {"action": "set_color", "color": "#000000"})
+                    r = aiai.call("RENDER", {"cut": cut, "frame": 0, "layers": [layer], "background": "#ffffff"}, timeout=60)
+                    with open(os.path.join(a.out, f"{pen}_mix_s30.png"), "wb") as f:
+                        f.write(base64.b64decode(r["png_base64"]))
+                    print(f"{pen} mix ok")
         aiai.call("SAVE_PROJECT", {})
         print(f"{done} folhas em {a.out}")
     finally:

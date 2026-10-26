@@ -283,6 +283,7 @@ impl StudioApp {
             "live": { "ms": ed.live_stroke.last_ms, "updates": ed.live_stroke.updates, "overlay": ed.live_stroke.overlay.is_some() },
             "selection": ed.selection.as_ref().map(|s| json!({ "mode": format!("{:?}", s.mode), "strokes": s.strokes.iter().map(|i| i.0.clone()).collect::<Vec<_>>(), "whole": s.whole, "offset": [round(s.offset.x), round(s.offset.y)], "rect": s.rect_of() })),
             "select_tool": super::selection::state_json(ed),
+            "lint_marks": lint_json(&ed.lint_marks),
             "gesture_active": !matches!(ed.gesture, super::editor::Gesture::None),
             "rulers": { "new_kind": ed.rulers.new_kind.id(), "snap": ed.rulers.snap, "show": ed.rulers.show, "pending": ed.rulers.pending.len() },
             "cursor_logical": ed.cursor.map(|c| json!([round(c.x), round(c.y)])),
@@ -335,6 +336,7 @@ impl StudioApp {
             "set_frame" => Some(&["frame"]),
             "set_color" => Some(&["color", "value"]),
             "fit_view" => Some(&[]),
+            "lint" | "lint_next" | "lint_prev" | "lint_fill" | "lint_clear" => Some(&[]),
             "set_brush" => Some(&["preset", "value", "size", "opacity"]),
             "toggle_panel" | "open_panel" => Some(&["panel", "value", "visible"]),
             "layout" => Some(&["op", "name"]),
@@ -411,6 +413,24 @@ impl StudioApp {
             "fit_view" => {
                 self.ed.fit_pending = true;
                 json!({ "fit": true })
+            }
+            "lint" | "lint_next" | "lint_prev" | "lint_fill" | "lint_clear" => {
+                // o botão Verificar do balde e a navegação pelos buracos marcados
+                let t = self.tokens();
+                let ws = self.ws;
+                let mut notes = Vec::new();
+                let mut env = super::ui_kit::Env { t, core: &mut self.core, ed: &mut self.ed, icons: &mut self.icons, notes: &mut notes, tool: &mut self.tool, ws };
+                match action.as_str() {
+                    "lint" => super::tools::run_lint(&mut env),
+                    "lint_next" => super::tools::lint_go(&mut env, 1),
+                    "lint_prev" => super::tools::lint_go(&mut env, -1),
+                    "lint_fill" => super::tools::lint_fill_current(&mut env),
+                    _ => {
+                        env.ed.lint_marks = Default::default();
+                        env.ed.lint_report = None;
+                    }
+                }
+                json!({ "report": self.ed.lint_report, "lint_marks": lint_json(&self.ed.lint_marks) })
             }
             "set_brush" => {
                 let name = text(&m, &["preset", "value"]).ok_or_else(|| BridgeError::invalid_params("set_brush exige 'preset' (nome do pincel)"))?;
@@ -533,4 +553,14 @@ impl StudioApp {
         out["action"] = json!(action);
         Ok(out)
     }
+}
+
+/// Buracos do Verificar no GET_UI_STATE (centro, área, borda, parcial; o atual).
+fn lint_json(m: &super::editor::LintMarks) -> Value {
+    json!({
+        "count": m.holes.len(),
+        "current": m.current,
+        "frame": m.frame,
+        "holes": m.holes.iter().map(|h| json!({ "point": [h.point.x, h.point.y], "area": h.area, "border": h.border, "partial": h.partial })).collect::<Vec<_>>(),
+    })
 }

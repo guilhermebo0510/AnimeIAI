@@ -1027,6 +1027,71 @@ fn eraser_presets_script(c: &Client) {
     }
 }
 
+/// Verificar com marcas e navegação (auditoria 2.9) e a caneta vetorial presa à seleção (auditoria 2.15).
+fn lint_and_pen_selection_script(c: &Client) {
+    c.ok("NEW_PROJECT", json!({"name": "verificar", "settings": {"width": 320, "height": 180}}));
+    let mk = |name: &str, parent: Option<&str>, data: Value| c.ok("APPLY_COMMAND", create_node(name, parent, data))["created"][0].as_str().unwrap().to_string();
+    let ep = mk("EP", None, json!({"type": "episode", "number": 1}));
+    let sc = mk("S", Some(&ep), json!({"type": "scene", "number": 1}));
+    let cut = mk("C001", Some(&sc), json!({"type": "cut", "number": 1, "duration": 12}));
+    let fill = mk("Cor", Some(&cut), json!({"type": "layer", "kind": "fill"}));
+    mk("c1", Some(&fill), json!({"type": "cel", "number": 1}));
+    let v = mk("Linha", Some(&cut), json!({"type": "layer", "kind": "vector"}));
+    let cel = mk("c1", Some(&v), json!({"type": "cel", "number": 1}));
+    c.ok("UI_ACTION", json!({"action": "select_cut", "cut": cut}));
+    c.ok("UI_ACTION", json!({"action": "select_layer", "layer": v}));
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "pen"}));
+    c.ok("UI_ACTION", json!({"action": "fit_view"}));
+    c.input(json!([{"kind": "wait", "frames": 3}]));
+    let wait_strokes = |n: usize| {
+        let t0 = Instant::now();
+        while c.strokes(&cel).len() < n {
+            assert!(t0.elapsed() < Duration::from_secs(20), "a caneta não gravou ({} traços)", c.strokes(&cel).len());
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    };
+    // dois retângulos fechados = duas regiões sem tinta
+    for (k, (x0, x1)) in [(30.0, 130.0), (180.0, 290.0)].into_iter().enumerate() {
+        c.drag_canvas(&[(x0, 40.0), (x1, 40.0), (x1, 140.0), (x0, 140.0), (x0, 40.0)], false);
+        wait_strokes(k + 1);
+    }
+    c.ok("UI_ACTION", json!({"action": "select_layer", "layer": fill}));
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "fill"}));
+    let r = c.ok("UI_ACTION", json!({"action": "lint"}));
+    let n = r["lint_marks"]["count"].as_u64().unwrap();
+    assert!(n >= 2, "os dois retângulos sem tinta: {r}");
+    assert_eq!(c.state()["editor"]["lint_marks"]["count"].as_u64().unwrap(), n, "o estado mostra as marcas");
+    // navegar centraliza a visão no buraco seguinte
+    let r = c.ok("UI_ACTION", json!({"action": "lint_next"}));
+    let cur = r["lint_marks"]["current"].as_u64().unwrap() as usize;
+    let hole = r["lint_marks"]["holes"][cur]["point"].clone();
+    let center = c.state()["editor"]["canvas"]["center"].clone();
+    let (hx, cx) = (hole[0].as_f64().unwrap(), center[0].as_f64().unwrap());
+    assert!((hx - cx).abs() < 80.0, "a visão foi para o buraco {hole} (centro {center})");
+    // pintar o buraco atual: sobra um a menos
+    let rev0 = c.state()["project"]["revision"].as_u64().unwrap();
+    let r = c.ok("UI_ACTION", json!({"action": "lint_fill"}));
+    assert!(c.state()["project"]["revision"].as_u64().unwrap() > rev0, "o balde pintou");
+    assert_eq!(r["lint_marks"]["count"].as_u64().unwrap(), n - 1, "um buraco a menos depois de pintar: {r}");
+    c.ok("UI_ACTION", json!({"action": "lint_clear"}));
+    assert_eq!(c.state()["editor"]["lint_marks"]["count"].as_u64().unwrap(), 0);
+    // caneta com seleção de área: o traço que atravessa só fica dentro dela (o Verificar mexeu na visão: enquadra de novo)
+    c.ok("UI_ACTION", json!({"action": "fit_view"}));
+    c.input(json!([{"kind": "wait", "frames": 3}]));
+    c.ok("UI_ACTION", json!({"action": "select_layer", "layer": v}));
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "select", "mode": "rect"}));
+    c.drag_canvas(&[(100.0, 60.0), (220.0, 120.0)], false);
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "pen"}));
+    let before = c.strokes(&cel).len();
+    c.drag_canvas(&[(10.0, 90.0), (310.0, 90.0)], false);
+    wait_strokes(before + 1);
+    let st = c.strokes(&cel);
+    let last = st.last().unwrap();
+    let xs: Vec<f64> = last["points"].as_array().unwrap().iter().map(|p| p["x"].as_f64().unwrap()).collect();
+    let (lo, hi) = xs.iter().fold((f64::MAX, f64::MIN), |(a, b), &x| (a.min(x), b.max(x)));
+    assert!(lo > 95.0 && hi < 225.0, "o traço ficou só dentro da seleção: x {lo}..{hi}");
+}
+
 #[test]
 fn the_app_serves_the_bridge_and_reacts_to_real_egui_input() {
     let dir = tempfile::tempdir().unwrap();
@@ -1053,6 +1118,7 @@ fn the_app_serves_the_bridge_and_reacts_to_real_egui_input() {
             merge_script(&client);
             prefs_script(&client);
             eraser_presets_script(&client);
+            lint_and_pen_selection_script(&client);
         }));
         done2.store(true, Ordering::SeqCst);
         r

@@ -1525,6 +1525,32 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
         painter.add(quad(ov.tex.id(), pts, uv));
     });
     let has_live = live.is_some();
+    // buracos do Verificar: contorno piscando (vermelho = fechado sem tinta, laranja = na borda do quadro, amarelo =
+    // pintado em parte); o atual mais forte, com o número
+    let lint_cut = env.ed.active_cut(env.core);
+    if env.ed.lint_marks.visible_for(lint_cut.as_ref(), env.ed.frame) {
+        let now = painter.ctx().input(|i| i.time) as f32;
+        let blink = 0.55 + 0.45 * (now * 5.0).sin();
+        for (i, h) in env.ed.lint_marks.holes.iter().enumerate() {
+            let base = if h.border {
+                egui::Color32::from_rgb(255, 150, 40)
+            } else if h.partial {
+                egui::Color32::from_rgb(250, 220, 60)
+            } else {
+                egui::Color32::from_rgb(255, 60, 70)
+            };
+            let cur = i == env.ed.lint_marks.current;
+            let col = base.gamma_multiply(if cur { blink } else { 0.3 + 0.35 * blink });
+            let pts: Vec<Pos2> = h.corners.iter().map(|c| xf.to_screen(*c)).collect();
+            painter.add(egui::Shape::closed_line(pts, egui::Stroke::new(if cur { 2.5 } else { 1.5 }, col)));
+            let p = xf.to_screen(h.point);
+            painter.circle_stroke(p, if cur { 7.0 } else { 4.0 }, egui::Stroke::new(2.0, col));
+            if cur {
+                painter.text(p + egui::vec2(9.0, -9.0), egui::Align2::LEFT_BOTTOM, format!("{}", i + 1), egui::FontId::proportional(13.0), base);
+            }
+        }
+        painter.ctx().request_repaint_after(std::time::Duration::from_millis(60));
+    }
     if *env.tool == ToolId::Lasso {
         super::selection::paint_gesture(env, painter, xf);
     }

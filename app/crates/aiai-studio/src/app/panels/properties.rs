@@ -506,6 +506,33 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
             if let Some(msg) = &env.ed.lint_report {
                 ui.label(egui::RichText::new(msg).size(12.0).color(t.text_dim));
             }
+            let n_holes = env.ed.lint_marks.holes.len();
+            if n_holes > 0 {
+                ui.horizontal(|ui| {
+                    let prev = ui.small_button("‹").on_hover_text(tr("lint.prev"));
+                    env.note("lint:prev", prev.rect);
+                    if prev.clicked() {
+                        tools::lint_go(env, -1);
+                    }
+                    ui.label(egui::RichText::new(format!("{}/{}", env.ed.lint_marks.current + 1, n_holes)).size(12.0));
+                    let next = ui.small_button("›").on_hover_text(tr("lint.next"));
+                    env.note("lint:next", next.rect);
+                    if next.clicked() {
+                        tools::lint_go(env, 1);
+                    }
+                    let fill = ui.small_button(tr("lint.fill")).on_hover_text(tr("lint.fill.tip"));
+                    env.note("lint:fill", fill.rect);
+                    if fill.clicked() {
+                        tools::lint_fill_current(env);
+                    }
+                    let clear = ui.small_button("✕").on_hover_text(tr("lint.clear"));
+                    env.note("lint:clear", clear.rect);
+                    if clear.clicked() {
+                        env.ed.lint_marks = Default::default();
+                        env.ed.lint_report = None;
+                    }
+                });
+            }
             if !compact {
                 dim_label(ui, &t, tr(match env.ed.opts.area.fill_mode {
                     crate::app::area_tools::FillMode::Others => "opt.fill_mode_hint.others",
