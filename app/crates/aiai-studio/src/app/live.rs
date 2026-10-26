@@ -579,7 +579,7 @@ impl Incremental {
         }
         // com o tempo de cada ponto (o mesmo do commit), o pincel vê a velocidade
         let times: Option<Vec<f32>> = (req.pts.len() == n && req.pts.iter().all(|q| q.len() == 4 && q[3].is_finite())).then(|| req.pts.iter().map(|q| q[3]).collect());
-        let smudge = (spec.preset.mix > 0.0).then_some(&self.layer);
+        let smudge = spec.preset.reads_layer().then_some(&self.layer);
         let feed = |sb: &mut aiai_paint::brush::StrokeBuffer, i: usize| match &times {
             Some(ts) => {
                 let (seg, st) = aiai_tools::paint::spline_segment_timed(&pts, ts, i);

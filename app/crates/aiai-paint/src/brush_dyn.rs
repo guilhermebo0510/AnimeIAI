@@ -438,6 +438,40 @@ impl Grain {
     }
 }
 
+/// Tinta que mistura com a camada (S25, o modelo dos pincéis do Clip Studio): a cada carimbo o pincel pega a cor que
+/// está sob a ponta e a carrega adiante.
+/// - `amount` (quantidade de tinta, 0..1): quanto da cor do pincel entra; 0 = só a cor carregada (misturadores).
+/// - `density` (densidade da tinta, 0..1): o quanto a cor do pincel cobre em cada carimbo.
+/// - `stretch` (extensão de cor, 0..1): quanto da cor carregada fica de um carimbo para o próximo; 1 = continua com a do
+///   começo do traço, 0 = pega só a de agora.
+/// - `smear`: arrasta a estrutura dos pixels (ponta do dedo); senão mistura a cor média sob a ponta.
+/// - `blur` (px): desfoca o que está sob a ponta (ferramenta Desfocar); ignora a quantidade e a extensão.
+/// - `amount_dyn`: dinâmica da quantidade de tinta (pressão).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PaintMix {
+    pub amount: f32,
+    #[serde(default = "d_one")]
+    pub density: f32,
+    #[serde(default)]
+    pub stretch: f32,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub smear: bool,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub blur: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount_dyn: Option<Dynamics>,
+}
+
+impl PaintMix {
+    pub fn validate(&self) -> Result<(), String> {
+        let unit = |v: f32| v.is_finite() && (0.0..=1.0).contains(&v);
+        if !unit(self.amount) || !unit(self.density) || !unit(self.stretch) || !(self.blur.is_finite() && (0.0..=64.0).contains(&self.blur)) {
+            return Err("paint_mix: amount, density e stretch em 0..1, blur em 0..64 px".into());
+        }
+        Ok(())
+    }
+}
+
 /// Spray: cada carimbo vira `count` partículas espalhadas no disco da ponta (aerógrafo spray, gotículas, spray
 /// colorido). Cada partícula é uma ponta redonda pequena com a dureza da ponta do pincel, achatada e girada ao acaso
 /// (gotas), com o tamanho sorteado entre `size_min` e 100%.
@@ -463,11 +497,19 @@ pub struct Spray {
     /// partículas na área fica igual, como o spray do Clip Studio).
     #[serde(default)]
     pub count_exp: f32,
+    /// Raio onde as partículas caem, em raios da ponta (1 = o disco da ponta; 2,5 = a lavagem molhada do Clip Studio,
+    /// com manchas do tamanho do pincel espalhadas bem além dele).
+    #[serde(default = "d_one", skip_serializing_if = "is_one")]
+    pub spread: f32,
+}
+
+fn is_one(v: &f32) -> bool {
+    *v == 1.0
 }
 
 impl Spray {
     pub fn validate(&self) -> Result<(), String> {
-        if !(self.count.is_finite() && (0.0..=500.0).contains(&self.count)) || !(0.0..=3.0).contains(&self.count_exp) || !(self.size.is_finite() && self.size > 0.0 && self.size <= 500.0) || !(0.0..=1.0).contains(&self.size_min) || !(0.02..=1.0).contains(&self.roundness_min) || !(0.0..=1.0).contains(&self.bias) {
+        if !(self.count.is_finite() && (0.0..=500.0).contains(&self.count)) || !(0.0..=3.0).contains(&self.count_exp) || !(self.size.is_finite() && self.size > 0.0 && self.size <= 500.0) || !(0.0..=1.0).contains(&self.size_min) || !(0.02..=1.0).contains(&self.roundness_min) || !(0.0..=1.0).contains(&self.bias) || !(self.spread.is_finite() && (0.1..=8.0).contains(&self.spread)) {
             return Err("spray: count 0..500, count_exp 0..3, size > 0, size_min 0..1, roundness_min 0,02..1, bias 0..1".into());
         }
         Ok(())

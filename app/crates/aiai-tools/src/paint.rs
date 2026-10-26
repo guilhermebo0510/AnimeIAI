@@ -394,7 +394,7 @@ pub struct PaintedRegion {
 pub fn paint_on_cel(blobs: &BlobStore, cel: Option<&CelData>, w: u32, h: u32, preset: &BrushPreset, color: [f32; 4], strokes: &[PaintStrokeSpec], seed: u64, keep_before: bool) -> ToolResult<PaintedRegion> {
     let paths = brush_paths_timed(strokes)?;
     // o borrador lê a camada inteira de antes do traço
-    let full = if preset.mix > 0.0 {
+    let full = if preset.reads_layer() {
         Some(match cel {
             Some(c) => cel_raster(blobs, c, w, h)?,
             None => Image::new(w, h),

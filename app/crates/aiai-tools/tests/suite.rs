@@ -412,7 +412,7 @@ fn local_tile_painting_matches_full_canvas_painting() {
         strokes: vec![PaintStrokeSpec { points: vec![vec![20.0, 250.0], vec![880.0, 260.0]], smooth: false }], seed: 3 };
     let c = paint_command(&s.project, &mut s.blobs, &base).unwrap();
     s.apply(c).unwrap();
-    for name in ["Aquarela", "Borrador", "Guache seco", "Folhagem"] {
+    for name in ["Aquarela", "Borrador", "Guache seco", "Folhagem", "Guache", "Misturar", "Desfocar", "Aquarela redonda"] {
         let preset = BrushPreset::defaults().into_iter().find(|p| p.name == name).unwrap();
         let pts = vec![vec![300.0, 200.0, 0.8], vec![360.0, 260.0, 1.0], vec![420.0, 300.0, 0.6]];
         // esperado: o motor no canvas inteiro

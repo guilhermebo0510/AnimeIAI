@@ -24,10 +24,15 @@ fn main() {
     for job in jobs {
         // "preset_name" = um preset de fábrica pelo nome (com "size" por cima); senão o "preset" inteiro
         let mut preset: BrushPreset = match job["preset_name"].as_str() {
-            Some("Borracha") => BrushPreset::eraser(),
-            Some(n) => BrushPreset::defaults().into_iter().find(|p| p.name == n).unwrap_or_else(|| panic!("preset de fábrica {n:?} não existe")),
+            Some(n) => factory(n),
             None => serde_json::from_value(job["preset"].clone()).expect("preset"),
         };
+        // "patch": campos por cima do preset (ajuste rápido sem recompilar; objetos são mesclados, o resto trocado)
+        if let Some(patch) = job.get("patch").filter(|p| p.is_object()) {
+            let mut base = serde_json::to_value(&preset).expect("preset em JSON");
+            merge(&mut base, patch);
+            preset = serde_json::from_value(base).expect("preset com patch");
+        }
         if let Some(sz) = job["size"].as_f64() {
             preset.size = sz as f32;
         }
@@ -38,20 +43,42 @@ fn main() {
         // camada do traço: vazia, ou preta cheia (folha das borrachas, `"base": "black"`); no fim, achatada no papel branco
         let mut img = if job["base"].as_str() == Some("black") { Image::filled(w, h, [0.0, 0.0, 0.0, 1.0]) } else { Image::new(w, h) };
         for (k, st) in job["strokes"].as_array().expect("strokes").iter().enumerate() {
-            let raw: Vec<[f32; 4]> = st.as_array().unwrap().iter().map(|q| {
+            // traço = lista de pontos, ou {"pts": [...], "color": [r, g, b] (0..255), "preset_name": "...", "size": n}
+            // (folhas de mistura: cor por traço; base dos misturadores: outro pincel antes)
+            let (pts_v, color, stroke_preset) = match st.as_object() {
+                Some(o) => {
+                    let color = o.get("color").and_then(|c| c.as_array()).map(|c| {
+                        let g = |i: usize| c.get(i).and_then(|x| x.as_f64()).unwrap_or(0.0) as f32 / 255.0;
+                        [g(0), g(1), g(2), 1.0]
+                    });
+                    let sp = o.get("preset_name").and_then(|n| n.as_str()).map(|n| {
+                        let mut p = factory(n);
+                        if let Some(sz) = o.get("size").and_then(|x| x.as_f64()) {
+                            p.size = sz as f32;
+                        }
+                        p
+                    });
+                    (o.get("pts").expect("pts").clone(), color.unwrap_or([0.0, 0.0, 0.0, 1.0]), sp)
+                }
+                None => (st.clone(), [0.0, 0.0, 0.0, 1.0], None),
+            };
+            let preset = stroke_preset.as_ref().unwrap_or(&preset);
+            let raw: Vec<[f32; 4]> = pts_v.as_array().unwrap().iter().map(|q| {
                 let a = q.as_array().unwrap();
                 let g = |i: usize, d: f32| a.get(i).and_then(|x| x.as_f64()).map(|x| x as f32).unwrap_or(d);
                 [g(0, 0.0), g(1, 0.0), g(2, 1.0), g(3, f32::NAN)]
             }).collect();
-            let samples = simulate(&preset, &raw, frame);
+            let samples = simulate(preset, &raw, frame);
             let spec = PaintStrokeSpec { points: brush_points_from_samples(&samples), smooth: true };
             for (path, times) in brush_paths_timed(std::slice::from_ref(&spec)).expect("caminho") {
-                let mut sb = StrokeBuffer::new(&preset, [0.0, 0.0, 0.0, 1.0], seed.wrapping_add(k as u64 * 7919), w, h, [0, 0]);
+                let mut sb = StrokeBuffer::new(preset, color, seed.wrapping_add(k as u64 * 7919), w, h, [0, 0]);
+                // a camada antes do traço: os pincéis que misturam pegam a cor dela (como no app)
+                let layer = img.clone();
                 match &times {
-                    Some(ts) => sb.add_timed(None, &path, ts),
-                    None => sb.add(None, &path),
+                    Some(ts) => sb.add_timed(Some(&layer), &path, ts),
+                    None => sb.add(Some(&layer), &path),
                 }
-                sb.finish(None);
+                sb.finish(Some(&layer));
                 sb.composite(&mut img, [0, 0]);
             }
         }
@@ -63,6 +90,32 @@ fn main() {
         }
         let out = job["out"].as_str().expect("out");
         paper.save_png(std::path::Path::new(out)).expect("gravar png");
+    }
+}
+
+/// Mescla `patch` em `base` (objetos campo a campo; `null` apaga o campo).
+fn merge(base: &mut serde_json::Value, patch: &serde_json::Value) {
+    match (base.as_object_mut(), patch.as_object()) {
+        (Some(b), Some(p)) => {
+            for (k, v) in p {
+                if v.is_null() {
+                    b.remove(k);
+                } else if v.is_object() && b.get(k).is_some_and(|x| x.is_object()) {
+                    merge(b.get_mut(k).unwrap(), v);
+                } else {
+                    b.insert(k.clone(), v.clone());
+                }
+            }
+        }
+        _ => *base = patch.clone(),
+    }
+}
+
+/// Preset de fábrica pelo nome ("Borracha" = a ponta da ferramenta Borracha).
+fn factory(n: &str) -> BrushPreset {
+    match n {
+        "Borracha" => BrushPreset::eraser(),
+        _ => BrushPreset::defaults().into_iter().find(|p| p.name == n).unwrap_or_else(|| panic!("preset de fábrica {n:?} não existe")),
     }
 }
 

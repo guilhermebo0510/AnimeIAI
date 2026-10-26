@@ -415,6 +415,9 @@ pub struct BrushPreset {
     /// Spray: o carimbo vira partículas espalhadas (aerógrafo).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spray: Option<crate::brush_dyn::Spray>,
+    /// Tinta que mistura com a camada (aquarela que mistura, guache, óleo, misturadores e Desfocar).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paint_mix: Option<crate::brush_dyn::PaintMix>,
     /// Borracha numa camada vetorial: o que sai do traço tocado (trecho, até as interseções, traço inteiro); `None` =
     /// o modo escolhido na ferramenta.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -545,10 +548,17 @@ impl BrushPreset {
             max_ink: false,
             grain: None,
             spray: None,
+            paint_mix: None,
             vector_erase: None,
             all_layers: false,
             snap: false,
         }
+    }
+
+    /// O traço lê a camada de antes dele (borrador, tinta que mistura, misturadores, Desfocar): quem pinta precisa
+    /// passar a camada inteira, não só o recorte tocado.
+    pub fn reads_layer(&self) -> bool {
+        self.mix > 0.0 || self.paint_mix.is_some()
     }
 
     /// Pixels por segundo que contam como velocidade 100%.
@@ -609,6 +619,9 @@ impl BrushPreset {
         if let Some(g) = &self.grain {
             g.validate()?;
         }
+        if let Some(pm) = &self.paint_mix {
+            pm.validate()?;
+        }
         if let Some(sp) = &self.spray {
             sp.validate()?;
         }
@@ -649,12 +662,7 @@ impl BrushPreset {
         wc.mix = 0.15;
         wc.texture = Some(BrushTexture { kind: TextureKind::Paper, scale: 6.0, depth: 0.35, mode: TextureMode::Multiply, seed: 7, invert: false, image: None, image_mask: None });
         v.push(wc);
-        let mut gouache = BrushPreset::round("Guache seco", 36.0, 0.75);
-        gouache.tip = BrushTip::Round { hardness: 0.75, roundness: 0.55, angle: 35.0 };
-        gouache.follow_direction = true;
-        gouache.texture = Some(BrushTexture { kind: TextureKind::Canvas, scale: 3.0, depth: 0.55, mode: TextureMode::Subtract, seed: 11, invert: false, image: None, image_mask: None });
-        gouache.opacity_pressure_min = 0.5;
-        v.push(gouache);
+        // o "Guache seco" antigo (S06) deu lugar ao do grupo pincel (S25), com o mesmo nome
         // o "Carvão" antigo (S06) deu lugar ao do grupo lápis (S25, lateral do bastão), com o mesmo nome
         let mut paper = BrushPreset::round("Textura de papel", 80.0, 0.3);
         paper.flow = 0.4;
@@ -741,7 +749,7 @@ impl BrushPreset {
                 "Lápis de rascunho" => "lapis",
                 "Aerógrafo" => "aerografo",
                 "Borrador" => "mistura",
-                "Redondo duro" | "Redondo macio" | "Aquarela" | "Guache seco" | "Textura de papel" => "pincel",
+                "Redondo duro" | "Redondo macio" | "Aquarela" | "Textura de papel" => "pincel",
                 _ => "decoracao",
             }
             .into();
@@ -750,6 +758,219 @@ impl BrushPreset {
         v.extend(Self::pencils());
         v.extend(Self::airbrushes());
         v.extend(Self::erasers());
+        v.extend(Self::paint_brushes());
+        v.extend(Self::blenders());
+        v
+    }
+
+    /// Pincéis de fábrica (S25, calibrados nos pincéis Nanquim, Aquarela e Pintura grossa do Clip Studio 5.1.5 em
+    /// 10/30/60 px e na folha de mistura vermelho/azul): multiplicar, borda de aquarela, grão de papel e a tinta que
+    /// mistura com a camada (`paint_mix`), com os números do banco de ferramentas dele e pontas desenhadas pelo nosso motor.
+    pub fn paint_brushes() -> Vec<BrushPreset> {
+        use crate::brush_dyn::{DynInput, Dynamics, EdgeNoise, Grain, GrainKind, PaintMix, Spray, Stabilization};
+        let brush = |name: &str, size: f32, hardness: f32| {
+            let mut p = BrushPreset::round(name, size, hardness);
+            p.group = "pincel".into();
+            p.category = "pintura".into();
+            p.antialias = Some(1);
+            p.spacing = 0.1;
+            p.size_pressure_min = 1.0;
+            p
+        };
+        let paper = |depth: f32| Some(Grain { kind: GrainKind::Paper, scale: 1.6, depth, contrast: 1.0, brightness: 0.0, subtract: false, moving: false, seed: 0 });
+        let mix = |amount: f32, density: f32, stretch: f32| Some(PaintMix { amount, density, stretch, smear: false, blur: 0.0, amount_dyn: None });
+        let mut v = Vec::new();
+        // nanquim
+        let mut bp = brush("Caneta pincel", 70.0, 1.0);
+        bp.antialias = Some(2);
+        bp.spacing = 0.02;
+        bp.stabilization = Some(Stabilization { level: 15, by_speed: true });
+        bp.size_dyn = Some(Dynamics::pressure(0.0));
+        v.push(bp);
+        let mut di = brush("Nanquim seco", 60.0, 1.0);
+        di.mode = BrushMode::Multiply;
+        di.antialias = Some(3);
+        di.spacing = 0.02;
+        di.edge = Some(EdgeNoise { amount: 0.5, grain: 1.5, seed: 0 });
+        di.grain = paper(0.85);
+        di.size_dyn = Some(Dynamics { velocity: Some(DynInput { min: 0.45, curve: vec![[0.0, 1.0], [1.0, 0.0]] }), ..Default::default() });
+        v.push(di);
+        let mut wi = brush("Nanquim aguado", 100.0, 1.0);
+        wi.mode = BrushMode::Multiply;
+        wi.antialias = Some(3);
+        wi.spacing = 0.02;
+        wi.flow = 0.65;
+        wi.max_ink = true;
+        wi.edge = Some(EdgeNoise { amount: 0.2, grain: 2.0, seed: 0 });
+        wi.grain = paper(0.65);
+        v.push(wi);
+        let mut wb = brush("Nanquim de mancha úmida", 30.0, 0.3);
+        wb.mode = BrushMode::Multiply;
+        wb.antialias = Some(0);
+        wb.spacing = 0.05;
+        wb.flow = 0.8;
+        wb.max_ink = true;
+        wb.wet_edges = 0.6;
+        wb.spray = Some(Spray { count: 2.0, size: 1.0, sync: true, size_min: 0.6, roundness_min: 0.7, bias: 0.0, count_exp: 0.0, spread: 2.3 });
+        wb.grain = paper(0.7);
+        v.push(wb);
+        // aquarela
+        let mut rw = brush("Aquarela redonda", 80.0, 1.0);
+        rw.mode = BrushMode::Multiply;
+        rw.flow = 0.6;
+        rw.max_ink = true;
+        rw.wet_edges = 0.3;
+        rw.grain = paper(0.7);
+        v.push(rw);
+        let mut fw = brush("Aquarela chata", 100.0, 1.0);
+        fw.mode = BrushMode::Multiply;
+        fw.tip = BrushTip::Round { hardness: 1.0, roundness: 0.45, angle: 90.0 };
+        fw.spacing = 0.01;
+        fw.wet_edges = 0.4;
+        fw.flow = 0.55;
+        fw.max_ink = true;
+        fw.grain = paper(0.6);
+        v.push(fw);
+        let mut sb = brush("Transbordo suave", 120.0, 1.0);
+        sb.mode = BrushMode::Multiply;
+        sb.antialias = Some(0);
+        sb.flow = 0.45;
+        sb.max_ink = true;
+        sb.wet_edges = 0.6;
+        sb.grain = paper(0.8);
+        v.push(sb);
+        let mut ww = brush("Lavagem molhada", 30.0, 0.3);
+        ww.mode = BrushMode::Multiply;
+        ww.antialias = Some(0);
+        ww.spacing = 0.01;
+        ww.spray = Some(Spray { count: 4.0, size: 1.0, sync: true, size_min: 0.6, roundness_min: 1.0, bias: 0.0, count_exp: 0.0, spread: 2.4 });
+        ww.paint_mix = mix(0.44, 0.5, 0.1);
+        ww.grain = paper(0.54);
+        v.push(ww);
+        let mut rh = brush("Lavagem áspera", 150.0, 1.0);
+        rh.mode = BrushMode::Multiply;
+        rh.flow = 0.75;
+        rh.max_ink = true;
+        rh.wet_edges = 0.4;
+        rh.edge = Some(EdgeNoise { amount: 0.4, grain: 3.0, seed: 0 });
+        rh.grain = paper(0.5);
+        v.push(rh);
+        let mut sp = brush("Respingos de aquarela", 300.0, 1.0);
+        sp.mode = BrushMode::Multiply;
+        sp.spacing = 0.09;
+        sp.flow = 0.35;
+        sp.spray = Some(Spray { count: 1.0, size: 0.3, sync: true, size_min: 0.1, roundness_min: 0.5, bias: 0.0, count_exp: 0.0, spread: 1.0 });
+        sp.edge = Some(EdgeNoise { amount: 0.5, grain: 2.0, seed: 0 });
+        v.push(sp);
+        // pintura grossa
+        let mut rm = brush("Pincel redondo de mistura", 50.0, 1.0);
+        rm.paint_mix = mix(0.8, 0.5, 1.0);
+        rm.flow = 0.88;
+        rm.max_ink = true;
+        rm.stabilization = Some(Stabilization { level: 2, by_speed: true });
+        v.push(rm);
+        let mut gu = brush("Guache", 80.0, 1.0);
+        gu.antialias = Some(0);
+        gu.flow = 0.82;
+        gu.max_ink = true;
+        gu.spacing = 0.03;
+        gu.paint_mix = mix(0.8, 0.6, 0.15);
+        gu.grain = paper(0.15);
+        v.push(gu);
+        let mut dg = brush("Guache seco", 80.0, 1.0);
+        dg.antialias = Some(0);
+        dg.flow = 0.75;
+        dg.max_ink = true;
+        dg.spacing = 0.05;
+        dg.paint_mix = mix(0.9, 0.8, 0.0);
+        dg.edge = Some(EdgeNoise { amount: 0.35, grain: 2.0, seed: 0 });
+        dg.grain = paper(0.6);
+        v.push(dg);
+        let mut tg = brush("Guache fino", 20.0, 1.0);
+        tg.spacing = 0.01;
+        tg.paint_mix = mix(1.0, 0.55, 0.7);
+        tg.grain = paper(0.1);
+        tg.flow = 0.87;
+        tg.max_ink = true;
+        v.push(tg);
+        let mut oi = brush("Óleo", 80.0, 1.0);
+        oi.spacing = 0.01;
+        oi.paint_mix = mix(0.61, 0.81, 0.87);
+        oi.grain = paper(0.12);
+        oi.flow = 0.9;
+        oi.max_ink = true;
+        v.push(oi);
+        let mut to = brush("Óleo grosso", 60.0, 1.0);
+        to.flow = 0.85;
+        to.spacing = 0.02;
+        to.tip = BrushTip::Round { hardness: 1.0, roundness: 0.6, angle: 70.0 };
+        to.paint_mix = mix(0.6, 0.5, 0.6);
+        to.grain = paper(0.5);
+        v.push(to);
+        let mut po = brush("Pontilhismo", 80.0, 1.0);
+        po.spray = Some(Spray { count: 6.0, size: 0.3, sync: true, size_min: 0.5, roundness_min: 0.25, bias: 0.0, count_exp: 0.0, spread: 1.0 });
+        po.flow = 0.8;
+        po.paint_mix = mix(0.5, 0.5, 0.15);
+        v.push(po);
+        let mut pa = brush("Pintar e aplicar", 40.0, 0.4);
+        pa.antialias = Some(2);
+        pa.flow = 0.8;
+        pa.paint_mix = Some(PaintMix { amount: 0.8, density: 1.0, stretch: 0.5, smear: true, blur: 0.0, amount_dyn: None });
+        pa.stabilization = Some(Stabilization { level: 2, by_speed: true });
+        v.push(pa);
+        v
+    }
+
+    /// Misturadores de fábrica (S25, calibrados nos misturadores do Clip Studio passando sobre uma grade vermelha e azul
+    /// feita com a Pena G 30): não põem cor, levam a que está na camada (média ou arrastada) ou desfocam.
+    pub fn blenders() -> Vec<BrushPreset> {
+        use crate::brush_dyn::{PaintMix, Stabilization};
+        let bl = |name: &str, size: f32, hardness: f32, stretch: f32, smear: bool| {
+            let mut p = BrushPreset::round(name, size, hardness);
+            p.group = "mistura".into();
+            p.category = "pintura".into();
+            p.antialias = Some(2);
+            p.spacing = 0.1;
+            p.size_pressure_min = 1.0;
+            p.paint_mix = Some(PaintMix { amount: 0.0, density: 0.0, stretch, smear, blur: 0.0, amount_dyn: None });
+            p
+        };
+        let mut v = Vec::new();
+        let mut m = bl("Misturar", 80.0, 0.01, 0.85, false);
+        m.flow = 0.6;
+        v.push(m);
+        let mut b = bl("Desfocar", 80.0, 0.01, 0.0, false);
+        if let Some(m) = b.paint_mix.as_mut() {
+            m.blur = 5.0;
+        }
+        v.push(b);
+        let mut f = bl("Ponta do dedo", 30.0, 0.5, 0.7, true);
+        f.spacing = 0.03;
+        f.stabilization = Some(Stabilization { level: 4, by_speed: true });
+        v.push(f);
+        let mut pb = bl("Misturador de pintura", 100.0, 0.01, 0.9, false);
+        pb.flow = 0.25;
+        pb.spacing = 0.015;
+        v.push(pb);
+        let mut wb = bl("Misturador molhado", 150.0, 0.01, 0.6, false);
+        wb.flow = 0.5;
+        wb.spacing = 0.2;
+        wb.antialias = Some(0);
+        v.push(wb);
+        let mut tb = bl("Misturador texturizado", 100.0, 1.0, 0.6, false);
+        tb.opacity = 0.8;
+        tb.flow = 0.6;
+        tb.spacing = 0.25;
+        v.push(tb);
+        let mut wa = bl("Pincel aquoso", 120.0, 1.0, 0.1, false);
+        wa.opacity = 0.75;
+        wa.flow = 0.7;
+        wa.antialias = Some(0);
+        v.push(wa);
+        let mut gb = bl("Misturador de guache", 80.0, 1.0, 0.6, false);
+        gb.flow = 0.5;
+        gb.spacing = 0.2;
+        v.push(gb);
         v
     }
 
@@ -859,11 +1080,11 @@ impl BrushPreset {
         // spray: pontinhos soltos, mesma densidade em qualquer tamanho
         let mut sp = air("Spray", 200.0, 1.0);
         sp.flow = 0.9;
-        sp.spray = Some(Spray { count: 12.0, size: 1.5, sync: false, size_min: 1.0, roundness_min: 1.0, bias: 0.0, count_exp: 2.0 });
+        sp.spray = Some(Spray { count: 12.0, size: 1.5, sync: false, size_min: 1.0, roundness_min: 1.0, bias: 0.0, count_exp: 2.0, spread: 1.0 });
         v.push(sp);
         // gotículas: respingos pretos de tamanhos variados, achatados e de borda irregular
         let mut d = air("Gotículas", 250.0, 1.0);
-        d.spray = Some(Spray { count: 3.0, size: 9.0, sync: false, size_min: 0.05, roundness_min: 0.3, bias: 0.0, count_exp: 1.0 });
+        d.spray = Some(Spray { count: 3.0, size: 9.0, sync: false, size_min: 0.05, roundness_min: 0.3, bias: 0.0, count_exp: 1.0, spread: 1.0 });
         d.size_dyn = Some(Dynamics { random: Some(0.3), ..Default::default() });
         d.edge = Some(EdgeNoise { amount: 0.45, grain: 2.0, seed: 0 });
         v.push(d);
@@ -879,7 +1100,7 @@ impl BrushPreset {
         let mut rc = air("Spray colorido", 200.0, 0.5);
         rc.flow = 0.9;
         rc.flow_dyn = Some(Dynamics::pressure(0.0));
-        rc.spray = Some(Spray { count: 4.0, size: 0.25, sync: true, size_min: 0.4, roundness_min: 1.0, bias: 0.0, count_exp: 0.0 });
+        rc.spray = Some(Spray { count: 4.0, size: 0.25, sync: true, size_min: 0.4, roundness_min: 1.0, bias: 0.0, count_exp: 0.0, spread: 1.0 });
         rc.grain = speckle(1.0, 2.5);
         v.push(rc);
         v
@@ -1277,6 +1498,11 @@ pub struct StrokeBuffer {
     /// Maior alfa do buffer (o nível da borda molhada; o alfa de um pixel do traço só sobe).
     max_a: f32,
     carry: Option<(i32, Vec<[f32; 4]>)>,
+    /// Tinta carregada (pré-multiplicada) do `paint_mix` em modo média.
+    loaded: Option<[f32; 4]>,
+    /// Misturadores e Desfocar trocam o pixel (cor e alfa) em vez de pintar por cima: o buffer guarda o pixel final e
+    /// este mapa (tiles de STS×STS) marca os pixels tocados.
+    touched: Option<std::collections::HashMap<(i32, i32), Vec<bool>>>,
     prev: Option<(BrushPoint, f32)>,
     acc: f32,
     sdir: Option<f32>,
@@ -1310,6 +1536,8 @@ impl StrokeBuffer {
             tiles: Default::default(),
             dual: preset.dual.as_ref().map(|_| Default::default()),
             carry: None,
+            loaded: None,
+            touched: preset.paint_mix.as_ref().filter(|m| m.amount <= 0.0 || m.blur > 0.0).map(|_| Default::default()),
             prev: None,
             acc: 0.0,
             sdir: None,
@@ -1610,7 +1838,7 @@ impl StrokeBuffer {
         for _ in 0..n {
             let u = self.rng.f32();
             let ang = self.rng.f32() * std::f32::consts::TAU;
-            let rad = r * u.powf(0.5 + 0.5 * sp.bias.clamp(0.0, 1.0) * 2.0);
+            let rad = r * sp.spread * u.powf(0.5 + 0.5 * sp.bias.clamp(0.0, 1.0) * 2.0);
             let (px, py) = (cx + rad * ang.cos(), cy + rad * ang.sin());
             let k = sp.size_min + (1.0 - sp.size_min) * self.rng.f32();
             let pr = (sp.diameter(preset.size) * 0.5 * k).max(0.3);
@@ -1745,7 +1973,44 @@ impl StrokeBuffer {
                 self.stamp_spray(&preset, &sp, px, py, r, angle, thick, flow * dab_opacity * color[3], [rgb[0], rgb[1], rgb[2]], grain_off);
                 continue;
             }
-            if preset.mix > 0.0 {
+            // tinta que mistura (S25): a quantidade (com a dinâmica), o borrar estrutural e a tinta média carregada
+            let pm = preset.paint_mix.as_ref();
+            let amt = pm.map(|m| (m.amount * m.amount_dyn.as_ref().map(|dy| dy.factor(pr, v, 1.0)).unwrap_or(1.0)).clamp(0.0, 1.0)).unwrap_or(1.0);
+            let (mix_eff, carry_k) = match pm {
+                Some(m) if m.smear && m.blur <= 0.0 => (1.0 - amt, m.stretch),
+                _ => (preset.mix, preset.smudge_carry),
+            };
+            let mut paint: Option<[f32; 4]> = None;
+            let mut blur_src: Option<([i32; 2], usize, Vec<[f32; 4]>)> = None;
+            if let Some(m) = pm.filter(|m| !m.smear || m.blur > 0.0) {
+                if m.blur > 0.0 {
+                    blur_src = Some(self.blurred_area(layer, px, py, r, m.blur));
+                } else {
+                    // a cor de baixo é a da camada ANTES do traço (o próprio traço à frente da ponta não conta)
+                    let s = self.sample_mean(layer, px, py, r);
+                    let k = m.stretch.clamp(0.0, 1.0);
+                    let l = match self.loaded {
+                        Some(l) => [0, 1, 2, 3].map(|c| l[c] * k + s[c] * (1.0 - k)),
+                        None => s,
+                    };
+                    self.loaded = Some(l);
+                    // cor: a do pincel puxada pela carregada (pesa a quantidade que falta e o alfa de baixo; canvas
+                    // vazio = cor pura do pincel); alfa: o de baixo subindo até a quantidade/densidade do pincel
+                    if amt <= 0.0 {
+                        // misturador: só a cor carregada da camada, nada do pincel
+                        paint = Some(l);
+                    } else {
+                        let w = (1.0 - amt) * l[3];
+                        let lc = if l[3] > 1e-6 { [l[0] / l[3], l[1] / l[3], l[2] / l[3]] } else { [rgb[0], rgb[1], rgb[2]] };
+                        let pa = l[3] + (1.0 - l[3]) * amt.max(m.density.clamp(0.0, 1.0));
+                        paint = Some([rgb[0] * (1.0 - w) + lc[0] * w, rgb[1] * (1.0 - w) + lc[1] * w, rgb[2] * (1.0 - w) + lc[2] * w, 1.0].map(|v| v * pa));
+                        if let Some(p) = paint.as_mut() {
+                            p[3] = pa;
+                        }
+                    }
+                }
+            }
+            if mix_eff > 0.0 {
                 // amostra a pegada sob o dab (camada com o traço em andamento por cima) e mistura com a que vem
                 // carregada: puxa a estrutura dos pixels (listras, bordas), não uma cor média
                 let pr_i = r.ceil() as i32;
@@ -1763,7 +2028,7 @@ impl StrokeBuffer {
                         sample[j as usize * side + i as usize] = [0, 1, 2, 3].map(|c| b[c] + l[c] * (1.0 - b[3]));
                     }
                 }
-                let k = preset.smudge_carry.clamp(0.0, 1.0);
+                let k = carry_k.clamp(0.0, 1.0);
                 self.carry = Some(match self.carry.take() {
                     Some((cr, prev)) if cr == pr_i => (pr_i, prev.iter().zip(&sample).map(|(a, b)| [0, 1, 2, 3].map(|c| a[c] * k + b[c] * (1.0 - k))).collect()),
                     _ => (pr_i, sample),
@@ -1802,11 +2067,70 @@ impl StrokeBuffer {
                             continue;
                         }
                     }
-                    let da = (a * flow * dab_opacity * color[3]).clamp(0.0, 1.0);
+                    let mut da = (a * flow * dab_opacity * color[3]).clamp(0.0, 1.0);
                     if da <= 0.0 {
                         continue;
                     }
+                    if self.touched.is_some() {
+                        // misturador/Desfocar: o pixel final = o de baixo puxado para a cor levada (ou desfocada)
+                        let target = match (&blur_src, paint) {
+                            (Some((o, side, bv)), _) => {
+                                let (i, j) = (x - o[0], y - o[1]);
+                                if i < 0 || j < 0 || i as usize >= *side || j as usize >= *side {
+                                    continue;
+                                }
+                                bv[j as usize * side + i as usize]
+                            }
+                            (None, Some(p)) => p,
+                            // ponta do dedo: a pegada arrastada (estrutura dos pixels)
+                            (None, None) => match &self.carry {
+                                Some((cr, cp)) => {
+                                    let side = (2 * cr + 1) as usize;
+                                    let (ci, cj) = (x - (px.round() as i32 - cr), y - (py.round() as i32 - cr));
+                                    if ci < 0 || cj < 0 || ci as usize >= side || cj as usize >= side {
+                                        continue;
+                                    }
+                                    cp[cj as usize * side + ci as usize]
+                                }
+                                None => continue,
+                            },
+                        };
+                        let u = self.under(layer, x, y);
+                        let out = [0, 1, 2, 3].map(|c| u[c] * (1.0 - da) + target[c] * da);
+                        *self.buf_mut(x, y) = out;
+                        let t = self.touched.as_mut().expect("modo de troca").entry((x.div_euclid(STS), y.div_euclid(STS))).or_insert_with(|| vec![false; (STS * STS) as usize]);
+                        t[(y.rem_euclid(STS) * STS + x.rem_euclid(STS)) as usize] = true;
+                        self.max_a = self.max_a.max(out[3]);
+                        continue;
+                    }
                     let mut src = [rgb[0], rgb[1], rgb[2], 1.0];
+                    if let Some(p) = paint {
+                        if p[3] <= 1e-6 {
+                            continue;
+                        }
+                        src = [p[0] / p[3], p[1] / p[3], p[2] / p[3], 1.0];
+                        // sobre tinta que já está na camada, a mistura troca a cor por inteiro (a cor de baixo já entrou
+                        // pela quantidade); no vazio, o alfa é o da tinta
+                        let dp = da * p[3];
+                        da = if amt > 0.0 {
+                            let la = self.layer_px(layer, x, y)[3];
+                            dp + (a.clamp(0.0, 1.0) - dp).max(0.0) * la
+                        } else {
+                            dp
+                        };
+                    }
+                    if let Some((o, side, bv)) = &blur_src {
+                        let (i, j) = (x - o[0], y - o[1]);
+                        if i < 0 || j < 0 || i as usize >= *side || j as usize >= *side {
+                            continue;
+                        }
+                        let b = bv[j as usize * side + i as usize];
+                        if b[3] <= 1e-6 {
+                            continue;
+                        }
+                        src = [b[0] / b[3], b[1] / b[3], b[2] / b[3], 1.0];
+                        da *= b[3];
+                    }
                     if let (Some(c2), Some((shape, u, v))) = (two, shape_uv(&preset.tip, dx, dy, r, angle)) {
                         let k = shape_tone(shape, u, v, 1.0 / r.max(0.25));
                         for c in 0..3 {
@@ -1819,13 +2143,24 @@ impl StrokeBuffer {
                         if ci >= 0 && cj >= 0 && (ci as usize) < side && (cj as usize) < side {
                             let cv = cp[cj as usize * side + ci as usize];
                             for c in 0..4 {
-                                src[c] = src[c] * (1.0 - preset.mix) + cv[c] * preset.mix;
+                                src[c] = src[c] * (1.0 - mix_eff) + cv[c] * mix_eff;
                             }
                         }
                     }
                     let max_ink = preset.max_ink;
+                    // tinta que mistura com teto: o carimbo troca a cor, mas não sobe o alfa além do dele (a densidade
+                    // do traço do Clip Studio); as canetas (`max_ink` sem mistura) ficam com o maior alfa
+                    let ceiling = max_ink && (paint.is_some() || blur_src.is_some() || self.carry.is_some());
                     let d = self.buf_mut(x, y);
-                    if max_ink {
+                    if ceiling {
+                        let k = 1.0 - da;
+                        let out = [0, 1, 2, 3].map(|c| src[c] * da + d[c] * k);
+                        let cap = d[3].max(da);
+                        let s = if out[3] > cap && out[3] > 0.0 { cap / out[3] } else { 1.0 };
+                        for c in 0..4 {
+                            d[c] = out[c] * s;
+                        }
+                    } else if max_ink {
                         if da > d[3] {
                             for c in 0..4 {
                                 d[c] = src[c] * da;
@@ -1842,6 +2177,84 @@ impl StrokeBuffer {
                 }
             }
         }
+    }
+
+    /// Cor (pré-multiplicada) sob o pixel: o traço em andamento por cima da camada de antes do traço.
+    fn under(&self, layer: Option<&Image>, x: i32, y: i32) -> [f32; 4] {
+        if x < 0 || y < 0 || x >= self.w || y >= self.h {
+            return [0.0; 4];
+        }
+        let l = layer.filter(|l| (x as u32) < l.width && (y as u32) < l.height).map(|l| l.get(x as u32, y as u32)).unwrap_or([0.0; 4]);
+        let b = self.buf_get(x, y);
+        [0, 1, 2, 3].map(|c| b[c] + l[c] * (1.0 - b[3]))
+    }
+
+    /// Cor (pré-multiplicada) da camada de antes do traço sob o pixel.
+    fn layer_px(&self, layer: Option<&Image>, x: i32, y: i32) -> [f32; 4] {
+        if x < 0 || y < 0 || x >= self.w || y >= self.h {
+            return [0.0; 4];
+        }
+        layer.filter(|l| (x as u32) < l.width && (y as u32) < l.height).map(|l| l.get(x as u32, y as u32)).unwrap_or([0.0; 4])
+    }
+
+    /// Cor média (pré-multiplicada) da camada de antes do traço no disco da ponta (amostras em grade; `paint_mix` em
+    /// modo média).
+    fn sample_mean(&self, layer: Option<&Image>, px: f32, py: f32, r: f32) -> [f32; 4] {
+        let ri = r.ceil() as i32;
+        let step = ((r / 6.0).floor() as i32).max(1);
+        let (cx, cy) = (px.round() as i32, py.round() as i32);
+        let (mut acc, mut n) = ([0.0f32; 4], 0.0f32);
+        let mut j = -ri;
+        while j <= ri {
+            let mut i = -ri;
+            while i <= ri {
+                if ((i * i + j * j) as f32) <= r * r {
+                    let u = self.layer_px(layer, cx + i, cy + j);
+                    for c in 0..4 {
+                        acc[c] += u[c];
+                    }
+                    n += 1.0;
+                }
+                i += step;
+            }
+            j += step;
+        }
+        if n > 0.0 { acc.map(|v| v / n) } else { [0.0; 4] }
+    }
+
+    /// O que está sob a ponta, desfocado (`blur` px, três passadas de caixa ≈ gaussiana): origem, lado e pixels
+    /// pré-multiplicados do quadrado que cobre a ponta (ferramenta Desfocar).
+    fn blurred_area(&self, layer: Option<&Image>, px: f32, py: f32, r: f32, blur: f32) -> ([i32; 2], usize, Vec<[f32; 4]>) {
+        let br = blur.ceil() as i32;
+        let ri = (r + 2.0).ceil() as i32;
+        let outer = ri + 2 * br;
+        let (ox, oy) = (px.round() as i32 - outer, py.round() as i32 - outer);
+        let side = (2 * outer + 1) as usize;
+        let mut ch: Vec<Vec<f32>> = vec![vec![0.0; side * side]; 4];
+        for j in 0..side {
+            for i in 0..side {
+                let u = self.under(layer, ox + i as i32, oy + j as i32);
+                for c in 0..4 {
+                    ch[c][j * side + i] = u[c];
+                }
+            }
+        }
+        let pass = ((blur / 1.7).round() as i32).max(1);
+        for c in ch.iter_mut() {
+            for _ in 0..3 {
+                *c = box_blur(c, side, side, pass);
+            }
+        }
+        let inner = (2 * ri + 1) as usize;
+        let off = (outer - ri) as usize;
+        let mut out = vec![[0.0f32; 4]; inner * inner];
+        for j in 0..inner {
+            for i in 0..inner {
+                let k = (j + off) * side + i + off;
+                out[j * inner + i] = [ch[0][k], ch[1][k], ch[2][k], ch[3][k]];
+            }
+        }
+        ([ox + off as i32, oy + off as i32], inner, out)
     }
 
     /// Caixa [x0, y0, x1, y1) dos tiles que o traço tocou (coordenadas locais), presa à camada.
@@ -1958,6 +2371,18 @@ impl StrokeBuffer {
                     continue;
                 }
                 let s = buf[(y - y0) as usize * bw + (x - x0) as usize];
+                if let Some(t) = &self.touched {
+                    // troca: o pixel já traz a camada de baixo; a opacidade do pincel mistura com o original
+                    let hit = t.get(&(x.div_euclid(STS), y.div_euclid(STS))).is_some_and(|v| v[(y.rem_euclid(STS) * STS + x.rem_euclid(STS)) as usize]);
+                    if hit {
+                        let i = img.idx(ix as u32, iy as u32);
+                        let op = preset.opacity.clamp(0.0, 1.0);
+                        for c in 0..4 {
+                            img.data[i][c] = img.data[i][c] * (1.0 - op) + s[c] * op;
+                        }
+                    }
+                    continue;
+                }
                 if s[3] <= 0.0 {
                     continue;
                 }
