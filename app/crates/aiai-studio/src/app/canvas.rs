@@ -821,13 +821,13 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
             env.ed.live_stroke.release(Some(counter));
         }
         // formas de arrastar da Figura (reta com um clique sem arrasto vira polilinha)
-        Gesture::GradFree { .. } => {}
         Gesture::Shape { start, .. } => super::figure::release_shape(env, start, c, xf.scale),
         Gesture::Figure => super::figure::release(env, c, xf.scale),
         Gesture::GradDrag { start, handle, .. } => {
             let end = if env.ed.shift { super::figure::snap_angle(start, c, env.ed.grad_tool.angle_step) } else { c };
             super::gradient_tool::release(env, start, end, handle, xf.scale);
         }
+        Gesture::GradFree { .. } => {}
         g @ Gesture::PolyCurve { .. } => env.ed.gesture = g, // a curva continua até Enter/duplo clique
         Gesture::Eyedrop => tools::do_eyedrop(env, c),
         Gesture::FillClick => tools::do_fill(env, c, at),

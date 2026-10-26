@@ -299,9 +299,9 @@ pub(crate) enum Sub {
     Points(PointsMode),
     /// Tipo de régua que a ferramenta Régua cria (linear, curva, figura, caneta de régua, especiais, guia, perspectiva...).
     Ruler(super::rulers::NewKind),
-    /// Ferramenta do motor sem variações (mover, objeto 3D, mão, zoom, conta-gotas, texto).
     /// Degradê pronto, de paleta ou livre (ferramenta Degradê).
     Gradient(super::gradient_tool::GradPick),
+    /// Ferramenta do motor sem variações (mover, objeto 3D, mão, zoom, conta-gotas, texto).
     Engine(ToolId),
 }
 
