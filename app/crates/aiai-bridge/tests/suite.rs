@@ -1855,6 +1855,41 @@ fn rulers_live_in_the_guide_layer_and_are_one_undo_step_each() {
     }
 }
 
+/// RULER (S25): os tipos do Clip Studio que faltavam (linear, curva, figura, círculos concêntricos, guia) pela bridge,
+/// com os campos novos; assar a figura dá um traço só (o contorno); formato errado é -32602.
+#[test]
+fn rulers_s25_kinds_create_edit_and_bake() {
+    let mut d = prod_doc();
+    let (cut, guide) = (d.cut.clone(), d.guide.clone());
+    let lin = act(&mut d.s, "RULER", json!({"layer": guide, "op": "create", "ruler": {"kind": "linear", "pts": [[20.0, 30.0], [300.0, 90.0]]}}));
+    assert_eq!(lin["rulers"][0]["pts"], json!([[20.0, 30.0], [300.0, 90.0]]));
+    let cur = act(&mut d.s, "RULER", json!({"layer": guide, "op": "create", "ruler": {"kind": "curve", "pts": [[10.0, 100.0], [80.0, 40.0], [150.0, 120.0]], "closed": true}}));
+    assert_eq!((cur["rulers"][1]["kind"].as_str(), cur["rulers"][1]["closed"].as_bool()), (Some("curve"), Some(true)));
+    let fig = act(&mut d.s, "RULER", json!({"layer": guide, "op": "create", "ruler": {"kind": "figure", "shape": "polygon", "count": 6, "center": [160.0, 120.0], "size": [60.0, 60.0]}}));
+    assert_eq!(fig["id"], "r3");
+    act(&mut d.s, "RULER", json!({"layer": guide, "op": "create", "ruler": {"kind": "concentric", "center": [160.0, 120.0], "size": [80.0, 40.0], "angle": 20.0}}));
+    let g = act(&mut d.s, "RULER", json!({"layer": guide, "op": "create", "ruler": {"kind": "guide", "center": [0.0, 75.0]}}));
+    assert_eq!(g["rulers"].as_array().unwrap().len(), 5);
+    // editar: a figura vira elipse; a régua converte de tipo no lugar (linear → curva mantém as pontas)
+    let e = act(&mut d.s, "RULER", json!({"layer": guide, "op": "edit", "id": "r3", "ruler": {"shape": "ellipse"}}));
+    assert_eq!(e["rulers"][2]["shape"], "ellipse");
+    let c = act(&mut d.s, "RULER", json!({"layer": guide, "op": "edit", "id": "r1", "ruler": {"kind": "curve"}}));
+    assert_eq!(c["rulers"][0]["pts"].as_array().unwrap().len(), 3);
+    // assar a figura: um traço (o contorno), que aparece com as guias
+    let b = act(&mut d.s, "RULER", json!({"layer": guide, "op": "bake", "id": "r3", "frame": 0}));
+    assert_eq!(b["id"], "r3");
+    assert!(opaque(&shot(&mut d.s, &cut, 0, &[&guide], json!({"include_guides": true}))) > 100, "contorno assado");
+    for bad in [
+        json!({"layer": guide, "op": "create", "ruler": {"kind": "linear", "pts": [[1.0, 1.0]]}}),
+        json!({"layer": guide, "op": "create", "ruler": {"kind": "figure", "shape": "star"}}),
+        json!({"layer": guide, "op": "create", "ruler": {"kind": "figure", "shape": "polygon", "count": 2}}),
+        json!({"layer": guide, "op": "create", "ruler": {"kind": "concentric", "size": [0.0, 10.0]}}),
+        json!({"layer": guide, "op": "create", "ruler": {"kind": "curve", "pts": [[5.0, 5.0], [6.0, 6.0]], "closed": true}}),
+    ] {
+        assert_eq!(act_err(&mut d.s, "RULER", bad.clone()).code, code::INVALID_PARAMS, "{bad}");
+    }
+}
+
 #[test]
 fn character_material_actions_list_create_edit_and_validate() {
     let mut d = prod_doc();
