@@ -570,29 +570,41 @@ impl Incremental {
     fn region(&mut self, spec: &StartSpec, req: &Req) -> Option<aiai_tools::paint::PaintedRegion> {
         let pts: Vec<BrushPoint> = req.pts.iter().filter_map(|q| match q.as_slice() {
             [x, y] => Some(BrushPoint { x: *x, y: *y, pressure: 1.0 }),
-            [x, y, pr] => Some(BrushPoint { x: *x, y: *y, pressure: pr.clamp(0.0, 1.0) }),
+            [x, y, pr] | [x, y, pr, _] => Some(BrushPoint { x: *x, y: *y, pressure: pr.clamp(0.0, 1.0) }),
             _ => None,
         }).collect();
         let n = pts.len();
         if n == 0 {
             return None;
         }
+        // com o tempo de cada ponto (o mesmo do commit), o pincel vê a velocidade
+        let times: Option<Vec<f32>> = (req.pts.len() == n && req.pts.iter().all(|q| q.len() == 4 && q[3].is_finite())).then(|| req.pts.iter().map(|q| q[3]).collect());
         let smudge = (spec.preset.mix > 0.0).then_some(&self.layer);
+        let feed = |sb: &mut aiai_paint::brush::StrokeBuffer, i: usize| match &times {
+            Some(ts) => {
+                let (seg, st) = aiai_tools::paint::spline_segment_timed(&pts, ts, i);
+                sb.add_timed(smudge, &seg, &st);
+            }
+            None => sb.add(smudge, &aiai_tools::paint::spline_segment(&pts, i)),
+        };
         // o último ponto ainda pode mudar (espaçamento das amostras): pronto é o trecho que não depende dele
         while n >= 4 && self.fed + 4 <= n {
-            let seg = aiai_tools::paint::spline_segment(&pts, self.fed);
-            self.sb.add(smudge, &seg);
+            feed(&mut self.sb, self.fed);
             self.fed += 1;
         }
         let committed = self.sb.take_dirty();
         let mut tmp = self.sb.clone();
+        let tail = |sb: &mut aiai_paint::brush::StrokeBuffer, from: usize| match &times {
+            Some(ts) => sb.add_timed(smudge, &pts[from..], &ts[from..]),
+            None => sb.add(smudge, &pts[from..]),
+        };
         if n < 3 {
-            tmp.add(smudge, &pts);
+            tail(&mut tmp, 0);
         } else {
             for i in self.fed..n - 1 {
-                tmp.add(smudge, &aiai_tools::paint::spline_segment(&pts, i));
+                feed(&mut tmp, i);
             }
-            tmp.add(smudge, &pts[n - 1..]);
+            tail(&mut tmp, n - 1);
         }
         tmp.finish(smudge);
         // só o que mudou: os trechos novos, o fim novo e o fim anterior (que pode ter recuado)

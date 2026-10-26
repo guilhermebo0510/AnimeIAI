@@ -770,7 +770,7 @@ impl BrushPreset {
         r.size_dyn = Some(Dynamics { pressure: Some(DynInput::linear(0.0)), velocity: Some(DynInput::slower_is_bigger(0.5)), random: Some(0.8), random_len: 40.0, ..Default::default() });
         r.thickness_dyn = Some(Dynamics { velocity: Some(DynInput::slower_is_bigger(0.5)), random: Some(0.85), random_len: 30.0, ..Default::default() });
         r.velocity_full = 25000.0;
-        r.edge = Some(EdgeNoise { amount: 0.3, grain: 4.0, seed: 0 });
+        r.edge = Some(EdgeNoise { amount: 0.45, grain: 5.0, seed: 0 });
         r.stabilization = stab(6);
         v.push(r);
         // caneta milimétrica: espessura quase fixa, afina um pouco no traço rápido
@@ -784,9 +784,8 @@ impl BrushPreset {
         f.antialias = Some(1);
         f.size_dyn = Some(Dynamics { pressure: Some(DynInput::linear(0.7)), velocity: Some(DynInput::slower_is_bigger(0.7)), random: Some(0.9), ..Default::default() });
         f.flow_dyn = Some(Dynamics { velocity: Some(DynInput::slower_is_bigger(0.18)), ..Default::default() });
-        f.velocity_full = 2500.0;
+        f.velocity_full = 2000.0;
         f.max_ink = false;
-        f.spacing = 0.3;
         f.stabilization = stab(6);
         v.push(f);
         // caneta de pixel: 1 px sem antisserrilhado, sem degrau dobrado
@@ -1281,7 +1280,9 @@ impl StrokeBuffer {
     /// Caneta de pixel: o pixel sob (x, y) entra na fila; pulos viram linha de Bresenham e o pixel do meio de um degrau em
     /// L sai (linha de 1 px sem pixel dobrado).
     fn pixel_at(&mut self, x: f32, y: f32) {
-        let c = (x.floor() as i32, y.floor() as i32);
+        // um centésimo de folga: ponto em cima da divisa entre pixels (mouse em px inteiros, conta da visão com zoom)
+        // não troca de pixel por erro de arredondamento
+        let c = ((x + 0.01).floor() as i32, (y + 0.01).floor() as i32);
         if self.pix_last == Some(c) {
             return;
         }

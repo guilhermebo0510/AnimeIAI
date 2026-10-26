@@ -391,32 +391,49 @@ pub fn calibration_override(t: [[f32; 2]; 5]) {
     let _ = CALIB.set(t);
 }
 
-/// Estimador da velocidade do traço (px/s) para as dinâmicas: média exponencial com constante `tau` (s) da velocidade
-/// entre amostras com tempos diferentes; amostras com o mesmo tempo (mesmo quadro) se acumulam até o próximo tempo.
+/// Estimador da velocidade do traço (px/s) para as dinâmicas: caminho percorrido numa janela de `SPEED_WINDOW` s
+/// (as amostras chegam em lotes por quadro, com o mesmo tempo; a janela cobre vários quadros e não deixa a velocidade
+/// pulsar com o número de amostras de cada quadro), suavizado com média exponencial de constante `SPEED_TAU`.
 #[derive(Debug, Clone, Default)]
 pub struct SpeedEstimator {
-    anchor: Option<(f32, f32)>,
+    /// (tempo, caminho acumulado) de cada tempo distinto, dentro da janela (mais um antes dela).
+    anchors: std::collections::VecDeque<(f32, f32)>,
     travel: f32,
     speed: f32,
 }
 
 /// Constante de tempo da velocidade do traço (s).
 pub const SPEED_TAU: f32 = 0.015;
+/// Janela da velocidade (s): ~5 quadros de 60 Hz.
+pub const SPEED_WINDOW: f32 = 0.08;
 
 impl SpeedEstimator {
     /// Mais `ds` px de caminho chegando no tempo `t` (s); devolve a velocidade suavizada.
     pub fn push(&mut self, ds: f32, t: f32) -> f32 {
         self.travel += ds;
-        match self.anchor {
-            None => self.anchor = Some((self.travel, t)),
-            Some((s0, t0)) if t > t0 + 1e-5 => {
-                let inst = (self.travel - s0) / (t - t0);
-                let tau = CALIB.get().map(|c| c[4][1]).filter(|v| *v > 0.0).unwrap_or(SPEED_TAU);
-                let k = 1.0 - (-(t - t0) / tau).exp();
-                self.speed += (inst - self.speed) * k;
-                self.anchor = Some((self.travel, t));
+        let Some(&(t_last, _)) = self.anchors.back() else {
+            self.anchors.push_back((t, self.travel));
+            return self.speed;
+        };
+        if t <= t_last + 1e-5 {
+            // mesmo quadro: o caminho entra no último ponto de apoio
+            if let Some(b) = self.anchors.back_mut() {
+                b.1 = self.travel;
             }
-            _ => {}
+            return self.speed;
+        }
+        // o quadro anterior está completo: velocidade da janela até ele (lote de quadros inteiros, sem pulsar)
+        if self.anchors.len() >= 2 {
+            let (t0, s0) = self.anchors[0];
+            let (t1, s1) = *self.anchors.back().expect("dois pontos");
+            let inst = (s1 - s0) / (t1 - t0).max(1e-4);
+            let tau = CALIB.get().map(|c| c[4][1]).filter(|v| *v > 0.0).unwrap_or(SPEED_TAU);
+            let k = 1.0 - (-(t - t_last) / tau).exp();
+            self.speed += (inst - self.speed) * k;
+        }
+        self.anchors.push_back((t, self.travel));
+        while self.anchors.len() > 2 && self.anchors[1].0 <= t - SPEED_WINDOW {
+            self.anchors.pop_front();
         }
         self.speed
     }
@@ -477,16 +494,18 @@ mod tests {
 
     #[test]
     fn speed_estimator_handles_samples_of_the_same_frame() {
+        // caneta a cada 8 ms, quadros de 16,7 ms: 2 ou 3 amostras de 15 px por quadro (1875 px/s); a velocidade não
+        // pode pulsar com o lote de cada quadro
         let mut e = SpeedEstimator::default();
-        // 2 amostras por quadro de 16 ms, 7 px cada: 875 px/s
-        let mut t = 0.0;
-        for i in 0..80 {
-            if i % 2 == 0 {
-                t += 0.016;
-            }
-            e.push(7.0, t);
+        let mut seen = Vec::new();
+        for i in 0..200 {
+            let t_in = i as f32 * 0.008;
+            let t = (t_in / 0.016667).ceil() * 0.016667;
+            seen.push(e.push(15.0, t));
         }
-        assert!((e.speed() - 875.0).abs() < 30.0, "{}", e.speed());
+        let tail = &seen[60..];
+        let (mn, mx) = tail.iter().fold((f32::MAX, 0.0f32), |a, v| (a.0.min(*v), a.1.max(*v)));
+        assert!((mn - 1875.0).abs() < 190.0 && (mx - 1875.0).abs() < 190.0, "{mn}..{mx}");
     }
 
     #[test]

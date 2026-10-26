@@ -311,7 +311,8 @@ impl StudioApp {
     /// open_panel {panel} (insere o painel do catálogo que não está no layout), layout {op: list|save|apply|delete|reset, name?},
     /// set_theme {theme: light|dark}, set_language {language: pt|en}, open_dialog/close_dialog {dialog: about|prefs|start, tab?: general|keys|folders|performance},
     /// set_window_size {width, height, maximized?} (pontos lógicos), library_import {files} (abre a janela de importar da Biblioteca),
-    /// select_layer {layer}, select_cut {cut}, set_frame {frame}, set_color {color}, fit_view.
+    /// select_layer {layer}, select_cut {cut}, set_frame {frame}, set_color {color}, fit_view,
+    /// set_brush {preset (nome, sem diferenciar maiúsculas), size?, opacity?} (pincel da biblioteca em uso).
     /// dock {op: list|maximize|restore|detach|redock|redock_all, panel?, group?} (painel maximizado e janelas soltas).
     /// Apelidos aceitos: set_tool = select_tool; open_panel = toggle_panel com visible=true.
     pub(crate) fn bridge_ui_action(&mut self, ctx: &egui::Context, params: &Value) -> BridgeResult {
@@ -326,6 +327,7 @@ impl StudioApp {
             "set_frame" => Some(&["frame"]),
             "set_color" => Some(&["color", "value"]),
             "fit_view" => Some(&[]),
+            "set_brush" => Some(&["preset", "value", "size", "opacity"]),
             "toggle_panel" | "open_panel" => Some(&["panel", "value", "visible"]),
             "layout" => Some(&["op", "name"]),
             "set_theme" => Some(&["theme", "value"]),
@@ -401,6 +403,20 @@ impl StudioApp {
             "fit_view" => {
                 self.ed.fit_pending = true;
                 json!({ "fit": true })
+            }
+            "set_brush" => {
+                let name = text(&m, &["preset", "value"]).ok_or_else(|| BridgeError::invalid_params("set_brush exige 'preset' (nome do pincel)"))?;
+                let items = &self.ed.brushes.items;
+                let i = items.iter().position(|b| b.preset.name.eq_ignore_ascii_case(name)).or_else(|| items.iter().position(|b| b.preset.name.to_lowercase() == name.to_lowercase()));
+                let i = i.ok_or_else(|| BridgeError::invalid_params(format!("pincel desconhecido: {name}; há: {}", items.iter().map(|b| b.preset.name.as_str()).collect::<Vec<_>>().join(", "))))?;
+                let p = items[i].preset.clone();
+                let num = |k: &str| m.get(k).and_then(Value::as_f64).map(|v| v as f32);
+                let o = &mut self.ed.opts;
+                o.brush_preset = i;
+                o.brush_custom = None;
+                o.brush_size = num("size").unwrap_or(p.size).clamp(0.5, 2000.0);
+                o.brush_opacity = num("opacity").unwrap_or(p.opacity).clamp(0.0, 1.0);
+                json!({ "preset": p.name, "group": p.group, "size": o.brush_size, "opacity": o.brush_opacity })
             }
             "toggle_panel" | "open_panel" => {
                 let key = text(&m, &["panel", "value"]).ok_or_else(|| BridgeError::invalid_params("toggle_panel exige 'panel'"))?;

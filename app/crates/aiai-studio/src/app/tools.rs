@@ -116,10 +116,11 @@ impl StrokeGesture {
             None => p,
         };
         self.path.push(p);
-        let keep = if self.tool == ToolId::Eraser { Some(p) } else { self.stab.feed(p) };
+        let t = self.t0.elapsed().as_secs_f32();
+        let keep = if self.tool == ToolId::Eraser { Some(p) } else { self.stab.feed_at(p, t) };
         if let Some(q) = keep {
             if self.samples.last().is_none_or(|l| (l.p - q).length() * self.screen_scale >= 0.4) {
-                self.samples.push(Sample { p: q, pressure: pressure.clamp(0.0, 1.0), t: self.t0.elapsed().as_secs_f32() });
+                self.samples.push(Sample { p: q, pressure: pressure.clamp(0.0, 1.0), t });
             }
         }
     }
@@ -161,7 +162,11 @@ pub(crate) fn begin_stroke(env: &mut Env, tool: ToolId, p: Vec2, pressure: f32, 
     let Some(t) = target(env, allowed, wrong) else { return Gesture::None };
     let o = &env.ed.opts;
     let mode = if tool == ToolId::Eraser { StabMode::Off } else { o.stab_mode };
-    let stab = Stabilizer::new(mode, o.stab_window as usize, o.stab_radius / scale.max(1e-3));
+    // pincel com estabilização própria (canetas S25): a dele, no lugar da do painel
+    let stab = match (tool == ToolId::Brush).then(|| brush_preset(env).stabilization).flatten() {
+        Some(cfg) => Stabilizer::pen(cfg),
+        None => Stabilizer::new(mode, o.stab_window as usize, o.stab_radius / scale.max(1e-3)),
+    };
     let snap = super::rulers::stroke_snap(env, tool, p, scale);
     super::pen::clip_notice(env, &t.layer);
     // camada que se move neste quadro: o traço é gravado no espaço do cel para aparecer embaixo do cursor
@@ -405,27 +410,11 @@ fn ghost_color(env: &Env, alpha: f32) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(q(c.0[0]), q(c.0[1]), q(c.0[2]), q(alpha))
 }
 
-/// Pontos do pincel a partir das amostras (~1,5 px entre eles, sempre com a última): o motor de dab cuida do
-/// espaçamento fino. O commit e a prévia ao vivo usam esta mesma lista.
+/// Pontos do pincel a partir das amostras (~1,5 px entre eles, sempre com a última), com o tempo de cada um
+/// (`[x, y, pressão, t]`: o motor vê a velocidade). O commit, a prévia ao vivo e o calibrador usam esta mesma lista.
 fn brush_points(samples: &[Sample]) -> Vec<Vec<f32>> {
-    let mut pts: Vec<Vec<f32>> = Vec::new();
-    let mut last: Option<Vec2> = None;
-    for s in samples {
-        if last.is_none_or(|l| (l - s.p).length() >= 1.5) {
-            pts.push(vec![s.p.x, s.p.y, s.pressure]);
-            last = Some(s.p);
-        }
-    }
-    if let Some(s) = samples.last() {
-        if last != Some(s.p) {
-            pts.push(vec![s.p.x, s.p.y, s.pressure]);
-        }
-    }
-    if pts.len() == 1 {
-        let q = pts[0].clone();
-        pts.push(vec![q[0] + 0.01, q[1], q[2]]);
-    }
-    pts
+    let raw: Vec<[f32; 4]> = samples.iter().map(|s| [s.p.x, s.p.y, s.pressure, s.t]).collect();
+    tpaint::brush_points_from_samples(&raw)
 }
 
 /// Preset do traço (o do pincel com tamanho/opacidade da barra, ou o da borracha).

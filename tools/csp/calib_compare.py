@@ -17,6 +17,8 @@ Uso:
     python tools/csp/calib_compare.py --ours calibracao/csp/ours/caneta [--ref calibracao/csp/ref/caneta]
            [--pens g-pen,milli-pen] [--sizes 3,10,30] [--out calibracao/csp/cmp] [--tag antes]
     python tools/csp/calib_compare.py --ref-only        (só as medidas da referência)
+    --ref calibracao/csp/ref/<grupo> --pens ... --sizes 10,30,60 servem aos outros grupos (lápis, pincel, aerógrafo);
+    --invert para as borrachas (folha apagada numa camada preta).
 """
 import argparse
 import json
@@ -37,9 +39,14 @@ PENS = ["g-pen", "real-g-pen", "mapping-pen", "turnip-pen", "calligraphy", "text
         "felt-pen", "dot-pen", "flat-marker"]
 
 
+INVERT = False  # borrachas: a folha é desenhada sobre uma camada preta (o "traço" é o branco que aparece)
+
+
 def load_ink(path):
-    """Tinta 0..1 (papel branco, tinta preta)."""
+    """Tinta 0..1 (papel branco, tinta preta; com `--invert`, o apagado sobre o preto)."""
     im = Image.open(path).convert("L")
+    if INVERT:
+        return np.asarray(im).astype(np.float32) / 255.0
     if im.size != (W, H):
         raise SystemExit(f"{path}: tamanho {im.size}, esperado {(W, H)}")
     return 1.0 - np.asarray(im).astype(np.float32) / 255.0
@@ -286,7 +293,10 @@ def main():
     ap.add_argument("--tag", default="")
     ap.add_argument("--ref-only", action="store_true")
     ap.add_argument("--no-images", action="store_true")
+    ap.add_argument("--invert", action="store_true", help="folhas de borracha (apagado sobre camada preta)")
     a = ap.parse_args()
+    global INVERT
+    INVERT = a.invert
     os.makedirs(a.out, exist_ok=True)
     pens = [p for p in a.pens.split(",") if p]
     sizes = [int(s) for s in a.sizes.split(",")]

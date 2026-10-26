@@ -5,7 +5,9 @@
 //! Eventos (`events`, em ordem; cada um é um objeto com `kind`):
 //! `mouse_move {x,y}`, `mouse_down|mouse_up {x,y,button?: primary|secondary|middle}`, `wheel {dx,dy}`,
 //! `key {key, pressed?, modifiers?: [ctrl|shift|alt]}` (sem `pressed` = aperta e solta), `text {text}`,
-//! `pen {x,y,pressure,phase: down|move|up}` e `wait {frames}`. `modifiers` também vale para mouse/wheel.
+//! `pen {x,y,pressure,phase: down|move|up, t_ms?}` e `wait {frames}`. `modifiers` também vale para mouse/wheel.
+//! `t_ms` (opcional) = quando o evento da caneta entra, em ms desde o `down`: a caneta anda no ritmo real (o pincel vê a
+//! velocidade do traço, como uma mesa digitalizadora que manda um ponto a cada 8 ms); sem `t_ms`, entra o quanto antes.
 //!
 //! Escalonamento: movimentos consecutivos (`mouse_move`, `pen move`) entram juntos no mesmo quadro (como um dispositivo de
 //! alta taxa); qualquer outro evento ocupa um quadro e nunca divide o quadro com um movimento anterior — assim o egui vê o
@@ -28,7 +30,7 @@ pub(crate) enum Step {
     Wheel { delta: Vec2, mods: Modifiers },
     Key { key: egui::Key, pressed: bool, mods: Modifiers },
     Text(String),
-    Pen { pos: Pos2, pressure: f32, phase: PenPhase },
+    Pen { pos: Pos2, pressure: f32, phase: PenPhase, at: Option<f32> },
     Wait(u32),
 }
 
@@ -53,6 +55,8 @@ pub(crate) struct InputQueue {
     pub(crate) injected_frames: u64,
     /// Modificadores atuais do teclado injetado (para emitir `ModifiersChanged` só quando mudam).
     mods: Modifiers,
+    /// Quando a caneta encostou (o `t_ms` dos eventos seguintes conta daqui).
+    pen_t0: Option<std::time::Instant>,
 }
 
 impl InputQueue {
@@ -71,6 +75,11 @@ impl InputQueue {
 
     /// Eventos do próximo quadro (chamado em `raw_input_hook`).
     pub(crate) fn next_events(&mut self, raw: &mut egui::RawInput) {
+        // com entrada injetada em andamento (fila ou caneta encostada), o mouse de verdade não entra no canvas: senão
+        // quem mexe no mouse do sistema ao mesmo tempo (outro programa na frente) puxa o traço injetado
+        if self.pen_t0.is_some() || !self.steps.is_empty() {
+            raw.events.retain(|e| !matches!(e, Event::PointerMoved(_) | Event::MouseMoved(_) | Event::PointerButton { .. } | Event::PointerGone | Event::Touch { .. }));
+        }
         if self.wait > 0 {
             self.wait -= 1;
             return;
@@ -78,6 +87,12 @@ impl InputQueue {
         let before = raw.events.len();
         let mut moves = 0;
         while let Some(front) = self.steps.front() {
+            // caneta com ritmo: o evento espera a hora dele
+            if let (Step::Pen { at: Some(ms), .. }, Some(t0)) = (front, self.pen_t0) {
+                if t0.elapsed().as_secs_f32() * 1000.0 < *ms {
+                    break;
+                }
+            }
             if front.is_move() {
                 if moves >= MAX_MOVES_PER_FRAME {
                     break;
@@ -91,6 +106,11 @@ impl InputQueue {
                 break; // o clique/tecla espera o quadro seguinte
             }
             let step = self.steps.pop_front().expect("há passo");
+            match step {
+                Step::Pen { phase: PenPhase::Down, .. } => self.pen_t0 = Some(std::time::Instant::now()),
+                Step::Pen { phase: PenPhase::Up, .. } => self.pen_t0 = None,
+                _ => {}
+            }
             if let Step::Wait(n) = step {
                 self.wait = n.saturating_sub(1);
             } else {
@@ -135,7 +155,7 @@ fn emit(raw: &mut egui::RawInput, step: Step) {
             raw.events.push(Event::Key { key, physical_key: Some(key), pressed, repeat: false, modifiers: mods });
         }
         Step::Text(t) => raw.events.push(Event::Text(t)),
-        Step::Pen { pos, pressure, phase } => {
+        Step::Pen { pos, pressure, phase, .. } => {
             let touch = |phase| Event::Touch { device_id: egui::TouchDeviceId(1), id: egui::TouchId(PEN_ID), phase, pos, force: Some(pressure) };
             match phase {
                 PenPhase::Down => {
@@ -247,7 +267,11 @@ pub(crate) fn parse(events: &[Value]) -> Result<Vec<Step>, String> {
                     Some("up") => PenPhase::Up,
                     _ => return Err(format!("events[{i}]: phase deve ser down|move|up")),
                 };
-                out.push(Step::Pen { pos: pos(m, i)?, pressure, phase });
+                let at = match m.get("t_ms") {
+                    None | Some(Value::Null) => None,
+                    Some(v) => Some(v.as_f64().filter(|t| t.is_finite() && (0.0..=600_000.0).contains(t)).ok_or_else(|| format!("events[{i}]: t_ms deve ser 0..600000"))? as f32),
+                };
+                out.push(Step::Pen { pos: pos(m, i)?, pressure, phase, at });
             }
             "wait" => {
                 let n = m.get("frames").and_then(Value::as_u64).filter(|n| *n <= 600).ok_or_else(|| format!("events[{i}]: wait.frames deve ser 0..600"))?;
@@ -302,6 +326,58 @@ mod tests {
         assert_eq!(forces, [0.5, 0.9]);
         assert!(f[0].iter().any(|e| matches!(e, Event::Touch { phase: TouchPhase::Start, force: Some(p), .. } if (*p - 0.2).abs() < 1e-6)));
         assert!(f[2].iter().any(|e| matches!(e, Event::Touch { phase: TouchPhase::End, .. })));
+    }
+
+    #[test]
+    fn paced_pen_waits_for_its_time() {
+        let mut q = InputQueue::default();
+        q.push(parse(json!([
+            {"kind":"pen","x":1,"y":1,"pressure":1.0,"phase":"down"},
+            {"kind":"pen","x":2,"y":1,"pressure":1.0,"phase":"move","t_ms":0},
+            {"kind":"pen","x":3,"y":1,"pressure":1.0,"phase":"move","t_ms":40},
+            {"kind":"pen","x":3,"y":1,"pressure":1.0,"phase":"up","t_ms":48}]).as_array().unwrap()).unwrap()).unwrap();
+        let t0 = std::time::Instant::now();
+        let mut moved_at = Vec::new();
+        while q.pending() > 0 && t0.elapsed().as_secs_f32() < 2.0 {
+            let mut raw = egui::RawInput::default();
+            q.next_events(&mut raw);
+            for e in &raw.events {
+                if let Event::Touch { phase: TouchPhase::Move, pos, .. } = e {
+                    moved_at.push((pos.x, t0.elapsed().as_secs_f32()));
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(moved_at.len(), 2, "{moved_at:?}");
+        assert!(moved_at[1].1 - moved_at[0].1 >= 0.035, "o segundo movimento esperou ~40 ms: {moved_at:?}");
+        assert!(parse(json!([{"kind":"pen","x":1,"y":1,"pressure":1.0,"phase":"move","t_ms":-5}]).as_array().unwrap()).is_err());
+    }
+
+    #[test]
+    fn the_real_mouse_does_not_pull_an_injected_stroke() {
+        let mut q = InputQueue::default();
+        q.push(parse(json!([
+            {"kind":"pen","x":1,"y":1,"pressure":1.0,"phase":"down"},
+            {"kind":"pen","x":2,"y":1,"pressure":1.0,"phase":"move","t_ms":30}]).as_array().unwrap()).unwrap()).unwrap();
+        let real = || Event::PointerMoved(Pos2::new(500.0, 500.0));
+        let mut seen_real = false;
+        for _ in 0..200 {
+            let mut raw = egui::RawInput::default();
+            raw.events.push(real());
+            q.next_events(&mut raw);
+            seen_real |= raw.events.iter().any(|e| matches!(e, Event::PointerMoved(p) if p.x == 500.0));
+            if q.pending() == 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(!seen_real, "o mouse do sistema ficou fora enquanto a caneta injetada está encostada");
+        // sem injeção, o mouse de verdade passa
+        let mut raw = egui::RawInput::default();
+        raw.events.push(real());
+        let mut idle = InputQueue::default();
+        idle.next_events(&mut raw);
+        assert_eq!(raw.events.len(), 1);
     }
 
     #[test]

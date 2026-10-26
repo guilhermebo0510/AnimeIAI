@@ -138,11 +138,32 @@ pub(crate) struct Stabilizer {
     ring: VecDeque<Vec2>,
     pos: Option<Vec2>,
     last_raw: Option<Vec2>,
+    /// Estabilização do próprio pincel (S25, 0..100 e "pela velocidade", no tempo das amostras): no lugar da do painel.
+    pen: Option<aiai_paint::brush_dyn::Stabilizer>,
 }
 
 impl Stabilizer {
     pub(crate) fn new(mode: StabMode, window: usize, radius: f32) -> Self {
-        Stabilizer { mode, window: window.clamp(1, 64), radius: radius.max(0.0), ring: VecDeque::new(), pos: None, last_raw: None }
+        Stabilizer { mode, window: window.clamp(1, 64), radius: radius.max(0.0), ring: VecDeque::new(), pos: None, last_raw: None, pen: None }
+    }
+
+    /// Estabilizador do pincel (nível 0..100 e "pela velocidade"), como nas canetas do Clip Studio.
+    pub(crate) fn pen(cfg: aiai_paint::brush_dyn::Stabilization) -> Self {
+        let mut s = Self::new(StabMode::Off, 1, 0.0);
+        s.pen = Some(aiai_paint::brush_dyn::Stabilizer::new(cfg));
+        s
+    }
+
+    /// Como [`feed`](Self::feed), com o tempo da amostra (s desde o começo do traço), que o estabilizador do pincel usa.
+    pub(crate) fn feed_at(&mut self, p: Vec2, t: f32) -> Option<Vec2> {
+        match &mut self.pen {
+            Some(s) => {
+                self.last_raw = Some(p);
+                let (x, y) = s.feed(p.x, p.y, t);
+                Some(Vec2::new(x, y))
+            }
+            None => self.feed(p),
+        }
     }
 
     /// Alimenta uma amostra bruta; devolve a posição estabilizada (ou nada, se a ponta não andou).
@@ -181,6 +202,9 @@ impl Stabilizer {
 
     /// Fim do traço: alcança o cursor suavemente (a média converge repetindo o último ponto; a corda se recolhe).
     pub(crate) fn finish(&mut self) -> Vec<Vec2> {
+        if let Some(s) = &mut self.pen {
+            return s.finish().into_iter().map(|(x, y, _)| Vec2::new(x, y)).collect();
+        }
         let Some(last) = self.last_raw else { return Vec::new() };
         let mut out = Vec::new();
         match self.mode {
