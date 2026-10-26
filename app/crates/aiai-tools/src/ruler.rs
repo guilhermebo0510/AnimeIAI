@@ -68,7 +68,39 @@ pub enum RulerKind {
     Symmetry,
     /// Grade em perspectiva sobre um plano: os 4 cantos de um quadrilátero (chão, parede) por homografia.
     Grid,
+    /// Régua linear (S25): um segmento entre as duas pontas `pts`; o traço que começa perto vai PARA o segmento.
+    Linear,
+    /// Régua curva (S25, também a da caneta de régua): curva suave que passa pelos pontos `pts` (`closed` fecha).
+    Curve,
+    /// Régua de figura (S25): contorno de retângulo, elipse ou polígono regular (`shape`, `center`, `size`, `angle`).
+    Figure,
+    /// Círculos concêntricos (régua especial, S25): o traço segue a elipse da partida (mesmo centro, proporção e giro).
+    Concentric,
+    /// Guia (S25): reta horizontal (`angle` 0) ou vertical (90) por `center`, de borda a borda.
+    Guide,
 }
+
+impl RulerKind {
+    /// Régua "objeto" (linear, curva, figura, guia): encaixa só o traço que começa perto dela (`SNAP_PX`), em cima dela.
+    pub fn is_object(self) -> bool {
+        matches!(self, RulerKind::Linear | RulerKind::Curve | RulerKind::Figure | RulerKind::Guide)
+    }
+}
+
+/// Figura da régua de figura.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FigureShape {
+    Rect,
+    #[default]
+    Ellipse,
+    /// Polígono regular de `count` lados (o primeiro vértice aponta para cima com `angle` 0).
+    Polygon,
+}
+
+/// Distância (px da TELA) até a régua objeto em que o traço encaixa nela, medida no Clip Studio (S25: a 40 px encaixa, a
+/// 43 px não, com zoom 100%).
+pub const SNAP_PX: f32 = 40.0;
 
 /// Uma régua. Campos que o tipo não usa ficam com o padrão e são ignorados (trocar o tipo não perde os outros).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -109,6 +141,14 @@ pub struct Ruler {
     pub cells: [u32; 2],
     /// Grade: células a mais em cada lado, além do quadrilátero (o plano continua rumo ao horizonte).
     pub extend: u32,
+    /// Linear: as duas pontas; curva: os pontos por onde a curva passa (px do canvas).
+    pub pts: Vec<P>,
+    /// Curva: fechada (o último ponto volta ao primeiro).
+    pub closed: bool,
+    /// Figura: retângulo, elipse ou polígono regular (`count` lados).
+    pub shape: FigureShape,
+    /// Figura e círculos concêntricos: semi-eixos (metade da largura e da altura antes do giro `angle`), px do canvas.
+    pub size: [f32; 2],
 }
 
 impl Default for Ruler {
@@ -141,6 +181,11 @@ pub fn default_name(kind: RulerKind, points: usize) -> String {
         RulerKind::Radial => "Radial".into(),
         RulerKind::Symmetry => "Simetria".into(),
         RulerKind::Grid => "Grade em perspectiva".into(),
+        RulerKind::Linear => "Régua linear".into(),
+        RulerKind::Curve => "Régua curva".into(),
+        RulerKind::Figure => "Régua de figura".into(),
+        RulerKind::Concentric => "Círculos concêntricos".into(),
+        RulerKind::Guide => "Guia".into(),
     }
 }
 
@@ -161,6 +206,18 @@ impl Ruler {
             RulerKind::Radial => "#f0a03cb4",
             RulerKind::Symmetry => "#e05ad2b4",
             RulerKind::Grid => "#38c8d8b4",
+            RulerKind::Linear | RulerKind::Curve | RulerKind::Figure => "#9b6bffc8",
+            RulerKind::Concentric => "#ff7a5ab4",
+            RulerKind::Guide => "#22b8e6c8",
+        };
+        let pts = match kind {
+            RulerKind::Linear => vec![[at[0] - 0.15 * w, at[1]], [at[0] + 0.15 * w, at[1]]],
+            RulerKind::Curve => vec![[at[0] - 0.2 * w, at[1]], [at[0] - 0.07 * w, at[1] - 0.08 * h], [at[0] + 0.07 * w, at[1] + 0.08 * h], [at[0] + 0.2 * w, at[1]]],
+            _ => Vec::new(),
+        };
+        let size = match kind {
+            RulerKind::Concentric => [0.1 * w, 0.06 * w],
+            _ => [0.12 * w, 0.12 * h.min(w)],
         };
         let (gw, gh) = (w * 0.18, h * 0.12);
         Ruler {
@@ -177,11 +234,19 @@ impl Ruler {
             center: at,
             angle: if kind == RulerKind::Symmetry { 90.0 } else { 0.0 },
             spacing: (h / 12.0).max(4.0),
-            count: if kind == RulerKind::Radial { 48 } else { 1 },
+            count: match kind {
+                RulerKind::Radial => 48,
+                RulerKind::Figure => 5,
+                _ => 1,
+            },
             mirror: true,
             quad: [[at[0] - gw, at[1] - gh * 0.6], [at[0] + gw, at[1] - gh * 0.6], [at[0] + gw * 1.7, at[1] + gh], [at[0] - gw * 1.7, at[1] + gh]],
             cells: [8, 8],
             extend: 4,
+            pts,
+            closed: false,
+            shape: FigureShape::Ellipse,
+            size,
         }
     }
 
@@ -253,6 +318,37 @@ impl Ruler {
                     return Err("os cantos da grade não formam um quadrilátero (três alinhados ou repetidos)".into());
                 }
             }
+            RulerKind::Linear => {
+                if self.pts.len() != 2 || !self.pts.iter().all(finite) {
+                    return Err(format!("régua linear precisa de 2 pontas finitas em pts (veio {})", self.pts.len()));
+                }
+                if len(sub(self.pts[1], self.pts[0])) < 1.0 {
+                    return Err("as duas pontas da régua linear coincidem".into());
+                }
+            }
+            RulerKind::Curve => {
+                if !(2..=1024).contains(&self.pts.len()) || !self.pts.iter().all(finite) {
+                    return Err(format!("régua curva precisa de 2 a 1024 pontos finitos em pts (veio {})", self.pts.len()));
+                }
+                if self.closed && self.pts.len() < 3 {
+                    return Err("curva fechada precisa de 3 pontos ou mais".into());
+                }
+                if Track::of(self).is_none_or(|t| t.length() < 1.0) {
+                    return Err("os pontos da régua curva coincidem".into());
+                }
+            }
+            RulerKind::Figure | RulerKind::Concentric => {
+                if !(self.size.iter().all(|s| s.is_finite() && *s >= 0.5 && *s < 1e7)) {
+                    return Err(format!("size (semi-eixos) deve ser ≥ 0,5 px (veio {:?})", self.size));
+                }
+                if self.kind == RulerKind::Figure && self.shape == FigureShape::Polygon && !(3..=64).contains(&self.count) {
+                    return Err(format!("polígono: count deve ficar em 3..64 lados (veio {})", self.count));
+                }
+                if self.kind == RulerKind::Concentric && !(self.spacing.is_finite() && self.spacing >= 1.0) {
+                    return Err(format!("spacing (distância entre os círculos mostrados) deve ser ≥ 1 px (veio {})", self.spacing));
+                }
+            }
+            RulerKind::Guide => {}
         }
         Ok(())
     }
@@ -474,6 +570,328 @@ fn grid_segment(h: &Homography, fixed: f32, along_v: bool, lo: f32, hi: f32) -> 
     Some((pt(a), pt(b)))
 }
 
+// ------------------------------------------------------------------------------------------------ réguas objeto (S25)
+
+/// Gira `p` em `deg` graus (em volta da origem).
+fn rot(p: P, deg: f32) -> P {
+    let (s, c) = deg.to_radians().sin_cos();
+    [c * p[0] - s * p[1], s * p[0] + c * p[1]]
+}
+
+/// Ponto da Catmull-Rom centrípeta (Barry–Goldman) entre `p1` e `p2`, `u` em [0, 1]: passa pelos pontos sem laçadas.
+fn cr_point(p0: P, p1: P, p2: P, p3: P, u: f32) -> P {
+    let knot = |a: P, b: P| len(sub(b, a)).sqrt().max(1e-3);
+    let (t0, t1) = (0.0f32, knot(p0, p1));
+    let t2 = t1 + knot(p1, p2);
+    let t3 = t2 + knot(p2, p3);
+    let t = t1 + (t2 - t1) * u;
+    let lerp = |a: P, b: P, ta: f32, tb: f32| add(mul(a, (tb - t) / (tb - ta)), mul(b, (t - ta) / (tb - ta)));
+    let a1 = lerp(p0, p1, t0, t1);
+    let a2 = lerp(p1, p2, t1, t2);
+    let a3 = lerp(p2, p3, t2, t3);
+    let b1 = lerp(a1, a2, t0, t2);
+    let b2 = lerp(a2, a3, t1, t3);
+    lerp(b1, b2, t1, t2)
+}
+
+/// Curva suave que passa por `pts` (Catmull-Rom centrípeta), `per` amostras por trecho; fechada liga o último ao
+/// primeiro. Nas pontas da aberta, o vizinho que falta é o reflexo do ponto seguinte (a curva sai reta).
+pub fn spline(pts: &[P], closed: bool, per: usize) -> Vec<P> {
+    // pontos repetidos em seguida não fazem trecho
+    let mut p: Vec<P> = Vec::with_capacity(pts.len());
+    for q in pts {
+        if p.last().is_none_or(|l| len(sub(*q, *l)) > 1e-3) {
+            p.push(*q);
+        }
+    }
+    if closed && p.len() > 2 && len(sub(p[0], p[p.len() - 1])) < 1e-3 {
+        p.pop();
+    }
+    let n = p.len();
+    if n < 2 {
+        return p;
+    }
+    let per = per.max(1);
+    let get = |i: isize| -> P {
+        if closed {
+            p[i.rem_euclid(n as isize) as usize]
+        } else if i < 0 {
+            sub(mul(p[0], 2.0), p[1])
+        } else if i as usize >= n {
+            sub(mul(p[n - 1], 2.0), p[n - 2])
+        } else {
+            p[i as usize]
+        }
+    };
+    let segs = if closed { n } else { n - 1 };
+    let mut out = Vec::with_capacity(segs * per + 1);
+    for i in 0..segs as isize {
+        for k in 0..per {
+            out.push(cr_point(get(i - 1), get(i), get(i + 1), get(i + 2), k as f32 / per as f32));
+        }
+    }
+    out.push(if closed { p[0] } else { p[n - 1] });
+    out
+}
+
+/// Vértices do contorno da figura (sem repetir o primeiro no fim), px do canvas.
+fn figure_pts(r: &Ruler) -> Vec<P> {
+    let [rx, ry] = r.size;
+    let local: Vec<P> = match r.shape {
+        FigureShape::Rect => vec![[-rx, -ry], [rx, -ry], [rx, ry], [-rx, ry]],
+        FigureShape::Ellipse => {
+            // ~3 px de corda (o encaixe e o desenho ficam a menos de 0,1 px da elipse de verdade)
+            let per = PI * (3.0 * (rx + ry) - ((3.0 * rx + ry) * (rx + 3.0 * ry)).max(0.0).sqrt());
+            let n = ((per / 3.0).ceil() as usize).clamp(48, 4096);
+            (0..n).map(|k| {
+                let a = TAU * k as f32 / n as f32;
+                [rx * a.cos(), ry * a.sin()]
+            }).collect()
+        }
+        FigureShape::Polygon => {
+            let n = r.count.clamp(3, 64);
+            (0..n).map(|k| {
+                let a = -PI / 2.0 + TAU * k as f32 / n as f32;
+                [rx * a.cos(), ry * a.sin()]
+            }).collect()
+        }
+    };
+    local.into_iter().map(|q| add(r.center, rot(q, r.angle))).collect()
+}
+
+/// O caminho da régua objeto (linear, curva, figura, guia) e se é fechado; `None` para os outros tipos. A guia é uma
+/// reta "infinita" (±1 000 000 px).
+pub fn outline(r: &Ruler) -> Option<(Vec<P>, bool)> {
+    match r.kind {
+        RulerKind::Linear if r.pts.len() >= 2 => Some((r.pts[..2].to_vec(), false)),
+        RulerKind::Curve if r.pts.len() >= 2 => Some((spline(&r.pts, r.closed && r.pts.len() >= 3, 32), r.closed && r.pts.len() >= 3)),
+        RulerKind::Figure => Some((figure_pts(r), true)),
+        RulerKind::Guide => {
+            let d = dir_of(r.angle);
+            Some((vec![add(r.center, mul(d, -1e6)), add(r.center, mul(d, 1e6))], false))
+        }
+        _ => None,
+    }
+}
+
+/// Polilinha medida (comprimento acumulado) onde o traço encaixa: o ponto mais perto e a continuidade pelo parâmetro
+/// (comprimento de arco desde o começo), para o traço não pular de um trecho da curva para outro que passa perto.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Track {
+    /// Pontos (o fechado repete o primeiro no fim).
+    pub pts: Vec<P>,
+    cum: Vec<f32>,
+    pub closed: bool,
+}
+
+impl Track {
+    pub fn new(pts: Vec<P>, closed: bool) -> Option<Track> {
+        let mut p: Vec<P> = Vec::with_capacity(pts.len() + 1);
+        for q in pts {
+            if !(q[0].is_finite() && q[1].is_finite()) {
+                return None;
+            }
+            if p.last().is_none_or(|l| len(sub(q, *l)) > 1e-4) {
+                p.push(q);
+            }
+        }
+        if p.len() < 2 {
+            return None;
+        }
+        let closed = closed && p.len() >= 3;
+        if closed && len(sub(p[0], p[p.len() - 1])) > 1e-4 {
+            p.push(p[0]);
+        }
+        let mut cum = vec![0.0f32; p.len()];
+        for i in 1..p.len() {
+            cum[i] = cum[i - 1] + len(sub(p[i], p[i - 1]));
+        }
+        Some(Track { pts: p, cum, closed })
+    }
+
+    pub fn of(r: &Ruler) -> Option<Track> {
+        let (p, c) = outline(r)?;
+        Track::new(p, c)
+    }
+
+    pub fn length(&self) -> f32 {
+        *self.cum.last().unwrap_or(&0.0)
+    }
+
+    /// Ponto no parâmetro `s` (o fechado dá a volta; o aberto para nas pontas).
+    pub fn at(&self, s: f32) -> P {
+        let l = self.length();
+        let s = if self.closed && l > 0.0 { s.rem_euclid(l) } else { s.clamp(0.0, l) };
+        let i = self.cum.partition_point(|c| *c <= s).clamp(1, self.pts.len() - 1);
+        let (a, b) = (self.pts[i - 1], self.pts[i]);
+        let seg = self.cum[i] - self.cum[i - 1];
+        let t = if seg > 0.0 { (s - self.cum[i - 1]) / seg } else { 0.0 };
+        add(a, mul(sub(b, a), t))
+    }
+
+    /// Ponto do trecho `i` mais perto de `q`: (ponto, parâmetro, distância).
+    fn on_seg(&self, i: usize, q: P) -> (P, f32, f32) {
+        let (a, b) = (self.pts[i], self.pts[i + 1]);
+        let d = sub(b, a);
+        let l2 = dot(d, d);
+        let t = if l2 > 0.0 { (dot(sub(q, a), d) / l2).clamp(0.0, 1.0) } else { 0.0 };
+        let p = add(a, mul(d, t));
+        (p, self.cum[i] + t * (self.cum[i + 1] - self.cum[i]), len(sub(q, p)))
+    }
+
+    /// O ponto do caminho mais perto de `q`: (ponto, parâmetro, distância).
+    pub fn nearest(&self, q: P) -> (P, f32, f32) {
+        (0..self.pts.len() - 1).map(|i| self.on_seg(i, q)).min_by(|a, b| a.2.total_cmp(&b.2)).expect("Track tem ≥ 2 pontos")
+    }
+
+    /// O ponto mais perto de `q` entre os trechos a até `win` (em comprimento de arco) do parâmetro `s0`: o traço anda
+    /// pelo caminho sem saltar para outra parte dele que passa perto (o "8", as duas pernas de um U estreito).
+    pub fn nearest_near(&self, q: P, s0: f32, win: f32) -> (P, f32) {
+        let l = self.length();
+        let gap = |lo: f32, hi: f32| -> f32 {
+            let one = |s: f32| if s < lo { lo - s } else if s > hi { s - hi } else { 0.0 };
+            if self.closed && l > 0.0 { one(s0).min(one(s0 - l)).min(one(s0 + l)) } else { one(s0) }
+        };
+        let best = (0..self.pts.len() - 1).filter(|&i| gap(self.cum[i], self.cum[i + 1]) <= win).map(|i| self.on_seg(i, q)).min_by(|a, b| a.2.total_cmp(&b.2));
+        match best {
+            Some((p, s, _)) => (p, s),
+            None => (self.at(s0), s0),
+        }
+    }
+}
+
+/// Círculos concêntricos: `q` levado à elipse que passa por `start` (mesmo centro, proporção `size` e giro `angle`).
+pub fn concentric_project(r: &Ruler, start: P, q: P) -> P {
+    let [rx, ry] = [r.size[0].max(1e-3), r.size[1].max(1e-3)];
+    let local = |p: P| {
+        let l = rot(sub(p, r.center), -r.angle);
+        [l[0] / rx, l[1] / ry]
+    };
+    let k = len(local(start));
+    let v = local(q);
+    let Some(u) = unit(v).or_else(|| unit(local(start))) else { return r.center };
+    let w = mul(u, k);
+    add(r.center, rot([w[0] * rx, w[1] * ry], r.angle))
+}
+
+/// A elipse dos círculos concêntricos que passa por `start` (para mostrar onde o traço vai).
+pub fn concentric_ring(r: &Ruler, start: P) -> Vec<P> {
+    let [rx, ry] = [r.size[0].max(1e-3), r.size[1].max(1e-3)];
+    let l = rot(sub(start, r.center), -r.angle);
+    let k = len([l[0] / rx, l[1] / ry]);
+    let mut x = r.clone();
+    x.size = [rx * k, ry * k];
+    x.shape = FigureShape::Ellipse;
+    let mut p = figure_pts(&x);
+    if let Some(f) = p.first().copied() {
+        p.push(f);
+    }
+    p
+}
+
+/// A régua objeto (encaixe ligado) mais perto de `s` a até `tol` px do canvas, como no Clip Studio (a mais perto
+/// ganha): (índice em `rulers`, caminho, parâmetro do ponto mais perto).
+pub fn pick_object(rulers: &[Ruler], s: P, tol: f32) -> Option<(usize, Track, f32)> {
+    rulers
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| r.kind.is_object() && r.visible && r.snap)
+        .filter_map(|(i, r)| {
+            let t = Track::of(r)?;
+            let (_, ps, d) = t.nearest(s);
+            (d <= tol).then_some((i, t, ps, d))
+        })
+        .min_by(|a, b| a.3.total_cmp(&b.3))
+        .map(|(i, t, ps, _)| (i, t, ps))
+}
+
+/// Caneta de régua: o caminho à mão simplificado (Ramer–Douglas–Peucker com tolerância `tol` px) nos pontos por onde a
+/// régua curva passa. `None` se o caminho não anda.
+pub fn simplify(path: &[P], tol: f32) -> Option<Vec<P>> {
+    let mut p: Vec<P> = Vec::with_capacity(path.len());
+    for q in path {
+        if p.last().is_none_or(|l| len(sub(*q, *l)) > 0.5) {
+            p.push(*q);
+        }
+    }
+    if p.len() < 2 {
+        return None;
+    }
+    let mut keep = vec![false; p.len()];
+    keep[0] = true;
+    keep[p.len() - 1] = true;
+    let mut stack = vec![(0usize, p.len() - 1)];
+    while let Some((i, j)) = stack.pop() {
+        if j <= i + 1 {
+            continue;
+        }
+        let (a, b) = (p[i], p[j]);
+        let d = sub(b, a);
+        let l = len(d);
+        let dist = |q: P| if l < 1e-6 { len(sub(q, a)) } else { cross(d, sub(q, a)).abs() / l };
+        let (k, dm) = (i + 1..j).map(|k| (k, dist(p[k]))).max_by(|x, y| x.1.total_cmp(&y.1)).expect("j > i + 1");
+        if dm > tol {
+            keep[k] = true;
+            stack.push((i, k));
+            stack.push((k, j));
+        }
+    }
+    let out: Vec<P> = p.iter().zip(&keep).filter(|(_, k)| **k).map(|(q, _)| *q).collect();
+    (out.len() >= 2 && len(sub(out[out.len() - 1], out[0])) + out.windows(2).map(|w| len(sub(w[1], w[0]))).sum::<f32>() > 1.0).then_some(out)
+}
+
+/// Polilinhas da régua objeto e dos círculos concêntricos (com a força de cada uma) dentro de `clip`. Concêntricos: a
+/// elipse da régua (forte), os anéis a cada `spacing` px (no eixo maior) até cobrir o recorte e o eixo pelo centro.
+fn polylines(r: &Ruler, clip: [f32; 4]) -> Vec<(Vec<P>, bool)> {
+    match r.kind {
+        RulerKind::Concentric => {
+            let mut out = Vec::new();
+            let [rx, ry] = [r.size[0].max(1e-3), r.size[1].max(1e-3)];
+            let corners = [[clip[0], clip[1]], [clip[2], clip[1]], [clip[2], clip[3]], [clip[0], clip[3]]];
+            let kmax = corners.iter().map(|c| {
+                let l = rot(sub(*c, r.center), -r.angle);
+                len([l[0] / rx, l[1] / ry])
+            }).fold(0.0f32, f32::max);
+            let dk = r.spacing.max(1.0) / rx.max(ry);
+            // no máximo ~40 anéis na tela (zoom muito longe: pula de m em m)
+            let m = ((kmax / dk / 40.0).ceil() as i64).max(1);
+            let mut j = m;
+            while (j as f32) * dk <= kmax {
+                let k = j as f32 * dk;
+                if (k - 1.0).abs() > dk * 0.25 {
+                    let mut x = r.clone();
+                    x.size = [rx * k, ry * k];
+                    x.shape = FigureShape::Ellipse;
+                    let mut p = figure_pts(&x);
+                    p.push(p[0]);
+                    out.push((p, false));
+                }
+                j += m;
+            }
+            let mut base = figure_pts(&{
+                let mut x = r.clone();
+                x.shape = FigureShape::Ellipse;
+                x
+            });
+            base.push(base[0]);
+            out.push((base, true));
+            if let Some((a, b)) = clip_param(r.center, dir_of(r.angle), -1e8, 1e8, clip) {
+                out.push((vec![a, b], false));
+            }
+            out
+        }
+        _ => match outline(r) {
+            Some((mut p, closed)) => {
+                if closed {
+                    p.push(p[0]);
+                }
+                vec![(p, true)]
+            }
+            None => Vec::new(),
+        },
+    }
+}
+
 /// As linhas da régua recortadas a `clip` ([x0, y0, x1, y1], px do canvas). Os raios dos pontos de fuga se distribuem
 /// pelo arco sob o qual o CANVAS é visto (o mesmo em qualquer zoom e pan) e se estendem até a borda de `clip`.
 pub fn lines(r: &Ruler, canvas: (u32, u32), clip: [f32; 4]) -> Vec<RulerLine> {
@@ -549,6 +967,13 @@ pub fn lines(r: &Ruler, canvas: (u32, u32), clip: [f32; 4]) -> Vec<RulerLine> {
                 push(grid_segment(&hm, j as f32, false, ulo, uhi).and_then(|(a, b)| clip_param(a, sub(b, a), 0.0, 1.0, clip)), strong);
             }
         }
+        RulerKind::Linear | RulerKind::Curve | RulerKind::Figure | RulerKind::Concentric | RulerKind::Guide => {
+            for (p, strong) in polylines(r, clip) {
+                for w in p.windows(2) {
+                    push(clip_param(w[0], sub(w[1], w[0]), 0.0, 1.0, clip), strong);
+                }
+            }
+        }
     }
     out
 }
@@ -591,6 +1016,8 @@ pub fn snap_dirs(r: &Ruler, s: P) -> Vec<P> {
                 out.extend(unit(sub(at(u, v + 0.01), p0)));
             }
         }
+        // objetos e concêntricos encaixam ponto a ponto (`Track`, `concentric_project`), não por direção
+        RulerKind::Linear | RulerKind::Curve | RulerKind::Figure | RulerKind::Concentric | RulerKind::Guide => {}
     }
     out
 }
@@ -684,8 +1111,12 @@ pub enum Handle {
     Angle,
     /// Canto `i` da grade.
     Corner(usize),
-    /// Meio da grade: move o quadrilátero inteiro.
+    /// Meio da grade: move o quadrilátero inteiro; da linear e da curva: move todos os pontos.
     Body,
+    /// Ponto `i` da régua linear (ponta) ou curva.
+    Point(usize),
+    /// Canto da caixa da figura / dos concêntricos (semi-eixos).
+    Size,
 }
 
 impl Handle {
@@ -698,6 +1129,8 @@ impl Handle {
             Handle::Angle => "angle".into(),
             Handle::Corner(i) => format!("corner{i}"),
             Handle::Body => "body".into(),
+            Handle::Point(i) => format!("point{i}"),
+            Handle::Size => "size".into(),
         }
     }
 }
@@ -729,8 +1162,31 @@ pub fn handles(r: &Ruler, canvas: (u32, u32), arm: f32) -> Vec<(Handle, P)> {
                 out.push((Handle::Body, [x, y]));
             }
         }
+        RulerKind::Linear | RulerKind::Curve => {
+            for (i, p) in r.pts.iter().enumerate() {
+                out.push((Handle::Point(i), *p));
+            }
+            if !r.pts.is_empty() {
+                let (lo, hi) = bbox(&r.pts);
+                let mid = mul(add(lo, hi), 0.5);
+                // meio da linear: no segmento; da curva: o meio da caixa, a não ser que caia em cima de um ponto
+                let body = if r.pts.iter().any(|p| len(sub(*p, mid)) < arm * 0.25) { add(mid, [0.0, arm * 0.35]) } else { mid };
+                out.push((Handle::Body, body));
+            }
+        }
+        RulerKind::Figure | RulerKind::Concentric => {
+            out.push((Handle::Center, r.center));
+            out.push((Handle::Size, add(r.center, rot(r.size, r.angle))));
+            out.push((Handle::Angle, add(r.center, rot([r.size[0] + arm * 0.6, 0.0], r.angle))));
+        }
+        RulerKind::Guide => out.push((Handle::Center, project(r.center, dir_of(r.angle), c))),
     }
     out
+}
+
+/// Caixa (mínimo, máximo) dos pontos.
+fn bbox(pts: &[P]) -> (P, P) {
+    pts.iter().fold(([f32::MAX, f32::MAX], [f32::MIN, f32::MIN]), |(lo, hi), p| ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]))
 }
 
 /// Alça mais perto de `p` a até `tol` (px do canvas).
@@ -782,10 +1238,21 @@ pub fn drag(orig: &Ruler, h: Handle, start: P, cur: P, alt: bool) -> Ruler {
             }
         }
         Handle::Corner(i) if i < 4 => r.quad[i] = add(orig.quad[i], delta),
+        Handle::Body if matches!(orig.kind, RulerKind::Linear | RulerKind::Curve) => {
+            for (k, p) in r.pts.iter_mut().enumerate() {
+                *p = add(orig.pts[k], delta);
+            }
+        }
         Handle::Body => {
             for k in 0..4 {
                 r.quad[k] = add(orig.quad[k], delta);
             }
+        }
+        Handle::Point(i) if i < r.pts.len() => r.pts[i] = add(orig.pts[i], delta),
+        Handle::Size => {
+            // o canto segue o cursor no referencial girado da figura
+            let l = rot(sub(cur, orig.center), -orig.angle);
+            r.size = [l[0].abs().max(0.5), l[1].abs().max(0.5)];
         }
         _ => {}
     }
@@ -854,6 +1321,10 @@ pub fn anchor(r: &Ruler, canvas: (u32, u32)) -> P {
         RulerKind::Perspective if r.vps.len() == 1 => r.vps[0],
         RulerKind::Perspective => horizon(r).map(|(p, d)| project(p, d, c)).unwrap_or(r.center),
         RulerKind::Grid => mul(r.quad.iter().fold([0.0, 0.0], |a, q| add(a, *q)), 0.25),
+        RulerKind::Linear | RulerKind::Curve if !r.pts.is_empty() => {
+            let (lo, hi) = bbox(&r.pts);
+            mul(add(lo, hi), 0.5)
+        }
         _ => r.center,
     }
 }
@@ -891,6 +1362,13 @@ pub fn convert(r: &Ruler, kind: RulerKind, points: usize, canvas: (u32, u32)) ->
             x.quad = q;
         }
     }
+    // entre réguas objeto parecidas a forma fica: linear ⇄ curva pelos pontos, figura ⇄ concêntricos pela caixa
+    match (r.kind, kind) {
+        (RulerKind::Linear, RulerKind::Curve) if r.pts.len() == 2 => x.pts = vec![r.pts[0], mul(add(r.pts[0], r.pts[1]), 0.5), r.pts[1]],
+        (RulerKind::Curve, RulerKind::Linear) if r.pts.len() >= 2 && len(sub(r.pts[r.pts.len() - 1], r.pts[0])) >= 1.0 => x.pts = vec![r.pts[0], r.pts[r.pts.len() - 1]],
+        (RulerKind::Figure, RulerKind::Concentric) | (RulerKind::Concentric, RulerKind::Figure) => (x.size, x.angle) = (r.size, r.angle),
+        _ => {}
+    }
     let old_default = Ruler::preset(r.kind, 1, canvas, None, "", "x").color;
     if !r.color.eq_ignore_ascii_case(&old_default) {
         x.color = r.color.clone();
@@ -907,7 +1385,19 @@ pub fn convert(r: &Ruler, kind: RulerKind, points: usize, canvas: (u32, u32)) ->
 pub fn bake_strokes(r: &Ruler, canvas: (u32, u32)) -> Vec<Stroke> {
     let (w, h) = (canvas.0 as f32, canvas.1 as f32);
     let color = r.rgba();
-    lines(r, canvas, [0.0, 0.0, w, h]).into_iter().map(|l| guide_stroke(vec![l.a, l.b], if l.strong { 2.0 } else { 1.2 }, color)).collect()
+    let clip = [0.0, 0.0, w, h];
+    let width = |strong: bool| if strong { 2.0 } else { 1.2 };
+    match r.kind {
+        // curvas e contornos: um traço por polilinha (não um por trechinho); a guia e o eixo recortados ao canvas
+        RulerKind::Linear | RulerKind::Curve | RulerKind::Figure | RulerKind::Concentric | RulerKind::Guide => polylines(r, clip)
+            .into_iter()
+            .filter_map(|(p, strong)| {
+                let p = if p.len() == 2 { clip_param(p[0], sub(p[1], p[0]), 0.0, 1.0, clip).map(|(a, b)| vec![a, b])? } else { p };
+                Some(guide_stroke(p, width(strong), color))
+            })
+            .collect(),
+        _ => lines(r, canvas, clip).into_iter().map(|l| guide_stroke(vec![l.a, l.b], width(l.strong), color)).collect(),
+    }
 }
 
 /// Corte que contém a camada (sobe pelas pastas).
@@ -1026,7 +1516,7 @@ pub fn ruler_plan(p: &Project, req: &RulerRequest) -> ToolResult<RulerPlan> {
             let patch = req.ruler.clone().unwrap_or(json!({}));
             let kind: RulerKind = match patch.get("kind") {
                 Some(k) => serde_json::from_value(k.clone()).map_err(|e| ToolError::Invalid(format!("ruler.kind: {e}")))?,
-                None => return Err(ToolError::Invalid("create: falta ruler.kind (perspective, parallel, radial, symmetry, grid)".into())),
+                None => return Err(ToolError::Invalid("create: falta ruler.kind (perspective, parallel, radial, symmetry, grid, linear, curve, figure, concentric, guide)".into())),
             };
             let pts = req.points.unwrap_or(2);
             if !(1..=3).contains(&pts) {
@@ -1287,6 +1777,215 @@ mod tests {
         assert!(s2.remove(&id));
         s2.cycle();
         assert_eq!(s2.active.as_deref(), Some("r2"));
+    }
+
+    /// Linear: o ponto vai para o segmento (perpendicular) e para nas pontas, como no Clip Studio (o traço não passa da
+    /// régua); a régua mais perto da partida ganha, e só dentro da tolerância.
+    #[test]
+    fn linear_ruler_projects_onto_the_segment_and_the_nearest_object_wins() {
+        let mut lin = Ruler::preset(RulerKind::Linear, 2, (1920, 1080), None, "r1", "");
+        lin.pts = vec![[100.0, 100.0], [600.0, 350.0]];
+        lin.validate().unwrap();
+        let t = Track::of(&lin).unwrap();
+        let (p, s, d) = t.nearest([300.0, 250.0]);
+        // na reta: y = 100 + 0,5·(x − 100)
+        assert!((p[1] - (100.0 + 0.5 * (p[0] - 100.0))).abs() < 1e-3, "{p:?}");
+        assert!((d - len(sub([300.0, 250.0], p))).abs() < 1e-4 && s > 0.0);
+        // além da ponta: fica na ponta
+        assert!(close(t.nearest([900.0, 400.0]).0, [600.0, 350.0], 1e-3));
+        assert!(close(t.nearest([0.0, 0.0]).0, [100.0, 100.0], 1e-3));
+        // escolha da régua: a 30 px encaixa, a 60 px não; com duas, a mais perto
+        let mut lin2 = lin.clone();
+        lin2.id = "r2".into();
+        lin2.pts = vec![[100.0, 160.0], [600.0, 410.0]];
+        let both = vec![lin.clone(), lin2];
+        let n = [-0.5f32 / 1.25f32.sqrt(), 1.0 / 1.25f32.sqrt()]; // normal da régua, para baixo
+        let at = |k: f32| add([350.0, 225.0], mul(n, k));
+        assert_eq!(pick_object(&both[..1], at(30.0), SNAP_PX).map(|x| x.0), Some(0));
+        assert!(pick_object(&both[..1], at(60.0), SNAP_PX).is_none());
+        assert_eq!(pick_object(&both, at(35.0), SNAP_PX).map(|x| x.0), Some(1), "a segunda está a ~19 px");
+        // sem encaixe, oculta ou de outro tipo: não conta
+        let mut off = lin.clone();
+        off.snap = false;
+        assert!(pick_object(&[off], at(5.0), SNAP_PX).is_none());
+        assert!(pick_object(&[two_point()], [960.0, 500.0], SNAP_PX).is_none());
+    }
+
+    /// Curva: passa pelos pontos clicados; o encaixe com continuidade não salta para a outra perna de um U estreito.
+    #[test]
+    fn curve_ruler_passes_through_its_points_and_snapping_keeps_continuity() {
+        let mut c = Ruler::preset(RulerKind::Curve, 2, (1920, 1080), None, "r1", "");
+        c.pts = vec![[100.0, 500.0], [300.0, 300.0], [500.0, 500.0], [700.0, 300.0]];
+        c.validate().unwrap();
+        let t = Track::of(&c).unwrap();
+        for p in &c.pts {
+            assert!(t.nearest(*p).2 < 0.05, "a curva não passa por {p:?}");
+        }
+        // U estreito: duas pernas verticais a 30 px uma da outra, unidas embaixo
+        let mut u = c.clone();
+        u.pts = vec![[100.0, 100.0], [100.0, 400.0], [115.0, 430.0], [130.0, 400.0], [130.0, 100.0]];
+        let tu = Track::of(&u).unwrap();
+        // começa na perna esquerda e a mão desvia para a direita no alto: sem continuidade iria para a outra perna
+        let (_, mut s, _) = tu.nearest([100.0, 150.0]);
+        let mut last = [100.0, 150.0];
+        for q in [[104.0, 160.0], [110.0, 175.0], [117.0, 190.0], [119.0, 205.0]] {
+            let (p, ns) = tu.nearest_near(q, s, len(sub(q, last)) * 2.0 + 8.0);
+            assert!(p[0] < 105.0, "pulou de perna: {q:?} → {p:?}");
+            s = ns;
+            last = q;
+        }
+        assert!(tu.nearest([119.0, 205.0]).0[0] > 125.0, "sem continuidade iria para a direita");
+        // fechada: dá a volta (o parâmetro passa do fim para o começo)
+        let mut cl = c.clone();
+        cl.closed = true;
+        let tc = Track::of(&cl).unwrap();
+        assert!(tc.closed && close(tc.at(tc.length() + 1.0), tc.at(1.0), 1e-2));
+        let (_, s_end, _) = tc.nearest(cl.pts[0]);
+        let (p, _) = tc.nearest_near(add(cl.pts[0], [-3.0, 3.0]), s_end, 10.0);
+        assert!(len(sub(p, cl.pts[0])) < 6.0);
+    }
+
+    #[test]
+    fn figure_outlines_project_onto_rect_ellipse_and_polygon() {
+        let mut f = Ruler::preset(RulerKind::Figure, 2, (1920, 1080), Some([500.0, 400.0]), "r1", "");
+        f.size = [200.0, 100.0];
+        // retângulo: um ponto de dentro vai para o lado mais perto
+        f.shape = FigureShape::Rect;
+        let t = Track::of(&f).unwrap();
+        assert!(t.closed);
+        assert!(close(t.nearest([520.0, 480.0]).0, [520.0, 500.0], 1e-3));
+        assert!(close(t.nearest([690.0, 390.0]).0, [700.0, 390.0], 1e-3));
+        // girado 90°: a caixa deita de pé
+        f.angle = 90.0;
+        assert!(close(Track::of(&f).unwrap().nearest([500.0, 650.0]).0, [500.0, 600.0], 1e-2));
+        // elipse: o ponto encaixado satisfaz a equação
+        f.angle = 0.0;
+        f.shape = FigureShape::Ellipse;
+        let te = Track::of(&f).unwrap();
+        for q in [[650.0, 420.0], [480.0, 290.0], [300.0, 400.0], [900.0, 700.0]] {
+            let p = te.nearest(q).0;
+            let e = ((p[0] - 500.0) / 200.0).powi(2) + ((p[1] - 400.0) / 100.0).powi(2);
+            assert!((e - 1.0).abs() < 2e-3, "{q:?} → {p:?} ({e})");
+        }
+        // polígono de 5 lados: o primeiro vértice em cima; o ponto encaixado está num dos lados
+        f.shape = FigureShape::Polygon;
+        f.size = [100.0, 100.0];
+        f.count = 5;
+        f.validate().unwrap();
+        let v = figure_pts(&f);
+        assert_eq!(v.len(), 5);
+        assert!(close(v[0], [500.0, 300.0], 1e-3));
+        let tp = Track::of(&f).unwrap();
+        assert!(tp.nearest([500.0, 290.0]).2 < 10.5);
+        f.count = 2;
+        assert!(f.validate().is_err());
+    }
+
+    #[test]
+    fn concentric_keeps_the_starting_ring_and_guides_snap_along_their_line() {
+        let mut c = Ruler::preset(RulerKind::Concentric, 2, (1920, 1080), Some([500.0, 500.0]), "r1", "");
+        c.size = [200.0, 100.0];
+        c.angle = 30.0;
+        c.validate().unwrap();
+        let start = [650.0, 560.0];
+        let k = |p: P| {
+            let l = rot(sub(p, c.center), -c.angle);
+            ((l[0] / 200.0).powi(2) + (l[1] / 100.0).powi(2)).sqrt()
+        };
+        let k0 = k(start);
+        for q in [[400.0, 300.0], [900.0, 900.0], [500.0, 510.0], [10.0, 500.0]] {
+            let p = concentric_project(&c, start, q);
+            assert!((k(p) - k0).abs() < 1e-3, "{q:?} → {p:?}: anel {} ≠ {k0}", k(p));
+            // e na direção (no referencial da elipse) do ponto da mão
+            let (lp, lq) = (rot(sub(p, c.center), -c.angle), rot(sub(q, c.center), -c.angle));
+            assert!(cross([lp[0] / 200.0, lp[1] / 100.0], [lq[0] / 200.0, lq[1] / 100.0]).abs() < 1e-3);
+        }
+        // círculo: raio da partida
+        c.size = [100.0, 100.0];
+        let p = concentric_project(&c, [530.0, 540.0], [900.0, 500.0]);
+        assert!(close(p, [550.0, 500.0], 1e-3), "{p:?}");
+        assert!(concentric_ring(&c, [530.0, 540.0]).iter().all(|q| (len(sub(*q, c.center)) - 50.0).abs() < 1e-2));
+        // guia horizontal em y = 300: o traço encaixa na linha de borda a borda
+        let mut g = Ruler::preset(RulerKind::Guide, 2, (1920, 1080), Some([700.0, 300.0]), "r2", "");
+        g.validate().unwrap();
+        let tg = Track::of(&g).unwrap();
+        assert!(close(tg.nearest([5000.0, 320.0]).0, [5000.0, 300.0], 1e-2));
+        assert!(pick_object(&[g.clone()], [-200.0, 330.0], SNAP_PX).is_some(), "a guia vale em toda a largura");
+        assert!(pick_object(&[g.clone()], [-200.0, 350.0], SNAP_PX).is_none());
+        g.angle = 90.0;
+        assert!(close(Track::of(&g).unwrap().nearest([710.0, 9.0]).0, [700.0, 9.0], 1e-2));
+        // as linhas aparecem no recorte
+        let ls = lines(&g, (1920, 1080), [0.0, 0.0, 1920.0, 1080.0]);
+        assert_eq!(ls.len(), 1);
+        assert!(close(ls[0].a, [700.0, 0.0], 1e-2) || close(ls[0].b, [700.0, 0.0], 1e-2));
+        assert!(lines(&c, (1920, 1080), [0.0, 0.0, 1920.0, 1080.0]).len() > 100, "anéis + eixo");
+    }
+
+    #[test]
+    fn ruler_pen_path_simplifies_to_a_few_points() {
+        // meia senoide amostrada a cada px, com tremor de ±0,4 px
+        let path: Vec<P> = (0..=600).map(|i| {
+            let x = i as f32;
+            [x, 300.0 + 100.0 * (x / 600.0 * PI).sin() + if i % 2 == 0 { 0.4 } else { -0.4 }]
+        }).collect();
+        let pts = simplify(&path, 2.0).unwrap();
+        assert!(pts.len() >= 4 && pts.len() <= 20, "{}", pts.len());
+        assert_eq!(pts[0], path[0]);
+        assert_eq!(*pts.last().unwrap(), path[600]);
+        let mut r = Ruler::preset(RulerKind::Curve, 2, (1920, 1080), None, "r1", "");
+        r.pts = pts;
+        r.validate().unwrap();
+        // a curva fica perto do caminho da mão
+        let t = Track::of(&r).unwrap();
+        for q in path.iter().step_by(25) {
+            assert!(t.nearest(*q).2 < 3.0, "{q:?} longe da curva");
+        }
+        assert!(simplify(&[[1.0, 1.0], [1.2, 1.1]], 2.0).is_none(), "caminho que não anda");
+    }
+
+    #[test]
+    fn new_kinds_have_handles_that_drag_and_survive_serde() {
+        let canvas = (1920, 1080);
+        let mut lin = Ruler::preset(RulerKind::Linear, 2, canvas, None, "r1", "");
+        let p1 = lin.pts[1];
+        let moved = drag(&lin, Handle::Point(1), p1, add(p1, [10.0, 40.0]), false);
+        assert!(close(moved.pts[1], add(p1, [10.0, 40.0]), 1e-3) && moved.pts[0] == lin.pts[0]);
+        let body = drag(&lin, Handle::Body, [0.0, 0.0], [5.0, 5.0], false);
+        assert!(close(body.pts[0], add(lin.pts[0], [5.0, 5.0]), 1e-3));
+        // ponta em cima da outra: inválido, fica como estava
+        assert_eq!(drag(&lin, Handle::Point(1), p1, lin.pts[0], false), lin);
+        let mut fig = Ruler::preset(RulerKind::Figure, 2, canvas, Some([500.0, 500.0]), "r2", "");
+        fig.angle = 90.0;
+        let sz = drag(&fig, Handle::Size, [0.0, 0.0], [530.0, 700.0], false);
+        assert!((sz.size[0] - 200.0).abs() < 1e-2 && (sz.size[1] - 30.0).abs() < 1e-2, "{:?}", sz.size);
+        assert!(hit_handle(&fig, canvas, 80.0, add(fig.center, rot(fig.size, 90.0)), 4.0) == Some(Handle::Size));
+        // serde: conjunto com os tipos novos volta igual; JSON antigo (sem os campos novos) carrega
+        let mut set = RulerSet::default();
+        lin.closed = false;
+        set.add(lin);
+        set.add(fig);
+        let mut cur = Ruler::preset(RulerKind::Curve, 2, canvas, None, "", "");
+        cur.closed = true;
+        set.add(cur);
+        set.add(Ruler::preset(RulerKind::Concentric, 2, canvas, None, "", ""));
+        set.add(Ruler::preset(RulerKind::Guide, 2, canvas, None, "", ""));
+        let back = read_params(&json!({ PARAMS_KEY: set })).unwrap();
+        assert_eq!(back, set);
+        let old = json!({ "rulers": { "version": 1, "active": "r1", "items": [ { "id": "r1", "name": "P", "kind": "perspective", "visible": true, "snap": true, "locked": false, "color": "#3aa0ffb4", "vps": [[-100.0, 400.0], [2000.0, 400.0]], "horizon_angle": 0.0, "density": 24, "center": [960.0, 486.0], "angle": 0.0, "spacing": 90.0, "count": 1, "mirror": true, "quad": [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]], "cells": [8, 8], "extend": 4 } ] } });
+        let o = read_params(&old).unwrap();
+        assert_eq!((o.items[0].kind, o.items[0].vps.len()), (RulerKind::Perspective, 2));
+        // só o tipo: a linear nasce com as duas pontas
+        let min = read_params(&json!({ "rulers": { "items": [ { "id": "a", "kind": "linear" } ] } })).unwrap();
+        assert_eq!(min.items[0].pts.len(), 2);
+        assert!(read_params(&json!({ "rulers": { "items": [ { "id": "a", "kind": "linear", "pts": [[1.0, 1.0]] } ] } })).is_err());
+        assert!(read_params(&json!({ "rulers": { "items": [ { "id": "a", "kind": "figure", "shape": "star" } ] } })).is_err());
+        // conversões: linear → curva mantém as pontas; figura → concêntricos mantém a caixa
+        let lc = convert(&set.items[0], RulerKind::Curve, 2, canvas);
+        assert_eq!((lc.pts[0], lc.pts[2]), (set.items[0].pts[0], set.items[0].pts[1]));
+        let fc = convert(&set.items[1], RulerKind::Concentric, 2, canvas);
+        assert_eq!((fc.center, fc.size), (set.items[1].center, set.items[1].size));
+        // assar: um traço por polilinha (a figura vira um traço só)
+        assert_eq!(bake_strokes(&set.items[1], canvas).len(), 1);
     }
 
     #[test]

@@ -301,7 +301,9 @@ pub(crate) enum Sub {
     Fill(u8),
     Select(SelTool),
     Points(PointsMode),
-    /// Ferramenta do motor sem variações (mover, objeto 3D, mão, zoom, conta-gotas, texto, régua).
+    /// Tipo de régua que a ferramenta Régua cria (linear, curva, figura, caneta de régua, especiais, guia, perspectiva...).
+    Ruler(super::rulers::NewKind),
+    /// Ferramenta do motor sem variações (mover, objeto 3D, mão, zoom, conta-gotas, texto).
     Engine(ToolId),
 }
 
@@ -319,6 +321,7 @@ impl Sub {
             Sub::Fill(_) => ToolId::Fill,
             Sub::Select(_) => ToolId::Lasso,
             Sub::Points(_) => ToolId::Points,
+            Sub::Ruler(_) => ToolId::Ruler,
             Sub::Engine(t) => *t,
         }
     }
@@ -336,6 +339,7 @@ impl Sub {
             Sub::Fill(i) => format!("fill:{i}"),
             Sub::Select(m) => format!("select:{m:?}").to_lowercase(),
             Sub::Points(m) => format!("points:{m:?}").to_lowercase(),
+            Sub::Ruler(k) => format!("ruler:{}", k.id()),
             Sub::Engine(t) => t.key().to_owned(),
         }
     }
@@ -368,7 +372,7 @@ pub(crate) fn fixed_subs(slot: Slot, tab_key: &str) -> Vec<Sub> {
         (Slot::Eraser, "vector") => [EraseMode::Segment, EraseMode::Intersection, EraseMode::Whole].into_iter().map(Sub::EraserVector).collect(),
         (Slot::Fill, _) => (0..FILLS.len() as u8).map(Sub::Fill).collect(),
         (Slot::Figure, _) => [PenShape::Line, PenShape::Curve, PenShape::Rect, PenShape::Ellipse].into_iter().map(Sub::PenShape).collect(),
-        (Slot::Ruler, _) => vec![Sub::Engine(T::Ruler)],
+        (Slot::Ruler, _) => super::rulers::NewKind::ALL.into_iter().map(Sub::Ruler).collect(),
         (Slot::Text, _) => vec![Sub::Engine(T::Text)],
         (Slot::CorrectLine, _) => super::panels::properties::POINTS_MODES.iter().map(|m| Sub::Points(*m)).collect(),
         _ => Vec::new(),
@@ -463,6 +467,7 @@ pub(crate) fn sub_label(env: &Env, s: &Sub) -> String {
         Sub::Fill(i) => tr(FILLS[*i as usize % FILLS.len()].0).to_owned(),
         Sub::Select(m) => tr(m.label_key()).to_owned(),
         Sub::Points(m) => tr(super::panels::properties::points_mode_key(*m)).to_owned(),
+        Sub::Ruler(k) => tr(k.key()).to_owned(),
         Sub::Engine(t) => tr(t.title_key()).to_owned(),
     }
 }
@@ -489,6 +494,7 @@ pub(crate) fn is_current(env: &Env, s: &Sub) -> bool {
         }
         Sub::Select(m) => o.select_mode == *m,
         Sub::Points(m) => o.points_mode == *m,
+        Sub::Ruler(k) => env.ed.rulers.new_kind == *k,
         Sub::Engine(_) => true,
     }
 }
@@ -619,6 +625,7 @@ pub(crate) fn apply_sub(env: &mut Env, slot: Slot, s: &Sub) {
         }
         Sub::Select(m) => env.ed.opts.select_mode = *m,
         Sub::Points(m) => env.ed.opts.points_mode = *m,
+        Sub::Ruler(k) => env.ed.rulers.new_kind = *k,
         Sub::Engine(_) => {}
     }
     *env.tool = s.engine();

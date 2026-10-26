@@ -747,7 +747,7 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
         Gesture::Eyedrop => tools::do_eyedrop(env, c),
         Gesture::FillClick => {}
         Gesture::RulerDrag { .. } => super::rulers::drag_move(env, c),
-        Gesture::RulerCreate { cur, .. } => *cur = c,
+        Gesture::RulerCreate { .. } => super::rulers::create_move(env, c),
     }
 }
 

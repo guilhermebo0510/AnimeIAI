@@ -12,43 +12,88 @@ use super::ui_kit::Env;
 use crate::i18n::tr;
 use crate::workspace::ToolId;
 use aiai_core::*;
-use aiai_tools::ruler::{self as rl, Handle, Ruler, RulerKind, RulerSet};
+use aiai_tools::ruler::{self as rl, FigureShape, Handle, Ruler, RulerKind, RulerSet};
 use egui::{Color32, Pos2, Rect, Stroke, Vec2};
 
-/// Tipo da régua nova (ferramenta Régua e menu + do painel): a perspectiva aparece como 1, 2 e 3 pontos.
+/// Tipo da régua nova (ferramenta Régua, sub-ferramentas da prateleira e menu + do painel), na ordem do Clip Studio:
+/// linear, curva, figura (retângulo, elipse, polígono), caneta de régua, especiais (paralelas, radial, concêntricos),
+/// guia, perspectiva de 1, 2 e 3 pontos, simetria e grade em perspectiva.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NewKind {
+    Linear,
+    Curve,
+    FigRect,
+    FigEllipse,
+    FigPolygon,
+    /// Caneta de régua: desenha à mão e o caminho vira uma régua curva.
+    RulerPen,
+    Parallel,
+    Radial,
+    Concentric,
+    Guide,
     P1,
     P2,
     P3,
-    Parallel,
-    Radial,
     Symmetry,
     Grid,
 }
 
 impl NewKind {
-    pub(crate) const ALL: [NewKind; 7] = [NewKind::P1, NewKind::P2, NewKind::P3, NewKind::Parallel, NewKind::Radial, NewKind::Symmetry, NewKind::Grid];
+    pub(crate) const ALL: [NewKind; 15] = [
+        NewKind::Linear,
+        NewKind::Curve,
+        NewKind::FigRect,
+        NewKind::FigEllipse,
+        NewKind::FigPolygon,
+        NewKind::RulerPen,
+        NewKind::Parallel,
+        NewKind::Radial,
+        NewKind::Concentric,
+        NewKind::Guide,
+        NewKind::P1,
+        NewKind::P2,
+        NewKind::P3,
+        NewKind::Symmetry,
+        NewKind::Grid,
+    ];
+
+    /// Os tipos que uma régua pode ter (a caneta de régua é só um jeito de criar a curva).
+    pub(crate) fn types() -> impl Iterator<Item = NewKind> {
+        NewKind::ALL.into_iter().filter(|k| *k != NewKind::RulerPen)
+    }
 
     pub(crate) fn key(self) -> &'static str {
         match self {
+            NewKind::Linear => "ruler.kind.linear",
+            NewKind::Curve => "ruler.kind.curve",
+            NewKind::FigRect => "ruler.kind.fig_rect",
+            NewKind::FigEllipse => "ruler.kind.fig_ellipse",
+            NewKind::FigPolygon => "ruler.kind.fig_polygon",
+            NewKind::RulerPen => "ruler.kind.pen",
+            NewKind::Parallel => "ruler.kind.parallel",
+            NewKind::Radial => "ruler.kind.radial",
+            NewKind::Concentric => "ruler.kind.concentric",
+            NewKind::Guide => "ruler.kind.guide",
             NewKind::P1 => "ruler.kind.p1",
             NewKind::P2 => "ruler.kind.p2",
             NewKind::P3 => "ruler.kind.p3",
-            NewKind::Parallel => "ruler.kind.parallel",
-            NewKind::Radial => "ruler.kind.radial",
             NewKind::Symmetry => "ruler.kind.symmetry",
             NewKind::Grid => "ruler.kind.grid",
         }
     }
 
-    /// Nome curto estável (notas de UI da bridge).
+    /// Nome curto estável (notas de UI da bridge, chave da sub-ferramenta).
     pub(crate) fn id(self) -> &'static str {
         self.key().rsplit('.').next().unwrap_or("")
     }
 
     pub(crate) fn kind_points(self) -> (RulerKind, usize) {
         match self {
+            NewKind::Linear => (RulerKind::Linear, 2),
+            NewKind::Curve | NewKind::RulerPen => (RulerKind::Curve, 2),
+            NewKind::FigRect | NewKind::FigEllipse | NewKind::FigPolygon => (RulerKind::Figure, 2),
+            NewKind::Concentric => (RulerKind::Concentric, 2),
+            NewKind::Guide => (RulerKind::Guide, 2),
             NewKind::P1 => (RulerKind::Perspective, 1),
             NewKind::P2 => (RulerKind::Perspective, 2),
             NewKind::P3 => (RulerKind::Perspective, 3),
@@ -56,6 +101,38 @@ impl NewKind {
             NewKind::Radial => (RulerKind::Radial, 2),
             NewKind::Symmetry => (RulerKind::Symmetry, 2),
             NewKind::Grid => (RulerKind::Grid, 2),
+        }
+    }
+
+    /// Figura da régua de figura deste tipo.
+    pub(crate) fn shape(self) -> Option<FigureShape> {
+        match self {
+            NewKind::FigRect => Some(FigureShape::Rect),
+            NewKind::FigEllipse => Some(FigureShape::Ellipse),
+            NewKind::FigPolygon => Some(FigureShape::Polygon),
+            _ => None,
+        }
+    }
+
+    /// Régua nova deste tipo em volta de `at` (ou do meio do canvas).
+    pub(crate) fn make(self, canvas: (u32, u32), at: Option<rl::P>, id: &str, name: &str) -> Ruler {
+        let (k, n) = self.kind_points();
+        let mut r = Ruler::preset(k, n, canvas, at, id, name);
+        self.apply_shape(&mut r);
+        r
+    }
+
+    /// Põe a figura do tipo na régua (polígono regular: caixa quadrada e pelo menos 3 lados).
+    pub(crate) fn apply_shape(self, r: &mut Ruler) {
+        if let Some(s) = self.shape() {
+            r.shape = s;
+            if s == FigureShape::Polygon {
+                let m = r.size[0].min(r.size[1]);
+                r.size = [m, m];
+                if r.count < 3 {
+                    r.count = 5;
+                }
+            }
         }
     }
 
@@ -68,6 +145,15 @@ impl NewKind {
             (RulerKind::Radial, _) => NewKind::Radial,
             (RulerKind::Symmetry, _) => NewKind::Symmetry,
             (RulerKind::Grid, _) => NewKind::Grid,
+            (RulerKind::Linear, _) => NewKind::Linear,
+            (RulerKind::Curve, _) => NewKind::Curve,
+            (RulerKind::Figure, _) => match r.shape {
+                FigureShape::Rect => NewKind::FigRect,
+                FigureShape::Ellipse => NewKind::FigEllipse,
+                FigureShape::Polygon => NewKind::FigPolygon,
+            },
+            (RulerKind::Concentric, _) => NewKind::Concentric,
+            (RulerKind::Guide, _) => NewKind::Guide,
         }
     }
 }
@@ -85,12 +171,30 @@ pub(crate) struct RulerState {
     pub preview: Option<(NodeId, Ruler)>,
     /// Alça sob o cursor (destaque).
     pub hover: Option<Handle>,
+    /// Régua curva sendo posta por cliques (px do canvas): Enter ou duplo clique termina, Esc cancela.
+    pub pending: Vec<Vec2>,
+    /// Último clique da curva (duplo clique).
+    pub last_click: Option<(std::time::Instant, Vec2)>,
+    /// Caminho da caneta de régua em andamento (px do canvas).
+    pub pen_path: Vec<Vec2>,
 }
 
 impl Default for RulerState {
     fn default() -> Self {
-        RulerState { show: true, snap: true, new_kind: NewKind::P2, layer: None, preview: None, hover: None }
+        RulerState { show: true, snap: true, new_kind: NewKind::P2, layer: None, preview: None, hover: None, pending: Vec::new(), last_click: None, pen_path: Vec::new() }
     }
+}
+
+/// Encaixe numa régua objeto (linear, curva, figura, guia): o caminho e onde o traço está nele.
+pub(crate) struct ObjSnap {
+    pub track: rl::Track,
+    /// Parâmetro (comprimento de arco) do último ponto encaixado.
+    pub s: f32,
+    /// Último ponto da mão (px do canvas).
+    pub last: Vec2,
+    /// Folga da janela de continuidade (px do canvas): o traço só procura o ponto mais perto até aqui além do que a
+    /// mão andou, para não saltar para outra parte do caminho que passa perto.
+    pub slack: f32,
 }
 
 /// Encaixe de um traço em andamento (pontos em px do canvas, antes de irem ao espaço do cel).
@@ -106,6 +210,8 @@ pub(crate) struct Snap {
     pub forward: bool,
     /// Quanto o traço já avançou na reta desde a partida (px do canvas, no sentido do primeiro trecho).
     pub reach: f32,
+    /// Régua objeto: o traço vai para o caminho dela (no lugar da reta pela partida).
+    pub object: Option<ObjSnap>,
 }
 
 fn v(p: rl::P) -> Vec2 {
@@ -117,13 +223,30 @@ fn a(p: Vec2) -> rl::P {
 
 impl Snap {
     pub(crate) fn new(ruler: Ruler, start: Vec2, decide: f32, forward: bool) -> Snap {
-        Snap { ruler, start, dir: None, decided: false, decide, forward, reach: 0.0 }
+        Snap { ruler, start, dir: None, decided: false, decide, forward, reach: 0.0, object: None }
+    }
+
+    /// Encaixe na régua objeto `ruler` (caminho `track`, partida no parâmetro `s`).
+    pub(crate) fn object(ruler: Ruler, start: Vec2, track: rl::Track, s: f32, slack: f32) -> Snap {
+        let mut x = Snap::new(ruler, start, 0.0, false);
+        x.object = Some(ObjSnap { track, s, last: start, slack });
+        x
     }
 
     /// O ponto do traço depois do encaixe.
     pub(crate) fn filter(&mut self, p: Vec2) -> Vec2 {
-        if self.ruler.kind == RulerKind::Symmetry {
-            return p;
+        if let Some(o) = self.object.as_mut() {
+            // o ponto mais perto do caminho, perto de onde o traço já está (não pula para outra parte da curva)
+            let win = (p - o.last).length() * 2.0 + o.slack;
+            let (q, s) = o.track.nearest_near(a(p), o.s, win);
+            o.s = s;
+            o.last = p;
+            return v(q);
+        }
+        match self.ruler.kind {
+            RulerKind::Symmetry => return p,
+            RulerKind::Concentric => return v(rl::concentric_project(&self.ruler, a(self.start), a(p))),
+            _ => {}
         }
         if !self.decided {
             if (p - self.start).length() < self.decide {
@@ -279,9 +402,9 @@ pub(crate) fn active_ruler(env: &mut Env) -> Option<Ruler> {
     layer_set(&env.core.project, &layer).ok()?.active_ruler().cloned()
 }
 
-/// Régua ativa da camada das réguas, quando ela encaixa traços agora (encaixe geral e da régua ligados, régua e camada à
-/// mostra).
-pub(crate) fn snap_ruler(env: &mut Env) -> Option<Ruler> {
+/// As réguas da camada das réguas, quando encaixam traços agora (encaixe geral ligado, réguas e camada à mostra). Cada
+/// régua ainda tem o seu olho e o seu encaixe (filtrados por quem usa).
+fn snap_set(env: &mut Env) -> Option<RulerSet> {
     if !env.ed.rulers.snap || !env.ed.rulers.show {
         return None;
     }
@@ -290,17 +413,39 @@ pub(crate) fn snap_ruler(env: &mut Env) -> Option<Ruler> {
     if !l.visible {
         return None;
     }
-    let set = rl::read_layer(l).ok()?;
-    set.active_ruler().filter(|r| r.visible && r.snap).cloned()
+    rl::read_layer(l).ok()
 }
 
-/// Encaixe do traço que começa em `p` (px do canvas), para a caneta e o pincel.
+/// Régua "de campo" (perspectiva, paralelas, radial, concêntricos, grade, simetria) que encaixa em qualquer lugar: a
+/// ativa, quando é de campo; senão a primeira de campo com olho e encaixe ligados.
+fn field_ruler(set: &RulerSet) -> Option<Ruler> {
+    let ok = |r: &&Ruler| !r.kind.is_object() && r.visible && r.snap;
+    set.active_ruler().filter(ok).or_else(|| set.items.iter().find(ok)).cloned()
+}
+
+/// Régua de campo que encaixa traços agora (linha da caneta).
+pub(crate) fn snap_ruler(env: &mut Env) -> Option<Ruler> {
+    field_ruler(&snap_set(env)?)
+}
+
+/// Encaixe do traço que começa em `p` (px do canvas), para a caneta, o pincel e a borracha (como no Clip Studio). A
+/// régua objeto (linear, curva, figura, guia) a até `SNAP_PX` px da tela da partida ganha (a mais perto); senão a de
+/// campo.
 pub(crate) fn stroke_snap(env: &mut Env, tool: ToolId, p: Vec2, scale: f32) -> Option<Snap> {
-    if !matches!(tool, ToolId::Pen | ToolId::Brush) {
+    if !matches!(tool, ToolId::Pen | ToolId::Brush | ToolId::Eraser) {
         return None;
     }
-    let ruler = snap_ruler(env)?;
-    Some(Snap::new(ruler, p, 6.0 / scale.max(1e-3), tool == ToolId::Pen))
+    // borracha com um pincel do grupo borracha: só encaixa o que pede (Borracha de encaixe, limpa-tipos), como no Clip Studio
+    if tool == ToolId::Eraser && env.ed.opts.eraser_use_brush && !super::tools::stroke_preset(env, true).snap {
+        return None;
+    }
+    let set = snap_set(env)?;
+    let scale = scale.max(1e-3);
+    if let Some((i, track, s)) = rl::pick_object(&set.items, a(p), rl::SNAP_PX / scale) {
+        return Some(Snap::object(set.items[i].clone(), p, track, s, 12.0 / scale));
+    }
+    let ruler = field_ruler(&set)?;
+    Some(Snap::new(ruler, p, 6.0 / scale, tool == ToolId::Pen))
 }
 
 /// Ponta da linha da caneta (forma Linha) encaixada na régua ativa: a direção mais perto do arrasto atual.
@@ -345,8 +490,14 @@ fn active_for_tool(env: &mut Env) -> Option<(NodeId, RulerSet, (u32, u32))> {
     Some((layer, set, canvas))
 }
 
-/// Clique da ferramenta Régua: numa alça da régua ativa = arrasto da alça; no vazio = criação por arrasto.
+/// Clique da ferramenta Régua: numa alça da régua ativa = arrasto da alça; no vazio = criação por arrasto (ou um
+/// ponto da régua curva, que é posta por cliques).
 pub(crate) fn press(env: &mut Env, c: Vec2, xf: &Xf) -> Gesture {
+    let curve = env.ed.rulers.new_kind == NewKind::Curve;
+    // curva em andamento: cada clique é mais um ponto (as alças da régua ativa não atrapalham)
+    if curve && !env.ed.rulers.pending.is_empty() {
+        return curve_click(env, c, xf.scale);
+    }
     if let Some((layer, set, canvas)) = active_for_tool(env) {
         if let Some(r) = set.active_ruler().filter(|r| r.visible).cloned() {
             if let Some(h) = rl::hit_handle(&r, canvas, arm(xf), a(c), 9.0 / xf.scale.max(1e-3)) {
@@ -359,19 +510,85 @@ pub(crate) fn press(env: &mut Env, c: Vec2, xf: &Xf) -> Gesture {
             }
         }
     }
+    if curve {
+        return curve_click(env, c, xf.scale);
+    }
+    env.ed.rulers.pen_path = vec![c];
     Gesture::RulerCreate { start: c, cur: c }
 }
 
-/// Régua que o arrasto de criação de `start` até `cur` faria (px do canvas).
-pub(crate) fn creation_preview(env: &mut Env, start: Vec2, cur: Vec2) -> Option<Ruler> {
+/// Clique da régua curva: mais um ponto; o segundo clique de um duplo clique termina a curva.
+fn curve_click(env: &mut Env, c: Vec2, scale: f32) -> Gesture {
+    let st = &mut env.ed.rulers;
+    let double = st.last_click.is_some_and(|(t, q)| t.elapsed().as_millis() < 450 && (q - c).length() * scale < 6.0);
+    st.last_click = Some((std::time::Instant::now(), c));
+    if double {
+        st.last_click = None;
+        finish_curve(env);
+    } else {
+        st.pending.push(c);
+    }
+    Gesture::None
+}
+
+/// Termina a régua curva posta por cliques (Enter, duplo clique, troca de ferramenta): com 2 pontos ou mais vira régua.
+pub(crate) fn finish_curve(env: &mut Env) {
+    let pts = std::mem::take(&mut env.ed.rulers.pending);
+    if pts.is_empty() {
+        return;
+    }
+    if pts.len() < 2 {
+        env.ed.notify(tr("ruler.curve_need_two"));
+        return;
+    }
+    let Some(cut) = env.ed.active_cut(env.core) else { return };
+    let canvas = cmds::canvas_size(&env.core.project, &cut);
+    let mut r = NewKind::Curve.make(canvas, None, "new", tr(NewKind::Curve.key()));
+    r.pts = pts.into_iter().map(a).collect();
+    add_new(env, r);
+}
+
+/// Grava a régua nova `r` na camada das réguas (criando a camada se preciso) e a ativa. Régua inválida é avisada.
+fn add_new(env: &mut Env, mut r: Ruler) {
+    if let Err(e) = r.validate() {
+        env.ed.notify(e);
+        return;
+    }
+    let Some(layer) = ensure_layer(env) else { return };
+    let mut set = match layer_set(&env.core.project, &layer) {
+        Ok(s) => s,
+        Err(e) => {
+            env.ed.notify(e);
+            return;
+        }
+    };
+    r.id = set.next_id();
+    set.add(r);
+    write(env, &layer, &set, "ruler.undo.create");
+}
+
+/// Arrasto de criação: anda a ponta e, na caneta de régua, guarda o caminho da mão.
+pub(crate) fn create_move(env: &mut Env, c: Vec2) {
+    if let Gesture::RulerCreate { cur, .. } = &mut env.ed.gesture {
+        *cur = c;
+    }
+    let st = &mut env.ed.rulers;
+    if st.new_kind == NewKind::RulerPen && st.pen_path.last().is_none_or(|l| (*l - c).length() > 0.3) {
+        st.pen_path.push(c);
+    }
+}
+
+/// Régua que o arrasto de criação de `start` até `cur` faria (px do canvas; `scale` = zoom da vista).
+pub(crate) fn creation_preview(env: &mut Env, start: Vec2, cur: Vec2, scale: f32) -> Option<Ruler> {
     let cut = env.ed.active_cut(env.core)?;
     let canvas = cmds::canvas_size(&env.core.project, &cut);
     let (w, h) = (canvas.0 as f32, canvas.1 as f32);
     let kind = env.ed.rulers.new_kind;
     let (k, n) = kind.kind_points();
-    let mut r = Ruler::preset(k, n, canvas, Some(a(start)), "new", tr(kind.key()));
+    let mut r = kind.make(canvas, Some(a(start)), "new", tr(kind.key()));
     let d = cur - start;
-    let moved = d.length() > 1.0;
+    let moved = d.length() * scale.max(1e-3) > 2.0;
+    let shift = env.ed.shift;
     match k {
         RulerKind::Perspective if n >= 2 => {
             // arrastar abre os pontos de fuga (pelo menos 0,6 da largura para cada lado)
@@ -395,6 +612,48 @@ pub(crate) fn creation_preview(env: &mut Env, start: Vec2, cur: Vec2) -> Option<
             let inset = (x1 - x0) * 0.18;
             r.quad = [[x0 + inset, y0], [x1 - inset, y0], [x1, y1], [x0, y1]];
         }
+        // linear: o segmento do arrasto (Shift: a cada 15°)
+        RulerKind::Linear if moved => {
+            let mut e = cur;
+            if shift {
+                let step = std::f32::consts::PI / 12.0;
+                let ang = (d.y.atan2(d.x) / step).round() * step;
+                e = start + Vec2::new(ang.cos(), ang.sin()) * d.length();
+            }
+            r.pts = vec![a(start), a(e)];
+        }
+        // caneta de régua: o caminho da mão simplificado (tolerância de 2 px da tela)
+        RulerKind::Curve => {
+            let path: Vec<rl::P> = env.ed.rulers.pen_path.iter().map(|p| a(*p)).collect();
+            if let Some(pts) = rl::simplify(&path, 2.0 / scale.max(1e-3)) {
+                r.pts = pts;
+            }
+        }
+        // figura: retângulo e elipse na caixa do arrasto (Shift: quadrado/círculo); polígono do centro até um vértice
+        RulerKind::Figure if moved => {
+            if r.shape == FigureShape::Polygon {
+                r.center = a(start);
+                r.size = [d.length().max(0.5); 2];
+                r.angle = d.y.atan2(d.x).to_degrees() + 90.0;
+            } else {
+                let mut e = d;
+                if shift {
+                    let m = d.x.abs().max(d.y.abs());
+                    e = Vec2::new(m * d.x.signum(), m * d.y.signum());
+                }
+                r.center = a(start + e * 0.5);
+                r.size = [(e.x.abs() * 0.5).max(0.5), (e.y.abs() * 0.5).max(0.5)];
+                r.angle = 0.0;
+            }
+        }
+        // concêntricos: do centro, a elipse da caixa (arrasto quase reto = círculo)
+        RulerKind::Concentric if moved => {
+            let (ax, ay) = (d.x.abs(), d.y.abs());
+            r.size = if ax.min(ay) * scale < 6.0 { [d.length(); 2] } else { [ax, ay] };
+            r.angle = 0.0;
+        }
+        // guia: horizontal ou vertical conforme o arrasto, pelo ponto do clique
+        RulerKind::Guide => r.angle = if d.y.abs() > d.x.abs() && moved { 90.0 } else { 0.0 },
         _ => {}
     }
     Some(r)
@@ -422,25 +681,27 @@ pub(crate) fn drag_release(env: &mut Env, layer: NodeId, orig: Ruler) {
 }
 
 /// Soltou o arrasto de criação: arrasto de verdade cria; clique simples cria só quando a camada não tem régua nenhuma
-/// (com réguas, um clique perdido perto de uma alça não deve criar outra).
+/// (com réguas, um clique perdido perto de uma alça não deve criar outra). A guia nasce também de um clique (como no
+/// Clip Studio); a caneta de régua precisa de um caminho que ande.
 pub(crate) fn create_release(env: &mut Env, start: Vec2, cur: Vec2, scale: f32) {
-    let dragged = (cur - start).length() * scale >= 8.0;
+    let kind = env.ed.rulers.new_kind;
+    let pen = kind == NewKind::RulerPen;
+    let dragged = if pen {
+        env.ed.rulers.pen_path.windows(2).map(|w| (w[1] - w[0]).length()).sum::<f32>() * scale >= 8.0
+    } else {
+        (cur - start).length() * scale >= 8.0
+    };
     let empty = active_for_tool(env).is_none_or(|(_, s, _)| s.items.is_empty());
-    if !dragged && !empty {
+    let click_ok = !pen && (empty || kind == NewKind::Guide);
+    if !dragged && !click_ok {
+        env.ed.rulers.pen_path.clear();
         return;
     }
-    let Some(mut r) = creation_preview(env, start, cur) else { return };
-    let Some(layer) = ensure_layer(env) else { return };
-    let mut set = match layer_set(&env.core.project, &layer) {
-        Ok(s) => s,
-        Err(e) => {
-            env.ed.notify(e);
-            return;
-        }
-    };
-    r.id = set.next_id();
-    set.add(r);
-    write(env, &layer, &set, "ruler.undo.create");
+    let r = creation_preview(env, start, cur, scale);
+    env.ed.rulers.pen_path.clear();
+    if let Some(r) = r {
+        add_new(env, r);
+    }
 }
 
 /// Atalhos das réguas (rodam com as teclas do editor).
@@ -448,12 +709,25 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
     use crate::keymap::Action as A;
     let keys = env.ed.keys.clone();
     let tool_ruler = *env.tool == ToolId::Ruler;
-    let (snap, show, next, del) = ctx.input_mut(|i| {
+    // régua curva sendo posta por cliques: Enter termina, Esc cancela, Backspace tira o último ponto
+    let placing = tool_ruler && !env.ed.rulers.pending.is_empty();
+    let (snap, show, next, del, enter, esc, back) = ctx.input_mut(|i| {
         let mut hit = |x: A| keys.get(x).is_some_and(|c| c.take(i));
         let (s, sh, n) = (hit(A::RulerSnap), hit(A::RulersShow), hit(A::RulerNext));
-        let d = tool_ruler && (i.consume_key(egui::Modifiers::NONE, egui::Key::Delete) || i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace));
-        (s, sh, n, d)
+        let none = egui::Modifiers::NONE;
+        let (en, es, bk) = if placing { (i.consume_key(none, egui::Key::Enter), i.consume_key(none, egui::Key::Escape), i.consume_key(none, egui::Key::Backspace)) } else { (false, false, false) };
+        let d = tool_ruler && !placing && (i.consume_key(none, egui::Key::Delete) || i.consume_key(none, egui::Key::Backspace));
+        (s, sh, n, d, en, es, bk)
     });
+    if enter {
+        finish_curve(env);
+    }
+    if esc {
+        env.ed.rulers.pending.clear();
+    }
+    if back {
+        env.ed.rulers.pending.pop();
+    }
     if snap {
         env.ed.rulers.snap = !env.ed.rulers.snap;
         env.ed.notify(tr(if env.ed.rulers.snap { "ruler.snap_on" } else { "ruler.snap_off" }));
@@ -535,11 +809,15 @@ pub(crate) fn paint(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf,
     if !matches!(env.ed.gesture, Gesture::RulerDrag { .. }) {
         env.ed.rulers.preview = None;
     }
+    // curva por cliques largada (trocou de ferramenta ou de tipo): termina com o que tem
+    if !env.ed.rulers.pending.is_empty() && (*env.tool != ToolId::Ruler || env.ed.rulers.new_kind != NewKind::Curve) {
+        finish_curve(env);
+    }
     let creating = match &env.ed.gesture {
         Gesture::RulerCreate { start, cur } => Some((*start, *cur)),
         _ => None,
     };
-    if !env.ed.rulers.show && creating.is_none() {
+    if !env.ed.rulers.show && creating.is_none() && env.ed.rulers.pending.is_empty() {
         return;
     }
     // recorte = o que a área do canvas mostra, em px do canvas
@@ -572,8 +850,28 @@ pub(crate) fn paint(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf,
         }
     }
     if let Some((s, c)) = creating {
-        if let Some(r) = creation_preview(env, s, c) {
+        if let Some(r) = creation_preview(env, s, c, xf.scale) {
             paint_lines(painter, xf, &r, canvas, clip, 1.0);
+        }
+        // caneta de régua: o caminho da mão, fino, por baixo da curva que ele vira
+        if env.ed.rulers.new_kind == NewKind::RulerPen && env.ed.rulers.pen_path.len() >= 2 {
+            let sp: Vec<Pos2> = env.ed.rulers.pen_path.iter().map(|p| xf.to_screen(*p)).collect();
+            painter.add(egui::Shape::line(sp, Stroke::new(1.0, Color32::from_rgba_unmultiplied(155, 107, 255, 110))));
+        }
+    }
+    // régua curva sendo posta: a curva pelos pontos e pelo cursor, e os pontos
+    if !env.ed.rulers.pending.is_empty() {
+        let mut pts: Vec<rl::P> = env.ed.rulers.pending.iter().map(|p| a(*p)).collect();
+        if let Some(cur) = env.ed.cursor.filter(|p| rect.contains(*p)) {
+            pts.push(a(xf.to_canvas(cur)));
+        }
+        let sp: Vec<Pos2> = rl::spline(&pts, false, 24).into_iter().map(|p| xf.to_screen(v(p))).collect();
+        let col = Color32::from_rgb(155, 107, 255);
+        if sp.len() >= 2 {
+            painter.add(egui::Shape::line(sp, Stroke::new(1.8, col)));
+        }
+        for p in &env.ed.rulers.pending {
+            painter.rect(Rect::from_center_size(xf.to_screen(*p), egui::vec2(7.0, 7.0)), 1.0, Color32::WHITE, Stroke::new(1.5, col), egui::StrokeKind::Inside);
         }
     }
     // alças da régua ativa (ferramenta Régua)
@@ -611,6 +909,9 @@ pub(crate) fn paint(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf,
                     painter.circle(p, 6.5, fill, line);
                     painter.text(p + egui::vec2(9.0, -9.0), egui::Align2::LEFT_BOTTOM, format!("{}", i + 1), egui::FontId::proportional(10.5), accent);
                 }
+                Handle::Point(_) => {
+                    painter.circle(p, 5.0, fill, line);
+                }
                 Handle::Angle => {
                     let s = 5.5;
                     painter.add(egui::Shape::convex_polygon(vec![p + egui::vec2(0.0, -s), p + egui::vec2(s, 0.0), p + egui::vec2(0.0, s), p + egui::vec2(-s, 0.0)], fill, line));
@@ -625,6 +926,19 @@ pub(crate) fn paint(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf,
     // traço encaixando: a reta escolhida (fina) e as cópias da simetria
     if let Gesture::Stroke(g) = &env.ed.gesture {
         if let Some(s) = &g.snap {
+            // régua objeto: o caminho em que o traço está, mais forte; concêntricos: a elipse da partida
+            let path: Option<Vec<rl::P>> = match (&s.object, s.ruler.kind) {
+                (Some(o), _) => Some(o.track.pts.clone()),
+                (None, RulerKind::Concentric) => Some(rl::concentric_ring(&s.ruler, a(s.start))),
+                _ => None,
+            };
+            if let Some(path) = path {
+                for w in path.windows(2) {
+                    if let Some((p, q)) = rl::clip_param(w[0], [w[1][0] - w[0][0], w[1][1] - w[0][1]], 0.0, 1.0, clip) {
+                        painter.line_segment([xf.to_screen(v(p)), xf.to_screen(v(q))], Stroke::new(2.2, color_of(&s.ruler, 1.0)));
+                    }
+                }
+            }
             if let Some(d) = s.dir {
                 if let Some((p, q)) = rl::clip_param(a(s.start), a(d), -1e8, 1e8, clip) {
                     painter.add(egui::Shape::dashed_line(&[xf.to_screen(v(p)), xf.to_screen(v(q))], Stroke::new(1.0, color_of(&s.ruler, 0.9)), 6.0, 4.0));
@@ -696,11 +1010,69 @@ mod tests {
 
     #[test]
     fn new_kinds_round_trip_through_the_ruler() {
-        for k in NewKind::ALL {
-            let (kind, n) = k.kind_points();
-            let r = Ruler::preset(kind, n, (1920, 1080), None, "r1", "");
+        for k in NewKind::types() {
+            let r = k.make((1920, 1080), None, "r1", "");
             assert_eq!(NewKind::of(&r), k);
             r.validate().unwrap();
+            assert!(!crate::i18n::tr(k.key()).starts_with("ruler."), "{k:?} sem texto");
         }
+        assert_eq!(NewKind::of(&NewKind::RulerPen.make((1920, 1080), None, "r1", "")), NewKind::Curve);
+        let ids: std::collections::HashSet<_> = NewKind::ALL.iter().map(|k| k.id()).collect();
+        assert_eq!(ids.len(), NewKind::ALL.len());
+    }
+
+    /// Régua objeto: os pontos do traço vão para o caminho (linear: o segmento, parando nas pontas); concêntricos: a
+    /// elipse da partida.
+    #[test]
+    fn object_and_concentric_snaps_put_every_point_on_the_ruler() {
+        let mut lin = NewKind::Linear.make((1920, 1080), None, "r1", "");
+        lin.pts = vec![[100.0, 100.0], [600.0, 100.0]];
+        let (_, track, s0) = rl::pick_object(std::slice::from_ref(&lin), [150.0, 130.0], rl::SNAP_PX).unwrap();
+        let mut snap = Snap::object(lin, Vec2::new(150.0, 130.0), track, s0, 12.0);
+        for (i, q) in [Vec2::new(150.0, 130.0), Vec2::new(300.0, 140.0), Vec2::new(500.0, 70.0), Vec2::new(900.0, 120.0)].into_iter().enumerate() {
+            let p = snap.filter(q);
+            assert!((p.y - 100.0).abs() < 1e-3, "{i}: {p:?}");
+            assert!(p.x <= 600.0 + 1e-3, "passou da ponta: {p:?}");
+        }
+        let mut c = NewKind::Concentric.make((1920, 1080), Some([500.0, 500.0]), "r2", "");
+        c.size = [100.0, 100.0];
+        let mut cs = Snap::new(c, Vec2::new(560.0, 500.0), 6.0, true);
+        for q in [Vec2::new(500.0, 300.0), Vec2::new(380.0, 520.0)] {
+            assert!(((cs.filter(q) - Vec2::new(500.0, 500.0)).length() - 60.0).abs() < 1e-3);
+        }
+    }
+
+    /// No app: com uma régua linear e uma perspectiva, o traço do pincel que começa perto da linear vai para ela; longe
+    /// dela segue a perspectiva; a borracha também encaixa.
+    #[test]
+    fn strokes_pick_the_nearby_object_ruler_before_the_field_ruler() {
+        use super::super::commands::{add_layer, quick_start};
+        let mut core = CoreSession::for_tests("rulers");
+        core.project.settings.width = 1920;
+        core.project.settings.height = 1080;
+        let cut = quick_start(&mut core, 12, None).unwrap();
+        let guide = add_layer(&mut core, &cut, LayerType::Guide, None).unwrap();
+        let mut set = RulerSet::default();
+        set.add(two_point());
+        let mut lin = NewKind::Linear.make((1920, 1080), None, "", "");
+        lin.pts = vec![[200.0, 900.0], [900.0, 900.0]];
+        set.add(lin);
+        cmds::run(&mut core, rl::set_command(&guide, &set, "r")).unwrap();
+        let mut ed = Editor::default();
+        ed.cut = Some(cut.clone());
+        ed.rulers.layer = Some(guide.clone());
+        let (mut icons, mut notes, mut tool) = (Default::default(), Vec::new(), ToolId::Brush);
+        let mut env = Env { t: crate::theme::Tokens::dark(), core: &mut core, ed: &mut ed, icons: &mut icons, notes: &mut notes, tool: &mut tool, ws: crate::workspace::WorkspaceId::Layout };
+        // a 30 px da tela (zoom 1): linear
+        let near = stroke_snap(&mut env, ToolId::Brush, Vec2::new(400.0, 930.0), 1.0).unwrap();
+        assert_eq!(near.ruler.kind, RulerKind::Linear);
+        // com zoom 2 os mesmos 30 px do canvas são 60 da tela: perspectiva
+        let zoomed = stroke_snap(&mut env, ToolId::Brush, Vec2::new(400.0, 930.0), 2.0).unwrap();
+        assert_eq!(zoomed.ruler.kind, RulerKind::Perspective);
+        assert_eq!(stroke_snap(&mut env, ToolId::Eraser, Vec2::new(400.0, 905.0), 1.0).map(|s| s.ruler.kind), Some(RulerKind::Linear));
+        assert!(stroke_snap(&mut env, ToolId::Fill, Vec2::new(400.0, 905.0), 1.0).is_none());
+        // encaixe geral desligado: nada
+        env.ed.rulers.snap = false;
+        assert!(stroke_snap(&mut env, ToolId::Pen, Vec2::new(400.0, 905.0), 1.0).is_none());
     }
 }

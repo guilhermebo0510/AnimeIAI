@@ -26,7 +26,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
             env.note("rulers:show", r.rect);
             env.ed.rulers.show = show;
             let mut snap = env.ed.rulers.snap;
-            let r = ui.checkbox(&mut snap, tr("ruler.snap")).on_hover_text(format!("{} ({})", tr("ruler.snap_tip"), env.ed.keys.label(Action::RulerSnap)));
+            let r = ui.checkbox(&mut snap, tr("ruler.snap")).on_hover_text(format!("{} ({})", tr("ruler.snap_tip_s25"), env.ed.keys.label(Action::RulerSnap)));
             env.note("rulers:snap", r.rect);
             env.ed.rulers.snap = snap;
         });
@@ -62,7 +62,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
         ui.horizontal_wrapped(|ui| {
             let mut new = None;
             let r = ui.menu_button(RichText::new(format!("+ {}", tr("ruler.new"))), |ui| {
-                for k in NewKind::ALL {
+                for k in NewKind::types() {
                     let b = ui.button(tr(k.key()));
                     env.note(format!("rulers:new.{}", k.id()), b.rect);
                     if b.clicked() {
@@ -196,7 +196,7 @@ fn properties(env: &mut Env, ui: &mut Ui, r: &Ruler) {
         let cur = NewKind::of(r);
         let mut pick = None;
         let resp = egui::ComboBox::from_id_salt(("ruler_type", r.id.clone())).selected_text(tr(cur.key())).show_ui(ui, |ui| {
-            for k in NewKind::ALL {
+            for k in NewKind::types() {
                 if ui.selectable_label(k == cur, tr(k.key())).clicked() {
                     pick = Some(k);
                 }
@@ -304,6 +304,102 @@ fn properties(env: &mut Env, ui: &mut Ui, r: &Ruler) {
                     }
                 }
             }
+            RulerKind::Linear => {
+                for (i, key) in ["ruler.point_a", "ruler.point_b"].iter().enumerate() {
+                    ui.label(tr(key));
+                    ui.horizontal(|ui| {
+                        let p = r.pts.get(i).copied().unwrap_or_default();
+                        if let Some(x) = num(ui, base.with(("px", i)), p[0], 1.0, -1e6..=1e6, "") {
+                            edit = Some(Box::new(move |r, _| r.pts[i][0] = x));
+                        }
+                        if let Some(y) = num(ui, base.with(("py", i)), p[1], 1.0, -1e6..=1e6, "") {
+                            edit = Some(Box::new(move |r, _| r.pts[i][1] = y));
+                        }
+                    });
+                    ui.end_row();
+                }
+                if r.pts.len() == 2 {
+                    ui.label(tr("ruler.length"));
+                    let d = [r.pts[1][0] - r.pts[0][0], r.pts[1][1] - r.pts[0][1]];
+                    ui.label(format!("{:.1} px  ·  {:.1}°", d[0].hypot(d[1]), d[1].atan2(d[0]).to_degrees()));
+                    ui.end_row();
+                }
+            }
+            RulerKind::Curve => {
+                ui.label(tr("ruler.points"));
+                ui.label(format!("{}", r.pts.len()));
+                ui.end_row();
+                ui.label(tr("ruler.closed"));
+                let mut c = r.closed;
+                let resp = ui.add_enabled(r.pts.len() >= 3, egui::Checkbox::new(&mut c, "")).on_hover_text(tr("ruler.closed_tip"));
+                env.note("rulers:closed", resp.rect);
+                if resp.changed() {
+                    edit = Some(Box::new(move |r, _| r.closed = c));
+                }
+                ui.end_row();
+            }
+            RulerKind::Figure | RulerKind::Concentric => {
+                ui.label(tr("ruler.center"));
+                ui.horizontal(|ui| {
+                    if let Some(x) = num(ui, base.with("cx"), r.center[0], 1.0, -1e6..=1e6, "") {
+                        edit = Some(Box::new(move |r, _| r.center[0] = x));
+                    }
+                    if let Some(y) = num(ui, base.with("cy"), r.center[1], 1.0, -1e6..=1e6, "") {
+                        edit = Some(Box::new(move |r, _| r.center[1] = y));
+                    }
+                });
+                ui.end_row();
+                // largura × altura (a régua guarda os semi-eixos)
+                ui.label(tr("ruler.size"));
+                ui.horizontal(|ui| {
+                    if let Some(w) = num(ui, base.with("sw"), r.size[0] * 2.0, 1.0, 1.0..=1e6, "") {
+                        edit = Some(Box::new(move |r, _| r.size[0] = w / 2.0));
+                    }
+                    if let Some(h) = num(ui, base.with("sh"), r.size[1] * 2.0, 1.0, 1.0..=1e6, "") {
+                        edit = Some(Box::new(move |r, _| r.size[1] = h / 2.0));
+                    }
+                });
+                ui.end_row();
+                ui.label(tr("ruler.angle"));
+                if let Some(a) = num(ui, base.with("ang"), r.angle, 0.5, -360.0..=360.0, "°") {
+                    edit = Some(Box::new(move |r, _| r.angle = a));
+                }
+                ui.end_row();
+                if r.kind == RulerKind::Figure && r.shape == rl::FigureShape::Polygon {
+                    ui.label(tr("ruler.sides"));
+                    if let Some(n) = num_u(ui, base.with("sides"), r.count, 3..=64) {
+                        edit = Some(Box::new(move |r, _| r.count = n));
+                    }
+                    ui.end_row();
+                }
+                if r.kind == RulerKind::Concentric {
+                    ui.label(tr("ruler.spacing")).on_hover_text(tr("ruler.ring_spacing_tip"));
+                    if let Some(sp) = num(ui, base.with("sp"), r.spacing, 0.5, 1.0..=10000.0, " px") {
+                        edit = Some(Box::new(move |r, _| r.spacing = sp));
+                    }
+                    ui.end_row();
+                }
+            }
+            RulerKind::Guide => {
+                let vertical = (r.angle.rem_euclid(180.0) - 90.0).abs() < 45.0;
+                ui.label(tr("ruler.orientation"));
+                ui.horizontal(|ui| {
+                    for (vert, key) in [(false, "ruler.horizontal"), (true, "ruler.vertical")] {
+                        let b = ui.selectable_label(vertical == vert, tr(key));
+                        env.note(format!("rulers:guide.{}", if vert { "v" } else { "h" }), b.rect);
+                        if b.clicked() && vertical != vert {
+                            edit = Some(Box::new(move |r, _| r.angle = if vert { 90.0 } else { 0.0 }));
+                        }
+                    }
+                });
+                ui.end_row();
+                ui.label(tr("ruler.position"));
+                let i = if vertical { 0 } else { 1 };
+                if let Some(x) = num(ui, base.with("gpos"), r.center[i], 1.0, -1e6..=1e6, " px") {
+                    edit = Some(Box::new(move |r, _| r.center[i] = x));
+                }
+                ui.end_row();
+            }
             RulerKind::Grid => {
                 for (i, key) in ["ruler.corner_tl", "ruler.corner_tr", "ruler.corner_br", "ruler.corner_bl"].iter().enumerate() {
                     ui.label(tr(key));
@@ -355,7 +451,7 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
     let cur = active.as_ref().map(NewKind::of).unwrap_or(env.ed.rulers.new_kind);
     let mut pick = None;
     let r = egui::ComboBox::from_id_salt(("ruler_new_kind", compact)).selected_text(tr(cur.key())).show_ui(ui, |ui| {
-        for k in NewKind::ALL {
+        for k in NewKind::types() {
             if ui.selectable_label(k == cur, tr(k.key())).clicked() {
                 pick = Some(k);
             }
@@ -369,9 +465,24 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut Ui, compact: bool) {
         env.ed.rulers.new_kind = k;
     }
     let mut snap = env.ed.rulers.snap;
-    let r = ui.checkbox(&mut snap, tr("ruler.snap")).on_hover_text(format!("{} ({})", tr("ruler.snap_tip"), env.ed.keys.label(Action::RulerSnap)));
+    let r = ui.checkbox(&mut snap, tr("ruler.snap")).on_hover_text(format!("{} ({})", tr("ruler.snap_tip_s25"), env.ed.keys.label(Action::RulerSnap)));
     env.note("opt:ruler_snap", r.rect);
     env.ed.rulers.snap = snap;
+    // como criar o tipo escolhido (curva por cliques, caneta de régua à mão, figura, guia)
+    let how = match env.ed.rulers.new_kind {
+        NewKind::Curve => Some("ruler.curve_hint"),
+        NewKind::RulerPen => Some("ruler.pen_hint"),
+        NewKind::FigRect | NewKind::FigEllipse | NewKind::FigPolygon => Some("ruler.figure_hint"),
+        NewKind::Guide => Some("ruler.guide_hint"),
+        _ => None,
+    };
+    if let Some(k) = how {
+        if compact {
+            r.on_hover_text(tr(k));
+        } else {
+            dim_label(ui, &t, tr(k));
+        }
+    }
     if !compact {
         dim_label(ui, &t, tr("ruler.tool_hint"));
     }

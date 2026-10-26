@@ -82,6 +82,7 @@ fn thumb_of(env: &Env, s: &Sub) -> Thumb {
         Sub::Fill(i) => Thumb::Fill(*i),
         Sub::Select(m) => Thumb::Select(*m),
         Sub::Points(m) => Thumb::Points(*m),
+        Sub::Ruler(_) => Thumb::Icon(ToolId::Ruler),
         Sub::Engine(t) => Thumb::Icon(*t),
     }
 }
