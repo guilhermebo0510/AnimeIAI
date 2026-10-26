@@ -8,6 +8,7 @@ Uso:
     python tools/csp/csp_tooldb.py tree [--db CAMINHO]                     árvore de ferramentas (nome, variante)
     python tools/csp/csp_tooldb.py dump "G-pen" [--db CAMINHO] [--all]     parâmetros da sub-ferramenta (JSON)
     python tools/csp/csp_tooldb.py pens [--db CAMINHO] [--out ARQ]         as canetas/marcadores da calibração S25 (JSON)
+    python tools/csp/csp_tooldb.py set lapis|aerografo|borracha [--out ARQ] os outros grupos levantados
 
 Formato dos blobs `*Effector` (dinâmica de um parâmetro), deduzido comparando as sub-ferramentas de fábrica (big-endian):
     cabeçalho de 44 ou 48 bytes, int32:
@@ -48,6 +49,17 @@ PENS = {
     "Marcador plano": "flat-marker",
 }
 
+# outros grupos levantados no S25 (nome no banco -> chave dos arquivos de referência)
+SETS = {
+    "canetas": PENS,
+    "lapis": {"Lápis": "pencil", "Lapiseira": "mechanical-pencil", "Carvão": "charcoal", "Giz de cera": "crayon", "Pastel": "pastel", "Giz": "chalk"},
+    "aerografo": {"Suave": "soft", "Spray": "spray", "Gotícula": "droplet", "Ruído": "noise", "Spray colorido pingando": "running-color-spray"},
+    "borracha": {"Duro": "hard", "Suave": "soft-eraser", "Limpa-tipos": "kneaded", "Rugoso": "rough-eraser", "Vetor": "vector-eraser",
+                 "Múltiplas camadas": "multiple-layers", "Ajustar borracha": "snap-eraser", "Borracha dinâmica": "borracha-dinamica"},
+}
+# "Suave" existe no aerógrafo e na borracha: o grupo diz qual (o pai na árvore)
+SET_PARENT = {"aerografo": "Aerógrafo", "borracha": "Borracha"}
+
 CONTROLS = [(0x10, "pressure", 3), (0x20, "tilt", 4), (0x40, "velocity", 5), (0x80, "random", 6)]
 INOUT_TARGETS = {1001: "size", 1021: "opacity", 1041: "flow", 1051: "thickness"}
 
@@ -56,7 +68,16 @@ def connect(db):
     if not os.path.exists(db):
         raise SystemExit(f"banco não encontrado: {db}")
     uri = "file:" + db.replace("\\", "/") + "?mode=ro"
-    return sqlite3.connect(uri, uri=True)
+    c = sqlite3.connect(uri, uri=True)
+    c.text_factory = _text  # há nomes gravados em UTF-8 e outros em cp1252
+    return c
+
+
+def _text(b):
+    try:
+        return b.decode("utf-8")
+    except UnicodeDecodeError:
+        return b.decode("cp1252", errors="replace")
 
 
 def decode_effector(b):
@@ -160,22 +181,34 @@ def variant(c, vid, all_cols=False):
     return out
 
 
-def find(c, name):
-    for r in nodes(c).values():
+def find(c, name, parent=None):
+    by = nodes(c)
+    if parent:
+        # filhos do grupo `parent` (tool > grupo > sub-ferramentas)
+        for g in by.values():
+            if g["NodeName"] == parent and g["NodeFirstChildUuid"]:
+                u = g["NodeFirstChildUuid"]
+                seen = set()
+                while u and u in by and u not in seen:
+                    seen.add(u)
+                    if by[u]["NodeName"] == name and by[u]["NodeVariantID"]:
+                        return by[u]
+                    u = by[u]["NodeNextUuid"]
+    for r in by.values():
         if r["NodeName"] == name:
             return r
     raise SystemExit(f"sub-ferramenta não encontrada: {name!r}")
 
 
-def dump(c, name, all_cols=False):
-    n = find(c, name)
+def dump(c, name, all_cols=False, parent=None):
+    n = find(c, name, parent)
     return {"name": n["NodeName"], "variant": n["NodeVariantID"], "init_variant": n["NodeInitVariantID"],
             "params": variant(c, n["NodeVariantID"], all_cols), "factory_params": variant(c, n["NodeInitVariantID"], all_cols)}
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("cmd", choices=["tree", "dump", "pens"])
+    ap.add_argument("cmd", choices=["tree", "dump", "pens", "set"])
     ap.add_argument("name", nargs="?")
     ap.add_argument("--db", default=DEFAULT_DB)
     ap.add_argument("--all", action="store_true", help="inclui as colunas desligadas e os blobs crus")
@@ -189,9 +222,12 @@ def main():
             raise SystemExit("dump precisa do nome da sub-ferramenta")
         res = dump(c, a.name, a.all)
     else:
+        which = "canetas" if a.cmd == "pens" else (a.name or "")
+        if which not in SETS:
+            raise SystemExit(f"conjunto desconhecido {which!r}; há: {', '.join(SETS)}")
         res = {}
-        for name, key in PENS.items():
-            d = dump(c, name, a.all)
+        for name, key in SETS[which].items():
+            d = dump(c, name, a.all, SET_PARENT.get(which))
             d["key"] = key
             res[key] = d
     text = json.dumps(res, ensure_ascii=False, indent=1)

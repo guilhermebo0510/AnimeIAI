@@ -49,6 +49,9 @@ pub enum TipShape {
     Square,
     /// Rosa em botão: disco com espiral de pétalas (vãos deixam ver o fundo escuro).
     Rose,
+    /// Lateral de bastão (carvão): cheio de um lado e esmaecendo para o outro; com `follow_direction`, o lado cheio
+    /// fica à esquerda do sentido do traço.
+    Stick,
 }
 
 /// Cobertura 0..1 de uma forma em coordenadas locais normalizadas (u, v ∈ [-1, 1]; v = -1 é a "ponta" superior).
@@ -114,6 +117,12 @@ fn shape_alpha_tone(shape: TipShape, u: f32, v: f32, aa: f32, two_tone: bool) ->
             edge(r - rad)
         }
         TipShape::Square => edge(u.abs().max(v.abs()) - 0.9),
+        TipShape::Stick => {
+            let r = (u * u + v * v).sqrt();
+            // v = -1 é o lado cheio; esmaece até sumir no lado oposto
+            let fade = (1.0 - smoothstep(-0.35, 1.0, v)).powf(0.8);
+            edge(r - 0.95) * fade
+        }
         TipShape::Rose if two_tone => {
             let (r, _) = rose_phase(u, v);
             if r > 1.0 { return 0.0 }
@@ -165,7 +174,7 @@ fn shape_tone(shape: TipShape, u: f32, v: f32, aa: f32) -> f32 {
         TipShape::Leaf | TipShape::Petal => smoothstep(-0.04, 0.08, u) * 0.85,
         // base da lâmina escura, ponta clara
         TipShape::GrassBlade => smoothstep(-0.3, 0.95, v),
-        TipShape::Star | TipShape::Square => 0.0,
+        TipShape::Star | TipShape::Square | TipShape::Stick => 0.0,
     }
 }
 
@@ -400,6 +409,34 @@ pub struct BrushPreset {
     /// camadas (canetas: a borda tem o perfil da ponta e não engrossa nem endurece com a sobreposição dos carimbos).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub max_ink: bool,
+    /// Grão de papel em cada carimbo (lápis, carvão, giz, pastel, ruído).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grain: Option<crate::brush_dyn::Grain>,
+    /// Spray: o carimbo vira partículas espalhadas (aerógrafo).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spray: Option<crate::brush_dyn::Spray>,
+    /// Borracha numa camada vetorial: o que sai do traço tocado (trecho, até as interseções, traço inteiro); `None` =
+    /// o modo escolhido na ferramenta.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vector_erase: Option<VectorErase>,
+    /// Borracha que apaga em todas as camadas do quadro (visíveis e destravadas), não só na ativa.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub all_layers: bool,
+    /// Encaixa na régua ativa (a borracha só encaixa quando o pincel pede; caneta e pincel sempre encaixam).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub snap: bool,
+}
+
+/// O que a borracha tira de um traço vetorial que ela toca.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum VectorErase {
+    /// Só o trecho coberto.
+    Segment,
+    /// Até as interseções com outros traços.
+    Intersection,
+    /// O traço inteiro.
+    Whole,
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -506,6 +543,11 @@ impl BrushPreset {
             stabilization: None,
             edge: None,
             max_ink: false,
+            grain: None,
+            spray: None,
+            vector_erase: None,
+            all_layers: false,
+            snap: false,
         }
     }
 
@@ -563,6 +605,12 @@ impl BrushPreset {
         }
         if let Some(e) = &self.edge {
             e.validate()?;
+        }
+        if let Some(g) = &self.grain {
+            g.validate()?;
+        }
+        if let Some(sp) = &self.spray {
+            sp.validate()?;
         }
         Ok(())
     }
@@ -703,6 +751,205 @@ impl BrushPreset {
             .into();
         }
         v.extend(Self::pens());
+        v.extend(Self::pencils());
+        v.extend(Self::airbrushes());
+        v.extend(Self::erasers());
+        v
+    }
+
+    /// Lápis de fábrica (S25, calibrados nas sub-ferramentas Lápis, Lapiseira, Carvão, Giz de cera, Pastel e Giz do
+    /// Clip Studio 5.1.5 em 3/10/30 px): grão de papel nosso (procedural), ponta macia ou de bastão, dinâmicas de
+    /// pressão do banco de ferramentas dele.
+    pub fn pencils() -> Vec<BrushPreset> {
+        use crate::brush_dyn::{DynInput, Dynamics, EdgeNoise, Grain, GrainKind, Stabilization};
+        let curve = |min: f32, pts: &[[f32; 2]]| DynInput { min, curve: pts.to_vec() };
+        let grain = |kind: GrainKind, scale: f32, depth: f32, contrast: f32, subtract: bool| Some(Grain { kind, scale, depth, contrast, brightness: 0.0, subtract, moving: false, seed: 0 });
+        let lap = |name: &str, size: f32, hardness: f32| {
+            let mut p = BrushPreset::round(name, size, hardness);
+            p.group = "lapis".into();
+            p.category = "lapis".into();
+            p.antialias = Some(1);
+            p.spacing = 0.1;
+            p.size_pressure_min = 1.0;
+            p
+        };
+        let mut v = Vec::new();
+        // lápis: ponta macia granulada, cinza que escurece com a pressão, borda irregular
+        let mut l = lap("Lápis", 10.0, 0.3);
+        l.opacity = 0.9;
+        l.flow = 0.45;
+        l.size_dyn = Some(Dynamics::pressure(0.1));
+        l.flow_dyn = Some(Dynamics { pressure: Some(curve(0.5, &[[0.0, 0.0], [0.5214, 0.0571], [0.7857, 0.4357], [0.8714, 0.7857], [1.0, 1.0]])), random: Some(0.6), ..Default::default() });
+        l.grain = grain(GrainKind::Paper, 2.0, 0.9, 2.0, false);
+        l.edge = Some(EdgeNoise { amount: 0.35, grain: 3.0, seed: 0 });
+        l.stabilization = Some(Stabilization { level: 5, by_speed: true });
+        v.push(l);
+        // lapiseira: grafite fino, cinza uniforme (a tinta não soma ao repassar), grão largo e suave
+        let mut m = lap("Lapiseira", 5.0, 0.8);
+        m.spacing = 0.08;
+        m.flow = 0.85;
+        m.max_ink = true;
+        m.size_dyn = Some(Dynamics { pressure: Some(curve(0.0, &[[0.0, 0.0], [0.2273, 0.0], [0.6818, 1.0], [1.0, 1.0]])), ..Default::default() });
+        m.flow_dyn = Some(Dynamics { pressure: Some(curve(0.6, &[[0.0, 0.0], [0.8455, 0.1182], [1.0, 1.0]])), ..Default::default() });
+        m.grain = grain(GrainKind::Paper, 3.0, 0.5, 1.5, false);
+        m.edge = Some(EdgeNoise { amount: 0.2, grain: 2.0, seed: 0 });
+        m.stabilization = Some(Stabilization { level: 5, by_speed: true });
+        v.push(m);
+        // carvão: lateral do bastão, cheio do lado esquerdo do traço e esmaecendo no grão do papel
+        let mut c = lap("Carvão", 20.0, 1.0);
+        c.tip = BrushTip::Shape { shape: TipShape::Stick, aspect: 1.0 };
+        c.spacing = 0.08;
+        c.follow_direction = true;
+        c.size_dyn = Some(Dynamics { pressure: Some(curve(0.5, &[[0.0, 0.0], [0.2588, 0.0], [0.75, 1.0], [1.0, 1.0]])), ..Default::default() });
+        c.flow_dyn = Some(Dynamics { pressure: Some(curve(0.3, &[[0.0, 0.0], [0.6, 0.0], [0.693, 1.0], [0.8909, 1.0], [1.0, 1.0]])), ..Default::default() });
+        c.grain = grain(GrainKind::Paper, 2.0, 0.85, 1.5, true);
+        v.push(c);
+        // giz de cera: cera em manchas grandes que falham nos vales, borda bem irregular
+        let mut g = lap("Giz de cera", 30.0, 1.0);
+        g.tip = BrushTip::Round { hardness: 1.0, roundness: 0.8, angle: 0.0 };
+        g.angle_jitter = 144.0;
+        g.spacing = 0.12;
+        g.flow = 0.8;
+        g.size_dyn = Some(Dynamics::pressure(0.3));
+        g.flow_dyn = Some(Dynamics { pressure: Some(curve(0.0, &[[0.0, 0.0], [0.2545, 0.0818], [0.5273, 0.5545], [0.9909, 0.7182], [1.0, 1.0]])), ..Default::default() });
+        g.grain = grain(GrainKind::Coarse, 5.0, 1.0, 3.0, true);
+        g.edge = Some(EdgeNoise { amount: 0.45, grain: 4.0, seed: 0 });
+        v.push(g);
+        // pastel seco: pó claro em pontinhos, borda dura sem antisserrilhado
+        let mut ps = lap("Pastel", 40.0, 0.9);
+        ps.tip = BrushTip::Round { hardness: 0.9, roundness: 0.8, angle: 0.0 };
+        ps.antialias = Some(0);
+        ps.flow = 0.3;
+        ps.max_ink = true;
+        ps.size_dyn = Some(Dynamics::pressure(0.4));
+        ps.flow_dyn = Some(Dynamics::pressure(0.15));
+        ps.grain = Some(Grain { kind: GrainKind::Speckle, scale: 0.6, depth: 1.0, contrast: 3.0, brightness: -0.1, subtract: true, moving: false, seed: 0 });
+        v.push(ps);
+        // giz: ponta larga deitada (traço horizontal largo), grão fino do papel
+        let mut z = lap("Giz", 30.0, 1.0);
+        z.tip = BrushTip::Round { hardness: 1.0, roundness: 0.75, angle: 90.0 };
+        z.flow = 0.6;
+        z.size_dyn = Some(Dynamics { pressure: Some(curve(0.5, &[[0.0, 0.0], [0.1364, 0.6909], [0.75, 1.0], [1.0, 1.0]])), ..Default::default() });
+        z.flow_dyn = Some(Dynamics { pressure: Some(curve(0.5, &[[0.0, 0.0], [0.6, 0.0], [0.693, 1.0], [0.8772, 1.0], [1.0, 1.0]])), ..Default::default() });
+        z.thickness_dyn = Some(Dynamics::pressure(0.7));
+        z.grain = grain(GrainKind::Paper, 1.5, 0.9, 1.8, false);
+        z.edge = Some(EdgeNoise { amount: 0.2, grain: 3.0, seed: 0 });
+        v.push(z);
+        v
+    }
+
+    /// Aerógrafos de fábrica (S25, calibrados em Suave, Spray, Gotícula, Ruído e Spray colorido pingando do Clip
+    /// Studio em 10/30/60 px): ponta macia com cauda, partículas e grão que anda, desenhados pelo nosso motor.
+    pub fn airbrushes() -> Vec<BrushPreset> {
+        use crate::brush_dyn::{DynInput, Dynamics, EdgeNoise, Grain, GrainKind, Spray};
+        let air = |name: &str, size: f32, hardness: f32| {
+            let mut p = BrushPreset::round(name, size, hardness);
+            p.group = "aerografo".into();
+            p.category = "pintura".into();
+            p.antialias = Some(2);
+            p.spacing = 0.1;
+            p.size_pressure_min = 1.0;
+            p
+        };
+        let speckle = |scale: f32, contrast: f32| Some(Grain { kind: GrainKind::Speckle, scale, depth: if scale > 1.1 { 0.9 } else { 1.0 }, contrast, brightness: 0.0, subtract: true, moving: true, seed: 0 });
+        let mut v = Vec::new();
+        // suave: nuvem gaussiana; repassar não escurece além do fluxo
+        let mut s = air("Aerógrafo suave", 150.0, 0.0);
+        s.antialias = Some(3);
+        s.flow = 0.62;
+        s.max_ink = true;
+        s.flow_dyn = Some(Dynamics::pressure(0.0));
+        v.push(s);
+        // spray: pontinhos soltos, mesma densidade em qualquer tamanho
+        let mut sp = air("Spray", 200.0, 1.0);
+        sp.flow = 0.9;
+        sp.spray = Some(Spray { count: 12.0, size: 1.5, sync: false, size_min: 1.0, roundness_min: 1.0, bias: 0.0, count_exp: 2.0 });
+        v.push(sp);
+        // gotículas: respingos pretos de tamanhos variados, achatados e de borda irregular
+        let mut d = air("Gotículas", 250.0, 1.0);
+        d.spray = Some(Spray { count: 3.0, size: 9.0, sync: false, size_min: 0.05, roundness_min: 0.3, bias: 0.0, count_exp: 1.0 });
+        d.size_dyn = Some(Dynamics { random: Some(0.3), ..Default::default() });
+        d.edge = Some(EdgeNoise { amount: 0.45, grain: 2.0, seed: 0 });
+        v.push(d);
+        // ruído: nuvem granulada em gomos (o grão anda a cada carimbo e a tinta varia ao longo do traço)
+        let mut n = air("Ruído", 250.0, 0.2);
+        n.antialias = Some(0);
+        n.flow = 0.3;
+        n.size_dyn = Some(Dynamics::pressure(0.75));
+        n.flow_dyn = Some(Dynamics { pressure: Some(DynInput::linear(0.0)), random: Some(0.4), random_len: 12.0, ..Default::default() });
+        n.grain = speckle(1.2, 3.0);
+        v.push(n);
+        // spray colorido: bolinhas granuladas que acompanham o tamanho
+        let mut rc = air("Spray colorido", 200.0, 0.5);
+        rc.flow = 0.9;
+        rc.flow_dyn = Some(Dynamics::pressure(0.0));
+        rc.spray = Some(Spray { count: 4.0, size: 0.25, sync: true, size_min: 0.4, roundness_min: 1.0, bias: 0.0, count_exp: 0.0 });
+        rc.grain = speckle(1.0, 2.5);
+        v.push(rc);
+        v
+    }
+
+    /// Borrachas de fábrica (S25, calibradas nas borrachas do Clip Studio apagando uma camada preta em 10/30/60 px).
+    /// Na camada vetorial, cada uma tira o que o nome diz (`vector_erase`); a de várias camadas apaga em todas as
+    /// camadas do quadro e a de encaixe segue a régua. A ferramenta Borracha de sempre (`eraser`) continua igual.
+    pub fn erasers() -> Vec<BrushPreset> {
+        use crate::brush_dyn::{DynInput, Dynamics, Grain, GrainKind, Stabilization};
+        let curve = |min: f32, pts: &[[f32; 2]]| DynInput { min, curve: pts.to_vec() };
+        let er = |name: &str, size: f32, hardness: f32| {
+            let mut p = BrushPreset::round(name, size, hardness);
+            p.group = "borracha".into();
+            p.category = "borracha".into();
+            p.mode = BrushMode::Erase;
+            p.antialias = Some(2);
+            p.spacing = 0.08;
+            p.size_pressure_min = 1.0;
+            p.max_ink = true;
+            p
+        };
+        let stab = Some(Stabilization { level: 2, by_speed: true });
+        let mut v = Vec::new();
+        let mut h = er("Borracha dura", 30.0, 1.0);
+        h.size_dyn = Some(Dynamics::pressure(0.0));
+        h.vector_erase = Some(VectorErase::Segment);
+        h.stabilization = stab;
+        v.push(h);
+        let mut s = er("Borracha macia", 50.0, 0.0);
+        s.flow_dyn = Some(Dynamics::pressure(0.0));
+        s.stabilization = stab;
+        v.push(s);
+        // limpa-tipos: tira só parte (clareia) e com o grão do papel
+        let mut k = er("Borracha limpa-tipos", 50.0, 1.0);
+        k.antialias = Some(1);
+        k.max_ink = false;
+        k.opacity = 0.9;
+        k.flow = 0.75;
+        k.size_dyn = Some(Dynamics { pressure: Some(curve(0.0, &[[0.0, 0.0], [0.4868, 0.8202], [0.8455, 1.0], [1.0, 1.0]])), ..Default::default() });
+        k.flow_dyn = Some(Dynamics { pressure: Some(curve(0.0, &[[0.0, 0.0], [0.3364, 0.2273], [0.8545, 1.0], [1.0, 1.0]])), ..Default::default() });
+        k.grain = Some(Grain { kind: GrainKind::Paper, scale: 3.0, depth: 0.8, contrast: 1.5, brightness: 0.0, subtract: false, moving: false, seed: 0 });
+        k.snap = true;
+        v.push(k);
+        // áspera: grande, e na camada vetorial leva o traço inteiro
+        let mut r = er("Borracha áspera", 100.0, 1.0);
+        r.vector_erase = Some(VectorErase::Whole);
+        v.push(r);
+        // vetorial: fina, e na camada vetorial apaga até as interseções
+        let mut ve = er("Borracha vetorial", 3.0, 1.0);
+        ve.vector_erase = Some(VectorErase::Intersection);
+        v.push(ve);
+        let mut ml = er("Borracha de várias camadas", 20.0, 1.0);
+        ml.antialias = Some(0);
+        ml.all_layers = true;
+        v.push(ml);
+        let mut sn = er("Borracha de encaixe", 30.0, 1.0);
+        sn.size_dyn = Some(Dynamics::pressure(0.0));
+        sn.snap = true;
+        sn.vector_erase = Some(VectorErase::Segment);
+        sn.stabilization = stab;
+        v.push(sn);
+        let mut dy = er("Borracha dinâmica", 20.0, 1.0);
+        dy.vector_erase = Some(VectorErase::Segment);
+        dy.stabilization = stab;
+        v.push(dy);
         v
     }
 
@@ -914,7 +1161,11 @@ fn tip_alpha_pen(tip: &BrushTip, dx: f32, dy: f32, radius: f32, extra_angle: f32
     let q = (ux * ux + uy * uy).sqrt();
     // distância (px) à borda da elipse ≈ (q - 1) / |∇q|
     let g = ((lx / (rr * rr)).powi(2) + (ly / (rr * rr * rho * rho)).powi(2)).sqrt() / q.max(1e-6);
-    let sd = if q < 1e-6 { -rr * rho } else { (q - 1.0) / g.max(1e-6) };
+    // ponta macia (dureza < 1): queda gaussiana que passa um pouco do raio, como a ponta macia do Clip Studio (o
+    // aerógrafo de 30 px tem meia altura a ~10 px do eixo e cauda até ~20 px)
+    let h = hardness.clamp(0.0, 1.0);
+    let ext = 1.0 + crate::brush_dyn::SOFT_TAIL * (1.0 - h);
+    let sd = if q < 1e-6 { -rr * rho * ext } else { (q - ext) / g.max(1e-6) };
     let edge_cov = if aa == 0 {
         if sd <= 0.0 { 1.0 } else { 0.0 }
     } else {
@@ -923,8 +1174,12 @@ fn tip_alpha_pen(tip: &BrushTip, dx: f32, dy: f32, radius: f32, extra_angle: f32
         let shift = if edge_k < 1.0 || rough { 0.0 } else { shift };
         ((-sd - shift) / w + 0.5).clamp(0.0, 1.0)
     };
-    let h = hardness.clamp(0.0, 1.0);
-    let inner = if q <= h || h >= 1.0 { 1.0 } else { let t = ((q - h) / (1.0 - h).max(1e-4)).clamp(0.0, 1.0); 0.5 + 0.5 * (t * std::f32::consts::PI).cos() };
+    let inner = if q <= h || h >= 1.0 {
+        1.0
+    } else {
+        let t = (q - h) / (1.0 - h).max(1e-4);
+        (-(t * t) / (2.0 * crate::brush_dyn::SOFT_SIGMA * crate::brush_dyn::SOFT_SIGMA)).exp()
+    };
     Some(inner * edge_cov)
 }
 
@@ -1342,6 +1597,64 @@ impl StrokeBuffer {
         self.max_a = self.max_a.max(a);
     }
 
+    /// Um carimbo de spray: partículas espalhadas no disco de raio `r` em volta de (cx, cy).
+    #[allow(clippy::too_many_arguments)]
+    fn stamp_spray(&mut self, preset: &BrushPreset, sp: &crate::brush_dyn::Spray, cx: f32, cy: f32, r: f32, angle: f32, thick: f32, alpha: f32, rgb: [f32; 3], grain_off: (f32, f32)) {
+        let count = sp.count_for(preset.size).min(5000.0);
+        let mut n = count.floor() as u32;
+        if self.rng.f32() < count.fract() {
+            n += 1;
+        }
+        let hardness = match preset.tip {
+            BrushTip::Round { hardness, .. } => hardness,
+            _ => 1.0,
+        };
+        let aa = preset.antialias.unwrap_or(if preset.aliased { 0 } else { 1 });
+        for _ in 0..n {
+            let u = self.rng.f32();
+            let ang = self.rng.f32() * std::f32::consts::TAU;
+            let rad = r * u.powf(0.5 + 0.5 * sp.bias.clamp(0.0, 1.0) * 2.0);
+            let (px, py) = (cx + rad * ang.cos(), cy + rad * ang.sin());
+            let k = sp.size_min + (1.0 - sp.size_min) * self.rng.f32();
+            let pr = (sp.diameter(preset.size) * 0.5 * k).max(0.3);
+            let round = sp.roundness_min + (1.0 - sp.roundness_min) * self.rng.f32();
+            let pang = angle + self.rng.f32() * 360.0;
+            let tip = BrushTip::Round { hardness, roundness: round, angle: 0.0 };
+            let pad = 1.0 + crate::brush_dyn::aa_ramp(aa).0 * 0.5 + pr * crate::brush_dyn::SOFT_TAIL;
+            let (bx0, by0) = (((px - pr - pad).floor() as i32).max(0), ((py - pr - pad).floor() as i32).max(0));
+            let (bx1, by1) = (((px + pr + pad).ceil() as i32).min(self.w), ((py + pr + pad).ceil() as i32).min(self.h));
+            if bx0 >= bx1 || by0 >= by1 {
+                continue;
+            }
+            self.mark([bx0, by0, bx1, by1]);
+            for y in by0..by1 {
+                for x in bx0..bx1 {
+                    let (dx, dy) = (x as f32 + 0.5 - px, y as f32 + 0.5 - py);
+                    let Some(mut a) = tip_alpha_pen(&tip, dx, dy, pr, pang, aa, thick, 1.0, false) else { continue };
+                    if let Some(g) = &preset.grain {
+                        a = g.apply(a, (x + self.tex_origin[0]) as f32 + grain_off.0, (y + self.tex_origin[1]) as f32 + grain_off.1);
+                    }
+                    let da = (a * alpha).clamp(0.0, 1.0);
+                    if da <= 0.0 {
+                        continue;
+                    }
+                    let max_ink = preset.max_ink;
+                    let d = self.buf_mut(x, y);
+                    if max_ink {
+                        if da > d[3] {
+                            *d = [rgb[0] * da, rgb[1] * da, rgb[2] * da, da];
+                        }
+                    } else {
+                        let k = 1.0 - da;
+                        *d = [rgb[0] * da + d[0] * k, rgb[1] * da + d[1] * k, rgb[2] * da + d[2] * k, da + d[3] * k];
+                    }
+                    let a = d[3];
+                    self.max_a = self.max_a.max(a);
+                }
+            }
+        }
+    }
+
     /// Sorteio do aleatório de uma dinâmica: por carimbo, ou suave ao longo do caminho (`random_len`).
     fn dyn_rnd(&mut self, dy: &crate::brush_dyn::Dynamics, s: f32, k: u32) -> f32 {
         if !dy.uses_random() {
@@ -1426,6 +1739,15 @@ impl StrokeBuffer {
                 rgb = hsv_to_rgb(hsv);
             }
             let two = preset.two_tone.as_ref().filter(|_| matches!(preset.tip, BrushTip::Shape { .. })).map(|t| t.second(rgb));
+            // grão que anda: deslocamento sorteado a cada carimbo
+            let grain_off = match &preset.grain {
+                Some(g) if g.moving => (self.rng.f32() * 997.0, self.rng.f32() * 991.0),
+                _ => (0.0, 0.0),
+            };
+            if let Some(sp) = preset.spray.clone() {
+                self.stamp_spray(&preset, &sp, px, py, r, angle, thick, flow * dab_opacity * color[3], [rgb[0], rgb[1], rgb[2]], grain_off);
+                continue;
+            }
             if preset.mix > 0.0 {
                 // amostra a pegada sob o dab (camada com o traço em andamento por cima) e mistura com a que vem
                 // carregada: puxa a estrutura dos pixels (listras, bordas), não uma cor média
@@ -1451,7 +1773,7 @@ impl StrokeBuffer {
                 });
             }
             // a rampa do antisserrilhado forte passa um pouco do raio
-            let pad = 1.0 + preset.antialias.map(|l| crate::brush_dyn::aa_ramp(l).0 * 0.5).unwrap_or(0.0);
+            let pad = 1.0 + preset.antialias.map(|l| crate::brush_dyn::aa_ramp(l).0 * 0.5).unwrap_or(0.0) + if csp_tip { r * crate::brush_dyn::SOFT_TAIL } else { 0.0 };
             let (bx0, by0) = (((px - r - pad).floor() as i32).max(0), ((py - r - pad).floor() as i32).max(0));
             let (bx1, by1) = (((px + r + pad).ceil() as i32).min(self.w), ((py + r + pad).ceil() as i32).min(self.h));
             if bx0 < bx1 && by0 < by1 {
@@ -1476,6 +1798,12 @@ impl StrokeBuffer {
                             TextureMode::Multiply => a * (1.0 - t.depth + t.depth * tv),
                             TextureMode::Subtract => (a - (1.0 - tv) * t.depth).max(0.0),
                         };
+                    }
+                    if let Some(g) = &preset.grain {
+                        a = g.apply(a, (x + self.tex_origin[0]) as f32 + grain_off.0, (y + self.tex_origin[1]) as f32 + grain_off.1);
+                        if a <= 0.0 {
+                            continue;
+                        }
                     }
                     let da = (a * flow * dab_opacity * color[3]).clamp(0.0, 1.0);
                     if da <= 0.0 {
@@ -1762,7 +2090,12 @@ mod tests {
 
     #[test]
     fn eraser_is_not_a_factory_preset_but_still_a_valid_eraser() {
-        assert!(BrushPreset::defaults().iter().all(|p| p.name != "Borracha" && p.mode != BrushMode::Erase && p.category != "borracha"));
+        // S25: as borrachas de fábrica são pincéis do grupo borracha (com nome próprio); o preset "Borracha" da
+        // ferramenta continua fora da biblioteca, e nenhum pincel de outro grupo apaga
+        let all = BrushPreset::defaults();
+        assert!(all.iter().all(|p| p.name != "Borracha"));
+        assert!(all.iter().all(|p| (p.mode == BrushMode::Erase) == (p.group == "borracha")));
+        assert_eq!(all.iter().filter(|p| p.group == "borracha").count(), 8);
         let e = BrushPreset::eraser();
         e.validate().unwrap();
         assert_eq!((e.name.as_str(), e.mode), ("Borracha", BrushMode::Erase));

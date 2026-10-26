@@ -24,6 +24,7 @@ fn main() {
     for job in jobs {
         // "preset_name" = um preset de fábrica pelo nome (com "size" por cima); senão o "preset" inteiro
         let mut preset: BrushPreset = match job["preset_name"].as_str() {
+            Some("Borracha") => BrushPreset::eraser(),
             Some(n) => BrushPreset::defaults().into_iter().find(|p| p.name == n).unwrap_or_else(|| panic!("preset de fábrica {n:?} não existe")),
             None => serde_json::from_value(job["preset"].clone()).expect("preset"),
         };
@@ -34,7 +35,8 @@ fn main() {
         let frame = job["frame_ms"].as_f64().unwrap_or(16.667) as f32 / 1000.0;
         let seed = job["seed"].as_u64().unwrap_or(1);
         let (w, h) = (job["w"].as_u64().unwrap_or(900) as u32, job["h"].as_u64().unwrap_or(700) as u32);
-        let mut img = Image::filled(w, h, [1.0, 1.0, 1.0, 1.0]);
+        // camada do traço: vazia, ou preta cheia (folha das borrachas, `"base": "black"`); no fim, achatada no papel branco
+        let mut img = if job["base"].as_str() == Some("black") { Image::filled(w, h, [0.0, 0.0, 0.0, 1.0]) } else { Image::new(w, h) };
         for (k, st) in job["strokes"].as_array().expect("strokes").iter().enumerate() {
             let raw: Vec<[f32; 4]> = st.as_array().unwrap().iter().map(|q| {
                 let a = q.as_array().unwrap();
@@ -53,8 +55,14 @@ fn main() {
                 sb.composite(&mut img, [0, 0]);
             }
         }
+        let mut paper = Image::filled(w, h, [1.0, 1.0, 1.0, 1.0]);
+        for (d, s) in paper.data.iter_mut().zip(&img.data) {
+            for c in 0..4 {
+                d[c] = s[c] + d[c] * (1.0 - s[3]);
+            }
+        }
         let out = job["out"].as_str().expect("out");
-        img.save_png(std::path::Path::new(out)).expect("gravar png");
+        paper.save_png(std::path::Path::new(out)).expect("gravar png");
     }
 }
 

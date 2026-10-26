@@ -34,6 +34,17 @@ FACTORY = {
     "dot-pen": "Caneta de pixel",
     "flat-marker": "Marcador chato",
 }
+# os outros grupos do S25: chave da referência -> preset de fábrica, pasta e tamanhos da folha
+GROUPS = {
+    "caneta": ("caneta", FACTORY, "3,10,30"),
+    "lapis": ("lapis", {"pencil": "Lápis", "mechanical-pencil": "Lapiseira", "charcoal": "Carvão", "crayon": "Giz de cera", "pastel": "Pastel",
+                        "chalk": "Giz"}, "3,10,30"),
+    "aerografo": ("aerografo", {"soft": "Aerógrafo suave", "spray": "Spray", "droplet": "Gotículas", "noise": "Ruído", "running-color-spray": "Spray colorido"},
+                  "10,30,60"),
+    "borracha": ("borracha", {"hard": "Borracha dura", "soft-eraser": "Borracha macia", "kneaded": "Borracha limpa-tipos", "rough-eraser": "Borracha áspera",
+                              "vector-eraser": "Borracha vetorial", "multiple-layers": "Borracha de várias camadas", "snap-eraser": "Borracha de encaixe",
+                              "borracha-dinamica": "Borracha dinâmica"}, "10,30,60"),
+}
 CADENCE = 0.008  # o injetor manda um ponto a cada 8 ms
 
 
@@ -62,8 +73,9 @@ def run(jobs, tmp, calib=None):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
-    ap.add_argument("--pens", default=",".join(PENS))
-    ap.add_argument("--sizes", default="3,10,30")
+    ap.add_argument("--group", default="caneta", choices=list(GROUPS))
+    ap.add_argument("--pens", default=None)
+    ap.add_argument("--sizes", default=None)
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--baseline", help="um preset de fábrica para todas as canetas (o 'antes')")
     g.add_argument("--factory", action="store_true", help="o preset de fábrica S25 de cada caneta")
@@ -73,6 +85,9 @@ def main():
     ap.add_argument("--calib", help="JSON da tabela do antisserrilhado em teste: [[w0,s0],[w1,s1],[w2,s2],[w3,s3],[semieixo,0]]")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
+    _, factory, sizes0 = GROUPS[a.group]
+    a.pens = a.pens or ",".join(factory)
+    a.sizes = a.sizes or sizes0
     cand = {}
     if a.presets:
         with open(a.presets, encoding="utf-8") as f:
@@ -81,11 +96,13 @@ def main():
     for pen in [p for p in a.pens.split(",") if p]:
         for s in [int(x) for x in a.sizes.split(",")]:
             job = {"strokes": strokes_for(s, a.quant), "out": os.path.join(a.out, f"{pen}_s{s}.png"), "frame_ms": a.frame_ms, "seed": 1}
+            if a.group == "borracha":
+                job["base"] = "black"
             if a.baseline:
                 job["preset_name"] = a.baseline
                 job["size"] = 1 if pen == "dot-pen" else s
             elif a.factory:
-                job["preset_name"] = FACTORY[pen]
+                job["preset_name"] = factory[pen]
                 job["size"] = 1 if pen == "dot-pen" else s
             else:
                 if pen not in cand:

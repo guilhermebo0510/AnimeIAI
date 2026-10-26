@@ -171,7 +171,7 @@ def edge_stats(ink, sh):
             idx = np.nonzero(col >= 0.5)[0]
             if len(idx):
                 pos.append(idx[0] if side < 0 else idx[-1])
-        if len(pos) > 20:
+        if len(pos) > 70:
             pos = np.array(pos, float)
             trend = np.convolve(pos, np.ones(61) / 61, mode="same")
             edges.append(float(np.std((pos - trend)[30:-30])))
@@ -188,6 +188,41 @@ def dir_profile(ink, sh):
         m = (ang >= k * 15) & (ang < (k + 1) * 15)
         bins[k] = np.median(w[m]) if m.any() else np.nan
     return bins
+
+
+def texture_stats(ink, sh):
+    """Textura no corpo da linha lenta: densidade (tinta média), contraste do grão (desvio-padrão), espectro radial do
+    grão (fração da energia por faixa de frequência, ciclos/px) e partículas (componentes com tinta > 50%: quantas por
+    1000 px², área mediana e do percentil 90)."""
+    own = sh.own(ink, "linha_lenta")
+    half = max(1, int(round(sh.size * 0.3)))
+    core = own[50 - half:50 + half, 200:700]
+    out = {"densidade": float(core.mean()), "grao": float(core.std())}
+    if core.shape[0] >= 4:
+        f = np.abs(np.fft.rfft2(core - core.mean())) ** 2
+        fy = np.fft.fftfreq(core.shape[0])[:, None]
+        fx = np.fft.rfftfreq(core.shape[1])[None, :]
+        fr = np.sqrt(fx ** 2 + fy ** 2)
+        edges = [0.0, 0.05, 0.1, 0.2, 0.35, 0.71]
+        tot = f[fr > 0].sum() + 1e-9
+        out["espectro"] = [float(f[(fr > a) & (fr <= b)].sum() / tot) for a, b in zip(edges, edges[1:])]
+    else:
+        out["espectro"] = None
+    band = own[max(0, 50 - int(sh.size * 1.5) - 4):50 + int(sh.size * 1.5) + 5, 200:700]
+    n, lab, st, _ = cv2.connectedComponentsWithStats((band > 0.5).astype(np.uint8), connectivity=8)
+    areas = st[1:, cv2.CC_STAT_AREA] if n > 1 else np.array([])
+    out["particulas"] = {"por_1000px2": float(len(areas) * 1000.0 / band.size), "area_mediana": float(np.median(areas)) if len(areas) else 0.0,
+                         "area_p90": float(np.percentile(areas, 90)) if len(areas) else 0.0}
+    return out
+
+
+def blur_map_diff(ref, ours, size):
+    """Mapa de tinta desfocado (sigma = tamanho/4): diferença média relativa à tinta da referência. Vale para pincéis
+    de grão e de spray, onde a sobreposição pixel a pixel não diz nada."""
+    k = max(1.0, size / 4.0)
+    a = cv2.GaussianBlur(ref, (0, 0), k)
+    b = cv2.GaussianBlur(ours, (0, 0), k)
+    return float(np.abs(a - b).sum() / max(a.sum(), 1e-6))
 
 
 def region_mean(ink, x0, y0, x1, y1):
@@ -220,6 +255,7 @@ def measure(ink, sh):
     m["sobreposta"] = region_mean(ink, 560, int(590 - size), 780, int(590 + 2 * gap + size))
     m["cruz"] = region_mean(ink, 650, 460, 690, 500)
     m["tinta"] = float(ink.sum())
+    m["textura"] = texture_stats(ink, sh)
     return m
 
 
@@ -230,7 +266,8 @@ def compare(ref, ours, size):
     r = {"iou": iou, "shift": shift, "tinta": mo["tinta"] / max(mr["tinta"], 1e-6)}
     r["corpo_ref"] = [body(mr["lenta"]), body(mr["rapida"])]
     r["corpo_nosso"] = [body(mo["lenta"]), body(mo["rapida"])]
-    r["corpo"] = [o / max(a, 1e-6) for o, a in zip(r["corpo_nosso"], r["corpo_ref"])]
+    # +0,1 px: linha que quase não aparece (pastel em 3 px) não vira divisão por zero
+    r["corpo"] = [(o + 0.1) / (a + 0.1) for o, a in zip(r["corpo_nosso"], r["corpo_ref"])]
     r["pontas"] = end_rms(mr["lenta"], mo["lenta"], size) + end_rms(mr["rapida"], mo["rapida"], size)
     r["borda"] = [mr["edge"]["edge"], mo["edge"]["edge"]]
     r["aspereza"] = [mr["edge"]["rough"], mo["edge"]["rough"]]
@@ -246,6 +283,14 @@ def compare(ref, ours, size):
     r["cruz"] = mo["cruz"] / max(mr["cruz"], 1e-6)
     r["perfil_ref"] = mr["edge"].get("profile")
     r["perfil_nosso"] = mo["edge"].get("profile")
+    pr, po = r["perfil_ref"], r["perfil_nosso"]
+    r["perfil"] = (float(np.abs(np.array(pr) - np.array(po)).sum() / max(np.sum(pr), 1e-6)) if pr and po and len(pr) == len(po) else None)
+    r["mapa"] = blur_map_diff(ref, ours, size)
+    tr_, to_ = mr["textura"], mo["textura"]
+    r["densidade"] = [tr_["densidade"], to_["densidade"]]
+    r["grao"] = [tr_["grao"], to_["grao"]]
+    r["espectro"] = (float(np.abs(np.array(tr_["espectro"]) - np.array(to_["espectro"])).sum()) if tr_["espectro"] and to_["espectro"] else None)
+    r["particulas"] = [tr_["particulas"], to_["particulas"]]
     return r
 
 
@@ -263,7 +308,9 @@ def side_by_side(ref, ours, path):
 
 def score(r):
     """Número único para ordenar (0 = igual): cobertura, corpo, pontas, borda, direção e aspereza juntos."""
-    s = (1 - r["iou"]) * 2
+    textured = bool(r.get("grao")) and r["grao"][0] > 0.04
+    # grão/spray: a sobreposição pixel a pixel não diz nada (o mapa desfocado entra no lugar, abaixo)
+    s = 0.0 if textured else (1 - r["iou"]) * 2
     s += sum(abs(math.log(max(c, 1e-3))) for c in r["corpo"])
     s += 0.5 * sum(r["pontas"]) / 4
     if r["borda"][0] and r["borda"][1]:
@@ -272,6 +319,15 @@ def score(r):
         s += r["direcao"]
     if r["aspereza"][0] is not None and r["aspereza"][1] is not None:
         s += 0.3 * abs(r["aspereza"][1] - r["aspereza"][0])
+    # textura (lápis, aerógrafo, spray): só pesa quando a referência tem grão
+    if textured:
+        s += r["mapa"] * 2
+        s += abs(r["densidade"][1] - r["densidade"][0]) * 2
+        s += abs(r["grao"][1] - r["grao"][0]) * 2
+        if r.get("espectro") is not None:
+            s += r["espectro"]
+    if r.get("perfil") is not None:
+        s += 0.5 * r["perfil"]
     return float(s)
 
 
@@ -285,17 +341,30 @@ def fmt(v, n=2):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--ref", default=os.path.join(ROOT, "calibracao", "csp", "ref", "caneta"))
+    ap.add_argument("--group", default=None, help="caneta, lapis, aerografo ou borracha: referência, lista, tamanhos e modo")
+    ap.add_argument("--ref", default=None)
     ap.add_argument("--ours")
-    ap.add_argument("--pens", default=",".join(PENS))
-    ap.add_argument("--sizes", default="3,10,30")
+    ap.add_argument("--pens", default=None)
+    ap.add_argument("--sizes", default=None)
     ap.add_argument("--out", default=os.path.join(ROOT, "calibracao", "csp", "cmp"))
     ap.add_argument("--tag", default="")
     ap.add_argument("--ref-only", action="store_true")
     ap.add_argument("--no-images", action="store_true")
     ap.add_argument("--invert", action="store_true", help="folhas de borracha (apagado sobre camada preta)")
+    ap.add_argument("--textura", action="store_true", help="colunas de textura (lápis, aerógrafo): mapa, densidade, grão, espectro, partículas")
     a = ap.parse_args()
     global INVERT
+    if a.group:
+        from calib_render import GROUPS
+        folder, factory, sizes0 = GROUPS[a.group]
+        a.ref = a.ref or os.path.join(ROOT, "calibracao", "csp", "ref", folder)
+        a.pens = a.pens or ",".join(factory)
+        a.sizes = a.sizes or sizes0
+        a.invert = a.invert or a.group == "borracha"
+        a.textura = a.textura or a.group in ("lapis", "aerografo")
+    a.ref = a.ref or os.path.join(ROOT, "calibracao", "csp", "ref", "caneta")
+    a.pens = a.pens or ",".join(PENS)
+    a.sizes = a.sizes or "3,10,30"
     INVERT = a.invert
     os.makedirs(a.out, exist_ok=True)
     pens = [p for p in a.pens.split(",") if p]
@@ -311,8 +380,13 @@ def main():
         return
     if not a.ours:
         raise SystemExit("--ours é obrigatório (ou --ref-only)")
-    print(f"{'caneta':14s} {'t':>3s} {'iou':>5s} {'desl':>6s} {'tinta':>5s} {'corpo L/R':>10s} {'pontas':>19s} {'borda r/n':>10s} "
-          f"{'asp r/n':>10s} {'dir':>5s} {'ráp':>5s} {'sobr':>5s} {'score':>6s}")
+    tex = a.textura
+    if tex:
+        print(f"{'pincel':20s} {'t':>3s} {'iou':>5s} {'mapa':>5s} {'tinta':>5s} {'corpo L/R':>10s} {'dens r/n':>10s} {'grão r/n':>10s} "
+              f"{'espec':>5s} {'perfil':>6s} {'part/1000 r/n':>13s} {'área r/n':>10s} {'score':>6s}")
+    else:
+        print(f"{'caneta':14s} {'t':>3s} {'iou':>5s} {'desl':>6s} {'tinta':>5s} {'corpo L/R':>10s} {'pontas':>19s} {'borda r/n':>10s} "
+              f"{'asp r/n':>10s} {'dir':>5s} {'ráp':>5s} {'sobr':>5s} {'score':>6s}")
     for pen in pens:
         for s in sizes:
             rp = os.path.join(a.ref, f"{pen}_s{s}.png")
@@ -324,9 +398,15 @@ def main():
             r = compare(ref, ours, s)
             r["score"] = score(r)
             allr[f"{pen}_s{s}"] = r
-            print(f"{pen:14s} {s:3d} {r['iou']:5.3f} {str(tuple(r['shift'])):>6s} {r['tinta']:5.2f} {fmt(r['corpo']):>10s} "
-                  f"{fmt(r['pontas']):>19s} {fmt(r['borda'], 1):>10s} {fmt(r['aspereza'], 1):>10s} {fmt(r['direcao']):>5s} "
-                  f"{r['rapidos']:5.2f} {r['sobreposta']:5.2f} {r['score']:6.3f}")
+            if tex:
+                pa = r["particulas"]
+                print(f"{pen:20s} {s:3d} {r['iou']:5.3f} {r['mapa']:5.2f} {r['tinta']:5.2f} {fmt(r['corpo']):>10s} {fmt(r['densidade']):>10s} "
+                      f"{fmt(r['grao']):>10s} {fmt(r['espectro']):>5s} {fmt(r['perfil']):>6s} "
+                      f"{pa[0]['por_1000px2']:6.1f}/{pa[1]['por_1000px2']:<6.1f} {pa[0]['area_mediana']:4.0f}/{pa[1]['area_mediana']:<5.0f} {r['score']:6.3f}")
+            else:
+                print(f"{pen:14s} {s:3d} {r['iou']:5.3f} {str(tuple(r['shift'])):>6s} {r['tinta']:5.2f} {fmt(r['corpo']):>10s} "
+                      f"{fmt(r['pontas']):>19s} {fmt(r['borda'], 1):>10s} {fmt(r['aspereza'], 1):>10s} {fmt(r['direcao']):>5s} "
+                      f"{r['rapidos']:5.2f} {r['sobreposta']:5.2f} {r['score']:6.3f}")
             if not a.no_images:
                 side_by_side(ref, ours, os.path.join(a.out, f"{pen}_s{s}_lado.png"))
     name = f"metricas{('_' + a.tag) if a.tag else ''}.json"

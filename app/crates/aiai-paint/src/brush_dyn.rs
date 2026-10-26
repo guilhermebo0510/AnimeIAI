@@ -360,6 +360,130 @@ impl EdgeNoise {
     }
 }
 
+/// Tipo de grão de papel procedural.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum GrainKind {
+    /// Dente de papel: relevo suave em várias escalas (lápis, giz).
+    #[default]
+    Paper,
+    /// Manchas grandes de cera/pastel oleoso: o pigmento pega nos altos e falha nos vales.
+    Coarse,
+    /// Pontilhado fino, quase pixel a pixel (pastel seco, ruído do aerógrafo).
+    Speckle,
+}
+
+/// Grão de papel aplicado a cada carimbo (lápis, carvão, giz, pastel, ruído do aerógrafo): desenhado pelo nosso motor,
+/// fixo no canvas (os carimbos falham nos mesmos vales, como a ponta raspando no papel) ou deslocado a cada carimbo
+/// (`moving`, o grão se acumula em nuvem, como o ruído do aerógrafo).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Grain {
+    #[serde(default)]
+    pub kind: GrainKind,
+    /// Tamanho do grão (px).
+    pub scale: f32,
+    /// Quanto o grão tira da cobertura (0..1).
+    pub depth: f32,
+    /// Contraste do grão (1 = como sai do ruído; maior = vales mais limpos).
+    #[serde(default = "d_one")]
+    pub contrast: f32,
+    /// Brilho do grão (-1..1: positivo = papel mais liso, menos falhas).
+    #[serde(default)]
+    pub brightness: f32,
+    /// Subtrair (os vales somem mesmo com cobertura cheia) em vez de multiplicar.
+    #[serde(default)]
+    pub subtract: bool,
+    /// Grão deslocado a cada carimbo (em vez de fixo no canvas).
+    #[serde(default)]
+    pub moving: bool,
+    #[serde(default)]
+    pub seed: u32,
+}
+
+fn d_one() -> f32 {
+    1.0
+}
+
+impl Grain {
+    pub fn validate(&self) -> Result<(), String> {
+        if !(self.scale.is_finite() && (0.2..=500.0).contains(&self.scale)) || !(0.0..=1.0).contains(&self.depth) || !(0.0..=20.0).contains(&self.contrast) || !(-1.0..=1.0).contains(&self.brightness) {
+            return Err("grain: scale 0,2..500 px, depth 0..1, contrast 0..20, brightness -1..1".into());
+        }
+        Ok(())
+    }
+
+    /// Altura do papel 0..1 no pixel (x, y) do canvas (1 = alto, pega tinta).
+    pub fn height(&self, x: f32, y: f32) -> f32 {
+        let g = self.scale.max(0.2);
+        let (u, v) = (x / g, y / g);
+        let raw = match self.kind {
+            GrainKind::Paper => 0.6 * crate::noise::fbm(u, v, 3, 2.1, 0.55, self.seed ^ 0x9A9E) + 0.4 * crate::noise::value_noise(u * 2.3, v * 2.3, self.seed ^ 0x51),
+            GrainKind::Coarse => {
+                let w = crate::noise::worley(u * 0.6, v * 0.6, self.seed ^ 0xC0A5);
+                0.65 * (1.0 - w).clamp(0.0, 1.0) + 0.35 * crate::noise::value_noise(u * 1.7, v * 1.7, self.seed ^ 0x77)
+            }
+            GrainKind::Speckle => 0.7 * crate::noise::value_noise(u, v, self.seed ^ 0x5BEC) + 0.3 * crate::noise::value_noise(u * 3.1, v * 3.1, self.seed ^ 0x1234),
+        };
+        ((raw - 0.5) * self.contrast + 0.5 + self.brightness * 0.5).clamp(0.0, 1.0)
+    }
+
+    /// Cobertura `a` depois do grão.
+    pub fn apply(&self, a: f32, x: f32, y: f32) -> f32 {
+        let h = self.height(x, y);
+        if self.subtract {
+            (a - (1.0 - h) * self.depth).max(0.0)
+        } else {
+            a * (1.0 - self.depth + self.depth * h)
+        }
+    }
+}
+
+/// Spray: cada carimbo vira `count` partículas espalhadas no disco da ponta (aerógrafo spray, gotículas, spray
+/// colorido). Cada partícula é uma ponta redonda pequena com a dureza da ponta do pincel, achatada e girada ao acaso
+/// (gotas), com o tamanho sorteado entre `size_min` e 100%.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Spray {
+    /// Partículas por carimbo (fração = chance de mais uma).
+    pub count: f32,
+    /// Diâmetro da partícula: fração do tamanho do pincel (`sync`) ou px.
+    pub size: f32,
+    #[serde(default)]
+    pub sync: bool,
+    /// Menor tamanho sorteado (fração 0..1).
+    #[serde(default = "d_one")]
+    pub size_min: f32,
+    /// Menor redondeza sorteada (1 = todas redondas).
+    #[serde(default = "d_one")]
+    pub roundness_min: f32,
+    /// Concentra as partículas no meio (0 = uniforme no disco, 1 = bem concentradas).
+    #[serde(default)]
+    pub bias: f32,
+    /// Como `count` acompanha o tamanho: `count` vale para um pincel de 30 px e é multiplicado por (tamanho / 30)^`count_exp`
+    /// (0 = fixo; 1 = a tinta por comprimento fica igual em qualquer tamanho, como as gotículas; 2 = a densidade de
+    /// partículas na área fica igual, como o spray do Clip Studio).
+    #[serde(default)]
+    pub count_exp: f32,
+}
+
+impl Spray {
+    pub fn validate(&self) -> Result<(), String> {
+        if !(self.count.is_finite() && (0.0..=500.0).contains(&self.count)) || !(0.0..=3.0).contains(&self.count_exp) || !(self.size.is_finite() && self.size > 0.0 && self.size <= 500.0) || !(0.0..=1.0).contains(&self.size_min) || !(0.02..=1.0).contains(&self.roundness_min) || !(0.0..=1.0).contains(&self.bias) {
+            return Err("spray: count 0..500, count_exp 0..3, size > 0, size_min 0..1, roundness_min 0,02..1, bias 0..1".into());
+        }
+        Ok(())
+    }
+
+    /// Partículas por carimbo num pincel de `brush` px.
+    pub fn count_for(&self, brush: f32) -> f32 {
+        if self.count_exp == 0.0 { self.count } else { self.count * (brush.max(0.5) / 30.0).powf(self.count_exp) }
+    }
+
+    /// Diâmetro da partícula (px) para um pincel de `brush` px.
+    pub fn diameter(&self, brush: f32) -> f32 {
+        if self.sync { self.size * brush } else { self.size }
+    }
+}
+
 /// Suavização de serrilhado (como os 4 níveis do Clip Studio): (largura da rampa da borda, recuo do meio da rampa), px.
 /// Nível 0 = sem (borda dura); 1 fraca; 2 média; 3 forte. Medido nas folhas de referência: a seção de uma linha da
 /// G-pen (média) é a cobertura de um disco de raio `r - 0,6` com rampa de ~1 px.
@@ -375,6 +499,11 @@ pub fn aa_ramp(level: u8) -> (f32, f32) {
         _ => (2.0, 0.8),
     }
 }
+
+/// Quanto a ponta macia passa do raio (fração do raio, com dureza 0) e o desvio da queda gaussiana (fração da parte
+/// macia): medidos no aerógrafo Suave do Clip Studio (dureza 1%: meia altura a 2/3 do raio, cauda até ~1,35 raio).
+pub const SOFT_TAIL: f32 = 0.4;
+pub const SOFT_SIGMA: f32 = 0.55;
 
 /// Menor semieixo (px) da ponta achatada: a ponta chata fina não some (no Clip Studio, a lateral fina da Caligrafia e do
 /// Marcador plano nunca fica abaixo de ~3 px de espessura).

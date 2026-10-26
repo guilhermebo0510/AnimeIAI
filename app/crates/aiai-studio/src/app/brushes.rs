@@ -442,11 +442,12 @@ mod tests {
 
     #[test]
     fn the_factory_library_has_no_eraser_brush_and_no_eraser_category() {
-        // a ferramenta Borracha cobre: nada de preset "Borracha" na biblioteca (nem a categoria "Borrachas" vazia na lista)
+        // S25: as borrachas de fábrica são pincéis do grupo borracha (Borracha dura, macia...), mas o preset "Borracha"
+        // da ferramenta não entra na biblioteca e só elas apagam
         let lib = BrushLibrary::open_at(None, None, &author());
-        assert!(lib.items.iter().all(|b| b.preset.name != "Borracha" && b.preset.mode != aiai_paint::brush::BrushMode::Erase && b.preset.category != "borracha"));
-        let cats: Vec<String> = lib.items.iter().map(|b| cat_of(&b.preset)).collect();
-        assert!(!cats.iter().any(|c| c == "borracha"), "{cats:?}");
+        assert!(lib.items.iter().all(|b| b.preset.name != "Borracha"));
+        assert!(lib.items.iter().all(|b| (b.preset.mode == aiai_paint::brush::BrushMode::Erase) == (b.preset.group == "borracha")));
+        assert!(lib.items.iter().filter(|b| b.preset.mode == aiai_paint::brush::BrushMode::Erase).all(|b| cat_of(&b.preset) == "borracha"));
         // a borracha raster da ferramenta nasce da própria função, não da biblioteca
         let e = crate::app::tools::eraser_preset(&crate::app::editor::ToolOptions::default(), None);
         assert_eq!((e.mode, e.name.as_str()), (aiai_paint::brush::BrushMode::Erase, "Borracha"));
