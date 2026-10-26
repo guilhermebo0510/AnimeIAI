@@ -193,7 +193,6 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("prefs.sec.undo", "Desfazer", "Undo"),
     ("prefs.undo_levels", "Níveis de desfazer:", "Undo levels:"),
     ("prefs.undo_levels.help", "Quantas ações ficam no histórico para desfazer. Mais níveis guardam mais memória; baixar o número descarta as ações mais antigas na hora.", "How many actions stay in the history to undo. More levels keep more memory; lowering the number discards the oldest actions at once."),
-    ("prefs.sec.gpu", "Placa de vídeo", "Graphics card"),
 ];
 
 #[cfg(test)]

@@ -158,3 +158,29 @@ seção para o editor a cada quadro (`StudioApp::sync_behavior`: `Editor.beh`, m
 - Unidades mm/cm: o projeto de anime não tem dpi; sem isso a conversão seria um número sem sentido.
 - Gestos de toque com dedos, Wintab, Tabmate, smartphone, IME, conversão de cores, histórias em quadrinhos: não se aplicam.
 - Nome das cópias do pincel duplicado (`panels/brushes.rs`) segue "Nome 2": o arquivo está em edição por outro agente.
+
+## Evidências (mouse e teclado reais, `input.ps1 -ProcessId`, cópia `calibracao/tmp/s25p_copy.aiai`, `--no-session`)
+
+Pasta `evidencias/prefs/`:
+
+| Arquivo | O que mostra |
+|---|---|
+| `p01_geral.png`, `p02_tools.png`, `p06_tablet.png`, `p02_cursor.png`, `p02_layer.png`, `p02_canvas.png`, `p08_arquivo.png`, `p09_desempenho.png` | as categorias da lista à esquerda |
+| `p03_size_drag.png` | Ctrl+Alt+arrastar com o mouse real: círculo do tamanho novo e "262.0 px" (o campo do painel acompanha) |
+| `p04_cursores.png` | cursor do pincel: forma da ponta, mira, ponto; ponta pequena: mira, ponto, nenhum |
+| `p06_tablet_teste.png` | área de teste de pressão com a caneta sintética do Windows (`pen.ps1`, pressão 0,05 → 1 → 0,05): o traço afina e engrossa; o estado passa a "Caneta com pressão detectada" |
+| `p07_camada_selecao.png`, `p07_formigas_rosa.png`, `p07_copyname_combo.png`, `p07_copia_de.png` | cor das formigas e nome das cópias ("Cópia de Raster 3" ao copiar a seleção para camada) |
+| `p10_xadrez_grade.png`, `p10_grade_vermelha.png`, `p10_tela_pintura.png` | xadrez próprio (azul) e grade de pixels em vermelho |
+| `p11_densidade_compacta.png`, `p11_densidade_espacosa.png` | densidade da interface |
+| `p09_desfazer_12.png` | níveis de desfazer em 12: depois de 25 ações o histórico tem 12 passos (conferido por `GET_STATUS.undo_steps`) |
+
+Conferido ao vivo, sem imagem: segurar **E** por 850 ms troca para a borracha e, ao soltar, volta ao pincel; um toque de 100 ms
+deixa a borracha; com o Mover, um arrasto de 2 px não mexe na seleção e um de 40 px move o total (95,2 px do desenho, sem salto
+dos 3 px iniciais).
+
+## Achados fora do escopo deste lote
+
+- O lançador flutuante da seleção (`sel_ops.rs`, `egui::Order::Foreground`) desenha por cima da janela de Preferências e dos
+  menus de seleção quando há uma seleção ativa (visível em `p07_copyname_combo.png`). Não mexi: é do lado direito (S25).
+- O Caps Lock ligado do Windows liga o "modo preciso" do cursor (mira sempre): foi o que escondeu o contorno nas primeiras
+  capturas do cursor.

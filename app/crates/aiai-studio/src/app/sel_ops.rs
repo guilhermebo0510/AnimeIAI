@@ -254,8 +254,13 @@ pub(crate) fn copy_to_layer(env: &mut Env) {
         }
         None => (cut.clone(), None),
     };
-    let base = p.node(&layer).map(|n| crate::behavior_prefs::copy_name_tr(&n.name, env.ed.beh.prefs.copy_name)).unwrap_or_else(|| tr(cmds::layer_type_key(l.kind)).to_owned());
-    let name = cmds::unique_layer_name(p, &parent, &base);
+    let copy = p.node(&layer).map(|n| crate::behavior_prefs::copy_name_tr(&n.name, env.ed.beh.prefs.copy_name));
+    // o nome da cópia vale como está quando ninguém na pasta o usa (o `unique_layer_name` sempre acrescenta um número)
+    let name = match copy {
+        Some(c) if !p.node(&parent).is_some_and(|pn| pn.children.iter().filter_map(|k| p.node(k)).any(|k| k.name == c)) => c,
+        Some(c) => cmds::unique_layer_name(p, &parent, &c),
+        None => cmds::unique_layer_name(p, &parent, tr(cmds::layer_type_key(l.kind))),
+    };
     let (id, cel_id) = (env.core.ids.next(), env.core.ids.next());
     let cmds_ = vec![
         cmds::create(id.clone(), Some(parent), index, name, NodeKind::Layer(LayerData::new(l.kind))),
@@ -466,10 +471,13 @@ mod tests {
         run(&mut env, Cmd::Grow);
         let r = env.ed.selection.as_ref().and_then(|s| s.rect_of()).unwrap();
         assert!(r[0] <= 12.5 && r[2] >= 39.5, "{r:?}");
-        // copiar para camada nova: a cópia tem o vermelho e fica ativa
+        // copiar para camada nova: a cópia tem o vermelho e fica ativa; o nome segue Preferências > Nome das cópias
+        env.ed.beh.prefs.copy_name = crate::behavior_prefs::CopyName::Number;
+        let orig = env.core.project.node(&raster).unwrap().name.clone();
         run(&mut env, Cmd::CopyToLayer);
         let copy = env.ed.layer.clone().unwrap();
         assert_ne!(copy, raster);
+        assert_eq!(env.core.project.node(&copy).unwrap().name, format!("{orig} 2"), "estilo numerado, sem sufixo extra");
         assert!(env.ed.selection.is_none());
         let cc = cmds::exposed_cel(&env.core.project, &cut, &copy, 0).unwrap();
         assert!(!cmds::cel_data(&env.core.project, &cc).unwrap().tiles.is_empty());

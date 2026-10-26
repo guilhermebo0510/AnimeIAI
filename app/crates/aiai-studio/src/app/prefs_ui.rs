@@ -300,26 +300,30 @@ impl StudioApp {
         let (mut min, mut gamma) = (self.prefs.pen_pressure_min, self.prefs.pen_pressure_gamma);
         let on = b.pen_pressure;
         ui.add_enabled_ui(on, |ui| {
-            let a = ui.add(egui::Slider::new(&mut min, 0.0..=0.6).text(tr("prefs.pen_min")));
-            let c = ui.add(egui::Slider::new(&mut gamma, 0.3..=3.0).logarithmic(true).text(tr("prefs.pen_gamma")));
-            self.rects.note("prefs:pen_min", a.rect);
-            self.rects.note("prefs:pen_gamma", c.rect);
-            if a.changed() || c.changed() {
-                self.prefs.pen_pressure_min = min;
-                self.prefs.pen_pressure_gamma = gamma;
-                self.mark_dirty();
-            }
-            // desenho da curva (força na horizontal, pressão do traço na vertical)
-            let (r, painter) = ui.allocate_painter(egui::vec2(140.0, 70.0), egui::Sense::hover());
-            painter.rect_stroke(r.rect, 2.0, egui::Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
-            let pts: Vec<egui::Pos2> = (0..=32)
-                .map(|i| {
-                    let f = i as f32 / 32.0;
-                    let p = crate::prefs::pressure_curve(f, min, gamma);
-                    egui::pos2(r.rect.left() + f * r.rect.width(), r.rect.bottom() - p * r.rect.height())
-                })
-                .collect();
-            painter.add(egui::Shape::line(pts, egui::Stroke::new(1.5, t.accent)));
+            // sliders à esquerda, a curva (força na horizontal, pressão do traço na vertical) à direita
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    let a = ui.add(egui::Slider::new(&mut min, 0.0..=0.6).text(tr("prefs.pen_min")));
+                    let c = ui.add(egui::Slider::new(&mut gamma, 0.3..=3.0).logarithmic(true).text(tr("prefs.pen_gamma")));
+                    self.rects.note("prefs:pen_min", a.rect);
+                    self.rects.note("prefs:pen_gamma", c.rect);
+                    if a.changed() || c.changed() {
+                        self.prefs.pen_pressure_min = min;
+                        self.prefs.pen_pressure_gamma = gamma;
+                        self.mark_dirty();
+                    }
+                });
+                let (r, painter) = ui.allocate_painter(egui::vec2(96.0, 60.0), egui::Sense::hover());
+                painter.rect_stroke(r.rect, 2.0, egui::Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+                let pts: Vec<egui::Pos2> = (0..=32)
+                    .map(|i| {
+                        let f = i as f32 / 32.0;
+                        let p = crate::prefs::pressure_curve(f, min, gamma);
+                        egui::pos2(r.rect.left() + f * r.rect.width(), r.rect.bottom() - p * r.rect.height())
+                    })
+                    .collect();
+                painter.add(egui::Shape::line(pts, egui::Stroke::new(1.5, t.accent)));
+            });
         });
 
         section(ui, t, "prefs.sec.pressure_test");
@@ -639,7 +643,6 @@ impl StudioApp {
         });
         hint(ui, t, "prefs.undo_levels.help");
         self.set_behavior(b);
-        section(ui, t, "prefs.sec.gpu");
         ui.label(tr("prefs.gpu"));
         let mut g = self.prefs.gpu;
         egui::ComboBox::from_id_salt("prefs_gpu")
