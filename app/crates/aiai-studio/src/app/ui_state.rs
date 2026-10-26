@@ -284,6 +284,7 @@ impl StudioApp {
             "selection": ed.selection.as_ref().map(|s| json!({ "mode": format!("{:?}", s.mode), "strokes": s.strokes.iter().map(|i| i.0.clone()).collect::<Vec<_>>(), "whole": s.whole, "offset": [round(s.offset.x), round(s.offset.y)], "rect": s.rect_of() })),
             "select_tool": super::selection::state_json(ed),
             "gesture_active": !matches!(ed.gesture, super::editor::Gesture::None),
+            "rulers": { "new_kind": ed.rulers.new_kind.id(), "snap": ed.rulers.snap, "show": ed.rulers.show, "pending": ed.rulers.pending.len() },
             "cursor_logical": ed.cursor.map(|c| json!([round(c.x), round(c.y)])),
             "cursor_kind": ed.cursor_kind,
             "ghosts": ed.ghosts.len(),

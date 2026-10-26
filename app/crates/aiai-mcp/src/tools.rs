@@ -293,14 +293,14 @@ Só grava em pastas permitidas (AIAI_MCP_ALLOWED_DIRS; padrão producoes/, calib
             "inputSchema": schema_of::<aiai_tools::paint::GradientRequest>()
         },
         {
-            "name": "aiai_transform",
-            "description": TRANSFORM_DESC,
-            "inputSchema": schema_of::<aiai_tools::transform::TransformRequest>()
-        },
-        {
             "name": "aiai_figure",
             "description": FIGURE_DESC,
             "inputSchema": schema_of::<aiai_tools::figure::FigureRequest>()
+        },
+        {
+            "name": "aiai_transform",
+            "description": TRANSFORM_DESC,
+            "inputSchema": schema_of::<aiai_tools::transform::TransformRequest>()
         },
         {
             "name": "aiai_erase",
