@@ -52,6 +52,12 @@ GROUPS = {
                           "round-mixing": "Pincel redondo de mistura", "gouache": "Guache", "dry-gouache": "Guache seco",
                           "thin-gouache": "Guache fino", "oil-paint": "Óleo", "thick-oil-paint": "Óleo grosso",
                           "pointillism": "Pontilhismo", "paint-and-apply": "Pintar e aplicar"}, "10,30,60"),
+    # decoração (só Efeito e Plano de fundo, o que serve para anime): a folha normal em 30/60
+    "decoracao": ("decoracao", {"sparkle": "Brilhos", "glitter": "Purpurina", "dappled-light": "Luz entre folhas",
+                                "soft-circle": "Círculos suaves", "feather": "Penas", "petal": "Flores/pétalas", "rose": "Rosas",
+                                "cherry": "Flores de cerejeira", "leaves": "Folhagem", "leaves-2": "Folhas soltas",
+                                "trees": "Árvores", "grassland": "Gramado", "grass-patch": "Grama", "fallen-leaves": "Folhas caídas",
+                                "ground": "Chão", "crack": "Rachadura", "cloud": "Nuvem", "rubble": "Cascalho"}, "30,60"),
     # misturadores: a folha normal no 30 por cima da grade COR_A/COR_B feita com a Pena G 30 (como no Clip Studio)
     "mistura": ("mistura", {"blend": "Misturar", "blur": "Desfocar", "finger-tip": "Ponta do dedo",
                             "painterly-blender": "Misturador de pintura", "wet-bleed-blender": "Misturador molhado",

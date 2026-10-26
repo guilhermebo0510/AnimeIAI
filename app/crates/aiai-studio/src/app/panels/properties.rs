@@ -110,7 +110,7 @@ pub(crate) fn preset_grid(ui: &mut Ui, p: &mut aiai_paint::brush::BrushPreset, a
         // ponta: redonda (dureza, achatamento, ângulo) ou forma de cenário (folha, grama, nuvem...)
         {
             use aiai_paint::brush::{BrushTip, TipShape};
-            const SHAPES: [(TipShape, &str); 7] = [
+            const SHAPES: [(TipShape, &str); 14] = [
                 (TipShape::Leaf, "tipshape.leaf"),
                 (TipShape::Petal, "tipshape.petal"),
                 (TipShape::GrassBlade, "tipshape.grass"),
@@ -118,6 +118,13 @@ pub(crate) fn preset_grid(ui: &mut Ui, p: &mut aiai_paint::brush::BrushPreset, a
                 (TipShape::Star, "tipshape.star"),
                 (TipShape::Square, "tipshape.square"),
                 (TipShape::Rose, "tipshape.rose"),
+                (TipShape::Sakura, "tipshape.sakura"),
+                (TipShape::Feather, "tipshape.feather"),
+                (TipShape::Bokeh, "tipshape.bokeh"),
+                (TipShape::Tree, "tipshape.tree"),
+                (TipShape::Maple, "tipshape.maple"),
+                (TipShape::Pebble, "tipshape.pebble"),
+                (TipShape::Glint, "tipshape.glint"),
             ];
             let current = match &p.tip {
                 BrushTip::Round { .. } => tr("tipshape.round").to_owned(),

@@ -52,6 +52,20 @@ pub enum TipShape {
     /// Lateral de bastão (carvão): cheio de um lado e esmaecendo para o outro; com `follow_direction`, o lado cheio
     /// fica à esquerda do sentido do traço.
     Stick,
+    /// Flor de cerejeira: cinco pétalas com o entalhe na ponta (S25, decoração).
+    Sakura,
+    /// Pena: haste no meio e barbas com fendas.
+    Feather,
+    /// Círculo de luz desfocada (bokeh): miolo claro e aro mais forte.
+    Bokeh,
+    /// Silhueta de árvore (conífera em camadas, com tronco).
+    Tree,
+    /// Folha de bordo caída: cinco pontas serrilhadas e o cabinho.
+    Maple,
+    /// Pedra/cascalho: polígono irregular com a face de baixo na sombra.
+    Pebble,
+    /// Cintilância: brilho de quatro raios finos com o miolo macio (purpurina, reflexo).
+    Glint,
 }
 
 /// Cobertura 0..1 de uma forma em coordenadas locais normalizadas (u, v ∈ [-1, 1]; v = -1 é a "ponta" superior).
@@ -128,6 +142,61 @@ fn shape_alpha_tone(shape: TipShape, u: f32, v: f32, aa: f32, two_tone: bool) ->
             if r > 1.0 { return 0.0 }
             edge(r - rose_rim(u, v))
         }
+        TipShape::Sakura => {
+            let r = (u * u + v * v).sqrt();
+            // fase dentro de cada pétala (-0,5..0,5; 0 = meio da pétala, uma pétala para cima)
+            let th = v.atan2(u) + std::f32::consts::FRAC_PI_2;
+            let f = (th * 5.0 / std::f32::consts::TAU).rem_euclid(1.0) - 0.5;
+            let notch = 0.24 * (1.0 - f.abs() / 0.07).max(0.0);
+            let rad = 0.95 * (1.0 - 2.2 * f * f) - notch;
+            edge(r - rad.max(0.2))
+        }
+        TipShape::Feather => {
+            if v.abs() > 1.0 { return 0.0 }
+            let t = (v + 1.0) / 2.0;
+            let half = 0.36 * (std::f32::consts::PI * t).sin().max(0.0).powf(0.7);
+            let shaft = edge(u.abs() - 0.035) * smoothstep(0.0, 0.1, t);
+            // fendas das barbas: linhas inclinadas que abrem buracos finos fora da haste
+            let k = (v * 9.0 + u.abs() * 5.0).rem_euclid(1.0);
+            let slit = if u.abs() > 0.08 && k < 0.09 { 0.0 } else { 1.0 };
+            (edge(u.abs() - half) * slit).max(shaft)
+        }
+        TipShape::Bokeh => {
+            let r = (u * u + v * v).sqrt();
+            edge(r - 0.9) * (0.35 + 0.65 * smoothstep(0.7, 0.88, r))
+        }
+        TipShape::Tree => {
+            // copa: três andares de triângulo (base serrilhada), tronco embaixo
+            let trunk = if v > 0.62 && v < 1.0 { edge(u.abs() - 0.07) } else { 0.0 };
+            let t = ((v + 1.0) / 1.62).clamp(0.0, 1.0);
+            let tier = (t * 3.0).fract();
+            let half = 0.55 * (0.35 + 0.65 * t) * (0.45 + 0.55 * tier);
+            let crown = if (-1.0..=0.62).contains(&v) { edge(u.abs() - half) } else { 0.0 };
+            crown.max(trunk)
+        }
+        TipShape::Maple => {
+            let r = (u * u + v * v).sqrt();
+            let th = v.atan2(u) + std::f32::consts::FRAC_PI_2;
+            let lobes = (th * 5.0 / 2.0).cos().abs().powf(3.0);
+            let serr = 0.04 * (th * 23.0).cos();
+            let leaf = edge(r - (0.38 + 0.55 * lobes + serr));
+            // cabinho para baixo
+            let stem = if v > 0.2 && v < 1.0 { edge(u.abs() - 0.03) } else { 0.0 };
+            leaf.max(stem)
+        }
+        TipShape::Pebble => {
+            let r = (u * u + v * v).sqrt();
+            let th = v.atan2(u);
+            let rad = 0.78 + 0.12 * (3.0 * th + 1.0).sin() + 0.07 * (5.0 * th + 2.0).sin();
+            edge(r - rad)
+        }
+        TipShape::Glint => {
+            let r = (u * u + v * v).sqrt();
+            let th = v.atan2(u);
+            let ray = (2.0 * th).cos().abs().powf(28.0);
+            let core = (1.0 - r / 0.3).clamp(0.0, 1.0);
+            (edge(r - (0.06 + 0.9 * ray)) * (1.0 - r * 0.6)).max(core)
+        }
         TipShape::Rose => {
             let r = (u * u + v * v).sqrt();
             if r > 1.0 { return 0.0 }
@@ -174,7 +243,14 @@ fn shape_tone(shape: TipShape, u: f32, v: f32, aa: f32) -> f32 {
         TipShape::Leaf | TipShape::Petal => smoothstep(-0.04, 0.08, u) * 0.85,
         // base da lâmina escura, ponta clara
         TipShape::GrassBlade => smoothstep(-0.3, 0.95, v),
-        TipShape::Star | TipShape::Square | TipShape::Stick => 0.0,
+        // miolo rosado da flor (meio mais escuro)
+        TipShape::Sakura => (1.0 - (u * u + v * v).sqrt() / 0.35).clamp(0.0, 1.0) * 0.8,
+        // nervuras da folha caída e a haste da pena
+        TipShape::Maple => smoothstep(0.08, 0.0, u.abs().min(v.abs())) * 0.6,
+        TipShape::Feather => smoothstep(0.06, 0.0, u.abs()) * 0.7,
+        // face de baixo da pedra na sombra
+        TipShape::Pebble => smoothstep(-0.1, 0.7, v + 0.3 * u),
+        TipShape::Star | TipShape::Square | TipShape::Stick | TipShape::Bokeh | TipShape::Tree | TipShape::Glint => 0.0,
     }
 }
 
@@ -760,6 +836,252 @@ impl BrushPreset {
         v.extend(Self::erasers());
         v.extend(Self::paint_brushes());
         v.extend(Self::blenders());
+        v.extend(Self::decorations());
+        for p in &mut v {
+            Self::s25_decoration_tuning(p);
+        }
+        v
+    }
+
+    /// Ajuste S25 da decoração (calibrada nas decorações do Clip Studio em 30/60 px): os elementos caem como partículas do
+    /// spray (forma da ponta, tamanho em fração do pincel, quantidade, espalhamento), menores e mais espaçados que a
+    /// ponta inteira; vale também para os pincéis de cenário antigos (S11) que têm um equivalente lá.
+    fn s25_decoration_tuning(p: &mut BrushPreset) {
+        use crate::brush_dyn::Spray;
+        let spray = |count: f32, size: f32, size_min: f32, spread: f32| Some(Spray { count, size, sync: true, size_min, roundness_min: 1.0, bias: 0.0, count_exp: 0.0, spread });
+        match p.name.as_str() {
+            "Brilhos" => {
+                p.spray = spray(1.5, 0.3, 0.6, 1.0);
+                p.spacing = 0.6;
+                p.scatter = 0.0;
+                p.count = 1;
+                p.tip = BrushTip::Shape { shape: TipShape::Glint, aspect: 1.0 };
+            }
+            "Purpurina" => {
+                p.spray = spray(6.0, 0.12, 0.3, 1.0);
+                p.spacing = 0.2;
+                p.scatter = 0.0;
+                p.count = 1;
+            }
+            "Círculos suaves" => {
+                p.spray = spray(2.0, 0.3, 0.6, 1.2);
+                p.spacing = 0.6;
+                p.flow = 0.3;
+                p.scatter = 0.0;
+                p.count = 1;
+            }
+            "Penas" => {
+                p.spray = spray(2.0, 0.35, 0.6, 1.0);
+                p.spacing = 0.5;
+                p.scatter = 0.0;
+                p.count = 1;
+            }
+            "Flores/pétalas" => {
+                p.spray = spray(2.0, 0.25, 0.6, 1.0);
+                p.spacing = 0.5;
+                p.flow = 0.7;
+                p.scatter = 0.0;
+                p.count = 1;
+            }
+            "Rosas" => {
+                p.spray = spray(1.5, 0.9, 0.6, 0.8);
+                p.spacing = 0.4;
+                p.scatter = 0.0;
+                p.count = 1;
+            }
+            "Flores de cerejeira" => {
+                p.spray = spray(2.5, 0.25, 0.6, 1.0);
+                p.spacing = 0.5;
+                p.scatter = 0.0;
+                p.count = 1;
+            }
+            "Folhagem" => {
+                p.spray = spray(6.0, 0.4, 0.6, 1.0);
+                p.spacing = 0.15;
+                p.scatter = 0.0;
+                p.count = 1;
+            }
+            "Folhas soltas" => {
+                p.spray = spray(2.0, 0.35, 0.6, 1.0);
+                p.spacing = 0.4;
+                p.scatter = 0.0;
+                p.count = 1;
+            }
+            "Árvores" => {
+                p.spray = spray(3.0, 0.7, 0.6, 0.7);
+                p.spacing = 0.15;
+                p.scatter = 0.0;
+                p.count = 1;
+            }
+            "Gramado" => {
+                p.spray = spray(3.0, 0.5, 0.6, 1.0);
+                p.spacing = 0.5;
+                p.flow = 0.8;
+                p.scatter = 0.0;
+                p.count = 1;
+            }
+            "Grama" => {
+                p.spray = spray(3.0, 0.3, 0.6, 1.0);
+                p.spacing = 0.5;
+                p.flow = 0.15;
+                p.scatter = 0.0;
+                p.count = 1;
+            }
+            "Folhas caídas" => {
+                p.spray = spray(1.0, 0.5, 0.6, 1.0);
+                p.spacing = 0.7;
+                p.flow = 0.6;
+                p.scatter = 0.0;
+                p.count = 1;
+            }
+            "Chão" => {
+                p.spray = spray(6.0, 0.08, 0.4, 1.0);
+                p.spacing = 0.2;
+                p.flow = 0.5;
+                p.scatter = 0.0;
+                p.count = 1;
+            }
+            "Rachadura" => {
+                p.angle_jitter = 8.0;
+                p.size_jitter = 0.3;
+                p.tip = BrushTip::Round { hardness: 1.0, roundness: 0.03, angle: 0.0 };
+            }
+            "Nuvem" => {
+                p.flow = 0.5;
+            }
+            "Cascalho" => {
+                p.spray = spray(2.0, 0.3, 0.6, 1.0);
+                p.spacing = 0.5;
+                p.flow = 0.7;
+                p.scatter = 0.0;
+                p.count = 1;
+            }
+            _ => {}
+        }
+    }
+
+    /// Decorações de fábrica (S25, calibradas nos pincéis de Decoração do Clip Studio que servem para anime: Efeito e
+    /// Plano de fundo, em 30/60 px): formas desenhadas pelo nosso motor (sakura, pena, bokeh, árvore, bordo, pedra,
+    /// cintilância), espalhadas, giradas e com duas cores; nada das imagens de material dele.
+    pub fn decorations() -> Vec<BrushPreset> {
+        use crate::brush_dyn::{EdgeNoise, Grain, GrainKind};
+        let deco = |name: &str, size: f32, shape: TipShape| {
+            let mut p = BrushPreset::round(name, size, 1.0);
+            p.tip = BrushTip::Shape { shape, aspect: 1.0 };
+            p.group = "decoracao".into();
+            p.category = "cenario".into();
+            p.size_pressure_min = 1.0;
+            p
+        };
+        let mut v = Vec::new();
+        // efeito
+        let mut g = deco("Purpurina", 100.0, TipShape::Glint);
+        g.spacing = 0.12;
+        g.count = 3;
+        g.scatter = 1.0;
+        g.size_jitter = 0.85;
+        g.angle_jitter = 15.0;
+        g.value_jitter = 0.25;
+        v.push(g);
+        let mut dl = BrushPreset::round("Luz entre folhas", 200.0, 0.2);
+        dl.group = "decoracao".into();
+        dl.category = "cenario".into();
+        dl.size_pressure_min = 1.0;
+        dl.spacing = 0.25;
+        dl.count = 2;
+        dl.scatter = 0.8;
+        dl.size_jitter = 0.7;
+        dl.flow = 0.35;
+        dl.opacity = 0.8;
+        v.push(dl);
+        let mut sc = deco("Círculos suaves", 120.0, TipShape::Bokeh);
+        sc.spacing = 0.2;
+        sc.count = 2;
+        sc.scatter = 1.0;
+        sc.size_jitter = 0.7;
+        sc.flow = 0.3;
+        v.push(sc);
+        let mut fe = deco("Penas", 120.0, TipShape::Feather);
+        fe.tip = BrushTip::Shape { shape: TipShape::Feather, aspect: 0.6 };
+        fe.spacing = 0.9;
+        fe.scatter = 1.0;
+        fe.size_jitter = 0.4;
+        fe.angle_jitter = 70.0;
+        fe.follow_direction = true;
+        fe.two_tone = Some(TwoTone { tint: [0.55, 0.55, 0.6], amount: 0.5, color: None });
+        v.push(fe);
+        let mut ch = deco("Flores de cerejeira", 150.0, TipShape::Sakura);
+        ch.spacing = 0.35;
+        ch.count = 3;
+        ch.scatter = 1.0;
+        ch.size_jitter = 0.5;
+        ch.angle_jitter = 180.0;
+        ch.two_tone = Some(TwoTone { tint: [0.9, 0.45, 0.6], amount: 0.8, color: None });
+        v.push(ch);
+        // plano de fundo
+        let mut lf = deco("Folhas soltas", 60.0, TipShape::Leaf);
+        lf.tip = BrushTip::Shape { shape: TipShape::Leaf, aspect: 0.7 };
+        lf.spacing = 0.3;
+        lf.count = 3;
+        lf.scatter = 1.1;
+        lf.size_jitter = 0.4;
+        lf.angle_jitter = 180.0;
+        lf.value_jitter = 0.15;
+        lf.two_tone = Some(TwoTone { tint: [0.45, 0.6, 0.62], amount: 0.7, color: None });
+        v.push(lf);
+        let mut tr = deco("Árvores", 200.0, TipShape::Tree);
+        tr.tip = BrushTip::Shape { shape: TipShape::Tree, aspect: 0.75 };
+        tr.spacing = 0.22;
+        tr.scatter = 0.15;
+        tr.size_jitter = 0.35;
+        tr.value_jitter = 0.1;
+        v.push(tr);
+        let mut gl = deco("Gramado", 150.0, TipShape::GrassBlade);
+        gl.spacing = 0.08;
+        gl.count = 6;
+        gl.scatter = 0.6;
+        gl.size_jitter = 0.5;
+        gl.angle_jitter = 18.0;
+        gl.value_jitter = 0.2;
+        gl.flow = 0.7;
+        gl.two_tone = Some(TwoTone { tint: [0.4, 0.58, 0.5], amount: 0.65, color: None });
+        v.push(gl);
+        let mut fl = deco("Folhas caídas", 120.0, TipShape::Maple);
+        fl.spacing = 0.7;
+        fl.scatter = 1.4;
+        fl.size_jitter = 0.4;
+        fl.angle_jitter = 180.0;
+        fl.value_jitter = 0.12;
+        fl.two_tone = Some(TwoTone { tint: [0.7, 0.45, 0.35], amount: 0.6, color: None });
+        v.push(fl);
+        let mut gr = deco("Chão", 150.0, TipShape::Pebble);
+        gr.spacing = 0.05;
+        gr.count = 4;
+        gr.scatter = 0.6;
+        gr.size_jitter = 0.8;
+        gr.angle_jitter = 180.0;
+        gr.flow = 0.6;
+        gr.grain = Some(Grain { kind: GrainKind::Speckle, scale: 1.2, depth: 0.6, contrast: 1.5, brightness: 0.0, subtract: true, moving: true, seed: 0 });
+        v.push(gr);
+        let mut cr = BrushPreset::round("Rachadura", 120.0, 1.0);
+        cr.group = "decoracao".into();
+        cr.category = "cenario".into();
+        cr.size_pressure_min = 1.0;
+        cr.tip = BrushTip::Round { hardness: 1.0, roundness: 0.06, angle: 0.0 };
+        cr.follow_direction = true;
+        cr.spacing = 0.02;
+        cr.angle_jitter = 25.0;
+        cr.edge = Some(EdgeNoise { amount: 0.6, grain: 3.0, seed: 0 });
+        v.push(cr);
+        let mut ru = deco("Cascalho", 150.0, TipShape::Pebble);
+        ru.spacing = 0.3;
+        ru.count = 2;
+        ru.scatter = 1.0;
+        ru.size_jitter = 0.6;
+        ru.angle_jitter = 180.0;
+        ru.value_jitter = 0.15;
+        ru.two_tone = Some(TwoTone { tint: [0.5, 0.5, 0.55], amount: 0.7, color: None });
+        v.push(ru);
         v
     }
 
@@ -1835,6 +2157,10 @@ impl StrokeBuffer {
             _ => 1.0,
         };
         let aa = preset.antialias.unwrap_or(if preset.aliased { 0 } else { 1 });
+        // decoração: cada partícula é a forma da ponta (folha, sakura, pedra…), girada pelo `angle_jitter` do pincel
+        // (árvores ficam em pé) e com a segunda cor
+        let shape_tip = matches!(preset.tip, BrushTip::Shape { .. });
+        let two = preset.two_tone.as_ref().filter(|_| shape_tip).map(|t| t.second(rgb));
         for _ in 0..n {
             let u = self.rng.f32();
             let ang = self.rng.f32() * std::f32::consts::TAU;
@@ -1843,8 +2169,8 @@ impl StrokeBuffer {
             let k = sp.size_min + (1.0 - sp.size_min) * self.rng.f32();
             let pr = (sp.diameter(preset.size) * 0.5 * k).max(0.3);
             let round = sp.roundness_min + (1.0 - sp.roundness_min) * self.rng.f32();
-            let pang = angle + self.rng.f32() * 360.0;
-            let tip = BrushTip::Round { hardness, roundness: round, angle: 0.0 };
+            let pang = if shape_tip { angle + preset.angle_jitter * self.rng.signed() } else { angle + self.rng.f32() * 360.0 };
+            let tip = if shape_tip { preset.tip.clone() } else { BrushTip::Round { hardness, roundness: round, angle: 0.0 } };
             let pad = 1.0 + crate::brush_dyn::aa_ramp(aa).0 * 0.5 + pr * crate::brush_dyn::SOFT_TAIL;
             let (bx0, by0) = (((px - pr - pad).floor() as i32).max(0), ((py - pr - pad).floor() as i32).max(0));
             let (bx1, by1) = (((px + pr + pad).ceil() as i32).min(self.w), ((py + pr + pad).ceil() as i32).min(self.h));
@@ -1855,7 +2181,8 @@ impl StrokeBuffer {
             for y in by0..by1 {
                 for x in bx0..bx1 {
                     let (dx, dy) = (x as f32 + 0.5 - px, y as f32 + 0.5 - py);
-                    let Some(mut a) = tip_alpha_pen(&tip, dx, dy, pr, pang, aa, thick, 1.0, false) else { continue };
+                    let tipa = if shape_tip { Some(tip_alpha_tone(&tip, dx, dy, pr, pang, preset.aliased, two.is_some())) } else { tip_alpha_pen(&tip, dx, dy, pr, pang, aa, thick, 1.0, false) };
+                    let Some(mut a) = tipa else { continue };
                     if let Some(g) = &preset.grain {
                         a = g.apply(a, (x + self.tex_origin[0]) as f32 + grain_off.0, (y + self.tex_origin[1]) as f32 + grain_off.1);
                     }
@@ -1863,15 +2190,22 @@ impl StrokeBuffer {
                     if da <= 0.0 {
                         continue;
                     }
+                    let mut c = rgb;
+                    if let (Some(c2), Some((shape, u, v))) = (two, shape_uv(&tip, dx, dy, pr, pang)) {
+                        let k = shape_tone(shape, u, v, 1.0 / pr.max(0.25));
+                        for i in 0..3 {
+                            c[i] += (c2[i] - c[i]) * k;
+                        }
+                    }
                     let max_ink = preset.max_ink;
                     let d = self.buf_mut(x, y);
                     if max_ink {
                         if da > d[3] {
-                            *d = [rgb[0] * da, rgb[1] * da, rgb[2] * da, da];
+                            *d = [c[0] * da, c[1] * da, c[2] * da, da];
                         }
                     } else {
                         let k = 1.0 - da;
-                        *d = [rgb[0] * da + d[0] * k, rgb[1] * da + d[1] * k, rgb[2] * da + d[2] * k, da + d[3] * k];
+                        *d = [c[0] * da + d[0] * k, c[1] * da + d[1] * k, c[2] * da + d[2] * k, da + d[3] * k];
                     }
                     let a = d[3];
                     self.max_a = self.max_a.max(a);

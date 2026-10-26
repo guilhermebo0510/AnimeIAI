@@ -50,6 +50,8 @@ fn rose_and_cloud_have_two_tones_and_follow_the_brush_color() {
         big.scatter = 0.0;
         big.count = 1;
         big.spacing = 2.0;
+        // a forma da ponta em si (o preset espalha rosas menores pelo spray desde o S25)
+        big.spray = None;
         paint_stroke(&mut sheet, &big, &[BrushPoint { x: 470.0 + 90.0 * k as f32, y: 140.0, pressure: 1.0 }], red, 9);
     }
     if let Ok(path) = std::env::var("AIAI_BRUSH_SHEET") {
@@ -65,6 +67,7 @@ fn rose_and_cloud_have_two_tones_and_follow_the_brush_color() {
     one.size_jitter = 0.0;
     one.angle_jitter = 0.0;
     one.value_jitter = 0.0;
+    one.spray = None;
     paint_stroke(&mut img, &one, &[BrushPoint { x: 60.0, y: 60.0, pressure: 1.0 }], red, 1);
     let lum: Vec<f32> = img.data.iter().filter(|p| p[3] > 0.99).map(|p| luma(*p)).collect();
     assert!(lum.len() > 4000, "botão cheio, sem buracos: {} px", lum.len());

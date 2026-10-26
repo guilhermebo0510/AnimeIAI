@@ -596,7 +596,7 @@ fn aa_icons(ui: &mut Ui, e: &mut Edit) {
 }
 
 fn tip_combo(ui: &mut Ui, e: &mut Edit) {
-    const SHAPES: [(TipShape, &str); 7] = [
+    const SHAPES: [(TipShape, &str); 14] = [
         (TipShape::Leaf, "tipshape.leaf"),
         (TipShape::Petal, "tipshape.petal"),
         (TipShape::GrassBlade, "tipshape.grass"),
@@ -604,6 +604,13 @@ fn tip_combo(ui: &mut Ui, e: &mut Edit) {
         (TipShape::Star, "tipshape.star"),
         (TipShape::Square, "tipshape.square"),
         (TipShape::Rose, "tipshape.rose"),
+        (TipShape::Sakura, "tipshape.sakura"),
+        (TipShape::Feather, "tipshape.feather"),
+        (TipShape::Bokeh, "tipshape.bokeh"),
+        (TipShape::Tree, "tipshape.tree"),
+        (TipShape::Maple, "tipshape.maple"),
+        (TipShape::Pebble, "tipshape.pebble"),
+        (TipShape::Glint, "tipshape.glint"),
     ];
     let current = match &e.p.tip {
         BrushTip::Round { .. } => tr("tipshape.round").to_owned(),
