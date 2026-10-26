@@ -45,6 +45,11 @@ pub(crate) struct AudioState {
     tts_text: String,
     tts_character: Option<Id>,
     sfx_preset: usize,
+    /// Clima do BGM gerado (índice em `Mood::ALL`).
+    bgm_mood: usize,
+    /// Verificação das ferramentas externas (FFmpeg, VOICEVOX, Kokoro): em andamento e o último resultado.
+    health_job: Option<crossbeam_channel::Receiver<Vec<aiai_tools::health::Health>>>,
+    health: Option<Vec<aiai_tools::health::Health>>,
     import_job: Option<crossbeam_channel::Receiver<Option<std::path::PathBuf>>>,
     /// Forma de onda de cada asset: pico (0..1) a cada 10 ms, lida uma vez.
     waves: HashMap<String, Option<Vec<f32>>>,
@@ -421,6 +426,72 @@ fn add_to_cut(env: &mut Env, ui: &mut Ui, cut: &NodeId) {
         env.note("audio:add_sfx", b.rect);
         if b.clicked() {
             let r = actions::run(env.core, "SFX", json!({ "preset": SFX_PRESETS[k], "seed": frame, "cut": cut, "start_frame": frame }));
+            actions::notify_err(env.ed, r);
+        }
+    });
+    // ferramentas externas (auditoria 4.6g): verificar numa thread e mostrar o que está pronto e o que falta
+    if let Some(rx) = &env.ed.audio.health_job {
+        if let Ok(h) = rx.try_recv() {
+            env.ed.audio.health = Some(h);
+            env.ed.audio.health_job = None;
+        } else {
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(150));
+        }
+    }
+    ui.horizontal_wrapped(|ui| {
+        let busy = env.ed.audio.health_job.is_some();
+        let b = ui.add_enabled(!busy, egui::Button::new(tr(if busy { "audio.health.running" } else { "audio.health" })));
+        env.note("audio:health", b.rect);
+        if b.on_hover_text(tr("audio.health.tip")).clicked() {
+            let (tx, rx) = crossbeam_channel::bounded(1);
+            let _ = std::thread::Builder::new().name("aiai-health".into()).spawn(move || {
+                let _ = tx.send(aiai_tools::health::check());
+            });
+            env.ed.audio.health_job = Some(rx);
+        }
+    });
+    if let Some(h) = env.ed.audio.health.clone() {
+        let t = env.t;
+        for item in h {
+            ui.horizontal_wrapped(|ui| {
+                let (mark, color) = match &item.status {
+                    Ok(_) => ("✔", egui::Color32::from_rgb(110, 200, 120)),
+                    Err(_) => ("✖", egui::Color32::from_rgb(230, 110, 100)),
+                };
+                ui.label(egui::RichText::new(mark).color(color));
+                ui.label(egui::RichText::new(item.name).strong());
+                let text = match &item.status {
+                    Ok(v) | Err(v) => v.clone(),
+                };
+                ui.label(egui::RichText::new(text).size(11.5).color(t.text_dim));
+            });
+        }
+    }
+    // BGM (auditoria 4.7c): trilha original em loop do tamanho do corte, pelo clima, no sintetizador local
+    ui.horizontal_wrapped(|ui| {
+        use aiai_audio::bgm::Mood;
+        let mut k = env.ed.audio.bgm_mood.min(Mood::ALL.len() - 1);
+        let key = |m: Mood| match m {
+            Mood::Calm => "audio.bgm.calm",
+            Mood::Happy => "audio.bgm.happy",
+            Mood::Tense => "audio.bgm.tense",
+            Mood::Sad => "audio.bgm.sad",
+        };
+        let r = egui::ComboBox::from_id_salt("audio_bgm_mood").selected_text(tr(key(Mood::ALL[k]))).show_ui(ui, |ui| {
+            for (i, m) in Mood::ALL.iter().enumerate() {
+                ui.selectable_value(&mut k, i, tr(key(*m)));
+            }
+        });
+        env.note("audio:bgm_mood", r.response.rect);
+        env.ed.audio.bgm_mood = k;
+        let b = ui.button(tr("audio.add_bgm"));
+        env.note("audio:add_bgm", b.rect);
+        if b.on_hover_text(tr("audio.add_bgm.tip")).clicked() {
+            let p = &env.core.project;
+            let secs = crate::app::commands::cut_data(p, cut).map(|c| c.duration as f64 / p.settings.fps()).unwrap_or(4.0) as f32;
+            let mood = Mood::ALL[k];
+            let song = aiai_audio::bgm::mood_song(mood, secs, env.core.change_counter);
+            let r = actions::run(env.core, "BGM", json!({ "song": song, "cut": cut, "start_frame": 0, "name": format!("BGM {}", tr(key(mood))), "fade_out": 0.5 }));
             actions::notify_err(env.ed, r);
         }
     });

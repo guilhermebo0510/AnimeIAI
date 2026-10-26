@@ -90,6 +90,10 @@ impl StudioApp {
     /// Há alterações não salvas? Percorre o log desde o último salvamento: desfazer tudo de volta ao estado salvo volta a
     /// ficar "limpo"; um comando novo depois de desfazer abaixo do ponto salvo o torna inalcançável (sujo para sempre).
     pub(crate) fn doc_dirty(&self) -> bool {
+        // modelagem ainda fora do projeto também é trabalho não salvo (auditoria V2-02)
+        if super::modeling::pending(&self.ed) {
+            return true;
+        }
         let log = self.core.log();
         if log.len() < self.saved_log_len {
             return true;
@@ -322,6 +326,11 @@ impl StudioApp {
     }
 
     fn doc_save_to(&mut self, path: Option<&Path>) -> bool {
+        // a modelagem pendente entra no projeto antes de gravar (senão "Projeto salvo" mentiria sobre o modelo)
+        if let Err(e) = super::modeling::flush_into_project(&mut self.core, &mut self.ed) {
+            self.doc_error("salvar modelagem", e);
+            return false;
+        }
         let params = match path {
             Some(p) => json!({ "path": p.display().to_string() }),
             None => json!({}),
@@ -496,7 +505,7 @@ impl StudioApp {
                 DialogKind::Open => d.add_filter(tr("dialog.project_filter"), &["aiaiproj", "json"]).pick_file(),
                 DialogKind::ProjectsDir | DialogKind::NewParent => d.pick_folder(),
                 DialogKind::SaveAs => d.set_file_name(file_name).save_file(),
-                DialogKind::ImportImage => d.add_filter("Imagem", &IMAGE_EXTS).pick_file(),
+                DialogKind::ImportImage => d.add_filter("Imagem", &IMAGE_EXTS).add_filter("PSD / ORA (camadas)", &["psd", "ora"]).pick_file(),
                 DialogKind::ExportFrame => d.add_filter("PNG", &["png"]).set_file_name(frame_name).save_file(),
                 DialogKind::ExportPsd => d.add_filter("PSD", &["psd"]).set_file_name(psd_name).save_file(),
                 DialogKind::ExportSvg => d.add_filter("SVG", &["svg"]).set_file_name(svg_name).save_file(),
@@ -568,9 +577,20 @@ impl StudioApp {
         let r: Result<String, String> = if ext == "wav" {
             super::actions::run(&mut self.core, "IMPORT_AUDIO", json!({ "path": path.display().to_string(), "cut": cut, "start_frame": self.ed.frame, "track": "sfx" }))
                 .map(|_| format!("{}: {stem}", tr("msg.imported")))
+        } else if ext == "psd" || ext == "ora" {
+            // PSD/ORA (auditoria 4.2d): cada camada de pixels vira uma camada raster no topo do corte
+            let req = aiai_tools::import_layers::ImportLayersRequest { cut: cut.clone(), path: path.display().to_string() };
+            let c = &mut self.core;
+            aiai_tools::import_layers::import_layers_command(&c.project, &mut c.blobs, &mut c.ids, &req)
+                .map_err(|e| e.to_string())
+                .and_then(|cmd| super::commands::run(&mut self.core, cmd).map(|_| ()))
+                .map(|_| format!("{}: {stem}", tr("msg.imported")))
         } else if super::model3d::DROP_EXTS.contains(&ext.as_str()) {
             // modelo 3D: camada 3D de referência nova no topo do corte (o .vrm volta com "em breve")
             super::model3d::import_into(&mut self.core, &mut self.ed, &cut, path)
+        } else if IMAGE_EXTS.contains(&ext.as_str()) && image::ImageReader::open(path).and_then(|r| r.with_guessed_format()).map_err(|e| e.to_string()).and_then(|r| r.decode().map_err(|e| e.to_string())).is_err() {
+            // imagem que não abre: nada muda no projeto (auditoria J01)
+            Err(format!("{}: {stem}.{ext}", tr("err.image_invalid")))
         } else if IMAGE_EXTS.contains(&ext.as_str()) {
             // camada de referência nova no topo do corte, com um cel, e a imagem ajustada ao canvas
             let (layer, cel) = (self.core.ids.next(), self.core.ids.next());
@@ -583,8 +603,22 @@ impl StudioApp {
                     aiai_core::Command::CreateNode { id: Some(cel), parent: Some(layer.clone()), index: None, name: "1".into(), data: aiai_core::NodeKind::Cel(aiai_core::CelData::new(1)) },
                 ],
             };
-            super::commands::run(&mut self.core, batch)
-                .and_then(|_| super::actions::run(&mut self.core, "IMPORT_IMAGE", json!({ "cut": cut, "layer": layer, "frame": 0, "path": path.display().to_string(), "fit": "contain" })))
+            let made = super::commands::run(&mut self.core, batch);
+            made.and_then(|_| {
+                let r = super::actions::run(&mut self.core, "IMPORT_IMAGE", json!({ "cut": cut, "layer": layer, "frame": 0, "path": path.display().to_string(), "fit": "contain" }));
+                match &r {
+                    // camada e imagem: um passo só de desfazer
+                    Ok(_) => {
+                        let label = format!("{}: {stem}", tr("menu.file.import_image"));
+                        self.core.merge_last(2, &label);
+                    }
+                    // a imagem falhou: a camada vazia preparada para ela sai
+                    Err(_) => {
+                        let _ = self.core.undo();
+                    }
+                }
+                r
+            })
                 .map(|_| {
                     self.ed.layer = Some(layer.clone());
                     self.ed.show_reference = true;
@@ -667,10 +701,22 @@ impl StudioApp {
             return;
         }
         let prev = std::mem::replace(&mut self.core.author, AUTHOR.into());
+        let (stack, _) = self.core.history();
+        let top = (stack.len(), stack.last().cloned());
         let r = self.core.undo();
         self.core.author = prev;
         match r {
-            Ok(o) => self.notice(o.description),
+            Ok(o) => {
+                // Mover desfeito: a seleção volta a ser a de antes, combinando com o conteúdo restaurado (M-01)
+                if let (n, Some(desc)) = top {
+                    if let Some((d, before, _)) = self.ed.sel_undo.get(&n) {
+                        if *d == desc {
+                            self.ed.selection = before.clone();
+                        }
+                    }
+                }
+                self.notice(o.description)
+            }
             Err(e) => self.doc_error("desfazer", e),
         }
     }
@@ -685,7 +731,17 @@ impl StudioApp {
         let r = self.core.redo();
         self.core.author = prev;
         match r {
-            Ok(o) => self.notice(o.description),
+            Ok(o) => {
+                let (stack, _) = self.core.history();
+                if let (n, Some(desc)) = (stack.len(), stack.last()) {
+                    if let Some((d, _, after)) = self.ed.sel_undo.get(&n) {
+                        if d == desc {
+                            self.ed.selection = after.clone();
+                        }
+                    }
+                }
+                self.notice(o.description)
+            }
             Err(e) => self.doc_error("refazer", e),
         }
     }

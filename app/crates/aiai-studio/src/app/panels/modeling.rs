@@ -176,9 +176,11 @@ pub(crate) fn properties(env: &mut Env, ui: &mut Ui, body: Rect) {
         return;
     };
     egui::ScrollArea::vertical().id_salt("mdl_props").show(ui, |ui| {
+        // auditoria UX-06: os parâmetros da operação que acabou de rodar (ex.: distância da extrusão) vêm primeiro; o
+        // catálogo de operações é um bloco que dá para recolher (o estado fica guardado)
         if env.ed.modeling.mode == EditMode::Edit {
-            operators(env, ui);
             adjust_last(env, ui);
+            egui::CollapsingHeader::new(egui::RichText::new(tr("mdl.ops_catalog")).strong()).id_salt("mdl_ops_catalog").default_open(true).show(ui, |ui| operators(env, ui));
         }
         let o = env.ed.modeling.doc.objects[a].clone();
         section(ui, &t, "mdl.object");
@@ -199,7 +201,15 @@ pub(crate) fn properties(env: &mut Env, ui: &mut Ui, body: Rect) {
                 let v = [o.transform.pos, o.transform.rot_deg, o.transform.scale][field];
                 ui.horizontal(|ui| {
                     for axis in 0..3 {
-                        if let Some(x) = crate::app::panels::commit_on_release(ui, egui::Id::new(("mdl_xf", a, field, axis)), v[axis], |ui, x| ui.add(egui::DragValue::new(x).speed(speed).max_decimals(3))) {
+                        // eixo nomeado e na cor do gizmo (auditoria UX-07): a cor nunca é o único sinal
+                        let (name, col) = [("X", egui::Color32::from_rgb(230, 90, 90)), ("Y", egui::Color32::from_rgb(110, 200, 110)), ("Z", egui::Color32::from_rgb(100, 150, 240))][axis];
+                        ui.label(egui::RichText::new(name).strong().color(col).size(11.0));
+                        let unit = match field {
+                            0 => " m",
+                            1 => "°",
+                            _ => "",
+                        };
+                        if let Some(x) = crate::app::panels::commit_on_release(ui, egui::Id::new(("mdl_xf", a, field, axis)), v[axis], |ui, x| ui.add(egui::DragValue::new(x).speed(speed).max_decimals(3).suffix(unit))) {
                             if field == 2 && x.abs() < 1e-4 {
                                 continue;
                             }

@@ -139,6 +139,12 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
 
 /// Linhas do pincel: os parâmetros com o olho aceso que valem para ele, na ordem das categorias.
 fn brush_rows(env: &mut Env, ui: &mut Ui, sub: &Option<Sub>) {
+    // não passar da linha (auditoria 4.5m): só o pincel; no alto, visível mesmo com o painel baixo
+    if *env.tool == ToolId::Brush {
+        let o = &mut env.ed.opts;
+        let r = ui.checkbox(&mut o.brush_no_overflow, tr("opt.brush_no_overflow")).on_hover_text(tr("opt.brush_no_overflow.tip"));
+        env.notes.push(("opt:brush_no_overflow".into(), r.rect));
+    }
     let Some((base, mut w)) = working(env) else { return };
     let key = sub.as_ref().filter(|s| matches!(s, Sub::Preset(_) | Sub::EraserPreset(_))).map(|s| s.key()).unwrap_or_else(|| shelf::preset_key(&base));
     let shown = env.ed.draw_ui.prefs.shown_for(&key);
@@ -214,6 +220,20 @@ fn pen_rows(env: &mut Env, ui: &mut Ui) {
     if plain_bar(env, ui, "tprop.size", &mut v, 0.5, 200.0, true, 1, " px") {
         env.ed.opts.pen_width = v;
     }
+    // Figura: o contorno da forma (a ponta vetorial) escolhido aqui mesmo, antes de desenhar (auditoria UX-01)
+    if env.ed.opts.pen_shape != crate::app::editor::PenShape::Freehand {
+        let t = env.t;
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(tr("tprop.outline")).size(12.0).color(t.text));
+            let o = &mut env.ed.opts;
+            let r = egui::ComboBox::from_id_salt("tprop_outline_tip").width(150.0).selected_text(format!("{} · {}", tr(crate::app::shelf::tip_key(o.pen_tip)), tr("tprop.vector"))).show_ui(ui, |ui| {
+                for tip in aiai_core::VectorTip::ALL {
+                    ui.selectable_value(&mut o.pen_tip, tip, tr(crate::app::shelf::tip_key(tip)));
+                }
+            });
+            env.notes.push(("tprop:outline_tip".into(), r.response.rect));
+        });
+    }
     let t = env.t;
     ui.horizontal(|ui| {
         ui.set_min_height(24.0);
@@ -240,6 +260,18 @@ fn pen_rows(env: &mut Env, ui: &mut Ui) {
     let o = &mut env.ed.opts;
     let r = ui.checkbox(&mut o.pen_autoclose, tr("opt.autoclose")).on_hover_text(tr("opt.autoclose.tip"));
     env.notes.push(("tprop:autoclose".into(), r.rect));
+    // auditoria 1 (4.8a, 4.9b, 4.8d, 2.7): as mesmas opções da aba Propriedades, aqui no painel da ferramenta
+    let mut v = env.ed.opts.pen_simplify;
+    if plain_bar(env, ui, "opt.pen_simplify", &mut v, 0.0, 100.0, false, 0, "") {
+        env.ed.opts.pen_simplify = v;
+    }
+    let o = &mut env.ed.opts;
+    let r = ui.checkbox(&mut o.pen_weld, tr("opt.pen_weld")).on_hover_text(tr("opt.pen_weld.tip"));
+    env.notes.push(("tprop:pen_weld".into(), r.rect));
+    let r = ui.checkbox(&mut o.pen_quickshape, tr("opt.pen_quickshape")).on_hover_text(tr("opt.pen_quickshape.tip"));
+    env.notes.push(("tprop:pen_quickshape".into(), r.rect));
+    let r = ui.checkbox(&mut o.pen_color_trace, tr("opt.pen_color_trace")).on_hover_text(tr("opt.pen_color_trace.tip"));
+    env.notes.push(("tprop:pen_color_trace".into(), r.rect));
 }
 
 /// "Redefinir a ferramenta": o pincel volta ao inicial; as outras ferramentas voltam às opções de fábrica delas.

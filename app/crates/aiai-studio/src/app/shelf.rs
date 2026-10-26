@@ -396,9 +396,9 @@ pub(crate) fn fixed_subs(slot: Slot, tab_key: &str) -> Vec<Sub> {
         (Slot::MoveLayer, _) => vec![Sub::Engine(T::Move), Sub::PickLayer, Sub::Engine(T::Model3d)],
         (Slot::Hand, _) => vec![Sub::Engine(T::Hand), Sub::RotateView, Sub::Engine(T::Zoom)],
         (Slot::Eyedropper, _) => vec![Sub::Eyedrop(false), Sub::Eyedrop(true)],
-        (Slot::Pen, "caneta") => vec![Sub::PenTip(VectorTip::GPen), Sub::PenTip(VectorTip::MaruPen)],
-        (Slot::Pen, "marcador") => vec![Sub::PenTip(VectorTip::Marker)],
-        (Slot::Pencil, _) => vec![Sub::PenTip(VectorTip::Pencil)],
+        (Slot::Pen, "caneta") => vec![Sub::PenTip(VectorTip::GPen), Sub::PenTip(VectorTip::MaruPen), Sub::PenTip(VectorTip::School), Sub::PenTip(VectorTip::Fude)],
+        (Slot::Pen, "marcador") => vec![Sub::PenTip(VectorTip::Marker), Sub::PenTip(VectorTip::Square)],
+        (Slot::Pencil, _) => vec![Sub::PenTip(VectorTip::Pencil), Sub::PenTip(VectorTip::Genga)],
         (Slot::Eraser, "raster") => vec![Sub::EraserRaster(0), Sub::EraserRaster(1), Sub::EraserTip(EraserTip::Pencil), Sub::EraserTip(EraserTip::Block), Sub::EraserBrush],
         (Slot::Eraser, "vector") => [EraseMode::Segment, EraseMode::Intersection, EraseMode::Whole].into_iter().map(Sub::EraserVector).collect(),
         (Slot::Fill, _) => (0..super::area_tools::FillMode::ALL.len() as u8).map(Sub::Fill).collect(),
@@ -479,13 +479,7 @@ pub(crate) fn sub_label(env: &Env, s: &Sub) -> String {
     let name_of = |k: &str| preset_index(env, k).and_then(|i| env.ed.brushes.get(i)).map(|p| p.name.clone()).unwrap_or_else(|| k.to_owned());
     match s {
         Sub::Preset(k) | Sub::EraserPreset(k) => name_of(k),
-        Sub::PenTip(t) => tr(match t {
-            VectorTip::GPen => "tip.g_pen",
-            VectorTip::MaruPen => "tip.maru_pen",
-            VectorTip::Marker => "tip.marker",
-            VectorTip::Pencil => "tip.pencil",
-        })
-        .to_owned(),
+        Sub::PenTip(t) => tr(tip_key(*t)).to_owned(),
         Sub::PenShape(m) => tr(super::figure::label_key(*m)).to_owned(),
         Sub::EraserRaster(i) => tr(ERASERS[*i as usize % ERASERS.len()].0).to_owned(),
         Sub::EraserTip(EraserTip::Pencil) => tr("eraser.item.pencil").to_owned(),
@@ -600,6 +594,17 @@ pub(crate) fn current_tab(env: &Env, slot: Slot) -> &'static Tab {
 /// Sub-ferramenta em uso da ferramenta da prateleira ativa (a que está marcada na lista).
 pub(crate) fn current_sub(env: &Env) -> Option<Sub> {
     let slot = env.ed.draw_ui.shelf.slot?;
+    // a última escolhida, se ainda vale (auditoria J02: a borracha vetorial "até a interseção" não pode aparecer como a
+    // borracha dura da outra aba só porque a dureza combina); depois a aba aberta; depois qualquer aba
+    if let Some(s) = env.ed.draw_ui.shelf.last.get(&slot).filter(|s| is_current(env, s)) {
+        return Some(s.clone());
+    }
+    let open = env.ed.draw_ui.shelf.tab.get(&slot).copied();
+    if let Some(t) = slot.tabs().iter().find(|t| Some(t.key) == open) {
+        if let Some(s) = subs(env, slot, t).into_iter().find(|s| is_current(env, s)) {
+            return Some(s);
+        }
+    }
     slot.tabs().iter().flat_map(|t| subs(env, slot, t)).find(|s| is_current(env, s))
 }
 
@@ -723,7 +728,7 @@ pub(crate) fn pick_slot(slots: &[Slot], current: Option<Slot>, tool: ToolId, own
             && match (tool, owner) {
                 (ToolId::Brush, Owner::Group(g)) => s.groups().contains(g),
                 (ToolId::Pen, Owner::Shape) => s == Slot::Figure,
-                (ToolId::Pen, Owner::PenTip(t)) => s != Slot::Figure && ((s == Slot::Pencil) == (*t == VectorTip::Pencil)),
+                (ToolId::Pen, Owner::PenTip(t)) => s != Slot::Figure && ((s == Slot::Pencil) == t.is_pencil()),
                 (ToolId::Lasso, Owner::Wand) => s == Slot::AutoSelect,
                 (ToolId::Lasso, _) => s == Slot::Select,
                 _ => true,
@@ -848,6 +853,20 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui) {
         activate(env, s);
         // o painel das sub-ferramentas vem para a frente (se estiver numa aba atrás de outro)
         env.ed.want_panel = Some(crate::layout::PanelKind::Brushes);
+    }
+}
+
+/// Chave de tradução do nome de cada pena vetorial.
+pub(crate) fn tip_key(t: VectorTip) -> &'static str {
+    match t {
+        VectorTip::GPen => "tip.g_pen",
+        VectorTip::MaruPen => "tip.maru_pen",
+        VectorTip::Marker => "tip.marker",
+        VectorTip::Pencil => "tip.pencil",
+        VectorTip::School => "tip.school",
+        VectorTip::Fude => "tip.fude",
+        VectorTip::Square => "tip.square",
+        VectorTip::Genga => "tip.genga",
     }
 }
 

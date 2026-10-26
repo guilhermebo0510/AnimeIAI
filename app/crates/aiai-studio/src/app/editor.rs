@@ -380,6 +380,8 @@ pub(crate) struct Selection {
     /// Malha (Mover > Malha, auditoria 2.17): grade regular sobre a caixa da seleção e para onde foi cada vértice
     /// (px do canvas). Fica pendente entre os arrastos; Enter grava, Esc desfaz.
     pub mesh: Option<SelMesh>,
+    /// Liquefazer (Mover > Liquefazer): os passos da pincelada em andamento, em px do canvas; grava ao soltar.
+    pub liquify: Vec<aiai_paint::warp::Liquify>,
 }
 
 /// Grade da malha do Mover: `cols × rows` células; `pts` = (cols+1)×(rows+1) vértices deslocados, linha maior.
@@ -397,6 +399,7 @@ pub(crate) enum LiveXf {
     Affine(aiai_paint::Affine),
     Persp(aiai_paint::warp::Homography),
     Mesh(std::sync::Arc<aiai_paint::warp::MeshWarp>),
+    Liquify(std::sync::Arc<Vec<aiai_paint::warp::Liquify>>),
 }
 
 impl LiveXf {
@@ -405,13 +408,14 @@ impl LiveXf {
             LiveXf::Affine(a) => a.apply(x, y),
             LiveXf::Persp(h) => h.apply(x, y),
             LiveXf::Mesh(m) => m.forward(x, y),
+            LiveXf::Liquify(s) => aiai_paint::warp::liquify_path_forward(s, x, y),
         }
     }
 }
 
 impl Selection {
     pub(crate) fn new(mode: SelMode, pts: Vec<Vec2>, whole: bool) -> Self {
-        Selection { mode, pts, offset: Vec2::ZERO, whole, scale: Vec2::splat(1.0), rotate: 0.0, mask: None, strokes: Vec::new(), strokes_layer: None, corners: None, mesh: None }
+        Selection { mode, pts, offset: Vec2::ZERO, whole, scale: Vec2::splat(1.0), rotate: 0.0, mask: None, strokes: Vec::new(), strokes_layer: None, corners: None, mesh: None, liquify: Vec::new() }
     }
 
     /// Centro da caixa da seleção (pivô da escala e da rotação), antes do deslocamento.
@@ -472,6 +476,9 @@ impl Selection {
 
     /// A transformação pendente: malha, perspectiva quando há distorção, senão a afim.
     pub(crate) fn live_xf(&self) -> LiveXf {
+        if !self.liquify.is_empty() {
+            return LiveXf::Liquify(std::sync::Arc::new(self.liquify.clone()));
+        }
         if let Some(m) = self.mesh_warp() {
             return LiveXf::Mesh(std::sync::Arc::new(m));
         }
@@ -482,7 +489,7 @@ impl Selection {
     }
 
     pub(crate) fn is_identity(&self) -> bool {
-        self.offset == Vec2::ZERO && self.plain_scale() && self.rotate.abs() < 1e-3 && self.corners.is_none() && self.mesh_is_identity()
+        self.offset == Vec2::ZERO && self.plain_scale() && self.rotate.abs() < 1e-3 && self.corners.is_none() && self.mesh_is_identity() && self.liquify.is_empty()
     }
 
     /// Sem malha, ou com a malha ainda na grade regular.
@@ -517,6 +524,9 @@ impl Selection {
 
     /// `p` (px do canvas, já com a transformação pendente) cai dentro da escolha?
     pub(crate) fn contains_mapped(&self, p: Vec2) -> bool {
+        if !self.liquify.is_empty() {
+            return self.contains(p);
+        }
         if let Some(m) = self.mesh_warp() {
             return m.inverse_point(p.x, p.y).is_some_and(|(x, y)| self.contains(Vec2::new(x, y)));
         }
@@ -552,6 +562,11 @@ impl Selection {
     /// Aplica a transformação pendente às coordenadas (depois de um Enter). Com escala/rotação, retângulo, elipse e
     /// varinha viram laço (o contorno transformado).
     pub(crate) fn bake_offset(&mut self) {
+        // o liquify só mexe no desenho: a seleção fica onde está
+        if !self.liquify.is_empty() {
+            self.liquify.clear();
+            return;
+        }
         // depois de uma distorção (ou malha) a seleção vira a caixa dos cantos (vértices) novos
         let moved = self.corners.take().map(|c| c.to_vec()).or_else(|| self.mesh.take().map(|m| m.pts));
         if let Some(c) = moved {
@@ -638,6 +653,15 @@ pub(crate) struct ToolOptions {
     pub pen_aliased: bool,
     /// Terminar perto do começo fecha o traço (sem pontas afinadas abrindo vão para o balde).
     pub pen_autoclose: bool,
+    /// Simplificar ao soltar (auditoria 4.8a): 0..100, a força do Corrigir linha > Simplificar aplicada ao traço inteiro
+    /// quando a caneta solta (as amostras viram poucos pontos de controle; a forma não sai mais que a tolerância).
+    pub pen_simplify: f32,
+    /// Linha de cor (Iro-Tresse, auditoria 2.7): o traço delimita sombra/realce e pode sumir no render final.
+    pub pen_color_trace: bool,
+    /// Soldar pontas (auditoria 4.9b): a ponta que termina perto de outra linha da mesma camada vai até ela.
+    pub pen_weld: bool,
+    /// Forma rápida: parar a caneta no fim do traço encaixa numa reta, arco ou elipse.
+    pub pen_quickshape: bool,
     pub pen_shape: PenShape,
     /// Mover em camada vetorial edita os pontos dos traços em vez de mover a seleção.
     pub stab_mode: StabMode,
@@ -684,6 +708,15 @@ pub(crate) struct ToolOptions {
     pub move_auto: bool,
     /// Células da malha do Mover (por lado).
     pub mesh_cells: u32,
+    /// Pincel: não passar da linha (fica na região das linhas onde o traço começou).
+    pub brush_no_overflow: bool,
+    /// Mover > Liquefazer (como o Liquify do Clip Studio): arrastar entorta o desenho com um pincel.
+    pub liquify: bool,
+    pub liquify_kind: aiai_paint::warp::LiquifyKind,
+    /// Diâmetro do pincel do Liquefazer (px do canvas).
+    pub liquify_size: f32,
+    /// Intensidade (0..1).
+    pub liquify_strength: f32,
     /// Transformação: cantos mantêm a proporção (Shift libera), como o Photoshop atual; desligado = livre (Shift trava).
     pub keep_aspect: bool,
     /// Tolerância da varinha (0..255, diferença máxima por canal).
@@ -704,6 +737,10 @@ impl Default for ToolOptions {
             pen_tip: VectorTip::GPen,
             pen_aliased: false,
             pen_autoclose: true,
+            pen_simplify: 10.0,
+            pen_color_trace: false,
+            pen_weld: true,
+            pen_quickshape: true,
             pen_shape: PenShape::Freehand,
             stab_mode: StabMode::Average,
             stab_window: 4,
@@ -732,6 +769,11 @@ impl Default for ToolOptions {
             fix: Default::default(),
             move_auto: false,
             mesh_cells: 3,
+            brush_no_overflow: false,
+            liquify: false,
+            liquify_kind: aiai_paint::warp::LiquifyKind::Push,
+            liquify_size: 80.0,
+            liquify_strength: 0.6,
             keep_aspect: false,
             wand_tolerance: 32.0,
             wand_contiguous: true,
@@ -765,6 +807,11 @@ pub(crate) struct StrokeGesture {
     pub inv: Option<aiai_paint::Affine>,
     /// Régua com encaixe ligado: o traço segue a reta escolhida pelo primeiro trecho (ou é repetido na simetria).
     pub snap: Option<super::rulers::Snap>,
+    /// Último instante (s desde `t0`) em que o cursor andou 1 pt ou mais: a forma rápida mede quanto tempo a caneta
+    /// ficou parada antes de soltar.
+    pub moved_t: f32,
+    /// Onde o cursor estava em `moved_t`.
+    pub moved_p: Option<Vec2>,
 }
 
 impl StrokeGesture {
@@ -809,6 +856,8 @@ pub(crate) enum Gesture {
     DistortSel { corner: usize },
     /// Vértice da malha do Mover.
     MeshSel { vertex: usize },
+    /// Pincelada do Liquefazer (Mover): o último ponto que gerou um passo.
+    LiquifySel { last: Vec2 },
     /// Alça de rotação do Mover.
     RotateSel { start_angle: f32, start_rot: f32 },
     /// Conta-gotas: amostra ao apertar e enquanto arrasta.
@@ -966,6 +1015,12 @@ pub(crate) struct Editor {
     /// Último clique da varinha e cache dos traços que a área leva.
     pub sel_state: super::selection::SelState,
     pub ghosts: Vec<Ghost>,
+    /// `change_counter` logo depois da camada criada sozinha no começo do gesto (caneta em raster, pincel em vetor);
+    /// o commit do traço junta os dois num passo de desfazer, e um gesto vazio desfaz a criação.
+    pub auto_layer: Option<u64>,
+    /// Seleção antes/depois de cada Mover gravado (auditoria M-01), pela altura da pilha de desfazer depois do passo e a
+    /// descrição dele: desfazer/refazer devolvem a seleção que combina com o conteúdo.
+    pub sel_undo: std::collections::HashMap<usize, (String, Option<Selection>, Option<Selection>)>,
     pub playback: Playback,
     /// Retângulo da área do canvas no último quadro (para a bridge e para as contas de tela).
     pub canvas_rect: Option<Rect>,
@@ -1111,6 +1166,8 @@ impl Default for Editor {
             selection: None,
             sel_state: Default::default(),
             ghosts: Vec::new(),
+            auto_layer: None,
+            sel_undo: Default::default(),
             playback: Playback::default(),
             canvas_rect: None,
             cursor: None,

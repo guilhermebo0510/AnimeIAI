@@ -67,15 +67,24 @@ enum Req {
     OpenDir,
 }
 
+/// Nome da miniatura de cada pena vetorial.
+fn pen_thumb(t: VectorTip) -> &'static str {
+    match t {
+        VectorTip::GPen => "pen:g",
+        VectorTip::MaruPen => "pen:maru",
+        VectorTip::Marker => "pen:marker",
+        VectorTip::Pencil => "pen:pencil",
+        VectorTip::School => "pen:school",
+        VectorTip::Fude => "pen:fude",
+        VectorTip::Square => "pen:square",
+        VectorTip::Genga => "pen:genga",
+    }
+}
+
 fn thumb_of(env: &Env, s: &Sub) -> Thumb {
     match s {
         Sub::Preset(k) | Sub::EraserPreset(k) => shelf::preset_index(env, k).map(Thumb::Brush).unwrap_or(Thumb::Icon(ToolId::Brush)),
-        Sub::PenTip(t) => Thumb::Tex(match t {
-            VectorTip::GPen => "pen:g",
-            VectorTip::MaruPen => "pen:maru",
-            VectorTip::Marker => "pen:marker",
-            VectorTip::Pencil => "pen:pencil",
-        }),
+        Sub::PenTip(t) => Thumb::Tex(pen_thumb(*t)),
         Sub::PenShape(m) => Thumb::Pen(*m),
         Sub::EraserRaster(i) => Thumb::Tex(if *i == 0 { "erase:hard" } else { "erase:soft" }),
         Sub::EraserTip(EraserTip::Pencil) => Thumb::Tex("erase:pencil"),
@@ -169,13 +178,21 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
             let g = p.layout_no_wrap(name.clone(), egui::FontId::proportional(12.0), t.text);
             let name_w = g.size().x.min(w * 0.5);
             let badge = if s.is_vector() { 14.0 } else { 0.0 };
-            let thumb_r = Rect::from_min_max(egui::pos2(rect.left() + 4.0, rect.top() + 4.0), egui::pos2((rect.right() - name_w - badge - 14.0).max(rect.left() + 40.0), rect.bottom() - 4.0));
+            // diagramas (formas, modos de borracha, seleção...) ficam numa caixa fixa à esquerda com o nome logo ao lado;
+            // traços de pincel ocupam a largura livre com o nome à direita (auditoria UX-03)
+            let th = thumb_of(env, s);
+            let iconic = !matches!(th, Thumb::Brush(_) | Thumb::Tex(_)) && !matches!(s, Sub::Gradient(_));
+            let thumb_r = if iconic {
+                Rect::from_min_size(egui::pos2(rect.left() + 4.0, rect.top() + 5.0), egui::vec2((ROW_H - 10.0) * THUMB_ASPECT * 0.7, ROW_H - 10.0))
+            } else {
+                Rect::from_min_max(egui::pos2(rect.left() + 4.0, rect.top() + 4.0), egui::pos2((rect.right() - name_w - badge - 14.0).max(rect.left() + 40.0), rect.bottom() - 4.0))
+            };
             match s {
                 Sub::Gradient(g) => crate::app::gradient_tool::paint_thumb(env, &p, thumb_r, g),
-                _ => paint_thumb(env, &p, thumb_r, thumb_of(env, s)),
+                _ => paint_thumb(env, &p, thumb_r, th),
             }
             if !renaming {
-                let x = rect.right() - 6.0 - name_w;
+                let x = if iconic { (thumb_r.right() + 8.0 + badge).min(rect.right() - 6.0 - name_w) } else { rect.right() - 6.0 - name_w };
                 p.with_clip_rect(Rect::from_min_max(egui::pos2(x, rect.top()), rect.max)).galley(egui::pos2(x, rect.center().y - g.size().y / 2.0), g, t.text);
                 if s.is_vector() {
                     env.icons.paint(&p, IconId::LayerVector, Rect::from_center_size(egui::pos2(x - 9.0, rect.center().y), egui::vec2(12.0, 12.0)), t.text_dim);
@@ -314,7 +331,10 @@ fn duplicate(env: &mut Env, slot: Slot, i: usize) {
         p.size = o.brush_size;
         p.opacity = o.brush_opacity;
     }
-    let name = format!("{} 2", p.name);
+    // estilo de nome de cópia das Preferências ("Nome cópia", "Cópia de Nome"...); repetido, ganha número
+    let base = crate::behavior_prefs::copy_name_tr(&p.name, env.ed.beh.prefs.copy_name);
+    let taken = |n: &str| (0..).map_while(|k| env.ed.brushes.get(k)).any(|b| b.name == n);
+    let name = if taken(&base) { (2..).map(|k| format!("{base} {k}")).find(|n| !taken(n)).unwrap_or(base) } else { base };
     let cat = match cat_of(&p).as_str() {
         "importados" | "" => "meus".to_owned(),
         c => c.to_owned(),
@@ -429,7 +449,7 @@ fn ensure_thumbs(env: &mut Env, ui: &Ui) {
     let c = |c: Color32| [c.r() as f32 / 255.0, c.g() as f32 / 255.0, c.b() as f32 / 255.0, 1.0];
     let (bg, ink) = (c(t.bg_widget), c(t.text));
     // penas vetoriais: o traço rasterizado pelo próprio motor (largura com pressão e afinamento de cada pena)
-    for (tip, name) in [(VectorTip::GPen, "pen:g"), (VectorTip::MaruPen, "pen:maru"), (VectorTip::Marker, "pen:marker"), (VectorTip::Pencil, "pen:pencil")] {
+    for (tip, name) in VectorTip::ALL.map(|t| (t, pen_thumb(t))) {
         let pts: Vec<aiai_core::StrokePoint> = (0..40)
             .map(|k| {
                 let f = k as f32 / 39.0;
@@ -438,7 +458,7 @@ fn ensure_thumbs(env: &mut Env, ui: &Ui) {
             .collect();
         let s = aiai_core::Stroke { id: aiai_core::Id(String::new()), points: pts, geometry: aiai_core::StrokeGeometry::Spline, tension: 0.0, tip, width: 9.0, profile: Default::default(), color: aiai_core::ColorRef::default(), opacity: 1.0, closed: false, aliased: false, color_trace: false };
         let mut img = aiai_paint::Image::filled(w, h, bg);
-        if let Some(cov) = aiai_paint::stroke_raster::rasterize_stroke(&aiai_paint::sample_stroke(&s), false, w, h) {
+        if let Some(cov) = aiai_paint::stroke_raster::rasterize_with_tip(&s, &aiai_paint::sample_stroke(&s), w, h) {
             for yy in 0..cov.height {
                 for xx in 0..cov.width {
                     let a = cov.cov[(yy * cov.width + xx) as usize];

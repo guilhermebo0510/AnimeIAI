@@ -358,14 +358,9 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
             });
             if !panel {
             row(ui, &t, compact, "opt.tip", |ui| {
-                let label = |t: VectorTip| match t {
-                    VectorTip::GPen => "tip.g_pen",
-                    VectorTip::MaruPen => "tip.maru_pen",
-                    VectorTip::Marker => "tip.marker",
-                    VectorTip::Pencil => "tip.pencil",
-                };
+                let label = crate::app::shelf::tip_key;
                 egui::ComboBox::from_id_salt(("pen_tip", compact)).width(100.0).selected_text(tr(label(o.pen_tip))).show_ui(ui, |ui| {
-                    for tip in [VectorTip::GPen, VectorTip::MaruPen, VectorTip::Marker, VectorTip::Pencil] {
+                    for tip in VectorTip::ALL {
                         ui.selectable_value(&mut o.pen_tip, tip, tr(label(tip)));
                     }
                 })
@@ -398,6 +393,12 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
             });
             ui.checkbox(&mut o.pen_aliased, tr("opt.aliased"));
             ui.checkbox(&mut o.pen_autoclose, tr("opt.autoclose")).on_hover_text(tr("opt.autoclose.tip"));
+            row(ui, &t, compact, "opt.pen_simplify", |ui| {
+                ui.add(egui::Slider::new(&mut o.pen_simplify, 0.0..=100.0).max_decimals(0)).on_hover_text(tr("opt.pen_simplify.tip"));
+            });
+            ui.checkbox(&mut o.pen_color_trace, tr("opt.pen_color_trace")).on_hover_text(tr("opt.pen_color_trace.tip"));
+            ui.checkbox(&mut o.pen_weld, tr("opt.pen_weld")).on_hover_text(tr("opt.pen_weld.tip"));
+            ui.checkbox(&mut o.pen_quickshape, tr("opt.pen_quickshape")).on_hover_text(tr("opt.pen_quickshape.tip"));
         }
         ToolId::Brush => {
             // o pincel é escolhido no painel Pincéis (categorias e miniaturas): aqui só o nome, que leva até lá
@@ -430,6 +431,9 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
                 ui.add(egui::Slider::new(&mut o.brush_opacity, 0.05..=1.0).show_value(!compact).custom_formatter(|v, _| format!("{:.0}%", v * 100.0)).trailing_fill(true)).on_hover_text(tr("opt.opacity"));
             });
             stabilizer_row(ui, &t, compact, o);
+            let r = ui.checkbox(&mut o.brush_no_overflow, tr("opt.brush_no_overflow")).on_hover_text(tr("opt.brush_no_overflow.tip"));
+            env.notes.push(("opt:brush_no_overflow".into(), r.rect));
+            let o = &mut env.ed.opts;
             if !compact {
                 brush_settings(ui, o, base);
             }
@@ -543,6 +547,11 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
             }
         }
         ToolId::Lasso => crate::app::selection::tool_options(env, ui, compact, panel),
+        // Composição: o Mover leva a camada inteira (posição/rotação/escala da camada); as opções de desenho (seleção
+        // automática de traço, distorção, malha, liquefazer) não valem aqui e não aparecem (auditoria UX-12)
+        ToolId::Move if env.ws == crate::workspace::WorkspaceId::Composicao => {
+            dim_label(ui, &t, tr("opt.move_comp_hint"));
+        }
         ToolId::Move => {
 
             // arrastar move e aplica ao soltar (Ctrl+Z desfaz): sem Aplicar/Enter
@@ -560,9 +569,16 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
             if !compact {
                 dim_label(ui, &t, tr("opt.move_distort_hint"));
             }
-            // Malha (como a do Clip Studio): grade sobre a seleção, cada vértice arrasta; Enter grava, Esc desfaz
-            if env.ed.selection.as_ref().is_some_and(|s| !s.whole) {
-                ui.horizontal(|ui| {
+            // Liquefazer (como o Liquify do Clip Studio: a pincelada entorta o desenho e grava a cada pincelada) e Malha
+            // (grade sobre a seleção, cada vértice arrasta; Enter grava, Esc desfaz), lado a lado
+            let has_area = env.ed.selection.as_ref().is_some_and(|s| !s.whole);
+            ui.horizontal_wrapped(|ui| {
+                let b = ui.selectable_label(env.ed.opts.liquify, tr("opt.liquify"));
+                env.note("opt:liquify", b.rect);
+                if b.on_hover_text(tr("opt.liquify.tip")).clicked() {
+                    env.ed.opts.liquify = !env.ed.opts.liquify;
+                }
+                if has_area && !env.ed.opts.liquify {
                     let on = env.ed.selection.as_ref().is_some_and(|s| s.mesh.is_some());
                     let b = ui.selectable_label(on, tr("opt.move_mesh"));
                     env.note("opt:move_mesh", b.rect);
@@ -580,6 +596,26 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
                         let r = ui.add(egui::DragValue::new(&mut env.ed.opts.mesh_cells).range(1..=8).suffix("×"));
                         env.note("opt:move_mesh_cells", r.rect);
                     }
+                }
+            });
+            if env.ed.opts.liquify {
+                use aiai_paint::warp::LiquifyKind as K;
+                ui.horizontal_wrapped(|ui| {
+                    for (k, key) in [(K::Push, "opt.liquify.push"), (K::Bulge, "opt.liquify.bulge"), (K::Pinch, "opt.liquify.pinch"), (K::Twirl, "opt.liquify.twirl")] {
+                        let b = ui.selectable_label(env.ed.opts.liquify_kind == k, tr(key));
+                        env.note(format!("opt:{}", &key[4..]), b.rect);
+                        if b.clicked() {
+                            env.ed.opts.liquify_kind = k;
+                        }
+                    }
+                });
+                row(ui, &t, compact, "opt.liquify.size", |ui| {
+                    let r = ui.add(egui::Slider::new(&mut env.ed.opts.liquify_size, 4.0..=600.0).logarithmic(true).suffix(" px"));
+                    env.note("opt:liquify_size", r.rect);
+                });
+                row(ui, &t, compact, "opt.liquify.strength", |ui| {
+                    let r = ui.add(egui::Slider::new(&mut env.ed.opts.liquify_strength, 0.0..=1.0));
+                    env.note("opt:liquify_strength", r.rect);
                 });
             }
             if env.ed.selection.as_ref().is_some_and(|s| !s.whole) {

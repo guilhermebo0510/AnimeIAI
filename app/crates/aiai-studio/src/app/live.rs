@@ -641,10 +641,18 @@ fn crop_of(r: &aiai_tools::paint::PaintedRegion) -> (usize, usize, usize, usize)
     (x0, y0, x1, y1)
 }
 
+/// A camada da prévia tem a transparência bloqueada?
+fn locks_alpha(spec: &StartSpec) -> bool {
+    spec.project.as_ref().is_some_and(|p| aiai_tools::paint::layer_locks_alpha(p, &spec.layer))
+}
+
 fn brush_overlay(spec: &StartSpec, req: &Req, above: Option<&Above>, inc: &mut Incremental) -> Option<Out> {
     let mut r = inc.region(spec, req)?;
     if let Some(m) = &spec.clip {
         aiai_tools::paint::clip_region(&mut r, m, spec.fwd.as_ref());
+    }
+    if locks_alpha(spec) {
+        aiai_tools::paint::lock_alpha_region(&mut r);
     }
     let before = r.before.as_ref()?;
     let (x0, y0, x1, y1) = crop_of(&r);
@@ -676,7 +684,7 @@ fn brush_overlay(spec: &StartSpec, req: &Req, above: Option<&Above>, inc: &mut I
 fn pen_overlay(spec: &StartSpec, req: &Req, above: Option<&Above>) -> Option<Out> {
     let s = req.stroke.as_ref()?;
     let smp = aiai_paint::sample_stroke(s);
-    let cov = aiai_paint::stroke_raster::rasterize_stroke(&smp, s.aliased, spec.canvas.0, spec.canvas.1)?;
+    let cov = aiai_paint::stroke_raster::rasterize_with_tip(s, &smp, spec.canvas.0, spec.canvas.1)?;
     let (cw, ch) = (cov.width as usize, cov.height as usize);
     if cw == 0 || ch == 0 {
         return None;
@@ -829,6 +837,9 @@ fn raster_erase_overlay(spec: &StartSpec, req: &Req, base: &EraseBase, inc: &mut
     if let Some(m) = &spec.clip {
         aiai_tools::paint::clip_region(&mut r, m, spec.fwd.as_ref());
     }
+    if locks_alpha(spec) {
+        aiai_tools::paint::lock_alpha_region(&mut r);
+    }
     let before = r.before.as_ref()?;
     let (x0, y0, x1, y1) = crop_of(&r);
     if x0 >= x1 || y0 >= y1 {
@@ -951,7 +962,7 @@ impl CelArt {
             if x1 + 2.0 < b[0] as f32 || y1 + 2.0 < b[1] as f32 || x0 - 2.0 > b[2] as f32 || y0 - 2.0 > b[3] as f32 {
                 continue;
             }
-            let Some(cov) = aiai_paint::stroke_raster::rasterize_stroke(&smp, s.aliased, canvas.0, canvas.1) else { continue };
+            let Some(cov) = aiai_paint::stroke_raster::rasterize_with_tip(s, &smp, canvas.0, canvas.1) else { continue };
             let color = resolve_rgba(p, &s.color);
             let a = color[3] * s.opacity;
             let premul = [color[0] * a, color[1] * a, color[2] * a, a];

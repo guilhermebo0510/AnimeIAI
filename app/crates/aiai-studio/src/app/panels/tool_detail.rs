@@ -849,7 +849,10 @@ pub(crate) fn window(env: &mut Env, ctx: &egui::Context) {
         d.preview = Some((w.clone(), super::tool_props::stroke_preview(ctx, "tool-detail-preview", &q, t.bg_widget, t.text, 560, 110)));
     }
     let mut prefs = std::mem::take(&mut env.ed.draw_ui.prefs);
-    let win = egui::Window::new(tr("tdet.title")).id(egui::Id::new("tool_detail")).open(&mut open).default_size([640.0, 520.0]).resizable(true).collapsible(false).show(ctx, |ui| {
+    // tamanho só muda quando o usuário arrasta a borda (auditoria M-02): o corpo rola dentro de uma altura fixa e o
+    // rodapé fica sempre visível; a janela nunca passa de 90% da tela
+    let max_h = (ctx.content_rect().height() * 0.9).max(360.0);
+    let win = egui::Window::new(tr("tdet.title")).id(egui::Id::new("tool_detail")).open(&mut open).default_size([640.0, 520.0]).max_height(max_h).resizable(true).constrain(true).collapsible(false).show(ctx, |ui| {
         if let Some((_, tex)) = &d.preview {
             let wd = ui.available_width().min(560.0);
             let r = ui.add(egui::Image::new((tex.id(), egui::vec2(wd, wd * 110.0 / 560.0))));
@@ -860,7 +863,8 @@ pub(crate) fn window(env: &mut Env, ctx: &egui::Context) {
             ui.label(egui::RichText::new(tr("tdet.not_brush")).color(t.text_dim));
         }
         ui.separator();
-        egui::ScrollArea::vertical().id_salt("tdet_scroll").max_height((ui.available_height() - 40.0).max(120.0)).show(ui, |ui| {
+        let body = (ui.available_height() - 44.0).max(120.0);
+        egui::ScrollArea::vertical().id_salt("tdet_scroll").auto_shrink([false, false]).max_height(body).min_scrolled_height(body).show(ui, |ui| {
             let mut e = Edit { p: &mut w, o: Some(&mut env.ed.opts), t, icons: env.icons, notes: env.notes, compact: false, salt: "detail" };
             changed = categories_ui(ui, &mut e, &mut d.cat, Some((&key, &mut prefs)));
         });

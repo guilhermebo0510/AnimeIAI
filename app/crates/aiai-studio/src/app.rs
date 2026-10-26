@@ -82,6 +82,8 @@ pub struct StudioApp {
     /// `None` com `--no-session` (nada é lido nem gravado).
     prefs_path: Option<PathBuf>,
     prefs_dirty: bool,
+    /// Geometria da janela vista por último e desde quando está assim (grava depois de 1 s parada).
+    win_geom: Option<(prefs::WindowGeom, std::time::Instant)>,
     ws: WorkspaceId,
     /// Ferramenta do quadro anterior (troca de ferramenta traz o painel Pincéis).
     /// (ferramenta, área de trabalho) do quadro anterior: só troca de ferramenta na mesma área traz o painel.
@@ -179,6 +181,7 @@ impl StudioApp {
             prefs,
             prefs_path,
             prefs_dirty: false,
+            win_geom: None,
             trees: HashMap::new(),
             layouts,
             layouts_path,
@@ -269,6 +272,39 @@ impl StudioApp {
 
     fn mark_dirty(&mut self) {
         self.prefs_dirty = true;
+    }
+
+    /// Acompanha a posição/tamanho da janela principal; quando fica 1 s igual e é diferente da gravada, vai para as
+    /// Preferências. Maximizada guarda só a marca (o tamanho de antes de maximizar continua o gravado).
+    fn track_window(&mut self, ctx: &egui::Context) {
+        if self.prefs_path.is_none() {
+            return;
+        }
+        let (outer, inner, maxi, mini) = ctx.input(|i| {
+            let v = i.viewport();
+            (v.outer_rect, v.inner_rect, v.maximized.unwrap_or(false), v.minimized.unwrap_or(false))
+        });
+        let (Some(outer), Some(inner)) = (outer, inner) else { return };
+        if mini {
+            return;
+        }
+        let g = match (maxi, self.prefs.window) {
+            (true, Some(prev)) => prefs::WindowGeom { maximized: true, ..prev },
+            _ => prefs::WindowGeom { pos: [outer.min.x, outer.min.y], size: [inner.width(), inner.height()], maximized: maxi },
+        };
+        let now = std::time::Instant::now();
+        match self.win_geom {
+            Some((last, since)) if last == g => {
+                if self.prefs.window != Some(g) && now.duration_since(since).as_secs_f32() >= 1.0 && g.sane().is_some() {
+                    self.prefs.window = Some(g);
+                    self.mark_dirty();
+                }
+            }
+            _ => {
+                self.win_geom = Some((g, now));
+                ctx.request_repaint_after(std::time::Duration::from_millis(1100));
+            }
+        }
     }
 
     /// Grava as preferências se algo mudou (nunca com `--no-session`).
@@ -1297,6 +1333,7 @@ impl StudioApp {
         self.confirm_window(&ctx);
         self.layout_name_window(&ctx);
         self.layouts_tick();
+        self.track_window(&ctx);
         self.persist();
         self.handle_screenshot(&ctx);
         let title = self.window_title();

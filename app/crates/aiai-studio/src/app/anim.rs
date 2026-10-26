@@ -759,6 +759,88 @@ pub(crate) fn paint_onion(ed: &Editor, painter: &egui::Painter, sp: [Pos2; 4], c
     painter.add(egui::Shape::mesh(m));
 }
 
+/// Intercalação pedida pela Linha do tempo: o cel A (o da célula clicada, desde o começo da exposição dele) até o
+/// próximo cel diferente da camada (B).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct InbetweenPlan {
+    pub key_a: u32,
+    pub key_b: u32,
+    pub frame_a: u32,
+    pub frame_b: u32,
+    pub hold: u32,
+    pub count: usize,
+}
+
+/// Plano de intercalação a partir da célula (`layer`, `frame`): só camada vetorial com um cel ali e outro depois. Em 2s
+/// quando o espaço é par (4 quadros ou mais), senão em 1s; `None` sem espaço para nenhum desenho.
+pub(crate) fn inbetween_plan(p: &Project, cut: &NodeId, layer: &NodeId, frame: u32) -> Option<InbetweenPlan> {
+    if !cmds::layer_data(p, layer).is_some_and(|l| l.kind == LayerType::Vector) {
+        return None;
+    }
+    let dur = cmds::cut_data(p, cut)?.duration;
+    let a = cmds::exposed_number(p, cut, layer, frame)?;
+    let mut fa = frame;
+    while fa > 0 && cmds::exposed_number(p, cut, layer, fa - 1) == Some(a) {
+        fa -= 1;
+    }
+    let (fb, b) = (frame + 1..dur).find_map(|k| cmds::exposed_number(p, cut, layer, k).filter(|n| *n != a).map(|n| (k, n)))?;
+    let gap = fb - fa;
+    let hold = if gap % 2 == 0 && gap >= 4 { 2 } else { 1 };
+    let count = (gap / hold).saturating_sub(1) as usize;
+    (count > 0).then_some(InbetweenPlan { key_a: a, key_b: b, frame_a: fa, frame_b: fb, hold, count })
+}
+
+/// Faz a intercalação do plano: cels novos (e os da camada de cor ligada) no timesheet entre A e B e, com as chaves já
+/// pintadas na camada de cor, o balde propagado para os desenhos novos. Dois passos de desfazer.
+pub(crate) fn run_inbetween(env: &mut Env, cut: &NodeId, layer: &NodeId, plan: &InbetweenPlan) {
+    let p = &env.core.project;
+    let fill = cmds::layer_rows(p, cut).into_iter().map(|r| r.id).find(|id| cmds::layer_data(p, id).is_some_and(|l| l.kind == LayerType::Fill && l.line_refs.contains(layer)));
+    let req = aiai_tools::anim::InbetweenRequest {
+        cut: cut.clone(),
+        layer: layer.clone(),
+        key_a: plan.key_a,
+        key_b: plan.key_b,
+        count: plan.count,
+        times: Vec::new(),
+        ease: None,
+        halves_toward_b: None,
+        first_number: None,
+        start_frame: Some(plan.frame_a),
+        hold: plan.hold,
+        options: Default::default(),
+        fill_layer: fill.clone(),
+    };
+    let cmd = match aiai_tools::anim::inbetween_command(&env.core.project, &mut env.core.ids, &req) {
+        Ok(c) => c,
+        Err(e) => {
+            env.ed.notify(e.to_string());
+            return;
+        }
+    };
+    if let Err(e) = cmds::run(env.core, cmd) {
+        env.ed.notify(e);
+        return;
+    }
+    let mut msg = format!("{} {}", plan.count, tr("timeline.inbetween.done"));
+    if let Some(fill) = fill {
+        let frames: Vec<u32> = (1..=plan.count as u32).map(|k| plan.frame_a + k * plan.hold).collect();
+        let pr = aiai_tools::anim::PropagateFillsRequest { cut: cut.clone(), fill_layer: fill, key_frame_a: plan.frame_a, key_frame_b: plan.frame_b, frames, gap: env.ed.opts.fill_gap };
+        match aiai_tools::anim::propagate_fills(&env.core.project, &mut env.core.blobs, &pr) {
+            Ok(cmds_) if !cmds_.is_empty() => {
+                let n = cmds_.len();
+                match cmds::run(env.core, Command::Batch { commands: cmds_, label: Some(tr("timeline.inbetween.fill").to_owned()) }) {
+                    Ok(_) => msg = format!("{msg}; {n} {}", tr("timeline.inbetween.filled")),
+                    Err(e) => msg = format!("{msg}; {e}"),
+                }
+            }
+            Ok(_) => {}
+            // chaves ainda sem pintura: só a linha
+            Err(_) => {}
+        }
+    }
+    env.ed.notify(msg);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

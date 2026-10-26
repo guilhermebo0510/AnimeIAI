@@ -217,9 +217,9 @@ Lote futuro: comparar com as nossas Preferências e acrescentar o que faltar e s
 
 ## Pendências para a integração (achadas pelos agentes)
 
-- A barra flutuante de seleção (`sel_ops.rs`, Order::Foreground) desenha por cima de janelas como Preferências.
-- `unique_layer_name` sempre acrescenta " 1" (corrigido só em Copiar para camada).
-- Pincel duplicado no painel de sub-ferramentas ainda vira "Nome 2" e não segue o estilo de nome de cópia das Preferências.
+- ~~A barra flutuante de seleção desenha por cima de janelas como Preferências.~~ Corrigido (26/10): camada do meio.
+- ~~`unique_layer_name` sempre acrescenta " 1".~~ Corrigido (26/10): nomes descritivos usam `unique_name` (nome, nome 2...).
+- ~~Pincel duplicado vira "Nome 2".~~ Corrigido (26/10): segue o estilo de cópia das Preferências.
 - A aba Propriedades da direita ainda repete opções da ferramenta.
 - Painéis da esquerda ficam apertados em 1080p (propriedades mostram cerca de 4 linhas, paleta de tamanhos cerca de 2).
 - Coluna direita da Animação lotada em 1080p (Navegador pequeno).

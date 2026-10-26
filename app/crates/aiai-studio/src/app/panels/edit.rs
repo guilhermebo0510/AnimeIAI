@@ -835,13 +835,16 @@ pub(crate) fn properties(env: &mut Env, ui: &mut Ui) {
             dim_label(ui, &t, tr("editing.in"));
             let max_in = mlen.map(|m| m.saturating_sub(1)).unwrap_or(u32::MAX / 4);
             if let Some(v) = commit_on_release(ui, EId::new(("edit_in", id, &o.id.0)), it.src_in, |ui, v| ui.add(egui::DragValue::new(v).range(0..=max_in).speed(0.3))) {
-                doc.slip(&[id], v as i64 - it.src_in as i64, &media);
+                // vinculados andam juntos, como no Início (auditoria F01): vídeo e áudio continuam em sincronia
+                let ids = if env.ed.edit.linked_sel { doc.linked(id) } else { vec![id] };
+                doc.slip(&ids, v as i64 - it.src_in as i64, &media);
                 changed = true;
             }
             ui.end_row();
             dim_label(ui, &t, tr("editing.duration"));
             if let Some(v) = commit_on_release(ui, EId::new(("edit_dur", id, &o.id.0)), it.dur, |ui, v| ui.add(egui::DragValue::new(v).range(1..=100_000).speed(0.3).suffix(format!(" {}", tr("unit.frames_short"))))) {
-                doc.trim(&[id], aiai_tools::edit::ops::Edge::Out, v as i64 - it.dur as i64, false, &media);
+                let ids = if env.ed.edit.linked_sel { doc.linked(id) } else { vec![id] };
+                doc.trim(&ids, aiai_tools::edit::ops::Edge::Out, v as i64 - it.dur as i64, false, &media);
                 changed = true;
             }
             ui.end_row();
@@ -888,7 +891,12 @@ pub(crate) fn properties(env: &mut Env, ui: &mut Ui) {
         dim_label(ui, &t, tr("editing.props_hint"));
     }
 
-    // ---- edição inteira: créditos e fade final
+    // ---- edição inteira: créditos e fade final, num bloco com escopo explícito (auditoria UX-11): valem para a
+    // sequência toda, não para o clipe escolhido acima
+    ui.add_space(8.0);
+    ui.separator();
+    ui.label(egui::RichText::new(tr("editing.scope_sequence")).strong().size(13.0));
+    dim_label(ui, &t, tr("editing.scope_sequence.tip"));
     section(ui, &t, "editing.credits");
     let w = (ui.available_width() - 4.0).max(80.0);
     let (r, c) = super::text_commit_multi(ui, EId::new(("edit_credits", &o.id.0)), &doc.credits.join("\n"), w, tr("editing.credits_hint"));

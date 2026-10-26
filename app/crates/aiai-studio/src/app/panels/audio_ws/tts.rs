@@ -211,8 +211,15 @@ fn gb(b: Option<u64>) -> String {
 }
 
 fn tts_body(env: &mut Env, ui: &mut Ui) {
+    tts_main(env, ui);
+    // hardware e motores opcionais ficam recolhidos no fim (auditoria UX-09): primeiro o motor pronto e a fala
+    ui.add_space(8.0);
+    let r = egui::CollapsingHeader::new(tr("audio.tts.hardware_more")).id_salt("tts_hw").default_open(false).show(ui, |ui| hardware_card(env, ui));
+    env.note("audio:tts:hardware", r.header_response.rect);
+}
+
+fn tts_main(env: &mut Env, ui: &mut Ui) {
     let t = env.t;
-    hardware_card(env, ui);
     // ---- motor
     section(ui, &t, "audio.tts.engine");
     let mut e = env.ed.audio_ws.tts.engine;

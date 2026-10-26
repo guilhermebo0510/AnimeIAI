@@ -220,7 +220,8 @@ pub(crate) fn eyedrop_layer(env: &mut Env, p: Vec2) {
         }
     };
     if let Some(c) = straight_at(&img, p) {
-        super::tools::set_picked_color(env, c);
+        // `straight_at` já tira a transparência: vai como cor opaca
+        super::tools::set_picked_color(env, [c[0], c[1], c[2], 1.0]);
     }
 }
 

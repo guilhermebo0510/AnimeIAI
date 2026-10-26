@@ -309,14 +309,116 @@ pub(crate) fn filter_groups(w: f32, h: f32) -> Vec<(&'static str, Vec<(&'static 
         ("filter.group.lens", pick(&["chromatic_aberration", "vignette", "grain", "deband"])),
         // renderizar: linhas de foco e de velocidade numa camada vetorial nova (traços editáveis, não efeito)
         ("filter.group.render", vec![("filter.focus_lines", json!({ "render": "focus" })), ("filter.speed_lines", json!({ "render": "speed" }))]),
+        // cenário (auditoria 4.5c): céu numa camada nova e texturas (plana, ou em perspectiva no laço de 4 cantos)
+        (
+            "filter.group.sky",
+            ["day", "morning", "sunset", "dusk", "night"].into_iter().map(|tod| (sky_key(tod), json!({ "render": "sky", "tod": tod }))).collect(),
+        ),
+        (
+            "filter.group.texture",
+            TEXTURES.iter().map(|(key, kind, _, _, _)| (*key, json!({ "render": "texture", "kind": kind }))).collect(),
+        ),
     ]
+}
+
+fn sky_key(tod: &str) -> &'static str {
+    match tod {
+        "morning" => "filter.sky.morning",
+        "sunset" => "filter.sky.sunset",
+        "dusk" => "filter.sky.dusk",
+        "night" => "filter.sky.night",
+        _ => "filter.sky.day",
+    }
+}
+
+/// Texturas de cenário: (chave, tipo, especificação, cor escura, cor clara). Cores de partida para ajustar depois.
+const TEXTURES: [(&str, &str, &str, [f32; 3], [f32; 3]); 8] = [
+    ("filter.tex.brick", "brick", r#"{"type":"brick","brick":[64,26],"mortar":3,"variation":0.25}"#, [0.42, 0.19, 0.14], [0.72, 0.38, 0.28]),
+    ("filter.tex.roof", "roof_tiles", r#"{"type":"roof_tiles","tile":[44,30],"variation":0.2}"#, [0.24, 0.22, 0.3], [0.5, 0.46, 0.56]),
+    ("filter.tex.wood", "wood", r#"{"type":"wood","scale":120,"rings":9}"#, [0.36, 0.22, 0.12], [0.64, 0.44, 0.26]),
+    ("filter.tex.stone", "stone", r#"{"type":"stone","scale":60}"#, [0.36, 0.36, 0.38], [0.7, 0.7, 0.72]),
+    ("filter.tex.grass", "grass", r#"{"type":"grass","scale":40,"density":0.7}"#, [0.14, 0.32, 0.12], [0.46, 0.7, 0.3]),
+    ("filter.tex.foliage", "foliage", r#"{"type":"foliage","scale":50}"#, [0.1, 0.28, 0.12], [0.4, 0.62, 0.28]),
+    ("filter.tex.plaster", "plaster", r#"{"type":"plaster","scale":80}"#, [0.74, 0.71, 0.65], [0.93, 0.91, 0.86]),
+    ("filter.tex.paper", "paper", r#"{"type":"paper","scale":40}"#, [0.84, 0.82, 0.77], [0.98, 0.97, 0.94]),
+];
+
+/// Uma camada raster nova acima da ativa, com o nome dado e o cel no quadro atual; devolve (corte, camada).
+fn new_raster(env: &mut Env, name: &str) -> Option<(super::commands::NodeId, super::commands::NodeId)> {
+    let Some(cut) = env.ed.active_cut(env.core) else {
+        env.ed.notify(tr("err.no_cut"));
+        return None;
+    };
+    let active = env.ed.active_layer(env.core);
+    let layer = match super::commands::add_layer(env.core, &cut, LayerType::Raster, active.as_ref()) {
+        Ok(l) => l,
+        Err(e) => {
+            env.ed.notify(e);
+            return None;
+        }
+    };
+    let _ = super::commands::rename_node(env.core, &layer, name);
+    env.ed.layer = Some(layer.clone());
+    env.ed.cel_number = None;
+    Some((cut, layer))
+}
+
+/// Céu (dia, manhã, pôr do sol, crepúsculo, noite) numa camada nova, horizonte a 62% da altura.
+fn render_sky(env: &mut Env, tod: &str) {
+    let Some((cut, layer)) = new_raster(env, &format!("{} ({})", tr("filter.sky"), tr(sky_key(tod)))) else { return };
+    let (_, h) = super::commands::canvas_size(&env.core.project, &cut);
+    let frame = env.ed.frame;
+    let sky: aiai_paint::texture::SkySpec = match serde_json::from_value(json!({ "time_of_day": tod, "horizon_y": h as f32 * 0.62, "seed": env.core.change_counter as u32 })) {
+        Ok(s) => s,
+        Err(e) => return env.ed.notify(e.to_string()),
+    };
+    let planned = super::commands::plan_with_prep(env.core, &cut, &layer, frame, None, vec![], |p, blobs| {
+        aiai_tools::background::sky_command(p, blobs, &aiai_tools::background::SkyRequest { cut: cut.clone(), frame, layer: layer.clone(), sky }).map_err(|e| e.to_string())
+    });
+    match planned.and_then(|c| super::commands::run(env.core, c).map(|_| ())) {
+        Ok(()) => {}
+        Err(e) => env.ed.notify(e),
+    }
+}
+
+/// Textura numa camada nova: dentro da seleção; um laço poligonal de 4 cantos (sup-esq, sup-dir, inf-dir, inf-esq)
+/// vira o plano em perspectiva (o padrão diminui com a distância), como uma parede ou um chão.
+fn render_texture(env: &mut Env, kind: &str) {
+    let Some((key, _, spec, dark, light)) = TEXTURES.iter().find(|t| t.1 == kind).copied() else { return };
+    let sel = env.ed.selection.clone().filter(|s| !s.whole);
+    let Some((cut, layer)) = new_raster(env, &format!("{} ({})", tr("filter.texture"), tr(key))) else { return };
+    let frame = env.ed.frame;
+    let quad = sel.as_ref().filter(|s| s.mode == super::editor::SelMode::Lasso && s.pts.len() == 4).map(|s| s.pts.iter().map(|p| [p.x, p.y]).collect::<Vec<_>>());
+    let mapping = match &quad {
+        Some(q) => {
+            let d = |a: usize, b: usize| ((q[a][0] - q[b][0]).powi(2) + (q[a][1] - q[b][1]).powi(2)).sqrt();
+            json!({ "type": "perspective", "quad": q, "size": [d(0, 1).max(d(3, 2)), d(0, 3).max(d(1, 2))] })
+        }
+        None => json!({ "type": "flat", "scale": 1.0 }),
+    };
+    let region = if quad.is_some() { None } else { sel.as_ref().and_then(|s| s.shape()) };
+    let spec: serde_json::Value = serde_json::from_str(spec).unwrap_or(serde_json::Value::Null);
+    let req = json!({ "cut": cut, "frame": frame, "layer": layer, "texture": { "spec": spec, "dark": dark, "light": light, "seed": env.core.change_counter as u32 }, "mapping": mapping, "region": region });
+    let req: aiai_tools::background::PatternFillRequest = match serde_json::from_value(req) {
+        Ok(r) => r,
+        Err(e) => return env.ed.notify(e.to_string()),
+    };
+    let planned = super::commands::plan_with_prep(env.core, &cut, &layer, frame, None, vec![], |p, blobs| aiai_tools::background::pattern_fill_command(p, blobs, &req).map_err(|e| e.to_string()));
+    match planned.and_then(|c| super::commands::run(env.core, c).map(|_| ())) {
+        Ok(()) => {}
+        Err(e) => env.ed.notify(e),
+    }
 }
 
 /// Aplica o filtro à camada ativa (um passo de desfazer) e abre a janela com os parâmetros. Um efeito entra no fim da
 /// pilha; uma lista (efeito rápido) entra inteira; `{"render": ...}` desenha linhas de foco/velocidade numa camada nova.
 pub(crate) fn apply_filter(env: &mut Env, effect: Value) {
     if let Some(kind) = effect.get("render").and_then(Value::as_str) {
-        return render_lines(env, kind);
+        return match kind {
+            "sky" => render_sky(env, effect.get("tod").and_then(Value::as_str).unwrap_or("day")),
+            "texture" => render_texture(env, effect.get("kind").and_then(Value::as_str).unwrap_or("brick")),
+            _ => render_lines(env, kind),
+        };
     }
     let Some(layer) = env.ed.active_layer(env.core) else {
         env.ed.notify(tr("filter.no_layer"));

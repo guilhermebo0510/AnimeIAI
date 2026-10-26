@@ -28,7 +28,7 @@ Os 5 itens P0 do plano da auditoria estão feitos (um deles com decisão mantida
 | 1.2b | Lint testa um pixel só | FEITO | `aiai-tools/src/fill.rs:424` (cobertura ≥ 0,95 por pixel) | nada |
 | 1.3 | Vetor rasterizado antes da câmera/escala | FEITO | `aiai-render/src/compose.rs:786-790`; teste `golden.rs:292`; commit 2f548b6 | nada |
 | 1.4 | Pincel/balde O(W×H) | FEITO | tiles tocados (0de0ec5, 54→16 ms), cache de regiões do balde (2º clique 1007→6 ms), `FrameCache` (2e492d2, 450-950→40-70 ms) | metas da auditoria (<16 ms, <8 ms) não medidas (ver 4.4) |
-| 1.5a | `inbetween`: sem grupos, traços sem par aparecem/somem em t=0,5 | NÃO FEITO | `aiai-anim/src/lib.rs:245,309-314`; `LACUNAS.md` nº 14 e 15 abertos | correspondência por grupo/tag, 1-para-N, suavizar sem par |
+| 1.5a | `inbetween`: sem grupos, traços sem par aparecem/somem em t=0,5 | PARCIAL (26/10) | traço sem par se apaga/desenha aos poucos andando com o corpo (`aiai-anim` `unmatched`) | grupos/tags e 1-para-N (precisa de campo de grupo no traço) |
 | 1.5b | Manequim `guide3d` sem plano anatômico nem projeção das juntas no JSON | PARCIAL | S24 trouxe manequim posável novo (`aiai-3d-charbase`, df4da70) | `GUIDE3D` continua sem `project` de pontos (`LACUNAS.md` nº 10) |
 | 1.6 | Mover seleção parcial vetorial apaga os outros traços | FEITO | não era bug (`ReplaceStrokes` troca por id, `aiai-core/src/command.rs:509`); critério unificado em `transform.rs:145` (maioria dos pontos); teste `aiai-tools/tests/suite.rs:246` | nada |
 | 1.7A | Prévia do arrasto diferente do traço final | FEITO | prévia do motor: `live.rs` (`StrokeBuffer`), `canvas.rs:1526-1549`; U7 do backlog | sobra uma `polyline` só como reserva antes da 1ª prévia chegar |
@@ -52,24 +52,24 @@ Os 5 itens P0 do plano da auditoria estão feitos (um deles com decisão mantida
 | 2.4 | Miniaturas de traço dos pincéis | FEITO | `panels/brushes.rs:429` (traço do motor), painel Ferramenta em grade (U13, U20, U24) | nada |
 | 2.5 | Caneta: reta, curva por cliques, retângulo, elipse | FEITO | commit 3289b64; `figure.rs` ampliando (em andamento) | polígono, Bézier, laço (em andamento) |
 | 2.6 | Caneta: edição de nós e largura | FEITO | ferramenta Editar pontos (`ToolId::Points`, `nodes.rs`), alça U25, ids U27 | nada |
-| 2.7 | Caneta: `color_trace` fixo `false` na UI | NÃO FEITO | `pen.rs:230`, `editor.rs:1208`, `anim.rs:781` | opção/caneta Iro-Tresse |
+| 2.7 | Caneta: `color_trace` fixo `false` na UI | FEITO (26/10) | opção "Linha de cor (Iro-Tresse)" nas opções da caneta (`tools.rs` `commit_pen`) | o balde/compositor: ver 4.7d |
 | 2.8 | Borracha vetorial apaga o traço inteiro | FEITO | modos trecho tocado, até a interseção, traço inteiro (`shelf.rs` `EraserVector(EraseMode)`); commit c572538, `aiai_erase` | nada |
-| 2.9 | "Verificar" só dá um número, não destaca onde | NÃO FEITO | `tools.rs:750-764` (`run_lint` só guarda a contagem; ignora `border_unpainted`) | marcas piscantes sobre `LintRegion.point`, navegar de buraco em buraco, laço de preencher buracos |
+| 2.9 | "Verificar" só dá um número, não destaca onde | FEITO (82cc089) | marcas piscantes, ‹ › e Pintar no painel; bridge `lint_next/prev/fill/clear` | nada |
 | 2.10 | Onion skin / mesa de luz temporal | FEITO | `panels/light_table.rs`, `anim.rs` (`OnionMode`), commit 27a1e09 | nada |
 | 2.11 | Seleção: Varinha | FEITO | commit 3a3d923; `selection.rs` | nada |
-| 2.12 | Seleção: faixa de cor (`ColorRange`) | NÃO FEITO | nenhum uso em `aiai-studio` | expor na Seleção |
+| 2.12 | Seleção: faixa de cor (`ColorRange`) | FEITO (b0ee21b) | menu Selecionar > Selecionar a cor atual | nada |
 | 2.13 | Seleção: somar/subtrair/interseção, feather, inverter, expandir | FEITO | `selection.rs:65-195`, `sel_ops.rs` | nada |
 | 2.14 | Seleção limita pincel e borracha raster | FEITO | commit 8316477 | caneta vetorial não respeita; balde não respeita (`FillRequest` não tem máscara) |
-| 2.15 | Seleção limita balde e caneta | NÃO FEITO | `aiai-tools/src/fill.rs:18-48` sem seleção; S24 lista "balde ainda não respeita" | máscara de seleção no balde e na caneta |
+| 2.15 | Seleção limita balde e caneta | FEITO (82cc089) | a caneta vetorial sai em pedaços dentro da seleção; o balde já respeitava | nada |
 | 2.16 | Mover: alças de escala/rotação, preview raster | FEITO | commits 3a3d923, 72f10e2, 3a6c235 (Ctrl+T 8 alças, prévia ao vivo `move_live.rs`) | nada |
-| 2.17 | Mover: inclinar, perspectiva, malha, liquify, puppet warp | NÃO FEITO | `selection.rs:645` só `Deform::Affine`; motor tem `aiai-paint/src/warp.rs` | expor `Perspective`, `MeshWarp`, `Liquify` na UI |
-| 2.18 | Conta-gotas: cor da camada/composta, lupa, preservar paleta | NÃO FEITO | `tools.rs:768-773` só `shown.rendered`, grava cor direta | opção "só camada atual", lupa, manter `ColorRef::Palette` |
+| 2.17 | Mover: inclinar, perspectiva, malha, liquify, puppet warp | FEITO, menos Puppet Warp | Ctrl+canto = distorção (a659cbd); Malha (bc36073, gravação por triângulos); Liquefazer empurrar/expandir/contrair/girar (`Deform::LiquifyPath`) | Puppet Warp (4.7h) |
+| 2.18 | Conta-gotas: cor da camada/composta, lupa, preservar paleta | FEITO (bc36073 + 26/10) | "Cor da camada"/"Cor exibida", lupa 11×11 que vira perto da borda, cor da paleta mantida, pixel vazio não troca a cor | nada |
 | 2.19 | Rotação livre do canvas (não só saltos de 15°) | PARCIAL | `panels/navigator.rs:116-128` (controle deslizante + passo configurável nas Preferências) | gesto contínuo Shift+Espaço+arrastar não confirmado |
 | 2.20 | `Layout`, `Pintura`, `Cenário` com painéis idênticos | FEITO | teste `layout.rs:1066` (`drawing_workspaces_no_longer_look_the_same`); réguas e Sub View nesses workspaces | Céu e Texturas em perspectiva ainda sem painel (ver 4.5A) |
 | 2.21 | Personagens: desenhar na folha dentro da aba | FEITO | commit 7e5aba0 (pasta do personagem com canvas) | nada |
 | 2.22 | `CONSISTENCY` digitando Y em pixels | NÃO FEITO | `panels/characters.rs:620-656` ainda `DragValue` | régua arrastável no canvas ou medição automática pela caixa dos traços |
 | 2.23 | Cor: monitor de áudio sob "Navegador"; coluna central desperdiçada | FEITO | o workspace "Cor" virou Biblioteca (`workspace.rs:19`); monitor só no Áudio (`app.rs:1437`) | nada |
-| 2.24 | Cor: Lift/Gamma/Gain em caixas numéricas, sem rodas/curvas/escopos | NÃO FEITO | `panels/satsuei.rs:104` (`DragValue`) | rodas 3-way, curvas RGB, escopos (S24 deixou "Escopos" para depois) |
+| 2.24 | Cor: Lift/Gamma/Gain em caixas numéricas, sem rodas/curvas/escopos | FEITO, menos escopos (26/10) | rodas de cor no Lift/Gamma/Gain e no Equilíbrio de cor; editor de Curvas (RGB/R/G/B) e dos outros ajustes na janela de filtros (antes "só pelo MCP") | escopos (forma de onda/vetorscópio) |
 | 2.25 | Áudio: timeline mostrando camadas de desenho | VERIFICAR | `layout.rs:1056` põe `Timeline` no Áudio; só abrindo o app se ela mostra trilhas de áudio | olhar o workspace Áudio |
 | 2.26 | Edição sem Play/Pause | FEITO | `panels/edit_panels.rs:44,206` (Play/Pausa com som); commit 085c524, 8c624e9 | nada |
 | 2.27 | Composição: parâmetros compostos "Editável via MCP" | PARCIAL | `satsuei.rs:117` ainda mostra para o que não é número/cor/vetor | editor de curvas/listas |
@@ -104,7 +104,7 @@ Os 5 itens P0 do plano da auditoria estão feitos (um deles com decisão mantida
 | 4.2a | Importar imagem (PNG, JPEG, WebP, TIFF, BMP) + arrastar e soltar | FEITO | `app/Cargo.toml:24`; `menu.file.import_image` (`app.rs:630`); commit 9d3e5b2 | nada |
 | 4.2b | Painel Sub View | FEITO | `panels/subview.rs`; commit b557a6a | nada |
 | 4.2c | Exportar PSD, SVG, XDTS, OTIO, quadro | FEITO | `app.rs:634-651`; commits 9273374 e seguintes | nada |
-| 4.2d | Importar PSD/ORA, exportar ORA | NÃO FEITO | nenhum | leitor de PSD/ORA |
+| 4.2d | Importar PSD/ORA, exportar ORA | FEITO, menos exportar ORA (26/10) | Arquivo > Importar aceita .psd (RGB 8 bits, cru ou RLE) e .ora (ZIP guardado/deflate): uma camada raster por camada, com nome, visibilidade, opacidade e mistura; bridge `IMPORT_LAYERS` e MCP `aiai_import_layers` | exportar ORA |
 | 4.2e | Importar 3D (.obj, .gltf, .glb) | FEITO | `aiai-3d-model/src/import.rs:37` | `.fbx` não; `.vrm` responde "em breve" (`import.rs:79`) |
 | 4.3a | Autosave antes do primeiro Salvar | FEITO | `app/autosave.rs` (recovery a cada 2 min, intervalo nas Preferências) | nada |
 | 4.3b | `sync_all` por tile travando 10 s | FEITO | `persist.rs:278` (blobs em paralelo, WAL sem sync por tile); commit fc17a74, eeadec5 | nada |
@@ -114,51 +114,51 @@ Os 5 itens P0 do plano da auditoria estão feitos (um deles com decisão mantida
 | 4.4a | GPU ociosa, tudo na CPU | NÃO FEITO | nenhum crate do motor usa wgpu para compor | decisão: compositor na GPU |
 | 4.4b | Sem cache por camada | FEITO | `FrameCache` em `aiai-render` (2e492d2, 0de0ec5) | nada |
 | 4.4c | Tempestade de alocações 132 MB por camada | PARCIAL | caixa do alfa, tiles tocados, LRU de tiles (2e492d2) | ainda `Image` f32 de quadro inteiro no composto |
-| 4.4d | Disputa de `rayon` entre ferramenta e render | NÃO FEITO | sem pools separados | pool próprio para o render |
+| 4.4d | Disputa de `rayon` entre ferramenta e render | FEITO (26/10) | pool próprio do render do canvas (metade dos núcleos) em `render_service.rs` | medir no bench 4K |
 | 4.4e | Máscara de preenchimento do tamanho do quadro | FEITO | não reproduziu: `mask_of` já recorta (backlog) | nada |
 | 4.4f | Tamanho do canvas do corte editável; Começo rápido ignorava o tamanho | FEITO | `canvas.rs:141`; `props.canvas_4k` (commit 9e5626d) | nada |
 | 4.4g | Metas de 4K (render < 8 ms, balde < 15 ms, 60 fps) | VERIFICAR | `evidencias/S23/desempenho/bench4k.json`: re-render 1890→339 ms, 1º clique do balde ~650 ms | rodar o bench de novo; as metas não foram atingidas |
-| 4.5a | `PAINT_SHAPES` / laço de preenchimento na GUI | PARCIAL | `app/figure.rs` (em andamento, não commitado) | commitar e conferir |
-| 4.5b | `GRADIENT` na GUI | PARCIAL | `app/gradient_tool.rs` (em andamento, não commitado), `ToolId::Gradient` | commitar e conferir |
-| 4.5c | Gerador de céu `SKY` e `PATTERN_FILL` em perspectiva na GUI | NÃO FEITO | só predefinições de degradê de céu (`grad_tool::sky_presets`) | ferramentas de céu e de textura em perspectiva |
+| 4.5a | `PAINT_SHAPES` / laço de preenchimento na GUI | FEITO (cdc0668, 1d3f2b2) | Figura (desenho direto) | nada |
+| 4.5b | `GRADIENT` na GUI | FEITO (cdc0668, 1d3f2b2) | Degradê por arrasto, camada de degradê, degradê livre | nada |
+| 4.5c | Gerador de céu `SKY` e `PATTERN_FILL` em perspectiva na GUI | FEITO (26/10) | Filtro > Céu (dia/manhã/pôr do sol/crepúsculo/noite) e Filtro > Textura (8 tipos; dentro da seleção; laço poligonal de 4 cantos = plano em perspectiva), cada um numa camada nova | nada |
 | 4.5d | `LINES` (velocidade/foco) na GUI | FEITO | `workbar.rs:339-356` (menu Filtro); `figure.rs` com as abas (em andamento) | nada |
-| 4.5e | MeshWarp / Liquify / Puppet Warp na GUI | NÃO FEITO | ver 2.17 | |
-| 4.5f | Camadas Ajuste e Texto no menu `+` | PARCIAL | `layers.rs:18` tem Texto; Ajuste fora | incluir `Adjustment` |
-| 4.5g | Editor de partículas na GUI | NÃO FEITO | nada de `particles` fora de `layers.rs`/`commands.rs` | presets pétala/chuva/neve/faísca e parâmetros |
+| 4.5e | MeshWarp / Liquify / Puppet Warp na GUI | FEITO, menos Puppet Warp | ver 2.17 | Puppet Warp |
+| 4.5f | Camadas Ajuste e Texto no menu `+` | FEITO (26/10) | "+" > Camada de ajuste > Níveis/Curvas/Matiz/... (camada de efeito com a correção, abre os parâmetros) | nada |
+| 4.5g | Editor de partículas na GUI | FEITO (26/10) | Propriedades da camada de partículas: presets (pétalas, brilhos, neve, chuva, poeira) e 16 parâmetros + cores (`panels/particles_ed.rs`) | faísca como preset |
 | 4.5h | Efeitos `Para`, `RadialBlur`, `ColorAwareBlur`, `Adjust`, `Lut` no menu | FEITO | `panels/effects_browser.rs:22-29` | nada |
 | 4.5i | 3D cel-shading, importação, câmera | FEITO | S24: spike 4,8 ms (6ea984e), `aiai-3d-render` (outline, toon) | extração de linhas do modelo (S24 "ficou para depois") |
 | 4.5j | Fumaça/fogo/raios procedurais 2D | NÃO FEITO | nenhum | gerador estilo anime |
 | 4.5k | Camera shake paramétrico | PARCIAL | bridge `CameraRequest::Shake` (`satsuei_tools.rs:150`) | botão/painel na GUI (não confirmado) |
-| 4.5l | `lock_alpha` na camada raster | NÃO FEITO | nenhum | |
-| 4.5m | Anti-overflow (não atravessar linhas da referência) no pincel | NÃO FEITO | nenhum | |
-| 4.6a | `INBETWEEN` e `PROPAGATE_FILLS` na Linha do tempo | NÃO FEITO | nenhum botão em `timeline.rs`/`anim.rs` | botões de gerar intercalação e propagar pintura |
+| 4.5l | `lock_alpha` na camada raster | FEITO (26/10) | botão "Bloquear transparência" na barra das Camadas (`params.lock_alpha`); commit e prévia (`paint::lock_alpha_region`) | nada |
+| 4.5m | Anti-overflow (não atravessar linhas da referência) no pincel | FEITO (26/10) | "Não passar da linha" no pincel: a região das linhas do balde onde o traço começou limita o pincel (`tools::stroke_clip`) | nada |
+| 4.6a | `INBETWEEN` e `PROPAGATE_FILLS` na Linha do tempo | FEITO (26/10) | menu da célula: "Intercalar até o próximo desenho" (2s quando cabe), timesheet e pintura propagada das chaves (`anim::run_inbetween`) | nada |
 | 4.6b | Dope sheet / graph editor, trilhas de Câmera/Efeito | FEITO | `panels/comp_timeline.rs:235,855` (Composição, commit 0680c5d) | na Linha do tempo de Animação continuam invisíveis (por desenho) |
-| 4.6c | `propagate_fills` com semente linear em arco | NÃO FEITO | `aiai-tools/src/anim.rs:196-200` | usar Procrustes/bend do `inbetween`; `LACUNAS.md` nº 14 |
+| 4.6c | `propagate_fills` com semente linear em arco | FEITO (26/10) | semente vai pelo `GlobalMotion` (o mesmo movimento das intercalações) medido nas linhas de referência | BasicPBC (4.8f) |
 | 4.6d | Rigging 2D nativo (ossos, IK, pai-filho, deformadores) | NÃO FEITO | só âncora e chaves; S24 "parenting com herança" ficou para depois | |
-| 4.6e | ProRes 10-bit com alfa (`rgba64le`) | NÃO FEITO | `aiai-media/src/lib.rs:147` `rgb24`; `:182` `yuv422p10le` | 4444 com alfa |
+| 4.6e | ProRes 10-bit com alfa (`rgba64le`) | FEITO (26/10) | `VideoCodec::Prores4444` (yuva444p10le, alfa 16), render sem fundo, preset "ProRes 4444 com transparência" na Entrega; teste com ffprobe | nada |
 | 4.6f | Fila de entrega com progresso por quadro e Cancelar | FEITO | `panels/deliver.rs:230` (cancelar), fila v2 (f6ce0d7) | nada |
-| 4.6g | Kokoro via `uv run`; `FFmpeg`/VOICEVOX sem verificação de saúde | NÃO FEITO | `aiai-audio/src/kokoro.rs:74` | ONNX embutido ou sidecar, verificação na UI |
+| 4.6g | Kokoro via `uv run`; `FFmpeg`/VOICEVOX sem verificação de saúde | PARCIAL (26/10) | Áudio > Verificar ferramentas: FFmpeg, ffprobe, VOICEVOX (1,5 s) e Kokoro (script, modelos, uv) com o que falta (`aiai-tools/src/health.rs`) | Kokoro sem `uv` (ONNX embutido) |
 | 4.6h | Cor linear / HDR | NÃO FEITO | `aiai-paint/src/tile.rs:16` `clamp(0,1)` | |
 | 4.6i | Prefs: recentes, atalhos, layouts, biblioteca de pincéis | FEITO | `prefs.rs:22,26`, `layout_store.rs`, biblioteca em Documentos (e1444bc) | nada |
-| 4.6j | Prefs: geometria da janela principal | NÃO FEITO | `main.rs:104` `persist_window: false` | |
+| 4.6j | Prefs: geometria da janela principal | FEITO (26/10) | posição, tamanho e maximizada gravados em `prefs.window` (1 s depois de parar) e usados ao abrir; `--size` manda mais | nada |
 | 4.6k | Projeto em arquivos por corte com trava por corte | NÃO FEITO | `persist.rs` só `project.lock` do projeto todo | S24 deixou o `.aiaiproj` SQLite para depois |
 | 4.7a | Áudio ao vivo, scrubbing, waveform nos clipes e na timeline | FEITO | `audio_out.rs`, `audio.rs:233`, `timeline.rs:530-557`; commits 4e8967c, 3904dba | nada |
 | 4.7b | Botões de áudio na GUI: importar WAV, TTS, lip-sync, SFX | FEITO | `panels/audio.rs:378-419`, `audio_ws/tts.rs` | nada |
-| 4.7c | Botão de BGM | NÃO FEITO | backlog "menos BGM"; só pela `aiai_bgm` | |
-| 4.7d | Iro-Tresse (linhas R/G/B no balde e no compositor) | NÃO FEITO | `boundary_from_alpha` só lê alfa | |
-| 4.7e | Variantes de iluminação na paleta (Dia/Entardecer/Noite) | PARCIAL | modelo: `PaletteData::active_variant`, `NamedColor::variants` (`model.rs:908`) | escolha por corte e interface |
+| 4.7c | Botão de BGM | FEITO (26/10) | Áudio > Gerar BGM pelo clima (calmo, alegre, tenso, triste): trilha original em loop do tamanho do corte (`aiai-audio` `mood_song`) | nada |
+| 4.7d | Iro-Tresse (linhas R/G/B no balde e no compositor) | FEITO (26/10) | linha de cor (opção da caneta) delimita o balde mesmo escondida; as regiões vão por baixo dela até o meio, então esconder não abre fresta (`fill::compute_regions_uncached`) | nada |
+| 4.7e | Variantes de iluminação na paleta (Dia/Entardecer/Noite) | FEITO (26/10) | painel Cores > Conjunto: Iluminação (Normal/variantes, gerar Entardecer/Noite/Sombra, editar cor por variante) e "Neste corte" (`CutData::palette_variant`, render e pincel por corte) | nada |
 | 4.7f | `.XDTS` e `.OTIO` | FEITO | commit 9273374 | importar `.xdts` não |
 | 4.7g | Botão Folha de e-conte | FEITO | `panels/board.rs:148` | nada |
 | 4.7h | Puppet Warp; modificadores de traço (vento, line boil, profundidade, espelho); colorização por dicas | NÃO FEITO | nenhum | |
-| 4.8a | Ajuste automático de curva (RDP + Schneider) ao soltar a caneta | NÃO FEITO | `pen.rs`/`tools.rs` gravam as amostras brutas | |
+| 4.8a | Ajuste automático de curva (RDP + Schneider) ao soltar a caneta | FEITO (26/10) | "Simplificar ao soltar" (0..100, padrão 10 = 1 px) usa o Simplificar do Editar pontos (RDP com largura + desvio medido na curva); 121 amostras viram ~28 pontos | nada |
 | 4.8b | Editar nós de controle | FEITO | ferramenta Editar pontos, atalhos U26 | nada |
-| 4.8c | Corrigir linha (Beliscar, Simplificar, Conectar, Largura, Redesenhar, poeira) | PARCIAL | `app/line_fix.rs` + `aiai-tools/src/line_fix.rs` + bridge/MCP (em andamento, não commitado) | commitar e conferir |
-| 4.8d | QuickArc / Perspective Snap | NÃO FEITO | nenhum | |
+| 4.8c | Corrigir linha (Beliscar, Simplificar, Conectar, Largura, Redesenhar, poeira) | FEITO (7e54e65, 1104dd7) | `app/line_fix.rs` + `aiai-tools/src/line_fix.rs` + bridge/MCP | nada |
+| 4.8d | QuickArc / Perspective Snap | FEITO, menos Perspective Snap (26/10) | "Forma rápida": parar 0,35 s no fim vira reta, arco ou elipse (`aiai-tools/src/quick_shape.rs`) | encaixe na grade 3D |
 | 4.8e | IA pontual de traço (ghost lines, micro-patches) | NÃO FEITO | proposta de pesquisa | |
 | 4.8f | Casamento de inclusão (BasicPBC) no `propagate_fills` | NÃO FEITO | nenhum | |
 | 4.9a | Duplo afinamento `taper × profile` | FEITO | commit 5b68146 (vale o mais fino); backlog 4.9.1 | nada |
-| 4.9b | Soldagem automática de pontas próximas; fim do remendo "Fecho do balde" | NÃO FEITO | `tools/calib/c131_lines.py:48`, `a138_char.py:323` ainda usam | |
-| 4.9c | Catálogo de canetas (10 do plano) | PARCIAL | 11 canetas/marcadores raster de fábrica (`brush.rs:976-1039`: Pena G, G real, Mapping, Nabo, Caligrafia...) | `VectorTip` segue com 4 variantes (`stroke.rs:74`); faltam School, Fude, Genga com grão no vetor, Iro-Tresse, ponta quadrada |
+| 4.9b | Soldagem automática de pontas próximas; fim do remendo "Fecho do balde" | FEITO no app (26/10) | "Soldar pontas": a ponta perto de outra linha entra nela e fica reta (canto na ponta = sem afinar) (`line_fix::weld_endpoints`) | scripts `tools/calib` ainda desenham pelo MCP com "Fecho do balde" |
+| 4.9c | Catálogo de canetas (10 do plano) | FEITO (26/10) | `VectorTip` + Pena escolar, Fude, Ponta quadrada (corte reto), Lápis de genga (grão de papel) e a linha de cor | nada |
 | 4.9d | Multi-Tip Stamp e Ribbon Brush | NÃO FEITO | só `TwoTone` de duas cores; sem `MultiStamp`/`Ribbon` | biblioteca de cenário e adereços |
 | 4.9e | Sete réguas interativas com snap | FEITO | `RulerKind` (`ruler.rs:59`: perspectiva 1/2/3, paralela, radial, simetria, grade, linear, curva, figura, concentrica, guia); commit 27cd5fe, cb2c8f6 | nada |
 | 4.9f | Criador de pincel e importador `.abr` | FEITO | U29 (`brush_import.rs`, `brush_maker.rs`), `.aiaibrush` (e1444bc) | `.sut` é recusado com motivo (backlog) |

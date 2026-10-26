@@ -219,6 +219,10 @@ fn effect_block(env: &mut Env, ui: &mut Ui, layer: &NodeId, l: &LayerData, i: us
             return;
         }
         for row in comp::effect_rows(&inst.effect) {
+            // pontos de curva e paradas (itens de lista) têm editor próprio abaixo: sem linha "0, 1, 2" solta aqui
+            if row.split(['/', '.']).any(|seg| !seg.is_empty() && seg.chars().all(|c| c.is_ascii_digit())) {
+                continue;
+            }
             let p = PropRef::effect(layer, i, &row);
             prop_row(env, ui, layer, l, &p, &format!("ec:fx:{i}:{row}"));
         }
@@ -232,6 +236,167 @@ fn effect_block(env: &mut Env, ui: &mut Ui, layer: &NodeId, l: &LayerData, i: us
             }
         });
     });
+}
+
+/// Editor de uma correção de cor (`Adjustment`): números com rótulo, rodas no Equilíbrio de cor, curva arrastável nas
+/// Curvas (clique põe ponto, duplo clique tira, canais RGB/R/G/B) e as paradas do Mapa de degradê. Devolve a correção
+/// nova quando um controle é solto.
+fn adjustment_editor(ui: &mut Ui, salt: (&str, usize), adj: &serde_json::Map<String, Value>) -> Option<serde_json::Map<String, Value>> {
+    let ty = adj.get("type").and_then(Value::as_str).unwrap_or("");
+    let mut out = adj.clone();
+    let mut changed = false;
+    let id = |k: &str| EId::new(("adj", salt.0, salt.1, k.to_owned()));
+    match ty {
+        "curves" => {
+            let chan_id = id("chan");
+            let mut chan: usize = ui.data(|d| d.get_temp(chan_id)).unwrap_or(0);
+            ui.horizontal(|ui| {
+                for (k, name) in ["RGB", "R", "G", "B"].iter().enumerate() {
+                    if ui.selectable_label(chan == k, *name).clicked() {
+                        chan = k;
+                    }
+                }
+            });
+            ui.data_mut(|d| d.insert_temp(chan_id, chan));
+            let key = ["rgb", "r", "g", "b"][chan];
+            let pts: Vec<[f32; 2]> = adj.get(key).and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
+            if let Some(np) = curve_editor(ui, id(key), &pts, [egui::Color32::from_gray(220), egui::Color32::from_rgb(230, 80, 80), egui::Color32::from_rgb(80, 200, 90), egui::Color32::from_rgb(90, 130, 240)][chan]) {
+                out.insert(key.to_owned(), json!(np));
+                changed = true;
+            }
+        }
+        "color_balance" => {
+            ui.horizontal(|ui| {
+                for k in ["shadows", "midtones", "highlights"] {
+                    let v: [f32; 3] = adj.get(k).and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or([0.0; 3]);
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new(super::satsuei::field_label(k)).size(11.0));
+                        if let Some(n) = super::satsuei::color_wheel(ui, id(k), v, 0.0, 0.5) {
+                            out.insert(k.to_owned(), json!(n));
+                            changed = true;
+                        }
+                    });
+                }
+            });
+        }
+        "gradient_map" => {
+            let stops: Vec<(f32, [f32; 3])> = adj.get("stops").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
+            let mut ns = stops.clone();
+            ui.horizontal_wrapped(|ui| {
+                for (k, s) in ns.iter_mut().enumerate() {
+                    let mut c = s.1;
+                    if ui.color_edit_button_rgb(&mut c).changed() {
+                        s.1 = c;
+                    }
+                    if let Some(t) = commit_on_release(ui, id(&format!("stop{k}")), s.0, |ui, t| ui.add(egui::DragValue::new(t).range(0.0..=1.0).speed(0.005).max_decimals(2))) {
+                        s.0 = t;
+                    }
+                }
+            });
+            if ns != stops {
+                out.insert("stops".to_owned(), json!(ns));
+                changed = true;
+            }
+        }
+        _ => {
+            egui::Grid::new(("adj_grid", salt.0, salt.1)).num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+                for (k, v) in adj {
+                    let Value::Number(n) = v else { continue };
+                    let cur = n.as_f64().unwrap_or(0.0) as f32;
+                    let (lo, hi, speed) = match k.as_str() {
+                        "hue" => (-180.0, 180.0, 0.5),
+                        "levels" => (2.0, 64.0, 0.1),
+                        "gamma" => (0.1, 5.0, 0.01),
+                        "saturation" | "lightness" | "brightness" | "contrast" => (-1.0, 1.0, 0.005),
+                        _ => (0.0, 1.0, 0.005),
+                    };
+                    ui.label(super::satsuei::field_label(k));
+                    if let Some(x) = commit_on_release(ui, id(k), cur, |ui, x| ui.add(egui::DragValue::new(x).range(lo..=hi).speed(speed).max_decimals(3))) {
+                        out.insert(k.clone(), if k == "levels" { json!(x.round() as u32) } else { json!(x) });
+                        changed = true;
+                    }
+                    ui.end_row();
+                }
+            });
+        }
+    }
+    changed.then_some(out)
+}
+
+/// Curva editável em 0..1: arrastar move um ponto, clique no vazio põe um ponto, duplo clique num ponto tira (as pontas
+/// ficam). Devolve os pontos novos quando o ponteiro solta.
+fn curve_editor(ui: &mut Ui, id: EId, pts: &[[f32; 2]], color: egui::Color32) -> Option<Vec<[f32; 2]>> {
+    let base: Vec<[f32; 2]> = if pts.len() >= 2 { pts.to_vec() } else { vec![[0.0, 0.0], [1.0, 1.0]] };
+    let mut cur: Vec<[f32; 2]> = ui.data(|d| d.get_temp::<Vec<[f32; 2]>>(id)).unwrap_or_else(|| base.clone());
+    let drag_id = id.with("drag");
+    let side = ui.available_width().clamp(140.0, 220.0);
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(side, side), Sense::click_and_drag());
+    let to_s = |p: [f32; 2]| egui::pos2(rect.left() + p[0] * rect.width(), rect.bottom() - p[1] * rect.height());
+    let to_c = |s: egui::Pos2| [((s.x - rect.left()) / rect.width()).clamp(0.0, 1.0), ((rect.bottom() - s.y) / rect.height()).clamp(0.0, 1.0)];
+    let mut done = false;
+    if let Some(pos) = resp.interact_pointer_pos() {
+        let near = cur.iter().position(|p| (to_s(*p) - pos).length() < 8.0);
+        if resp.drag_started() {
+            let k = match near {
+                Some(k) => k,
+                None => {
+                    cur.push(to_c(pos));
+                    cur.len() - 1
+                }
+            };
+            ui.data_mut(|d| d.insert_temp(drag_id, k));
+        }
+        if resp.dragged() {
+            if let Some(k) = ui.data(|d| d.get_temp::<usize>(drag_id)) {
+                if let Some(p) = cur.get_mut(k) {
+                    *p = to_c(pos);
+                }
+            }
+        }
+        if resp.double_clicked() {
+            if let Some(k) = near.filter(|_| cur.len() > 2) {
+                cur.remove(k);
+                done = true;
+            }
+        } else if resp.clicked() && near.is_none() {
+            cur.push(to_c(pos));
+            done = true;
+        }
+    }
+    if resp.drag_stopped() {
+        ui.data_mut(|d| d.remove_temp::<usize>(drag_id));
+        done = true;
+    }
+    cur.sort_by(|a, b| a[0].partial_cmp(&b[0]).unwrap_or(std::cmp::Ordering::Equal));
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 3.0, egui::Color32::from_gray(28));
+    for k in 1..4 {
+        let f = k as f32 / 4.0;
+        let g = egui::Stroke::new(1.0, egui::Color32::from_gray(52));
+        painter.line_segment([egui::pos2(rect.left() + f * rect.width(), rect.top()), egui::pos2(rect.left() + f * rect.width(), rect.bottom())], g);
+        painter.line_segment([egui::pos2(rect.left(), rect.top() + f * rect.height()), egui::pos2(rect.right(), rect.top() + f * rect.height())], g);
+    }
+    painter.line_segment([rect.left_bottom(), rect.right_top()], egui::Stroke::new(1.0, egui::Color32::from_gray(70)));
+    // a curva como o motor a avalia (spline monotônica)
+    let adj = aiai_paint::adjust::Adjustment::Curves { rgb: cur.clone(), r: vec![], g: vec![], b: vec![] };
+    let line: Vec<egui::Pos2> = (0..=64)
+        .map(|k| {
+            let x = k as f32 / 64.0;
+            let y = adj.apply_rgb([x, x, x])[0];
+            to_s([x, y.clamp(0.0, 1.0)])
+        })
+        .collect();
+    painter.add(egui::Shape::line(line, egui::Stroke::new(2.0, color)));
+    for p in &cur {
+        painter.circle(to_s(*p), 4.0, egui::Color32::WHITE, egui::Stroke::new(1.0, egui::Color32::BLACK));
+    }
+    let _ = resp.on_hover_text(tr("fx.curve.tip"));
+    if done {
+        ui.data_mut(|d| d.remove_temp::<Vec<[f32; 2]>>(id));
+        return (cur != base).then_some(cur);
+    }
+    ui.data_mut(|d| d.insert_temp(id, cur));
+    None
 }
 
 fn other_fields(env: &mut Env, ui: &mut Ui, layer: &NodeId, i: usize, inst: &aiai_fx::EffectInstance) {
@@ -267,6 +432,14 @@ fn other_fields(env: &mut Env, ui: &mut Ui, layer: &NodeId, i: usize, inst: &aia
                         effects_op(env, "update", json!({ "layer": layer, "index": i, "effect": e }));
                     }
                 });
+            }
+            // correções (Níveis, Curvas, Matiz/saturação, Equilíbrio de cor...): editor próprio (auditoria 2.24)
+            ("adjustment", Value::Object(o)) => {
+                if let Some(adj) = adjustment_editor(ui, (&layer.0, i), o) {
+                    let mut e = obj.clone();
+                    e.insert(k.clone(), Value::Object(adj));
+                    effects_op(env, "update", json!({ "layer": layer, "index": i, "effect": e }));
+                }
             }
             (_, Value::Object(o)) if o.get("type").and_then(Value::as_str).is_some() => {
                 let ty = o.get("type").and_then(Value::as_str).unwrap_or("?");

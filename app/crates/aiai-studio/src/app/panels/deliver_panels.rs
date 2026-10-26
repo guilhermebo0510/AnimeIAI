@@ -863,7 +863,9 @@ pub(crate) fn preflight_panel(env: &mut Env, ui: &mut Ui, body: Rect) {
                     ui.add(egui::Label::new(egui::RichText::new(text).size(12.0).color(if stale { t.text_dim } else { t.text })).wrap());
                 });
                 if let Some(f) = &c.fix {
-                    let b = ui.add(egui::Button::new(egui::RichText::new(tr("deliver.pf.fix")).size(11.5)));
+                    // o botão leva até onde se corrige (não corrige sozinho): diz para onde vai (auditoria J03)
+                    let dest = WorkspaceId::from_key(f.workspace).map(|w| tr(w.title_key()).to_owned()).unwrap_or_default();
+                    let b = ui.add(egui::Button::new(egui::RichText::new(format!("{} {dest} ›", tr("deliver.pf.fix"))).size(11.5)));
                     env.note(format!("deliver:pf:{i}:fix"), b.rect);
                     if b.on_hover_text(tr("deliver.pf.fix.tip")).clicked() {
                         goto = WorkspaceId::from_key(f.workspace);

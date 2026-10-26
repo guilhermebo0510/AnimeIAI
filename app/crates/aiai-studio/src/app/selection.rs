@@ -804,7 +804,30 @@ pub(crate) fn plan_move(env: &mut Env, sel: &Selection, cut: &NodeId, layer: &No
         }
         None => None,
     };
+    // liquify: os passos levados ao espaço do cel (centro, direção e tamanho pela inversa do lugar da camada)
+    let liquify = if sel.liquify.is_empty() {
+        None
+    } else {
+        let mut steps = sel.liquify.clone();
+        if let Some(pl) = &place {
+            let inv = pl.inverse().ok_or_else(|| tr("err.move_layer").to_owned())?;
+            for s in &mut steps {
+                let (cx, cy) = inv.apply(s.center[0], s.center[1]);
+                let (ux, uy) = inv.apply(s.center[0] + 1.0, s.center[1]);
+                let k = ((ux - cx).powi(2) + (uy - cy).powi(2)).sqrt();
+                let (dx, dy) = inv.apply(s.center[0] + s.direction[0], s.center[1] + s.direction[1]);
+                s.center = [cx, cy];
+                s.direction = [dx - cx, dy - cy];
+                s.radius *= k;
+                if s.kind == aiai_paint::warp::LiquifyKind::Push {
+                    s.strength *= k;
+                }
+            }
+        }
+        Some(aiai_tools::transform::Deform::LiquifyPath { steps })
+    };
     let deform = match &place {
+        _ if liquify.is_some() => liquify.expect("liquify"),
         _ if mesh.is_some() => mesh.expect("malha"),
         _ if distort.is_some() => distort.expect("distorção"),
         None => {

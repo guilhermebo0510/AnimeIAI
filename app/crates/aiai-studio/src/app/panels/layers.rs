@@ -100,6 +100,17 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
             }
             }
         }
+        // Bloquear transparência (raster): o pincel só pinta onde já tem tinta
+        let raster = al.as_ref().is_some_and(|l| l.kind == LayerType::Raster);
+        let la_on = al.as_ref().is_some_and(|l| l.params.get("lock_alpha").and_then(|v| v.as_bool()).unwrap_or(false));
+        if env.icon_button(ui, IconId::LockAlpha, "layers.lock_alpha", la_on, raster, "layers:lock_alpha").clicked() {
+            if let (Some(a), Some(l)) = (&active, &al) {
+                let mut params = if l.params.is_object() { l.params.clone() } else { json!({}) };
+                params["lock_alpha"] = json!(!la_on);
+                let r = cmds::set_layer_props(env.core, a, json!({ "params": params }));
+                notify(env, r);
+            }
+        }
         let line = al.as_ref().is_some_and(|l| matches!(l.kind, LayerType::Vector | LayerType::Raster));
         let ref_on = active.as_ref().is_some_and(|a| is_fill_ref(&env.core.project, &rows, a));
         if env.icon_button(ui, IconId::LayerReference, "layers.fill_ref", ref_on, line, "layers:fill_ref").clicked() {
@@ -219,6 +230,38 @@ fn add_menu(env: &mut Env, ui: &mut Ui, cut: &NodeId, active: Option<&NodeId>) {
         if item.clicked() {
             new_layer(env, cut, kind, active);
             ui.close();
+        }
+    }
+    // camada de ajuste (auditoria 4.5f): uma camada de efeito com a correção escolhida, que muda o que está abaixo dela
+    // sem tocar nos desenhos; a janela de parâmetros abre em seguida
+    let (w, h) = cmds::canvas_size(&env.core.project, cut);
+    let mut pick: Option<(&'static str, serde_json::Value)> = None;
+    let tex = env.icons.texture(ui.ctx(), IconId::LayerAdjustment, 16.0);
+    let r = ui.horizontal(|ui| {
+        ui.add(egui::Image::new((tex, egui::vec2(16.0, 16.0))).tint(t.text_dim));
+        ui.menu_button(tr("layers.add.adjustment"), |ui| {
+            for (group, items) in crate::app::workbar::filter_groups(w as f32, h as f32) {
+                if group != "filter.group.correction" {
+                    continue;
+                }
+                for (key, effect) in items {
+                    let b = ui.button(tr(key));
+                    env.note(format!("layers:add.adjustment.{}", key.trim_start_matches("filter.")), b.rect);
+                    if b.clicked() {
+                        pick = Some((key, effect));
+                        ui.close();
+                    }
+                }
+            }
+        })
+    });
+    env.note("layers:add.adjustment", r.inner.response.rect);
+    if let Some((key, effect)) = pick {
+        ui.close();
+        new_layer(env, cut, LayerType::Effect, active);
+        if let Some(l) = env.ed.layer.clone() {
+            let _ = cmds::rename_node(env.core, &l, &format!("{} ({})", tr("layers.adjustment_name"), tr(key)));
+            crate::app::workbar::apply_filter(env, effect);
         }
     }
     // camada 3D de referência: importa .glb/.gltf/.obj (cria o ativo e a camada no topo)

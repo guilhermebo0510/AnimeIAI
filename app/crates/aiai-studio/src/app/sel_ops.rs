@@ -255,10 +255,9 @@ pub(crate) fn copy_to_layer(env: &mut Env) {
         None => (cut.clone(), None),
     };
     let copy = p.node(&layer).map(|n| crate::behavior_prefs::copy_name_tr(&n.name, env.ed.beh.prefs.copy_name));
-    // o nome da cópia vale como está quando ninguém na pasta o usa (o `unique_layer_name` sempre acrescenta um número)
+    // o nome da cópia vale como está quando ninguém na pasta o usa; senão "cópia 2", "cópia 3"...
     let name = match copy {
-        Some(c) if !p.node(&parent).is_some_and(|pn| pn.children.iter().filter_map(|k| p.node(k)).any(|k| k.name == c)) => c,
-        Some(c) => cmds::unique_layer_name(p, &parent, &c),
+        Some(c) => cmds::unique_name(p, &parent, &c),
         None => cmds::unique_layer_name(p, &parent, tr(cmds::layer_type_key(l.kind))),
     };
     let (id, cel_id) = (env.core.ids.next(), env.core.ids.next());
@@ -353,7 +352,8 @@ pub(crate) fn launcher(env: &mut Env, ctx: &egui::Context, xf: &super::editor::X
     let c = CmdCtx::of(env.core, env.ed);
     let t = env.t;
     let mut run_cmd = None;
-    let area = egui::Area::new(egui::Id::new("aiai_sel_launcher")).order(egui::Order::Foreground).fixed_pos(pos).constrain(false).show(ctx, |ui| {
+    // camada do meio (a das janelas): Preferências, filtros e diálogos ficam por cima da barra, não embaixo
+    let area = egui::Area::new(egui::Id::new("aiai_sel_launcher")).order(egui::Order::Middle).fixed_pos(pos).constrain(false).show(ctx, |ui| {
         egui::Frame::NONE.fill(t.bg_panel).stroke(egui::Stroke::new(1.0, t.border)).corner_radius(6.0).inner_margin(egui::Margin::same(5)).shadow(egui::Shadow { offset: [0, 2], blur: 8, spread: 0, color: egui::Color32::from_black_alpha(70) }).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 2.0;

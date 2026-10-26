@@ -52,6 +52,8 @@ pub(crate) struct FigOpts {
     pub sides: u32,
     pub speed: LineOpts,
     pub focus: LineOpts,
+    /// Em camada raster, a linha da forma é o pincel atual percorrendo a geometria (auditoria UX-02).
+    pub raster_brush: bool,
 }
 
 impl Default for FigOpts {
@@ -66,6 +68,7 @@ impl Default for FigOpts {
             // os mesmos números do Filtro > Renderizar
             speed: LineOpts { count: 90, width: [1.5, 5.0], length: [15.0, 45.0] },
             focus: LineOpts { count: 160, width: [2.0, 7.0], length: [25.0, 60.0] },
+            raster_brush: false,
         }
     }
 }
@@ -414,14 +417,74 @@ pub(crate) fn commit(env: &mut Env, shape: FigureShape) {
         width: env.ed.opts.pen_width.max(0.1),
         color: env.ed.color.clone(),
         fill_color,
-        tip: aiai_core::VectorTip::Marker,
+        // a ponta escolhida em "Contorno" (antes ficava sempre Marcador)
+        tip: env.ed.opts.pen_tip,
         opacity: 1.0,
         aliased: env.ed.opts.pen_aliased,
         selection: None,
     };
     let mask = if t.kind == LayerType::Raster { super::tools::paint_clip_mask(env) } else { None };
     let released = Instant::now();
+    // raster com "pincel atual": o preenchimento (se houver) pela Figura e a linha pelo pincel, num passo de desfazer
+    if t.kind == LayerType::Raster && env.ed.figure.opts.raster_brush && mode.line() {
+        return commit_brush_outline(env, &t, req, mask, released);
+    }
     let planned = cmds::plan_with_prep(env.core, &t.cut, &t.layer, t.frame, env.ed.cel_number, vec![], |p, blobs| figure_command_masked(p, blobs, &req, mask.as_ref()).map_err(|e| e.to_string()));
+    match planned {
+        Ok(c) => {
+            if env.ed.apply(env.core, c) {
+                env.ed.begin_latency(released, "figure", env.core);
+            }
+        }
+        Err(e) => env.ed.notify(e),
+    }
+}
+
+/// Linha da forma pintada com o pincel atual (tamanho, opacidade e cor da barra), percorrendo o contorno (fechado
+/// quando a forma fecha); o preenchimento da Figura vem antes, no mesmo passo de desfazer.
+fn commit_brush_outline(env: &mut Env, t: &super::tools::Target, req: FigureRequest, mask: Option<(Vec<f32>, u32, u32)>, released: Instant) {
+    let outline = match req.shape.outline() {
+        Ok(o) => o,
+        Err(e) => return env.ed.notify(e.to_string()),
+    };
+    let mut pts = aiai_tools::figure::outline_polygon(&outline);
+    if req.shape.closed() {
+        if let Some(f) = pts.first().copied() {
+            pts.push(f);
+        }
+    }
+    // pontos a cada ~2 px: o pincel segue os cantos sem arredondar
+    let mut dense: Vec<Vec<f32>> = Vec::new();
+    for w in pts.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let n = (((b[0] - a[0]).hypot(b[1] - a[1])) / 2.0).ceil().max(1.0) as usize;
+        for k in 0..n {
+            let f = k as f32 / n as f32;
+            dense.push(vec![a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, 1.0]);
+        }
+    }
+    if let Some(l) = pts.last() {
+        dense.push(vec![l[0], l[1], 1.0]);
+    }
+    let preset = super::tools::stroke_preset(env, false);
+    env.ed.brushes.ensure_blobs(&mut env.core.blobs, &preset);
+    let paint = aiai_tools::paint::PaintRequest { cut: t.cut.clone(), frame: t.frame, layer: t.layer.clone(), preset, color: req.color.clone(), strokes: vec![aiai_tools::paint::PaintStrokeSpec { points: dense, smooth: false }], seed: env.core.change_counter };
+    let fill = (req.mode != FigureMode::Line).then(|| FigureRequest { mode: FigureMode::Fill, ..req.clone() });
+    let planned = cmds::plan_with_prep(env.core, &t.cut, &t.layer, t.frame, env.ed.cel_number, vec![], |p, blobs| {
+        let mut cmds_ = Vec::new();
+        let mut tmp: Option<aiai_core::Project> = None;
+        if let Some(f) = &fill {
+            let c = figure_command_masked(p, blobs, f, mask.as_ref()).map_err(|e| e.to_string())?;
+            let mut q = p.clone();
+            let ctx = ApplyCtx { blobs: &*blobs, author: "studio", revision: q.revision + 1 };
+            c.apply(&mut q, &ctx).map_err(|e| e.to_string())?;
+            cmds_.push(c);
+            tmp = Some(q);
+        }
+        let base = tmp.as_ref().unwrap_or(p);
+        cmds_.push(aiai_tools::paint::paint_command_masked(base, blobs, &paint, mask.as_ref()).map_err(|e| e.to_string())?);
+        Ok(Command::Batch { commands: cmds_, label: Some(tr("fig.brush_outline").to_owned()) })
+    });
     match planned {
         Ok(c) => {
             if env.ed.apply(env.core, c) {
@@ -498,7 +561,7 @@ pub(crate) fn commit_lines(env: &mut Env, a: Vec2, b: Vec2, focus: bool) {
     }
     let p = &env.core.project;
     let (parent, index) = place_above(p, &cut, active.as_ref());
-    let name = cmds::unique_layer_name(p, &parent, tr(if focus { "filter.focus_lines" } else { "filter.speed_lines" }));
+    let name = cmds::unique_name(p, &parent, tr(if focus { "filter.focus_lines" } else { "filter.speed_lines" }));
     let (layer, cel) = (env.core.ids.next(), env.core.ids.next());
     let mut cmds_v = vec![
         Command::CreateNode { id: Some(layer.clone()), parent: Some(parent), index, name, data: NodeKind::Layer(LayerData::new(LayerType::Vector)) },
@@ -714,6 +777,7 @@ pub(crate) fn prop_rows(env: &mut Env, ui: &mut Ui, shape: PenShape) {
             }
             ui.checkbox(&mut o.from_center, tr("fig.opt.from_center")).on_hover_text(tr("fig.opt.from_center.tip"));
             ui.checkbox(&mut o.keep_aspect, tr("fig.opt.keep_aspect")).on_hover_text(tr("fig.opt.keep_aspect.tip"));
+            ui.checkbox(&mut o.raster_brush, tr("fig.opt.raster_brush")).on_hover_text(tr("fig.opt.raster_brush.tip"));
         }
         PenShape::Line | PenShape::Polyline | PenShape::TwoStepCurve => {
             ui.horizontal(|ui| {

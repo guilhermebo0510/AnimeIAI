@@ -365,6 +365,7 @@ fn set_tab(env: &mut Env, ui: &mut Ui) {
         Some(pal) => {
             swatches(env, ui, &pal);
             edit_selected(env, ui, &pal);
+            variants_row(env, ui, &pal);
         }
     }
     // a cor em uso vira amostra da paleta (fica ligada a ela)
@@ -658,6 +659,93 @@ fn palette_picker(env: &mut Env, ui: &mut Ui) {
     }
 }
 
+/// Variantes de iluminação prontas para criar: (chave do botão, nome da variante, multiplicador RGB, mistura com cinza).
+const VARIANT_PRESETS: [(&str, &str, [f32; 3], f32); 3] = [
+    ("palette.variant.new_dusk", "entardecer", [1.0, 0.8, 0.66], 0.0),
+    ("palette.variant.new_night", "noite", [0.5, 0.56, 0.82], 0.25),
+    ("palette.variant.new_shade", "sombra", [0.72, 0.7, 0.86], 0.1),
+];
+
+/// Iluminação (auditoria 4.7e): a variante da paleta em edição (Normal, entardecer, noite...) e a do corte atual.
+/// Criar uma variante pronta preenche todas as cores com um ponto de partida (multiplicador de luz), para ajustar uma a
+/// uma; editar uma cor com uma variante escolhida muda só a cor daquela variante.
+fn variants_row(env: &mut Env, ui: &mut Ui, pal: &NodeId) {
+    let t = env.t;
+    let Some(pd) = cmds::palette_data(&env.core.project, pal).cloned() else { return };
+    let names = pd.variant_names();
+    let label = |v: &str| if v.is_empty() { tr("palette.variant.normal").to_owned() } else { v.to_owned() };
+    let mut pick: Option<String> = None;
+    let mut create: Option<usize> = None;
+    ui.horizontal(|ui| {
+        dim_label(ui, &t, tr("palette.variant"));
+        let combo = egui::ComboBox::from_id_salt("pal_variant").width(110.0).selected_text(label(&pd.active_variant)).show_ui(ui, |ui| {
+            for v in std::iter::once(String::new()).chain(names.iter().cloned()) {
+                if ui.selectable_label(pd.active_variant == v, label(&v)).clicked() {
+                    pick = Some(v);
+                }
+            }
+            ui.separator();
+            for (k, (key, name, _, _)) in VARIANT_PRESETS.iter().enumerate() {
+                if !names.iter().any(|n| n == name) {
+                    let b = ui.button(tr(key));
+                    if b.clicked() {
+                        create = Some(k);
+                    }
+                }
+            }
+        });
+        env.note("colors:variant_combo", combo.response.rect);
+    });
+    if let Some(k) = create {
+        let (_, name, mul, grey) = VARIANT_PRESETS[k];
+        let mut data = pd.clone();
+        for c in &mut data.colors {
+            let l = 0.3 * c.rgba.0[0] + 0.59 * c.rgba.0[1] + 0.11 * c.rgba.0[2];
+            let ch = |i: usize| ((c.rgba.0[i] * (1.0 - grey) + l * grey) * mul[i]).clamp(0.0, 1.0);
+            c.variants.insert(name.to_owned(), Rgba([ch(0), ch(1), ch(2), c.rgba.0[3]]));
+        }
+        data.active_variant = name.to_owned();
+        if let Err(e) = cmds::replace_palette(env.core, pal, data) {
+            env.ed.notify(e);
+        }
+    } else if let Some(v) = pick.filter(|v| *v != pd.active_variant) {
+        let mut data = pd.clone();
+        data.active_variant = v;
+        if let Err(e) = cmds::replace_palette(env.core, pal, data) {
+            env.ed.notify(e);
+        }
+    }
+    // a iluminação do corte aberto: todas as paletas desenham nesta variante no corte
+    let Some(cut) = env.ed.cut.clone() else { return };
+    let Some(cd) = cmds::cut_data(&env.core.project, &cut).cloned() else { return };
+    let all: std::collections::BTreeSet<String> = env.core.project.roots.palettes.iter().filter_map(|id| cmds::palette_data(&env.core.project, id)).flat_map(|p| p.variant_names()).collect();
+    let cur = cd.palette_variant.clone();
+    let mut set: Option<Option<String>> = None;
+    ui.horizontal(|ui| {
+        dim_label(ui, &t, tr("palette.variant.cut"));
+        let text = cur.clone().unwrap_or_else(|| tr("palette.variant.cut_default").to_owned());
+        let combo = egui::ComboBox::from_id_salt("cut_variant").width(110.0).selected_text(text).show_ui(ui, |ui| {
+            if ui.selectable_label(cur.is_none(), tr("palette.variant.cut_default")).clicked() {
+                set = Some(None);
+            }
+            if ui.selectable_label(cur.as_deref() == Some(""), tr("palette.variant.normal")).clicked() {
+                set = Some(Some(String::new()));
+            }
+            for v in &all {
+                if ui.selectable_label(cur.as_ref() == Some(v), v).clicked() {
+                    set = Some(Some(v.clone()));
+                }
+            }
+        });
+        env.note("colors:cut_variant_combo", combo.response.rect);
+    });
+    if let Some(v) = set.filter(|v| *v != cur) {
+        if let Err(e) = cmds::set_cut_props(env.core, &cut, serde_json::json!({ "palette_variant": v })) {
+            env.ed.notify(e);
+        }
+    }
+}
+
 fn swatches(env: &mut Env, ui: &mut Ui, pal: &NodeId) {
     let t = env.t;
     let Some(pd) = cmds::palette_data(&env.core.project, pal).cloned() else { return };
@@ -734,8 +822,14 @@ fn edit_selected(env: &mut Env, ui: &mut Ui, pal: &NodeId) {
     let key = (pal.clone(), color.clone());
     let (mut name, mut c32) = match &env.ed.color_edit {
         Some((p, c, n, col)) if (p, c) == (&key.0, &key.1) => (n.clone(), *col),
-        _ => (nc.name.clone(), rgba_to_color32(Rgba([nc.rgba.0[0], nc.rgba.0[1], nc.rgba.0[2], 1.0]))),
+        _ => {
+            let v = pd.resolve(&color).unwrap_or(nc.rgba);
+            (nc.name.clone(), rgba_to_color32(Rgba([v.0[0], v.0[1], v.0[2], 1.0])))
+        }
     };
+    // com uma variante escolhida, a edição muda a cor daquela variante
+    let shown = pd.resolve(&color).unwrap_or(nc.rgba);
+    let variant = pd.active_variant.clone();
     let mut touched = false;
     ui.horizontal(|ui| {
         dim_label(ui, &t, tr("palette.color_name"));
@@ -756,14 +850,19 @@ fn edit_selected(env: &mut Env, ui: &mut Ui, pal: &NodeId) {
         if let Some((p, c, n, col)) = env.ed.color_edit.take() {
             if (&p, &c) == (&key.0, &key.1) {
                 let rgba = color32_to_rgba(col);
-                let changed = n.trim() != nc.name || (0..3).any(|i| (rgba.0[i] - nc.rgba.0[i]).abs() > 0.002);
+                let changed = n.trim() != nc.name || (0..3).any(|i| (rgba.0[i] - shown.0[i]).abs() > 0.002);
                 if changed {
                     let mut data = pd.clone();
                     if let Some(entry) = data.colors.iter_mut().find(|e| e.id == c) {
                         if !n.trim().is_empty() {
                             entry.name = n.trim().to_owned();
                         }
-                        entry.rgba = Rgba([rgba.0[0], rgba.0[1], rgba.0[2], nc.rgba.0[3]]);
+                        let v = Rgba([rgba.0[0], rgba.0[1], rgba.0[2], nc.rgba.0[3]]);
+                        if variant.is_empty() {
+                            entry.rgba = v;
+                        } else if (0..3).any(|i| (rgba.0[i] - shown.0[i]).abs() > 0.002) {
+                            entry.variants.insert(variant.clone(), v);
+                        }
                     }
                     if let Err(e) = cmds::replace_palette(env.core, pal, data) {
                         env.ed.notify(e);

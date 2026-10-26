@@ -770,6 +770,11 @@ pub(crate) fn clip_effects(env: &mut Env, ui: &mut Ui, body: Rect) {
             env.note("edit:afx_add", r.response.rect);
         }
     });
+    // trilha travada: os efeitos e a opacidade do clipe também ficam travados (auditoria M-03)
+    if changed && o.doc.is_locked(it.track) {
+        env.ed.toast = Some(tr("editing.track_locked").to_owned());
+        changed = false;
+    }
     if changed {
         let mut d = (*o.doc).clone();
         if let Some(x) = d.item_mut(it.id) {

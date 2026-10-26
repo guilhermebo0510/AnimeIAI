@@ -107,6 +107,15 @@ pub enum IconId {
     Eye,
     EyeOff,
     Lock,
+    /// Bloquear transparência da camada raster.
+    LockAlpha,
+    /// Ferramentas da Edição (NLE).
+    NleSelect,
+    NleRazor,
+    NleRipple,
+    NleRoll,
+    NleSlip,
+    NleSlide,
     Unlock,
     Plus,
     Trash,
@@ -217,7 +226,7 @@ pub enum IconId {
 }
 
 impl IconId {
-    pub const ALL: [IconId; 136] = [
+    pub const ALL: [IconId; 143] = [
         IconId::WsRoteiro,
         IconId::WsPersonagens,
         IconId::WsStoryboard,
@@ -283,6 +292,13 @@ impl IconId {
         IconId::Eye,
         IconId::EyeOff,
         IconId::Lock,
+        IconId::LockAlpha,
+        IconId::NleSelect,
+        IconId::NleRazor,
+        IconId::NleRipple,
+        IconId::NleRoll,
+        IconId::NleSlip,
+        IconId::NleSlide,
         IconId::Unlock,
         IconId::Plus,
         IconId::Trash,
@@ -428,6 +444,13 @@ impl IconId {
             IconId::Eye => include_str!("../assets/icons/eye.svg"),
             IconId::EyeOff => include_str!("../assets/icons/eye-off.svg"),
             IconId::Lock => include_str!("../assets/icons/lock.svg"),
+            IconId::LockAlpha => include_str!("../assets/icons/lock-alpha.svg"),
+            IconId::NleSelect => include_str!("../assets/icons/nle-select.svg"),
+            IconId::NleRazor => include_str!("../assets/icons/nle-razor.svg"),
+            IconId::NleRipple => include_str!("../assets/icons/nle-ripple.svg"),
+            IconId::NleRoll => include_str!("../assets/icons/nle-roll.svg"),
+            IconId::NleSlip => include_str!("../assets/icons/nle-slip.svg"),
+            IconId::NleSlide => include_str!("../assets/icons/nle-slide.svg"),
             IconId::Unlock => include_str!("../assets/icons/unlock.svg"),
             IconId::Plus => include_str!("../assets/icons/plus.svg"),
             IconId::Trash => include_str!("../assets/icons/trash.svg"),

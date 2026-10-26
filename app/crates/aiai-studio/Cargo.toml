@@ -35,6 +35,7 @@ aiai-bridge = { workspace = true }
 aiai-paint = { workspace = true }
 aiai-tools = { workspace = true }
 aiai-audio = { workspace = true }
+aiai-anim = { workspace = true }
 aiai-3d-core = { path = "../aiai-3d-core" }
 aiai-3d-render = { path = "../aiai-3d-render" }
 aiai-3d-model = { path = "../aiai-3d-model" }

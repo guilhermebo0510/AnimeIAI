@@ -611,6 +611,39 @@ fn header(env: &mut Env, ui: &mut Ui, bar: Rect) {
         ms.select_shape = if ms.select_shape == SelectShape::Lasso { SelectShape::Box } else { SelectShape::Lasso };
     }
     ui.separator();
+    // faixa estreita (auditoria UX-05): o que não cabe vai para "Mais ▾" em vez de sumir cortado; a largura em que a
+    // faixa transbordou fica guardada para voltar ao normal quando a janela alargar
+    let ow_id = egui::Id::new("mdl_header_overflow_w");
+    let overflow_w: f32 = ui.ctx().data(|d| d.get_temp(ow_id)).unwrap_or(0.0);
+    let narrow = bar.width() <= overflow_w;
+    if narrow {
+        let mut sh = env.ed.modeling.shade;
+        let r = egui::ComboBox::from_id_salt("mdl_shade_combo").width(96.0).selected_text(tr(&format!("mdl.shade.{}", sh.key()))).show_ui(ui, |ui| {
+            for m in ViewShade::ALL {
+                ui.selectable_value(&mut sh, m, tr(&format!("mdl.shade.{}", m.key())));
+            }
+        });
+        env.ed.modeling.shade = sh;
+        env.note("mdl:shade_combo", r.response.rect);
+        let r = ui.menu_button(tr("mdl.more"), |ui| header_tail(env, ui, edit));
+        env.note("mdl:more", r.response.rect);
+    } else {
+        header_shade(env, ui);
+        ui.separator();
+        header_tail(env, ui, edit);
+    }
+    if env.ed.modeling.dirty {
+        ui.separator();
+        ui.label(egui::RichText::new(tr("mdl.unsaved")).size(11.0).color(t.text_dim));
+    }
+    if !narrow && ui.min_rect().right() > bar.right() - 2.0 {
+        ui.ctx().data_mut(|d| d.insert_temp(ow_id, bar.width()));
+        ui.ctx().request_repaint();
+    }
+}
+
+/// Sombreamento da vista em botões (faixa larga).
+fn header_shade(env: &mut Env, ui: &mut Ui) {
     let shade_tip = format!("{} ({})", tr("mdl.shade.tip"), env.ed.modeling.keys.label(MAction::ShadingToggle));
     for m in ViewShade::ALL {
         let r = ui.selectable_label(env.ed.modeling.shade == m, tr(&format!("mdl.shade.{}", m.key()))).on_hover_text(shade_tip.as_str());
@@ -619,7 +652,10 @@ fn header(env: &mut Env, ui: &mut Ui, bar: Rect) {
             env.ed.modeling.shade = m;
         }
     }
-    ui.separator();
+}
+
+/// Raio X, grade, vistas, encaixe e proporcional (na faixa ou no menu "Mais" quando ela não cabe).
+fn header_tail(env: &mut Env, ui: &mut Ui, edit: bool) {
     let k = env.ed.modeling.keys.clone();
     let r = ui.selectable_label(env.ed.modeling.xray, tr("mdl.xray")).on_hover_text(k.tip(MAction::Xray));
     env.note("mdl:xray", r.rect);
@@ -679,10 +715,6 @@ fn header(env: &mut Env, ui: &mut Ui, bar: Rect) {
             }
         });
         ui.checkbox(&mut p.connected, tr("mdl.prop.connected"));
-    }
-    if env.ed.modeling.dirty {
-        ui.separator();
-        ui.label(egui::RichText::new(tr("mdl.unsaved")).size(11.0).color(t.text_dim));
     }
 }
 
@@ -1960,6 +1992,30 @@ fn add_menu(env: &mut Env, ui: &mut Ui) {
 // ================================================================================================= salvar e enviar
 
 /// Grava o documento no ativo 3D do projeto (cria ou atualiza; um passo de desfazer do projeto). `None` = falhou.
+/// A Modelagem tem mudanças que ainda não estão no projeto (auditoria V2-02)?
+pub(crate) fn pending(ed: &crate::app::editor::Editor) -> bool {
+    ed.modeling.dirty && !ed.modeling.doc.objects.is_empty()
+}
+
+/// Grava a modelagem pendente no projeto (o mesmo ativo de "Salvar no projeto"), sem pedir nada: o Salvar geral passa
+/// por aqui antes de gravar o arquivo, para "Projeto salvo" valer também para o modelo.
+pub(crate) fn flush_into_project(core: &mut aiai_core::CoreSession, ed: &mut crate::app::editor::Editor) -> Result<(), String> {
+    if !pending(ed) {
+        return Ok(());
+    }
+    let existing = ed.modeling.asset.clone().filter(|a| core.project.node(a).is_some());
+    let doc = ed.modeling.doc.clone();
+    let (cmd, id, _) = aiai_tools::modeling::save_command(&core.project, &mut core.ids, &mut core.blobs, existing.as_ref(), &doc).map_err(|e| e.to_string())?;
+    let cmd = Command::Batch { commands: vec![cmd], label: Some(format!("Modelagem: salvar \"{}\"", doc.name)) };
+    if ed.apply(core, cmd) {
+        ed.modeling.asset = Some(id);
+        ed.modeling.dirty = false;
+        Ok(())
+    } else {
+        Err(tr("mdl.save_failed").to_owned())
+    }
+}
+
 pub(crate) fn save_to_project(env: &mut Env) -> Option<NodeId> {
     let ms = &env.ed.modeling;
     if ms.doc.objects.is_empty() {

@@ -91,6 +91,10 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
                 env.ed.notify(e);
             }
         }
+        // ---- partículas (o sistema da camada)
+        if l.kind == aiai_core::LayerType::Particles {
+            super::particles_ed::editor(env, ui, &layer, &l);
+        }
         // ---- papel, profundidade, deslocamento (e 3D)
         super::properties::layer_properties(env, ui);
     });

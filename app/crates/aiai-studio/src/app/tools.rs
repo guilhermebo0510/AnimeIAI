@@ -88,7 +88,7 @@ pub(crate) fn target(env: &mut Env, allowed: &[LayerType], wrong_key: &str) -> O
         env.ed.notify(tr(wrong_key));
         return None;
     }
-    if l.locked {
+    if l.locked || cmds::locked_effective(&env.core.project, &layer) {
         env.ed.notify(tr("err.layer_locked"));
         return None;
     }
@@ -115,8 +115,12 @@ impl StrokeGesture {
             }
             None => p,
         };
-        self.path.push(p);
         let t = self.t0.elapsed().as_secs_f32();
+        if self.moved_p.is_none_or(|l| (l - p).length() * self.screen_scale >= 1.0) {
+            self.moved_t = t;
+            self.moved_p = Some(p);
+        }
+        self.path.push(p);
         let keep = if self.tool == ToolId::Eraser { Some(p) } else { self.stab.feed_at(p, t) };
         if let Some(q) = keep {
             if self.samples.last().is_none_or(|l| (l.p - q).length() * self.screen_scale >= 0.4) {
@@ -140,8 +144,14 @@ fn ensure_layer_for(env: &mut Env, tool: ToolId) {
     if active.as_ref().and_then(|l| cmds::layer_data(&env.core.project, l)).is_some_and(|l| l.kind == want) {
         return;
     }
+    // camada (ou pasta) travada: a trava vale também contra criar outra camada por baixo dela (auditoria V2-03)
+    if active.as_ref().is_some_and(|l| cmds::locked_effective(&env.core.project, l)) {
+        return;
+    }
     match cmds::add_layer(env.core, &cut, want, active.as_ref()) {
         Ok(id) => {
+            // a criação e o traço viram um passo só de desfazer quando o traço for gravado (auditoria V2-04)
+            env.ed.auto_layer = Some(env.core.change_counter);
             let name = env.core.project.node(&id).map(|n| n.name.clone()).unwrap_or_default();
             env.ed.layer = Some(id);
             env.ed.cel_number = None;
@@ -159,7 +169,15 @@ pub(crate) fn begin_stroke(env: &mut Env, tool: ToolId, p: Vec2, pressure: f32, 
         ToolId::Brush => (&[LayerType::Raster], "err.need_raster"),
         _ => (&[LayerType::Vector, LayerType::Raster, LayerType::Fill], "err.eraser_layer"),
     };
-    let Some(t) = target(env, allowed, wrong) else { return Gesture::None };
+    let Some(t) = target(env, allowed, wrong) else {
+        // a camada criada sozinha para este gesto não serve (oculta, etc.): sai também
+        if let Some(c) = env.ed.auto_layer.take() {
+            if env.core.change_counter == c && env.core.undo().is_ok() {
+                env.ed.layer = None;
+            }
+        }
+        return Gesture::None;
+    };
     let o = &env.ed.opts;
     let mode = if tool == ToolId::Eraser { StabMode::Off } else { o.stab_mode };
     // pincel com estabilização própria (canetas S25): a dele, no lugar da do painel
@@ -174,7 +192,7 @@ pub(crate) fn begin_stroke(env: &mut Env, tool: ToolId, p: Vec2, pressure: f32, 
     let inv = fwd.and_then(|a| a.inverse());
     let fwd = inv.and(fwd);
     let scale = scale * fwd.map(|a| a.0[0].hypot(a.0[3])).unwrap_or(1.0);
-    let mut g = StrokeGesture { tool, layer: t.layer, samples: Vec::new(), stab, t0: Instant::now(), hits: Vec::new(), path: Vec::new(), screen_scale: scale, fwd, inv, snap };
+    let mut g = StrokeGesture { tool, layer: t.layer, samples: Vec::new(), stab, t0: Instant::now(), hits: Vec::new(), path: Vec::new(), screen_scale: scale, fwd, inv, snap, moved_t: 0.0, moved_p: None };
     g.push(p, pressure);
     Gesture::Stroke(Box::new(g))
 }
@@ -207,6 +225,18 @@ pub(crate) fn finish_stroke(env: &mut Env, mut g: Box<StrokeGesture>, released_a
         }
     }
     let Some(t) = target_for_commit(env, &g) else { return };
+    let before = env.core.change_counter;
+    finish_commit(env, &t, &g, released_at);
+    // gesto que não gravou nada (clique sem traço, erro): a camada criada sozinha para ele não fica para trás
+    if let Some(c) = env.ed.auto_layer.take() {
+        if env.core.change_counter == before && before == c && env.core.undo().is_ok() {
+            env.ed.layer = None;
+            env.ed.cel_number = None;
+        }
+    }
+}
+
+fn finish_commit(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant) {
     match g.tool {
         ToolId::Pen => commit_pen(env, &t, &g, released_at),
         ToolId::Brush => commit_brush(env, &t, &g, released_at, false),
@@ -266,9 +296,29 @@ fn commit_pen(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant
     let mut pieces = pieces.into_iter();
     let mut points = pieces.next().expect("há pedaço");
     let rest: Vec<Vec<StrokePoint>> = pieces.collect();
+    // Forma rápida (QuickArc, auditoria 4.8d): a caneta parada no fim (0,35 s) antes de soltar encaixa o traço numa
+    // reta, num arco ou numa elipse
+    let mut geometry = StrokeGeometry::Freehand;
+    let mut quick_closed = false;
+    let dwell = released_at.saturating_duration_since(g.t0).as_secs_f32() - g.moved_t;
+    if !clipped && env.ed.opts.pen_quickshape && dwell >= 0.35 {
+        let xy: Vec<[f32; 2]> = points.iter().map(|q| [q.x, q.y]).collect();
+        if let Some(q) = aiai_tools::quick_shape::quick_shape(&xy, 1.0 / g.screen_scale.max(1e-3)) {
+            let pr = points.iter().map(|q| q.pressure).sum::<f32>() / points.len() as f32;
+            let base = points[0];
+            points = q.points.iter().map(|p| StrokePoint { x: p[0], y: p[1], pressure: pr, t: None, ..base }).collect();
+            geometry = q.geometry;
+            quick_closed = q.closed;
+            env.ed.notify(tr(match q.kind {
+                aiai_tools::quick_shape::QuickKind::Line => "pen.quick.line",
+                aiai_tools::quick_shape::QuickKind::Arc => "pen.quick.arc",
+                aiai_tools::quick_shape::QuickKind::Ellipse => "pen.quick.ellipse",
+            }));
+        }
+    }
     let o = &env.ed.opts;
     // volta ao ponto de partida: fecha o traço (sem as pontas afinadas abrindo um vão que o balde não vê)
-    let closed = !clipped && o.pen_autoclose && should_close(&points, o.pen_width, g.screen_scale);
+    let closed = quick_closed || (geometry == StrokeGeometry::Freehand && !clipped && o.pen_autoclose && should_close(&points, o.pen_width, g.screen_scale));
     if closed {
         let (a, b) = (points[0], points[points.len() - 1]);
         if (a.x - b.x).hypot(a.y - b.y) < 1.0 {
@@ -278,7 +328,7 @@ fn commit_pen(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant
     let stroke = Stroke {
         id: Id(String::new()),
         points,
-        geometry: StrokeGeometry::Freehand,
+        geometry,
         tension: 0.0,
         tip: o.pen_tip,
         width: o.pen_width.max(0.1),
@@ -287,7 +337,32 @@ fn commit_pen(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant
         opacity: 1.0,
         closed,
         aliased: o.pen_aliased,
-        color_trace: false,
+        color_trace: o.pen_color_trace,
+    };
+    // Simplificar ao soltar: as amostras viram poucos pontos de controle (pressão inclusa), sem a linha sair mais que a
+    // tolerância da de antes
+    let simplify = |s: Stroke| -> Stroke {
+        if o.pen_simplify <= 0.0 || s.points.len() < 4 || s.geometry != StrokeGeometry::Freehand {
+            return s;
+        }
+        let tol = aiai_tools::line_fix::simplify_tolerance(o.pen_simplify);
+        match aiai_tools::points::simplify_plan(&s, tol) {
+            Ok((keep, _)) if keep.iter().any(|k| !*k) => aiai_tools::points::keep_only(&s, &keep),
+            _ => s,
+        }
+    };
+    let extra: Vec<Stroke> = rest.into_iter().map(|pts| simplify(Stroke { points: pts, ..stroke.clone() })).collect();
+    let stroke = simplify(stroke);
+    // soldar pontas: a ponta que para perto de outra linha do cel vai até ela (meia largura e pouco da caneta, ou 6 pt
+    // da tela). Vale para o traço à mão (mesmo simplificado em spline) e a reta da forma rápida; arco e elipse da forma
+    // rápida ficam como estão (um ponto a mais tiraria o traço do círculo)
+    let weldable = matches!(geometry, StrokeGeometry::Freehand | StrokeGeometry::Polyline);
+    let stroke = match (o.pen_weld && weldable && !closed, cmds::exposed_cel(&env.core.project, &t.cut, &t.layer, t.frame).and_then(|c| cmds::cel_data(&env.core.project, &c))) {
+        (true, Some(cel)) if !cel.strokes.is_empty() => {
+            let radius = (o.pen_width * 0.75).max(6.0 / g.screen_scale.max(1e-3));
+            aiai_tools::line_fix::weld_endpoints(&stroke, &cel.strokes, radius).0
+        }
+        _ => stroke,
     };
     // régua de simetria: as cópias espelhadas entram no mesmo passo de undo
     let pts: Vec<Vec2> = stroke.points.iter().map(|q| Vec2::new(q.x, q.y)).collect();
@@ -296,7 +371,6 @@ fn commit_pen(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant
         s.points.iter_mut().zip(c).for_each(|(q, p)| (q.x, q.y) = (p.x, p.y));
         s
     }).collect();
-    let extra: Vec<Stroke> = rest.into_iter().map(|pts| Stroke { points: pts, ..stroke.clone() }).collect();
     let (cut, layer, frame, pref) = (t.cut.clone(), t.layer.clone(), t.frame, env.ed.cel_number);
     let width = stroke.width;
     // o fantasma é a mesma geometria do traço gravado (afinamento, fechamento), não a polilinha do arrasto
@@ -485,6 +559,50 @@ pub(crate) fn paint_clip_mask(env: &Env) -> Option<(Vec<f32>, u32, u32)> {
     super::selection::area_cov(sel, w, h).map(|c| (c.cov, w, h))
 }
 
+/// Não passar da linha (auditoria 4.5m): a região das linhas de referência (as do balde da camada; sem camada de cor,
+/// a camada vetorial mais perto) onde o traço começou, em px do canvas. Fora dela o pincel não pinta.
+fn overflow_mask(env: &Env, active: &NodeId, start: Vec2) -> Option<(Vec<f32>, u32, u32)> {
+    let cut = env.ed.cut.clone()?;
+    let active = active.clone();
+    let p = &env.core.project;
+    let lines = match fill_plan(p, &cut, &active) {
+        Some((_, lines, _)) => lines,
+        None => {
+            let rows = cmds::layer_rows(p, &cut);
+            let i = rows.iter().position(|r| r.id == active)?;
+            let vec_at = |k: usize| rows.get(k).filter(|r| cmds::layer_data(p, &r.id).is_some_and(|l| l.kind == LayerType::Vector)).map(|r| r.id.clone());
+            vec![(1..rows.len()).flat_map(|d| [i.checked_sub(d), Some(i + d)]).flatten().find_map(vec_at)?]
+        }
+    };
+    let params = aiai_paint::fill::FillParams { gap: env.ed.opts.fill_gap, expand: 2, line_threshold: 0.35 };
+    let lr = tfill::compute_regions(p, &env.core.blobs, &cut, env.ed.frame, &lines, &params).ok()?;
+    let (w, h) = (lr.width, lr.height);
+    if start.x < 0.0 || start.y < 0.0 || start.x >= w as f32 || start.y >= h as f32 {
+        return None;
+    }
+    let lab = lr.regions.label_near(start.x as u32, start.y as u32);
+    if lab == 0 {
+        return None;
+    }
+    Some((lr.regions.labels.iter().map(|&l| if l == lab { 1.0 } else { 0.0 }).collect(), w, h))
+}
+
+/// O que limita o traço do pincel/borracha raster: a seleção e, no pincel com "Não passar da linha", a região onde
+/// ele começou (as duas juntas = a menor cobertura).
+pub(crate) fn stroke_clip(env: &Env, g: &StrokeGesture) -> Option<(Vec<f32>, u32, u32)> {
+    let sel = paint_clip_mask(env);
+    let start = g.samples.first().map(|s| s.p).or_else(|| g.path.first().copied());
+    let over = match start {
+        Some(s) if g.tool == ToolId::Brush && env.ed.opts.brush_no_overflow => overflow_mask(env, &g.layer, g.to_canvas(s)),
+        _ => None,
+    };
+    match (sel, over) {
+        (Some(a), Some(b)) if a.1 == b.1 && a.2 == b.2 => Some((a.0.iter().zip(&b.0).map(|(x, y)| x.min(*y)).collect(), a.1, a.2)),
+        (Some(a), _) => Some(a),
+        (None, b) => b,
+    }
+}
+
 /// Semente do traço: a mesma no começo (prévia) e no commit, enquanto nada mais mudou no documento.
 fn stroke_seed(env: &Env) -> u64 {
     env.core.change_counter.wrapping_mul(2654435761)
@@ -534,7 +652,7 @@ pub(crate) fn start_live(env: &mut Env, ctx: &egui::Context, g: &StrokeGesture, 
         erase_radius: env.ed.opts.eraser_size / 2.0,
         erase_mode: eraser_vector_mode(env),
         hide: None,
-        clip: match (paint_clip_mask(env), mode) {
+        clip: match (stroke_clip(env, g), mode) {
             (Some(m), super::live::Mode::Brush | super::live::Mode::EraseRaster) => Some(std::sync::Arc::new(m)),
             _ => None,
         },
@@ -599,7 +717,7 @@ fn commit_brush(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Insta
     let opacity = preset.opacity;
     let seed = stroke_seed(env);
     let (cut, layer, frame, pref) = (t.cut.clone(), t.layer.clone(), t.frame, env.ed.cel_number);
-    let clip = paint_clip_mask(env);
+    let clip = stroke_clip(env, g);
     let ghost_pts: Vec<Vec2> = g.samples.iter().map(|s| g.to_canvas(s.p)).collect();
     // borracha de várias camadas: apaga também nas outras camadas do quadro (visíveis, destravadas, com cel exposto)
     let others: Vec<(NodeId, LayerType)> = if erase && preset.all_layers {
@@ -703,6 +821,13 @@ fn commit(env: &mut Env, planned: Result<Command, String>, released_at: Instant,
         }
     };
     if env.ed.apply(env.core, cmd) {
+        // camada criada sozinha no começo deste gesto: ela e o traço são um passo de desfazer
+        if let Some(c) = env.ed.auto_layer.take() {
+            if env.core.change_counter == c + 1 {
+                let desc = env.core.history().0.last().cloned().unwrap_or_default();
+                env.core.merge_last(2, &desc);
+            }
+        }
         env.ed.begin_latency(released_at, label, env.core);
         if let Some((pts, radii, width, color)) = ghost {
             env.ed.ghosts.push(Ghost { pts, radii, width, color, until_counter: env.core.change_counter, born: Instant::now() });
@@ -885,7 +1010,11 @@ pub(crate) fn do_eyedrop(env: &mut Env, p: Vec2) {
 /// Cor tirada pelo conta-gotas (auditoria 2.18): se ela é uma cor da paleta ativa (até 1,5/255 por canal), escolhe a
 /// cor DA PALETA (mudar a paleta continua mudando tudo o que usa essa cor); senão, uma cor direta.
 pub(crate) fn set_picked_color(env: &mut Env, c: [f32; 4]) {
-    let rgb = if c[3] > 1e-4 { [c[0] / c[3], c[1] / c[3], c[2] / c[3]] } else { [c[0], c[1], c[2]] };
+    // pixel vazio: nada a copiar (antes virava preto)
+    if c[3] <= 0.5 / 255.0 {
+        return;
+    }
+    let rgb = [c[0] / c[3], c[1] / c[3], c[2] / c[3]];
     if let Some(pal) = env.ed.palette.clone() {
         if let Some(pd) = cmds::palette_data(&env.core.project, &pal) {
             let hit = pd.colors.iter().find(|pc| {
@@ -955,7 +1084,7 @@ pub(crate) fn commit_move(env: &mut Env) {
     if sel.is_identity() {
         return;
     }
-    let plain = sel.plain_scale() && sel.rotate.abs() < 1e-3 && sel.corners.is_none() && sel.mesh.is_none();
+    let plain = sel.plain_scale() && sel.rotate.abs() < 1e-3 && sel.corners.is_none() && sel.mesh.is_none() && sel.liquify.is_empty();
     let Some(t) = target(env, &[LayerType::Vector, LayerType::Raster], "err.move_layer") else { return };
     if t.kind == LayerType::Raster && plain {
         sel.offset = Vec2::new(sel.offset.x.round(), sel.offset.y.round());
@@ -971,7 +1100,19 @@ pub(crate) fn commit_move(env: &mut Env) {
         ttransform::transform_command_masked(&env.core.project, &mut env.core.blobs, &req, plan.mask.as_ref()).map_err(|e| e.to_string())
     });
     let ok = planned.is_ok();
+    // a seleção de antes do Mover: o lugar dela sem a transformação pendente (é o que o desfazer deve mostrar)
+    let sel_before = env.ed.selection.clone().map(|mut s| {
+        s.offset = Vec2::ZERO;
+        s.scale = Vec2::splat(1.0);
+        s.rotate = 0.0;
+        s.corners = None;
+        s.mesh = None;
+        s.liquify.clear();
+        s
+    });
+    let depth0 = env.core.history().0.len();
     commit(env, planned, released_at, "move", None);
+    let ok = ok && env.core.history().0.len() > depth0;
     if ok {
         if !sel.strokes.is_empty() {
             // os mesmos traços continuam escolhidos, com a caixa refeita no lugar novo
@@ -983,6 +1124,11 @@ pub(crate) fn commit_move(env: &mut Env) {
                 s.offset = off;
                 s.bake_offset();
             }
+        }
+        let (undo, _) = env.core.history();
+        if let Some(desc) = undo.last().cloned() {
+            let after = env.ed.selection.clone();
+            env.ed.sel_undo.insert(undo.len(), (desc, sel_before, after));
         }
     } else {
         // nada para mover (área vazia na camada vetorial, erro): a seleção volta ao lugar
@@ -1014,6 +1160,7 @@ pub(crate) fn cancel_move(ed: &mut Editor) {
             s.rotate = 0.0;
             s.corners = None;
             s.mesh = None;
+            s.liquify.clear();
             if s.whole {
                 ed.selection = None;
             }

@@ -99,6 +99,14 @@ fn effect_fields(ui: &mut Ui, t: &crate::theme::Tokens, salt: (&str, usize), eff
                 Value::Array(a) if a.iter().all(Value::is_number) && (a.len() == 2 || a.len() == 3) => {
                     let mut f: Vec<f32> = a.iter().map(|x| x.as_f64().unwrap_or(0.0) as f32).collect();
                     let mut any = false;
+                    // rodas de cor do colorista (auditoria 2.24): o ponto na roda é a tonalidade de sombras/meios/altas
+                    if f.len() == 3 && matches!(k.as_str(), "lift" | "gamma" | "gain") {
+                        let (neutral, reach) = if k == "lift" { (0.0, 0.2) } else { (1.0, 0.5) };
+                        if let Some(v) = color_wheel(ui, id.with("wheel"), [f[0], f[1], f[2]], neutral, reach) {
+                            f = v.to_vec();
+                            any = true;
+                        }
+                    }
                     ui.horizontal(|ui| {
                         for (i, x) in f.clone().iter().enumerate() {
                             if let Some(y) = commit_on_release(ui, id.with(i), *x, |ui, y| ui.add(egui::DragValue::new(y).speed(if k == "lift" { 0.002 } else { 0.01 }).max_decimals(3))) {
@@ -120,6 +128,63 @@ fn effect_fields(ui: &mut Ui, t: &crate::theme::Tokens, salt: (&str, usize), eff
         }
     });
     changed.then(|| Value::Object(out))
+}
+
+/// Roda de cor de um trio RGB em volta de `neutral` (0 no lift, 1 no gamma/gain): o ponto é o desvio de cor (a borda
+/// = `reach`), a luminância fica como está. Arrastar mostra ao vivo; o valor novo volta ao soltar (um passo de desfazer).
+pub(crate) fn color_wheel(ui: &mut Ui, id: EId, cur: [f32; 3], neutral: f32, reach: f32) -> Option<[f32; 3]> {
+    let s3 = 3f32.sqrt();
+    let mut v: [f32; 3] = ui.data(|d| d.get_temp::<[f32; 3]>(id)).unwrap_or(cur);
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(72.0, 72.0), egui::Sense::click_and_drag());
+    let c = rect.center();
+    let r = rect.width() * 0.5 - 3.0;
+    let d = [v[0] - neutral, v[1] - neutral, v[2] - neutral];
+    let l = (d[0] + d[1] + d[2]) / 3.0;
+    if let Some(p) = resp.interact_pointer_pos().filter(|_| resp.dragged() || resp.clicked()) {
+        let mut q = (p - c) / r;
+        if q.length() > 1.0 {
+            q = q.normalized();
+        }
+        // tela: x para a direita, y para cima = mais verde
+        let (x, y) = (q.x * reach, -q.y * reach);
+        v = [neutral + l + 2.0 * x / 3.0, neutral + l - x / 3.0 + y / s3, neutral + l - x / 3.0 - y / s3];
+        ui.data_mut(|dm| dm.insert_temp(id, v));
+    }
+    let painter = ui.painter_at(rect.expand(2.0));
+    // anel de matizes
+    let n = 48;
+    for i in 0..n {
+        let a0 = i as f32 / n as f32 * std::f32::consts::TAU;
+        let a1 = (i + 1) as f32 / n as f32 * std::f32::consts::TAU;
+        // a mesma conversão do ponto: ângulo -> desvio RGB unitário
+        let col = |a: f32| {
+            let (x, y) = (a.cos(), a.sin());
+            let rgb = [0.5 + 0.5 * (2.0 * x / 3.0), 0.5 + 0.5 * (-x / 3.0 + y / s3), 0.5 + 0.5 * (-x / 3.0 - y / s3)];
+            egui::Color32::from_rgb((rgb[0].clamp(0.0, 1.0) * 255.0) as u8, (rgb[1].clamp(0.0, 1.0) * 255.0) as u8, (rgb[2].clamp(0.0, 1.0) * 255.0) as u8)
+        };
+        let p0 = c + egui::vec2(a0.cos(), -a0.sin()) * r;
+        let p1 = c + egui::vec2(a1.cos(), -a1.sin()) * r;
+        painter.line_segment([p0, p1], egui::Stroke::new(4.0, col((a0 + a1) * 0.5)));
+    }
+    painter.circle_stroke(c, r * 0.5, egui::Stroke::new(1.0, egui::Color32::from_gray(90)));
+    painter.line_segment([c - egui::vec2(4.0, 0.0), c + egui::vec2(4.0, 0.0)], egui::Stroke::new(1.0, egui::Color32::from_gray(120)));
+    painter.line_segment([c - egui::vec2(0.0, 4.0), c + egui::vec2(0.0, 4.0)], egui::Stroke::new(1.0, egui::Color32::from_gray(120)));
+    let d = [v[0] - neutral, v[1] - neutral, v[2] - neutral];
+    let l = (d[0] + d[1] + d[2]) / 3.0;
+    let x = d[0] - l;
+    let y = (d[1] - d[2]) * s3 / 2.0;
+    let dot = c + egui::vec2(x, -y) / reach * r;
+    painter.circle(dot, 4.0, egui::Color32::WHITE, egui::Stroke::new(1.5, egui::Color32::BLACK));
+    let resp = resp.on_hover_text(tr("fx.wheel.tip"));
+    if resp.double_clicked() {
+        ui.data_mut(|dm| dm.remove_temp::<[f32; 3]>(id));
+        return Some([neutral + l; 3]);
+    }
+    if resp.drag_stopped() || (resp.clicked() && !resp.dragged()) {
+        ui.data_mut(|dm| dm.remove_temp::<[f32; 3]>(id));
+        return (v != cur).then_some(v);
+    }
+    None
 }
 
 /// Ordem de leitura dos campos (a do colorista: sombras → meios → altas, depois saturação...); o resto em seguida.

@@ -728,12 +728,27 @@ fn toolbar(env: &mut Env, ui: &mut Ui, bar: Rect, o: &Opened, ppf: f32, fit: f32
     let t = env.t;
     let mut bui = ui.new_child(egui::UiBuilder::new().max_rect(bar).layout(egui::Layout::left_to_right(egui::Align::Center)));
     bui.spacing_mut().item_spacing.x = 3.0;
-    for tool in EditTool::ALL {
+    // ícone + nome curto (auditoria UX-10): a letra do atalho fica na dica, não no lugar do nome
+    for (k, tool) in EditTool::ALL.into_iter().enumerate() {
+        if k == 1 || k == 3 || k == 6 {
+            bui.separator();
+        }
         let on = env.ed.edit.tool == tool;
-        let label = format!("{}", tool.shortcut().symbol_or_name());
-        let r = bui.add(egui::Button::selectable(on, egui::RichText::new(label).size(12.0).strong()).min_size(egui::vec2(24.0, 22.0)));
+        let icon = match tool {
+            EditTool::Select => IconId::NleSelect,
+            EditTool::Razor => IconId::NleRazor,
+            EditTool::Ripple => IconId::NleRipple,
+            EditTool::Roll => IconId::NleRoll,
+            EditTool::Slip => IconId::NleSlip,
+            EditTool::Slide => IconId::NleSlide,
+            EditTool::Hand => IconId::ToolHand,
+            EditTool::Zoom => IconId::ToolZoom,
+        };
+        let tex = env.icons.texture(bui.ctx(), icon, 16.0);
+        let img = egui::Image::new((tex, egui::vec2(16.0, 16.0))).tint(if on { t.text } else { t.text_dim });
+        let r = bui.add(egui::Button::image_and_text(img, egui::RichText::new(tr(&format!("editing.tool_short.{}", tool.key()))).size(11.5)).selected(on).min_size(egui::vec2(24.0, 22.0)));
         env.note(format!("edit:tool:{}", tool.key()), r.rect);
-        if r.on_hover_text(format!("{} ({})", tr(&format!("editing.tool.{}", tool.key())), tool.shortcut().symbol_or_name())).clicked() {
+        if r.on_hover_text(format!("{}  [{}]", tr(&format!("editing.tool.{}", tool.key())), tool.shortcut().symbol_or_name())).clicked() {
             env.ed.edit.tool = tool;
         }
     }

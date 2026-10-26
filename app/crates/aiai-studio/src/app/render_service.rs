@@ -243,7 +243,9 @@ fn worker(shared: Arc<Shared>, tx: crossbeam_channel::Sender<Done>, ctx: egui::C
         };
         let t0 = Instant::now();
         let key = job.key.clone();
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| render_job(&job, t0, &mut cache)));
+        // pool próprio (auditoria 4.4d): o render do canvas não enfileira atrás das ferramentas (pincel, balde) no pool
+        // global, nem elas atrás dele
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| render_pool().install(|| render_job(&job, t0, &mut cache))));
         let done: Done = match result {
             Ok(Ok(r)) => Ok(r),
             Ok(Err(e)) => Err((key, e)),
@@ -260,6 +262,19 @@ fn worker(shared: Arc<Shared>, tx: crossbeam_channel::Sender<Done>, ctx: egui::C
         }
         ctx.request_repaint();
     }
+}
+
+/// Threads do render do canvas: metade dos núcleos (pelo menos 2); a outra metade fica com o pool global das ferramentas.
+fn render_pool() -> &'static rayon::ThreadPool {
+    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads((n / 2).max(2))
+            .thread_name(|i| format!("aiai-render-{i}"))
+            .build()
+            .unwrap_or_else(|_| rayon::ThreadPoolBuilder::new().num_threads(2).build().expect("pool de render"))
+    })
 }
 
 fn render_job(job: &Job, t0: Instant, cache: &mut FrameCache) -> Result<Rendered, String> {

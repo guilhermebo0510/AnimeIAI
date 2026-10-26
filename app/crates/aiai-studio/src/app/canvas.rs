@@ -620,6 +620,18 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
                     // Seleção: retângulo/elipse/laço/laço poligonal/varinha/Selecionar traços (Shift soma, Alt subtrai)
                     ToolId::Lasso => super::selection::press(env, c, mods, xf.scale),
                     // Mover > Selecionar camada (S25): o clique escolhe a camada desenhada sob o cursor
+                    // Mover > Liquefazer: a pincelada entorta o desenho (a seleção, se houver, limita o que anda)
+                    ToolId::Move if env.ed.opts.liquify => {
+                        if tools::begin_move(env) {
+                            if let Some(s) = env.ed.selection.as_mut() {
+                                s.mesh = None;
+                                s.corners = None;
+                                s.liquify.clear();
+                            }
+                            liquify_step(env, c, c);
+                            env.ed.gesture = Gesture::LiquifySel { last: c };
+                        }
+                    }
                     ToolId::Move if env.ed.opts.area.pick_layer => super::area_tools::pick_layer(env, c),
                     ToolId::Move => {
                         // alças da seleção: cantos escalam, a de cima gira; fora delas, mover
@@ -695,7 +707,7 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
     // arrasto mínimo: os arrastos de objeto só começam depois que o ponteiro anda a distância das Preferências
     let object_drag = match &env.ed.gesture {
         Gesture::Select { tool, .. } => !tool.is_path(),
-        Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } | Gesture::DistortSel { .. } | Gesture::MeshSel { .. } | Gesture::StrokePick { .. } | Gesture::Shape { .. } | Gesture::DragNode { .. } | Gesture::DragHandle { .. } | Gesture::RulerDrag { .. } | Gesture::RulerCreate { .. } => true,
+        Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } | Gesture::DistortSel { .. } | Gesture::MeshSel { .. } | Gesture::LiquifySel { .. } | Gesture::StrokePick { .. } | Gesture::Shape { .. } | Gesture::DragNode { .. } | Gesture::DragHandle { .. } | Gesture::RulerDrag { .. } | Gesture::RulerCreate { .. } => true,
         _ => false,
     };
     if object_drag && !env.ed.beh.drag_armed {
@@ -757,6 +769,14 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
                 match s.corners.as_mut() {
                     Some(c4) => c4.iter_mut().for_each(|p| *p += d),
                     None => s.offset += d,
+                }
+            }
+        }
+        Gesture::LiquifySel { last } => {
+            let from = *last;
+            if liquify_step(env, from, c) {
+                if let Gesture::LiquifySel { last } = &mut env.ed.gesture {
+                    *last = c;
                 }
             }
         }
@@ -858,7 +878,7 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
         }
         Gesture::StrokePick { start, op, .. } => super::selection::strokes_release(env, start, c, op, xf.scale),
         g @ Gesture::PolyLasso { .. } => env.ed.gesture = g, // o laço poligonal continua até fechar
-        Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } | Gesture::DistortSel { .. } => {
+        Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } | Gesture::DistortSel { .. } | Gesture::LiquifySel { .. } => {
             let key = tools::move_key(env);
             let ready = key.as_ref().is_some_and(|k| env.ed.move_live.ready_for(k));
             let aff = env.ed.selection.as_ref().filter(|s| !s.is_identity()).map(|s| s.live_xf());
@@ -1240,7 +1260,7 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
         painter.add(quad(chk.id(), sp, uv));
     }
     // Mover ao vivo: o que fica abaixo, a parte que fica, a que anda (transformada) e o que fica acima
-    let moving = matches!(env.ed.gesture, Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } | Gesture::DistortSel { .. } | Gesture::MeshSel { .. })
+    let moving = matches!(env.ed.gesture, Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } | Gesture::DistortSel { .. } | Gesture::MeshSel { .. } | Gesture::LiquifySel { .. })
         || env.ed.selection.as_ref().is_some_and(|s| s.mesh.is_some());
     let live_aff = if moving {
         tools::move_key(env).filter(|k| env.ed.move_live.ready_for(k)).and_then(|_| env.ed.selection.as_ref().map(|s| s.live_xf()))
@@ -1269,7 +1289,11 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
             }
             // perspectiva e malha: malha fina (cada vértice pela transformação) em vez de um quadrilátero só
             super::editor::LiveXf::Persp(_) | super::editor::LiveXf::Mesh(_) => {
-                painter.add(warped_mesh(mt.moving.id(), mw, mh, |x, y| aff.apply(x, y), xf));
+                painter.add(warped_mesh(mt.moving.id(), mw, mh, 24, |x, y| aff.apply(x, y), xf));
+            }
+            // liquify: pincel pequeno, malha bem mais fina
+            super::editor::LiveXf::Liquify(_) => {
+                painter.add(warped_mesh(mt.moving.id(), mw, mh, 160, |x, y| aff.apply(x, y), xf));
             }
         }
         painter.add(quad(mt.above.id(), plain, full));
@@ -1443,8 +1467,10 @@ fn paint_camera(env: &mut Env, painter: &egui::Painter, xf: &Xf, cd: &CutData, c
 /// Alças da transformação na caixa original (sem a transformação pendente): 0..4 cantos (sup-esq, sup-dir, inf-dir,
 /// inf-esq) e 4..8 meios dos lados (cima, direita, baixo, esquerda).
 /// Textura do canvas (`mw`×`mh`) desenhada por uma transformação qualquer: malha de 24×24 células.
-fn warped_mesh(tex: egui::TextureId, mw: f32, mh: f32, f: impl Fn(f32, f32) -> (f32, f32), xf: &Xf) -> Shape {
-    const N: u32 = 24;
+fn warped_mesh(tex: egui::TextureId, mw: f32, mh: f32, n: u32, f: impl Fn(f32, f32) -> (f32, f32), xf: &Xf) -> Shape {
+    let n = n.max(1);
+    #[allow(non_snake_case)]
+    let N = n;
     let mut mesh = egui::Mesh::with_texture(tex);
     for j in 0..=N {
         for i in 0..=N {
@@ -1594,9 +1620,14 @@ fn paint_loupe(env: &Env, painter: &egui::Painter, xf: &Xf) {
     // `cursor` é a posição na tela; o pixel é o do desenho sob ela
     let cc = xf.to_canvas(cur);
     let (cx, cy) = (cc.x.floor() as i32, cc.y.floor() as i32);
-    let at = cur + egui::vec2(24.0, 24.0);
     let side = N as f32 * CELL;
-    let frame = Rect::from_min_size(at, egui::vec2(side, side + 18.0));
+    let size = egui::vec2(side, side + 18.0);
+    // abaixo e à direita do cursor; perto da borda do canvas vira para o outro lado (não fica cortada)
+    let clip = painter.clip_rect();
+    let x = if cur.x + 24.0 + size.x + 4.0 > clip.max.x { cur.x - 24.0 - size.x } else { cur.x + 24.0 };
+    let y = if cur.y + 24.0 + size.y + 4.0 > clip.max.y { cur.y - 24.0 - size.y } else { cur.y + 24.0 };
+    let at = Pos2::new(x, y);
+    let frame = Rect::from_min_size(at, size);
     painter.rect_filled(frame.expand(3.0), 4.0, Color32::from_black_alpha(200));
     for j in 0..N {
         for i in 0..N {
@@ -1610,16 +1641,63 @@ fn paint_loupe(env: &Env, painter: &egui::Painter, xf: &Xf) {
     }
     let mid = Rect::from_min_size(at + egui::vec2((N / 2) as f32 * CELL, (N / 2) as f32 * CELL), egui::vec2(CELL, CELL));
     painter.rect_stroke(mid, 0.0, Stroke::new(1.5, Color32::WHITE), egui::StrokeKind::Outside);
-    if let Some(c) = shown.rendered.sample(cx, cy) {
-        let k = |v: f32| (v.clamp(0.0, 1.0) * 255.0) as u8;
-        let sw = Rect::from_min_size(at + egui::vec2(0.0, side + 3.0), egui::vec2(side, 13.0));
-        painter.rect_filled(sw, 2.0, Color32::from_rgba_premultiplied(k(c[0]), k(c[1]), k(c[2]), 255));
+    // a cor que vai ser escolhida (sem a transparência); pixel vazio: xadrez (o conta-gotas não troca a cor)
+    let sw = Rect::from_min_size(at + egui::vec2(0.0, side + 3.0), egui::vec2(side, 13.0));
+    match shown.rendered.sample(cx, cy).filter(|c| c[3] > 0.5 / 255.0) {
+        Some(c) => {
+            let k = |v: f32| ((v / c[3]).clamp(0.0, 1.0) * 255.0).round() as u8;
+            painter.rect_filled(sw, 2.0, Color32::from_rgb(k(c[0]), k(c[1]), k(c[2])));
+        }
+        None => {
+            for i in 0..(side / 6.5) as i32 {
+                for j in 0..2 {
+                    let r = Rect::from_min_size(sw.min + egui::vec2(i as f32 * 6.5, j as f32 * 6.5), egui::vec2(6.5, 6.5)).intersect(sw);
+                    painter.rect_filled(r, 0.0, Color32::from_gray(if (i + j) % 2 == 0 { 200 } else { 160 }));
+                }
+            }
+        }
+    }
+    painter.rect_stroke(frame.expand(3.0), 4.0, Stroke::new(1.0, Color32::from_gray(90)), egui::StrokeKind::Inside);
+}
+
+/// Um passo do Liquefazer de `from` até `to` (px do canvas). Empurrar só anda depois de uma distância mínima (o passo
+/// leva o desenho junto com o cursor); Expandir, Contrair e Girar agem no ponto a cada evento. `true` = gerou passo.
+fn liquify_step(env: &mut Env, from: Vec2, to: Vec2) -> bool {
+    use aiai_paint::warp::{Liquify, LiquifyKind};
+    let o = &env.ed.opts;
+    let (kind, radius, st) = (o.liquify_kind, (o.liquify_size / 2.0).max(1.0), o.liquify_strength.clamp(0.0, 1.0));
+    let d = to - from;
+    let step = match kind {
+        LiquifyKind::Push => {
+            if d.length() < (radius * 0.12).max(1.0) {
+                return false;
+            }
+            Liquify { kind, center: [from.x, from.y], radius, strength: d.length() * st, direction: [d.x, d.y] }
+        }
+        LiquifyKind::Bulge | LiquifyKind::Pinch => Liquify { kind, center: [to.x, to.y], radius, strength: 0.12 * st, direction: [0.0, 0.0] },
+        LiquifyKind::Twirl => Liquify { kind, center: [to.x, to.y], radius, strength: 10.0 * st, direction: [0.0, 0.0] },
+    };
+    match env.ed.selection.as_mut() {
+        Some(s) => {
+            s.liquify.push(step);
+            true
+        }
+        None => false,
     }
 }
 
 fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId) {
     if matches!(env.ed.gesture, Gesture::Eyedrop) {
         paint_loupe(env, painter, xf);
+    }
+    // Liquefazer: o círculo do pincel
+    if *env.tool == ToolId::Move && env.ed.opts.liquify {
+        if let Some(cur) = env.ed.cursor {
+            let r = env.ed.opts.liquify_size / 2.0 * xf.scale;
+            let p = cur;
+            painter.circle_stroke(p, r, Stroke::new(2.5, Color32::from_black_alpha(120)));
+            painter.circle_stroke(p, r, Stroke::new(1.0, Color32::WHITE));
+        }
     }
     // o que o gesto anterior acabou de fazer, até o render novo chegar
     env.ed.ghosts.retain(|g| g.born.elapsed().as_secs_f32() < 5.0);

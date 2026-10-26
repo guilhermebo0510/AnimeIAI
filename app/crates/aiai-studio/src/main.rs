@@ -90,8 +90,15 @@ fn main() -> eframe::Result {
         aiai_studio::prefs::GpuPref::Dedicated => wgpu::PowerPreference::HighPerformance,
         aiai_studio::prefs::GpuPref::Integrated => wgpu::PowerPreference::LowPower,
     };
+    // a janela volta onde estava (Preferências gravam a geometria; `--size` manda mais)
+    let geom = if cli.size.is_none() { startup.window.and_then(|g| g.sane()) } else { None };
+    let (w, h) = geom.map(|g| (g.size[0], g.size[1])).unwrap_or((w, h));
+    let mut viewport = egui::ViewportBuilder::default();
+    if let Some(g) = geom {
+        viewport = viewport.with_position(g.pos).with_maximized(g.maximized);
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
+        viewport: viewport
             .with_title("AnimeIAI")
             // ícone inicial (variante do tema do Windows, no tamanho do ícone grande do sistema); `StudioApp::new` refaz o par
             // pequeno + grande certo e acompanha o tema (brand.rs). O ícone do exe vem do recurso embutido (build.rs).

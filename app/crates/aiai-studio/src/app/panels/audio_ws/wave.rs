@@ -333,7 +333,17 @@ fn toolbar(env: &mut Env, ui: &mut Ui, asset: &Id, placement: Option<&(NodeId, a
         if env.icon_button(ui, IconId::Loop, "audio.wave.loop", lp, true, "audio:wave:loop").clicked() {
             env.ed.audio_ws.wave.looping = !lp;
         }
-        ui.separator();
+        // o alcance das ações de edição, sempre à vista (auditoria UX-08)
+        let scope = match sel.filter(|(a, b)| b > a) {
+            Some((a, b)) => format!("{} {:.3}–{:.3} s ({:.3} s)", tr("audio.wave.scope_sel"), secs(a, rate), secs(b, rate), secs(b - a, rate)),
+            None => format!("{} {:.3} s · {}", tr("audio.wave.scope_cursor"), secs(env.ed.audio_ws.wave.cursor, rate), tr("audio.wave.scope_whole")),
+        };
+        dim_label(ui, &t, &scope);
+    });
+    // edição: cortar/copiar/colar/apagar/silenciar/aparar, fades com a curva ao lado, ganho e reverso
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        dim_label(ui, &t, tr("audio.wave.group_edit"));
         let en = !busy;
         let mut op: Option<WaveKey> = None;
         for (k, key, need_sel, name) in [
@@ -393,7 +403,11 @@ fn toolbar(env: &mut Env, ui: &mut Ui, asset: &Id, placement: Option<&(NodeId, a
             let (s, e) = sel.map(|(a, b)| (Some(secs(a, rate)), Some(secs(b, rate)))).unwrap_or((None, None));
             run_steps(env, asset, placement, vec![EditStep::Reverse { start_s: s, end_s: e }], "audio.wave.reverse", false);
         }
-        ui.separator();
+    });
+    // visualização: não mexe no som
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        dim_label(ui, &t, tr("audio.wave.group_view"));
         let mut v = env.ed.audio_ws.wave.view;
         for (k, key, name) in [(View::Wave, "audio.wave.view_wave", "audio:wave:view_wave"), (View::Spectrum, "audio.wave.view_spec", "audio:wave:view_spec"), (View::Both, "audio.wave.view_both", "audio:wave:view_both")] {
             let r = ui.selectable_value(&mut v, k, tr(key));

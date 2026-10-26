@@ -358,6 +358,16 @@ pub(crate) fn set_cut_props(core: &mut CoreSession, cut: &NodeId, patch: Value) 
 
 // ------------------------------------------------------------------------------------------------ camadas
 
+/// Nome descritivo ("Linhas de foco", "Linha cópia"): ele mesmo se ninguém na pasta usa; senão "nome 2", "nome 3"...
+pub(crate) fn unique_name(p: &Project, parent: &NodeId, base: &str) -> String {
+    let existing: Vec<&str> = p.node(parent).map(|n| n.children.iter().filter_map(|c| p.node(c)).map(|n| n.name.as_str()).collect()).unwrap_or_default();
+    if !existing.contains(&base) {
+        return base.to_owned();
+    }
+    (2..).map(|i| format!("{base} {i}")).find(|c| !existing.contains(&c.as_str())).unwrap_or_else(|| base.to_owned())
+}
+
+/// Nome de camada nova pelo tipo ("Vetor 1", "Vetor 2"...), como as camadas numeradas do Clip Studio.
 pub(crate) fn unique_layer_name(p: &Project, parent: &NodeId, base: &str) -> String {
     let existing: Vec<&str> = p.node(parent).map(|n| n.children.iter().filter_map(|c| p.node(c)).map(|n| n.name.as_str()).collect()).unwrap_or_default();
     (1..)
@@ -525,8 +535,26 @@ pub(crate) enum Exposure {
 }
 
 /// Define a exposição da camada no quadro: cria a trilha (preservando a exposição estática de antes) e o cel, se faltarem.
+/// A camada está travada por ela mesma ou por alguma pasta acima (auditoria V2-03): conteúdo, exposição e criação
+/// automática respeitam a mesma regra.
+pub(crate) fn locked_effective(p: &Project, layer: &NodeId) -> bool {
+    let mut cur = Some(layer.clone());
+    while let Some(id) = cur {
+        let Some(n) = p.node(&id) else { break };
+        match &n.data {
+            NodeKind::Layer(l) if l.locked => return true,
+            NodeKind::Layer(_) => cur = n.parent.clone(),
+            _ => break,
+        }
+    }
+    false
+}
+
 pub(crate) fn set_exposure(core: &mut CoreSession, cut: &NodeId, layer: &NodeId, frame: u32, what: Exposure) -> Result<(), String> {
     let p = &core.project;
+    if locked_effective(p, layer) {
+        return Err(tr("err.layer_locked").to_owned());
+    }
     let cd = cut_data(p, cut).ok_or_else(|| tr("err.no_cut").to_owned())?;
     let cels = layer_cels(p, layer);
     let mut cmds: Vec<Command> = Vec::new();

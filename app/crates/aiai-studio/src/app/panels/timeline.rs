@@ -441,6 +441,16 @@ fn grid(env: &mut Env, ui: &mut Ui, area: Rect, cut: &NodeId, cd: &CutData, comp
             act = Some(Exposure::Empty);
             ui.close();
         }
+        // Intercalar até a próxima chave (auditoria 4.6a): os desenhos entre este cel e o próximo da camada, em 2s
+        if let Some(plan) = crate::app::anim::inbetween_plan(&env.core.project, cut, &lid, f) {
+            ui.separator();
+            let b = ui.button(format!("{} ({})", tr("timeline.ctx.inbetween"), plan.count));
+            env.note("timeline:ctx.inbetween", b.rect);
+            if b.on_hover_text(tr("timeline.ctx.inbetween.tip")).clicked() {
+                crate::app::anim::run_inbetween(env, cut, &lid, &plan);
+                ui.close();
+            }
+        }
         // papel do cel exposto nesta célula (chave, breakdown, intercalação) e a trava do douga
         if let Some(cel) = cmds::exposed_cel(&env.core.project, cut, &lid, f) {
             ui.separator();

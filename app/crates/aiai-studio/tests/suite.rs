@@ -1161,13 +1161,13 @@ fn lint_and_pen_selection_script(c: &Client) {
     let sel = c.state()["editor"]["selection"].clone();
     let rect: Vec<f64> = sel["rect"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
     assert!((rect[0] + rect[2] - 230.0).abs() < 2.0 && (rect[1] + rect[3] - 170.0).abs() < 2.0, "a seleção virou a caixa dos cantos novos: {rect:?}");
-    // Malha (auditoria 2.17): numa camada com uma barra em y = 90, grade 2x2 sobre a seleção; o vértice do meio desce
-    // 30 px e só grava no Enter
+    // Malha (auditoria 2.17): numa camada com uma barra em y = 90, grade 3x3 (padrão) sobre a seleção 50..140 x 30..120
+    // (vértices a cada 30 px); o vértice (110, 90) desce 15 px e só grava no Enter
     c.input(json!([{"kind": "key", "key": "Escape"}, {"kind": "wait", "frames": 2}]));
     let q = mk("Malha", Some(&cut), json!({"type": "layer", "kind": "raster"}));
     mk("c1", Some(&q), json!({"type": "cel", "number": 1}));
     c.ok("PAINT", json!({"cut": cut, "frame": 0, "layer": q, "preset": "redondo duro", "preset_overrides": {"size": 10}, "color": {"type": "direct", "rgba": [0.0, 0.0, 0.0, 1.0]},
-        "strokes": [{"points": [[70, 90], [150, 90]]}]}));
+        "strokes": [{"points": [[60, 90], [170, 90]]}]}));
     let px = |x: u32, y: u32| {
         use base64::Engine as _;
         let r = c.ok("RENDER", json!({"cut": cut, "frame": 0, "layers": [q], "inline": true}));
@@ -1176,32 +1176,178 @@ fn lint_and_pen_selection_script(c: &Client) {
     };
     c.ok("UI_ACTION", json!({"action": "select_layer", "layer": q}));
     c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "select", "mode": "rect"}));
-    c.drag_canvas(&[(60.0, 40.0), (160.0, 140.0)], false);
+    c.drag_canvas(&[(50.0, 30.0), (140.0, 120.0)], false);
     c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "move"}));
     c.input(json!([{"kind": "wait", "frames": 2}]));
     assert!(px(110, 90)[3] > 200 && px(110, 120)[3] < 10, "antes: barra em y 90");
-    c.click_widget("opt:move_mesh_cells");
-    c.input(json!([{"kind": "key", "key": "A", "modifiers": ["ctrl"]}, {"kind": "text", "text": "2"}, {"kind": "key", "key": "Enter"}, {"kind": "wait", "frames": 2}]));
     c.click_widget("opt:move_mesh");
     let st = c.state();
-    assert!(st["widgets"]["transform:mesh:4"]["rect_logical"].is_array(), "a malha 2x2 tem o vértice do meio (4)");
-    assert!(st["widgets"]["transform:mesh:9"].is_null(), "só 9 vértices numa grade 2x2");
+    assert!(st["widgets"]["transform:mesh:15"]["rect_logical"].is_array(), "a malha 3x3 tem 16 vértices: {}", st["editor"]["selection"]);
+    assert!(st["widgets"]["transform:mesh:16"].is_null(), "só 16 vértices numa grade 3x3");
     assert!(st["editor"]["selection"]["mesh"].is_array(), "a malha está pendente: {}", st["editor"]["selection"]);
     let rev1 = st["project"]["revision"].as_u64().unwrap();
-    c.drag_canvas(&[(110.0, 90.0), (110.0, 100.0), (110.0, 110.0), (110.0, 120.0)], false);
+    c.drag_canvas(&[(110.0, 90.0), (110.0, 95.0), (110.0, 100.0), (110.0, 105.0)], false);
     c.input(json!([{"kind": "wait", "frames": 3}]));
     assert_eq!(c.state()["project"]["revision"].as_u64().unwrap(), rev1, "arrastar o vértice não grava sozinho");
+    assert_eq!(c.state()["editor"]["selection"]["mesh"][10], json!([110.0, 105.0]), "o vértice 10 foi para (110, 105)");
     c.input(json!([{"kind": "key", "key": "Enter"}, {"kind": "wait", "frames": 3}]));
     let t0 = Instant::now();
     while c.state()["project"]["revision"].as_u64().unwrap() == rev1 {
         assert!(t0.elapsed() < Duration::from_secs(20), "o Enter não gravou a malha");
         std::thread::sleep(Duration::from_millis(20));
     }
-    assert!(px(110, 120)[3] > 200, "o meio da barra desceu com o vértice: {:?}", px(110, 120));
+    assert!(px(110, 105)[3] > 200, "a barra desceu com o vértice: {:?}", px(110, 105));
     assert!(px(110, 90)[3] < 30, "e saiu de y 90: {:?}", px(110, 90));
-    // perto da borda (vértices parados) desce menos: em x 75 a fração é 15/50, 9 px (interpolação bilinear)
-    assert!(px(75, 99)[3] > 200 && px(75, 120)[3] < 10, "perto da borda desceu só 9 px: {:?} {:?}", px(75, 99), px(75, 120));
+    assert!(px(80, 90)[3] > 200, "no vértice parado a barra ficou: {:?}", px(80, 90));
+    assert!(px(95, 97)[3] > 200, "no meio do caminho desceu 7,5 px (bilinear): {:?}", px(95, 97));
     assert!(c.state()["editor"]["selection"]["mesh"].is_null(), "a malha foi gravada e saiu");
+    // Liquefazer (auditoria 2.17/4.5e): sem seleção, empurrar a barra (agora em y ~90..120) de cima para baixo no meio
+    c.input(json!([{"kind": "key", "key": "Escape"}, {"kind": "wait", "frames": 2}]));
+    c.ok("UI_ACTION", json!({"action": "select_layer", "layer": q}));
+    c.click_widget("opt:liquify");
+    c.click_widget("opt:liquify.push");
+    assert!(px(140, 92)[3] > 200 && px(140, 115)[3] < 10, "antes do liquify: barra em y 90 no x 140 {:?} {:?}", px(140, 92), px(140, 115));
+    let rev2 = c.state()["project"]["revision"].as_u64().unwrap();
+    c.drag_canvas(&[(140.0, 70.0), (140.0, 80.0), (140.0, 90.0), (140.0, 100.0), (140.0, 110.0)], false);
+    let t0 = Instant::now();
+    while c.state()["project"]["revision"].as_u64().unwrap() == rev2 {
+        assert!(t0.elapsed() < Duration::from_secs(20), "o liquify não gravou");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // centro da barra na coluna x (média de y pesada pelo alfa)
+    let center_y = |x: u32| {
+        use base64::Engine as _;
+        let r = c.ok("RENDER", json!({"cut": cut, "frame": 0, "layers": [q], "inline": true}));
+        let png = base64::engine::general_purpose::STANDARD.decode(r["png_base64"].as_str().unwrap()).unwrap();
+        let im = image::load_from_memory(&png).unwrap().to_rgba8();
+        let (mut sw, mut sy) = (0.0, 0.0);
+        for y in 60..150 {
+            let a = im.get_pixel(x, y).0[3] as f64;
+            sw += a;
+            sy += a * y as f64;
+        }
+        sy / sw.max(1.0)
+    };
+    let cy = center_y(140);
+    assert!(cy > 100.0, "a barra foi empurrada para baixo no x 140 (centro em y {cy:.1}, antes 90)");
+    assert!(px(80, 90)[3] > 200, "longe do pincel nada mudou: {:?}", px(80, 90));
+    c.click_widget("opt:liquify");
+}
+
+/// Pincel que não passa da linha (auditoria 4.5m) e caneta: forma rápida segurando no fim (4.8d) e ponta soldada (4.9b).
+fn overflow_and_pen_extras_script(c: &Client) {
+    c.ok("NEW_PROJECT", json!({"name": "linha", "settings": {"width": 320, "height": 180}}));
+    let mk = |name: &str, parent: Option<&str>, data: Value| c.ok("APPLY_COMMAND", create_node(name, parent, data))["created"][0].as_str().unwrap().to_string();
+    let ep = mk("EP", None, json!({"type": "episode", "number": 1}));
+    let sc = mk("S", Some(&ep), json!({"type": "scene", "number": 1}));
+    let cut = mk("C001", Some(&sc), json!({"type": "cut", "number": 1, "duration": 12}));
+    let sombra = mk("Sombra", Some(&cut), json!({"type": "layer", "kind": "raster"}));
+    mk("c1", Some(&sombra), json!({"type": "cel", "number": 1}));
+    let v = mk("Linha", Some(&cut), json!({"type": "layer", "kind": "vector"}));
+    let cel = mk("c1", Some(&v), json!({"type": "cel", "number": 1}));
+    c.ok("APPLY_COMMAND", json!({"command": {"kind": "insert_strokes", "cel": cel, "items": [{"index": 0, "stroke": {
+        "points": [{"x": 60, "y": 40}, {"x": 160, "y": 40}, {"x": 160, "y": 140}, {"x": 60, "y": 140}], "geometry": "polyline", "closed": true,
+        "width": 4, "tip": "marker", "color": {"type": "direct", "rgba": [0, 0, 0, 1]}}}]}}));
+    c.ok("UI_ACTION", json!({"action": "select_cut", "cut": cut}));
+    c.ok("UI_ACTION", json!({"action": "select_layer", "layer": sombra}));
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "brush"}));
+    // um pincel que pinta numa camada vazia (os testes anteriores podem ter deixado um misturador escolhido)
+    c.ok("UI_ACTION", json!({"action": "set_brush", "preset": "Pena G", "size": 12}));
+    c.ok("UI_ACTION", json!({"action": "set_color", "color": "#ff0000"}));
+    c.ok("UI_ACTION", json!({"action": "fit_view"}));
+    c.input(json!([{"kind": "wait", "frames": 3}]));
+    c.click_widget("opt:brush_no_overflow");
+    assert_eq!(c.state()["editor"]["tool_options_s25"]["brush_no_overflow"], true, "a opção ligou");
+    let n = c.latency_count();
+    c.drag_canvas(&[(100.0, 90.0), (150.0, 90.0), (200.0, 90.0), (250.0, 90.0)], false);
+    c.wait_canvas(n);
+    let t0 = Instant::now();
+    while c.render_px(&cut, 0, 120, 90)[3] == 0 {
+        assert!(t0.elapsed() < Duration::from_secs(20), "o pincel não pintou dentro do quadrado");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(c.render_px(&cut, 0, 220, 90)[3], 0, "não passou da linha do quadrado");
+    c.click_widget("opt:brush_no_overflow");
+    // caneta: arco segurando no fim vira forma rápida (poucos pontos, spline); a ponta que para perto da linha solda
+    c.ok("UI_ACTION", json!({"action": "select_layer", "layer": v}));
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "pen"}));
+    let before = c.strokes(&cel).len();
+    let arc: Vec<(f64, f64)> = (0..=30).map(|k| { let t = std::f64::consts::PI * (1.0 + k as f64 / 30.0); (240.0 + 50.0 * t.cos(), 150.0 + 50.0 * t.sin()) }).collect();
+    let (x0, y0) = c.canvas_pt(arc[0].0, arc[0].1);
+    let mut ev = vec![json!({"kind": "mouse_move", "x": x0, "y": y0}), json!({"kind": "mouse_down", "x": x0, "y": y0, "button": "primary"})];
+    for p in &arc[1..] {
+        let (x, y) = c.canvas_pt(p.0, p.1);
+        ev.push(json!({"kind": "mouse_move", "x": x, "y": y}));
+        ev.push(json!({"kind": "wait", "frames": 1}));
+    }
+    let (x1, y1) = c.canvas_pt(arc[30].0, arc[30].1);
+    c.input(Value::Array(ev));
+    // parado no fim antes de soltar
+    std::thread::sleep(Duration::from_millis(600));
+    c.input(json!([{"kind": "mouse_up", "x": x1, "y": y1, "button": "primary"}, {"kind": "wait", "frames": 3}]));
+    let t0 = Instant::now();
+    while c.strokes(&cel).len() == before {
+        assert!(t0.elapsed() < Duration::from_secs(20), "a caneta não gravou o arco");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let st = c.strokes(&cel);
+    let arc_s = st.last().unwrap();
+    assert_eq!(arc_s["geometry"], "spline", "forma rápida: arco em spline: {arc_s}");
+    for p in arc_s["points"].as_array().unwrap() {
+        let (x, y) = (p["x"].as_f64().unwrap(), p["y"].as_f64().unwrap());
+        assert!(((x - 240.0).hypot(y - 150.0) - 50.0).abs() < 3.0, "os pontos ficam no círculo: ({x}, {y})");
+    }
+    // traço que para 4 px antes da linha do quadrado (x = 160): a ponta entra nela e fica reta
+    c.drag_canvas(&[(100.0, 70.0), (120.0, 70.0), (140.0, 70.0), (156.0, 70.0)], false);
+    let t0 = Instant::now();
+    while c.strokes(&cel).len() < before + 2 {
+        assert!(t0.elapsed() < Duration::from_secs(20), "a caneta não gravou o traço");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let st = c.strokes(&cel);
+    let pts = st.last().unwrap()["points"].as_array().unwrap().clone();
+    let last = pts.last().unwrap();
+    assert!(last["x"].as_f64().unwrap() > 157.5 && last["corner"] == true, "ponta soldada na linha: {last}");
+}
+
+/// Linha do tempo > Intercalar até o próximo desenho (auditoria 4.6a): A no quadro 1, B no 9 -> 3 desenhos em 2s.
+fn timeline_inbetween_script(c: &Client) {
+    c.ok("NEW_PROJECT", json!({"name": "intercalar", "settings": {"width": 320, "height": 180}}));
+    c.ok("UI_ACTION", json!({"action": "set_workspace", "workspace": "animacao"}));
+    let mk = |name: &str, parent: Option<&str>, data: Value| c.ok("APPLY_COMMAND", create_node(name, parent, data))["created"][0].as_str().unwrap().to_string();
+    let ep = mk("EP", None, json!({"type": "episode", "number": 1}));
+    let sc = mk("S", Some(&ep), json!({"type": "scene", "number": 1}));
+    let cut = mk("C001", Some(&sc), json!({"type": "cut", "number": 1, "duration": 12}));
+    let v = mk("A", Some(&cut), json!({"type": "layer", "kind": "vector"}));
+    let mut keys = Vec::new();
+    for (n, x) in [(1, 60.0), (2, 220.0)] {
+        let cel = mk(&format!("c{n}"), Some(&v), json!({"type": "cel", "number": n}));
+        keys.push(cel.clone());
+        c.ok("APPLY_COMMAND", json!({"command": {"kind": "insert_strokes", "cel": cel, "items": [{"index": 0, "stroke": {
+            "points": [{"x": x, "y": 50}, {"x": x + 20.0, "y": 90}, {"x": x, "y": 130}], "geometry": "spline",
+            "width": 4, "tip": "marker", "color": {"type": "direct", "rgba": [0, 0, 0, 1]}}}]}}));
+    }
+    let track = "trilhaA".to_string();
+    c.ok("APPLY_COMMAND", json!({"command": {"kind": "add_track", "cut": cut, "track": {"id": track, "name": "A", "kind": "drawing", "layer": v}}}));
+    c.ok("APPLY_COMMAND", json!({"command": {"kind": "set_cells", "cut": cut, "track": track, "cells": [
+        {"frame": 0, "cell": {"type": "cel", "number": 1}}, {"frame": 8, "cell": {"type": "cel", "number": 2}}]}}));
+    c.ok("UI_ACTION", json!({"action": "select_cut", "cut": cut}));
+    c.ok("UI_ACTION", json!({"action": "select_layer", "layer": v}));
+    c.input(json!([{"kind": "wait", "frames": 3}]));
+    let ui = c.state();
+    let area = ui["widgets"]["timeline:area"]["rect_logical"].clone();
+    let (cell_w, hdr) = (ui["editor"]["timeline"]["cell_w"].as_f64().unwrap(), ui["editor"]["timeline"]["header_w"].as_f64().unwrap());
+    let row = ui["widgets"]["timeline:row:0"]["rect_logical"].clone();
+    let (cx, cy) = (area[0].as_f64().unwrap() + hdr + 0.5 * cell_w, row[1].as_f64().unwrap() + row[3].as_f64().unwrap() / 2.0);
+    c.input(json!([{"kind": "mouse_move", "x": cx, "y": cy}, {"kind": "mouse_down", "x": cx, "y": cy, "button": "secondary"}, {"kind": "mouse_up", "x": cx, "y": cy, "button": "secondary"}, {"kind": "wait", "frames": 2}]));
+    c.click_widget("timeline:ctx.inbetween");
+    let cels = c.ok("QUERY", json!({"query": {"kind": "tree", "id": v}}))["children"].as_array().unwrap().len();
+    assert_eq!(cels, 5, "A, B e 3 intercalações");
+    let ex = |f: u32| c.ok("QUERY", json!({"query": {"kind": "exposure", "cut": cut, "frame": f}})).to_string();
+    for f in [2, 4, 6] {
+        assert!(!ex(f).contains(&keys[0]) && !ex(f).contains(&keys[1]), "quadro {f} mostra uma intercalação: {}", ex(f));
+    }
+    assert!(ex(0).contains(&keys[0]) && ex(8).contains(&keys[1]), "A no quadro 1 e B no 9: {} {}", ex(0), ex(8));
 }
 
 #[test]
@@ -1231,6 +1377,8 @@ fn the_app_serves_the_bridge_and_reacts_to_real_egui_input() {
             prefs_script(&client);
             eraser_presets_script(&client);
             lint_and_pen_selection_script(&client);
+            overflow_and_pen_extras_script(&client);
+            timeline_inbetween_script(&client);
         }));
         done2.store(true, Ordering::SeqCst);
         r

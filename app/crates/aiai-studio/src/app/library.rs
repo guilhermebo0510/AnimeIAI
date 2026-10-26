@@ -652,9 +652,11 @@ pub(crate) fn save_from_project(env: &mut Env, from: &str, node: &aiai_core::Id)
         "palette" => json!({ "op": "save", "from": "palette", "palette": node, "asset_author": env.ed.brushes.profile_author().name, "license": env.ed.brushes.profile_license() }),
         _ => json!({ "op": "save", "from": "model", "asset": node }),
     };
-    let ctx_root = env.ed.library.root().map(Path::to_path_buf);
-    if ctx_root.is_none() {
+    // a raiz é resolvida agora, não pela última visita ao workspace Biblioteca (auditoria M-04); e o resultado aparece
+    // junto de quem pediu (aviso), além da mensagem do painel da biblioteca
+    if env.ed.library.root().is_none() && aiai_assets::root().is_none() {
         env.ed.library.msg = Some(tr("lib.disabled").to_owned());
+        env.ed.notify(tr("lib.disabled"));
         return;
     }
     match actions::run(env.core, "LIBRARY", p) {
@@ -663,10 +665,15 @@ pub(crate) fn save_from_project(env: &mut Env, from: &str, node: &aiai_core::Id)
             if let Some(id) = v.pointer("/saved/id").and_then(Value::as_str) {
                 env.ed.library.want_select = Some(id.to_owned());
             }
-            env.ed.library.msg = Some(tr("lib.saved").replace("{name}", &name));
+            let msg = tr("lib.saved").replace("{name}", &name);
+            env.ed.notify(msg.clone());
+            env.ed.library.msg = Some(msg);
             env.ed.library.changed();
         }
-        Err(m) => env.ed.library.msg = Some(m),
+        Err(m) => {
+            env.ed.notify(m.clone());
+            env.ed.library.msg = Some(m);
+        }
     }
 }
 
