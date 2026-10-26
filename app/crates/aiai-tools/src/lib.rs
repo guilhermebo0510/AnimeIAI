@@ -23,6 +23,7 @@ pub mod guide;
 pub mod import;
 pub mod layer_merge;
 pub mod library;
+pub mod line_fix;
 pub mod model3d;
 pub mod modeling;
 pub mod paint;

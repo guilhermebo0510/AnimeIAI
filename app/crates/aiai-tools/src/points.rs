@@ -228,11 +228,18 @@ fn rdp(p: &[[f32; 3]], a: usize, b: usize, tol: f32, keep: &mut [bool]) {
 /// Pontos que podem sair sem a linha desenhada se afastar mais que `tol` px (do cel) da de agora. Ficam sempre as
 /// pontas, os cantos e os pontos com alça explícita. Devolve quais ficam e o desvio real medido.
 pub fn simplify_plan(s: &Stroke, tol: f32) -> Result<(Vec<bool>, f32), String> {
+    simplify_plan_masked(s, tol, None)
+}
+
+/// Como [`simplify_plan`], só podendo tirar os pontos marcados em `eligible` (Corrigir linha > Simplificar: os pontos
+/// debaixo do pincel); os outros seguram a forma como as pontas.
+pub fn simplify_plan_masked(s: &Stroke, tol: f32, eligible: Option<&[bool]>) -> Result<(Vec<bool>, f32), String> {
     if s.geometry == StrokeGeometry::Bezier {
         return Err("simplificar não vale para Bézier (controles 3n+1); converta para spline antes".into());
     }
     let n = s.points.len();
-    let locked: Vec<bool> = s.points.iter().enumerate().map(|(i, q)| i == 0 || i + 1 == n || q.corner || q.handle.is_some()).collect();
+    let free = |i: usize| eligible.is_none_or(|e| e.get(i).copied().unwrap_or(false));
+    let locked: Vec<bool> = s.points.iter().enumerate().map(|(i, q)| i == 0 || i + 1 == n || q.corner || q.handle.is_some() || !free(i)).collect();
     let pts: Vec<[f32; 3]> = (0..n).map(|i| [s.points[i].x, s.points[i].y, aiai_paint::width_at_point(s, i) * 0.5]).collect();
     let mut t = tol.max(0.0);
     for _ in 0..12 {
@@ -255,7 +262,7 @@ pub fn simplify_plan(s: &Stroke, tol: f32) -> Result<(Vec<bool>, f32), String> {
 }
 
 /// O traço só com os pontos marcados (ids gravados antes, para os que ficam manterem os seus).
-fn keep_only(s: &Stroke, keep: &[bool]) -> Stroke {
+pub fn keep_only(s: &Stroke, keep: &[bool]) -> Stroke {
     let mut ns = s.clone();
     ns.materialize_point_ids();
     ns.points = ns.points.iter().zip(keep).filter(|(_, k)| **k).map(|(q, _)| *q).collect();
