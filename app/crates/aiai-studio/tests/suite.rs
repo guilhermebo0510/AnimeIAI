@@ -645,10 +645,17 @@ fn editor_script2(c: &Client) {
     let kinds: Vec<&str> = layers.iter().map(|l| l.1.as_str()).collect();
     assert_eq!(kinds, ["raster", "vector", "fill"], "o balde entra abaixo da linha; o raster novo acima da camada ativa");
     let (vec_id, fill_id) = (layers[1].0.clone(), layers[2].0.clone());
+    // subir/descer ficam no menu de contexto da linha (S25: a barra do painel só tem ícones de criar e de estado)
+    let ctx_menu = |row: &str| {
+        let (x, y) = c.center(row);
+        c.input(json!([{"kind": "mouse_move", "x": x, "y": y}, {"kind": "mouse_down", "x": x, "y": y, "button": "secondary"}, {"kind": "mouse_up", "x": x, "y": y, "button": "secondary"}, {"kind": "wait", "frames": 2}]));
+    };
     c.click_widget("layers:row:1");
-    c.click_widget("layers:up");
+    ctx_menu("layers:row:1");
+    c.click_widget("layers:ctx.up");
     assert_eq!(c.state()["editor"]["layers"][0]["id"], json!(vec_id), "subir move a linha para o topo");
-    c.click_widget("layers:down");
+    ctx_menu("layers:row:0");
+    c.click_widget("layers:ctx.down");
     assert_eq!(c.state()["editor"]["layers"][1]["id"], json!(vec_id), "descer devolve");
     // mistura: abre o combo e escolhe Multiplicar
     c.click_widget("layers:blend");

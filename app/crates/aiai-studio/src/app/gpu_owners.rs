@@ -39,9 +39,11 @@ enum Slot {
     CutThumbs,
     EffectThumbs,
     CompAlpha,
+    /// Miniaturas das camadas (painel Camadas, S25).
+    LayerThumbs,
 }
 
-const SLOTS: [Slot; 20] = [
+const SLOTS: [Slot; 21] = [
     Slot::Canvas,
     Slot::MoveLive,
     Slot::Drag3d,
@@ -62,13 +64,14 @@ const SLOTS: [Slot; 20] = [
     Slot::CutThumbs,
     Slot::EffectThumbs,
     Slot::CompAlpha,
+    Slot::LayerThumbs,
 ];
 
 impl Slot {
     /// Caches de miniaturas: com pressão normal ficam mesmo fora da tela (refazer custa renders na CPU); sob pressão
     /// saem como as prévias, e na crítica saem mesmo na tela (voltam aos poucos pelo limite de renders por quadro).
     fn is_cache(self) -> bool {
-        matches!(self, Slot::LibraryGrid | Slot::FontPreviews | Slot::DeliverThumbs | Slot::BoardThumbs | Slot::CutThumbs | Slot::EffectThumbs)
+        matches!(self, Slot::LibraryGrid | Slot::FontPreviews | Slot::DeliverThumbs | Slot::BoardThumbs | Slot::CutThumbs | Slot::EffectThumbs | Slot::LayerThumbs)
     }
 }
 
@@ -102,6 +105,7 @@ fn visible(app: &StudioApp, s: Slot) -> bool {
         Slot::LibraryPreview => drawn(app, PanelKind::LibraryPreview),
         Slot::LibraryGrid => drawn(app, PanelKind::Library),
         Slot::SubView => drawn(app, PanelKind::SubView),
+        Slot::LayerThumbs => drawn(app, PanelKind::Layers),
         Slot::Spectrogram => drawn(app, PanelKind::Waveform),
         Slot::FontPreviews => drawn(app, PanelKind::Text),
         Slot::Poster => drawn(app, PanelKind::Poster),
@@ -162,6 +166,7 @@ fn release(app: &mut StudioApp, s: Slot) -> bool {
             had
         }
         Slot::CompAlpha => ed.comp.alpha_tex.take().is_some(),
+        Slot::LayerThumbs => ed.workbar.thumbs.release_gpu(),
     }
 }
 

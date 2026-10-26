@@ -26,7 +26,9 @@ mod gpu_evict;
 mod gpu_owners;
 mod input_queue;
 mod layer_merge;
+mod layer_thumbs;
 mod library;
+mod materials;
 mod live;
 mod model3d;
 mod modeling;
@@ -36,11 +38,13 @@ mod panels;
 mod pen;
 mod render_service;
 mod rulers;
+mod sel_ops;
 mod selection;
 mod text_tool;
 mod tools;
 mod ui_kit;
 mod ui_state;
+mod workbar;
 
 use crate::brand;
 use crate::cli::Cli;
@@ -578,6 +582,7 @@ impl StudioApp {
                         self.menu_file(ui);
                         self.menu_edit(ui);
                         self.menu_view(ui);
+                        self.menu_filter(ui);
                         self.menu_window(ui);
                         self.menu_help(ui);
                     });
@@ -1228,6 +1233,7 @@ impl StudioApp {
 
         self.menu_bar(ui);
         self.workspace_bar(ui);
+        self.command_bar(ui);
         self.status_bar(ui);
         // a Modelagem não tem canvas, mas tem a prateleira do viewport 3D
         if !self.ws.profile().tools.is_empty() {
@@ -1236,6 +1242,7 @@ impl StudioApp {
         self.workspace_ui(ui);
         self.dock_floats_ui(&ctx);
         self.about_window(&ctx);
+        self.filter_window(&ctx);
         self.prefs_window(&ctx);
         self.start_window(&ctx);
         self.confirm_window(&ctx);
@@ -1364,12 +1371,18 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
         ui.painter().rect_filled(rect, CARD_RADIUS, self.t.bg_panel);
         let mut resp = UiResponse::None;
         let mut body = rect;
-        if !self.in_tabs.contains(&tile_id) {
+        // S25: o canvas solto não tem a linha de título; a barra de ícones dele é o cabeçalho (arrastar, duplo clique,
+        // maximizar e soltar ficam nela). A alça é registrada antes dos botões da barra, que ficam por cima
+        let canvas_hdr = (kind == PanelKind::Canvas && !self.in_tabs.contains(&tile_id)).then(|| {
+            let hdr = Rect::from_min_size(rect.min, egui::vec2(rect.width(), canvas::TOOLBAR_H));
+            (hdr, ui.interact(hdr, ui.id().with(("dock_hdr", tile_id)), Sense::click_and_drag()))
+        });
+        if canvas_hdr.is_none() && !self.in_tabs.contains(&tile_id) {
             resp = self.header(ui, rect, kind, tile_id);
             body.min.y += HEADER_H + 1.0;
         }
         match kind {
-            PanelKind::Canvas => canvas::show(&mut self.env, ui, body),
+            PanelKind::Canvas => canvas::show_with_header(&mut self.env, ui, body, if canvas_hdr.is_some() { 50.0 } else { 0.0 }),
             PanelKind::Layers => panels::layers::show(&mut self.env, ui, body),
             PanelKind::Palette => panels::colors::show(&mut self.env, ui, body),
             PanelKind::Timeline if self.env.ws == WorkspaceId::Edicao => panels::edit::timeline(&mut self.env, ui, body),
@@ -1383,6 +1396,8 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::Multitrack => panels::audio_ws::multitrack::show(&mut self.env, ui, body),
             PanelKind::Tts => panels::audio_ws::tts::show(&mut self.env, ui, body),
             PanelKind::Navigator => panels::navigator::show(&mut self.env, ui, body),
+            PanelKind::History => panels::history::show(&mut self.env, ui, body),
+            PanelKind::LayerProps => panels::layer_props::show(&mut self.env, ui, body),
             PanelKind::SubView => panels::subview::show(&mut self.env, ui, body),
             PanelKind::Brushes => panels::brushes::show(&mut self.env, ui, body),
             PanelKind::Text => panels::text::show(&mut self.env, ui, body),
@@ -1425,6 +1440,12 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::ModelOutliner => panels::modeling::outliner(&mut self.env, ui, body),
             PanelKind::ModelProps => panels::modeling::properties(&mut self.env, ui, body),
             PanelKind::ModelModifiers => panels::modeling::modifiers(&mut self.env, ui, body),
+        }
+        if let Some((hdr, hresp)) = canvas_hdr {
+            dock_ui::header_extras(self, ui, hdr, kind, tile_id, &hresp);
+            if hresp.drag_started() {
+                resp = UiResponse::DragStarted;
+            }
         }
         ui.painter().rect_stroke(rect, CARD_RADIUS, Stroke::new(1.0, self.t.border), StrokeKind::Inside);
         resp

@@ -94,6 +94,10 @@ pub enum PanelKind {
     Poster,
     /// Entrega: verificação final antes de exportar (semáforo com link para corrigir).
     Preflight,
+    /// Histórico (S25): os passos de desfazer com nomes legíveis; clicar leva o documento até o passo.
+    History,
+    /// Propriedades da camada (S25): a camada ativa, os filtros (efeitos) dela, papel, profundidade e deslocamento.
+    LayerProps,
 }
 
 /// Categoria do painel (agrupa o Exibir > Painéis e decide junto de quem um painel novo entra como aba).
@@ -173,7 +177,7 @@ const DRAWING_WS: &[WorkspaceId] = &[W::Personagens, W::Layout, W::Cenario, W::A
 const LIBRARY_WS: &[WorkspaceId] = &[W::Biblioteca, W::Modelagem, W::Personagens, W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Composicao];
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 53] = [
+    pub const ALL: [PanelKind; 55] = [
         PanelKind::Canvas,
         PanelKind::Layers,
         PanelKind::Properties,
@@ -227,6 +231,8 @@ impl PanelKind {
         PanelKind::Deliverables,
         PanelKind::Poster,
         PanelKind::Preflight,
+        PanelKind::History,
+        PanelKind::LayerProps,
     ];
 
     /// Identificador estável (bridge/UI_ACTION, `layouts.json`): `canvas`, `layers`, `timeline`...
@@ -294,6 +300,8 @@ impl PanelKind {
             PanelKind::Deliverables => "panel.deliverables.title",
             PanelKind::Poster => "panel.poster.title",
             PanelKind::Preflight => "panel.preflight.title",
+            PanelKind::History => "panel.history.title",
+            PanelKind::LayerProps => "panel.layer_props.title",
         }
     }
 
@@ -353,6 +361,8 @@ impl PanelKind {
             PanelKind::Deliverables => "panel.deliverables.empty",
             PanelKind::Poster => "panel.poster.empty",
             PanelKind::Preflight => "panel.preflight.empty",
+            PanelKind::History => "panel.history.empty",
+            PanelKind::LayerProps => "panel.layer_props.empty",
         }
     }
 
@@ -414,6 +424,8 @@ impl PanelKind {
             PanelKind::Deliverables => (C::Delivery, Center, &[W::Entrega], false),
             PanelKind::Poster => (C::Delivery, Right, &[W::Entrega], false),
             PanelKind::Preflight => (C::Delivery, Right, &[W::Entrega], false),
+            PanelKind::History => (C::Drawing, Right, DRAWING_WS, false),
+            PanelKind::LayerProps => (C::Drawing, Right, DRAWING_WS, false),
         };
         PanelMeta { key: self.key(), title_key: self.title_key(), category, dock_hint, workspaces, needs_canvas }
     }
@@ -464,13 +476,16 @@ pub fn factory_rev(ws: WorkspaceId) -> u32 {
     match ws {
         // S24: Animação com Cena, Referências do personagem e Mesa de luz no lugar de Projeto e Sub View, linha do tempo
         // mais baixa (compacta) e a variante Douga
-        W::Animacao => 3,
+        // S25: à direita, como nos programas de pintura: Navegador no topo, Propriedades da camada e Camadas | Histórico
+        W::Animacao => 4,
         // S24: pasta do personagem (materiais por tipo) e canvas para desenhar neles
-        W::Personagens => 2,
+        // S25: Histórico em aba com as Camadas
+        W::Personagens => 3,
         // S24: fábricas novas (cada etapa de desenho com a sua cara) e os workspaces novos
         // S24: Réguas (perspectiva) em aba com os pincéis
-        W::Layout => 3,
-        W::Cenario | W::Pintura => 2,
+        // S25: à direita o Navegador no topo, as Propriedades da camada e Camadas | Histórico | Propriedades em abas
+        W::Layout => 4,
+        W::Cenario | W::Pintura => 3,
         // S24 3D (fase 12): viewport 3D no centro, Objetos e Biblioteca à esquerda, Propriedades do objeto e
         // Modificadores à direita
         W::Modelagem => 3,
@@ -478,7 +493,8 @@ pub fn factory_rev(ws: WorkspaceId) -> u32 {
         W::Biblioteca => 3,
         // S24 3.1–3.5: viewer no centro, Linha do tempo da composição embaixo, Efeitos e predefinições e Controles de
         // efeito à direita
-        W::Composicao => 3,
+        // S25: Histórico em aba com o Projeto e as Camadas
+        W::Composicao => 4,
         // S24: painel Texto (legendas) em aba com as Propriedades
         // S24 3.13–3.18: estilo Premiere (Mídia/Transições/Legendas, monitor de origem e do programa, Efeitos do clipe)
         W::Edicao => 3,
@@ -504,7 +520,7 @@ fn default_node(ws: WorkspaceId) -> Node {
         W::Personagens => Row(vec![
             (0.19, Col(vec![(0.30, Pane(P::Characters)), (0.70, Pane(P::CharFolder))])),
             (0.49, TabsOf(&[P::Canvas, P::Sheet])),
-            (0.32, Col(vec![(0.22, Pane(P::Palette)), (0.26, Pane(P::Layers)), (0.52, Pane(P::Properties))])),
+            (0.32, Col(vec![(0.22, Pane(P::Palette)), (0.30, TabsOf(&[P::Layers, P::History])), (0.48, Pane(P::Properties))])),
         ]),
         W::Storyboard => Col(vec![
             (0.72, Row(vec![(0.20, Pane(P::Shots)), (0.56, Pane(P::Board)), (0.24, Pane(P::Properties))])),
@@ -515,14 +531,14 @@ fn default_node(ws: WorkspaceId) -> Node {
         W::Layout => Row(vec![
             (0.19, Col(vec![(0.45, Pane(P::Project)), (0.55, TabsOf(&[P::Rulers, P::Brushes, P::SubView]))])),
             (0.53, Pane(P::Canvas)),
-            (0.28, Col(vec![(0.24, Pane(P::Navigator)), (0.42, Pane(P::Layers)), (0.34, TabsOf(&[P::Properties, P::Palette, P::Text]))])),
+            (0.28, Col(vec![(0.28, Pane(P::Navigator)), (0.20, TabsOf(&[P::LayerProps, P::Palette, P::Text])), (0.52, TabsOf(&[P::Layers, P::History, P::Properties]))])),
         ]),
         // fundo: pincéis e referências grandes à esquerda (pintura de fundo vive de referência), paleta, camadas (planos)
         // e propriedades à direita
         W::Cenario => Row(vec![
-            (0.17, Col(vec![(0.40, Pane(P::Brushes)), (0.60, TabsOf(&[P::SubView, P::Navigator]))])),
+            (0.17, Col(vec![(0.40, Pane(P::Brushes)), (0.60, Pane(P::SubView))])),
             (0.54, Pane(P::Canvas)),
-            (0.29, Col(vec![(0.30, Pane(P::Palette)), (0.42, TabsOf(&[P::Layers, P::Project])), (0.28, TabsOf(&[P::Properties, P::Text]))])),
+            (0.29, Col(vec![(0.28, Pane(P::Navigator)), (0.20, TabsOf(&[P::LayerProps, P::Palette, P::Text])), (0.52, TabsOf(&[P::Layers, P::History, P::Properties, P::Project]))])),
         ]),
         // genga: a cena do roteiro/storyboard e os pincéis em cima à esquerda, as referências do personagem embaixo; à
         // direita o navegador, a mesa de luz (com as cores pequenas em aba, para o balde de conferir linha) e camadas;
@@ -531,7 +547,7 @@ fn default_node(ws: WorkspaceId) -> Node {
             (0.78, Row(vec![
                 (0.18, Col(vec![(0.52, TabsOf(&[P::SceneInfo, P::Brushes])), (0.48, Pane(P::CharRef))])),
                 (0.55, Pane(P::Canvas)),
-                (0.27, Col(vec![(0.20, Pane(P::Navigator)), (0.30, TabsOf(&[P::LightTable, P::Palette])), (0.50, TabsOf(&[P::Layers, P::Properties]))])),
+                (0.27, Col(vec![(0.25, Pane(P::Navigator)), (0.15, Pane(P::LayerProps)), (0.22, TabsOf(&[P::LightTable, P::Palette])), (0.38, TabsOf(&[P::Layers, P::History, P::Properties]))])),
             ])),
             (0.22, Pane(P::Timeline)),
         ]),
@@ -540,7 +556,7 @@ fn default_node(ws: WorkspaceId) -> Node {
             (0.80, Row(vec![
                 (0.18, Col(vec![(0.58, Pane(P::Palette)), (0.42, TabsOf(&[P::Brushes, P::Project]))])),
                 (0.54, Pane(P::Canvas)),
-                (0.28, Col(vec![(0.24, Pane(P::Navigator)), (0.46, TabsOf(&[P::Layers, P::Properties])), (0.30, Pane(P::SubView))])),
+                (0.28, Col(vec![(0.28, Pane(P::Navigator)), (0.18, TabsOf(&[P::LayerProps, P::SubView])), (0.54, TabsOf(&[P::Layers, P::History, P::Properties]))])),
             ])),
             (0.20, Pane(P::Timeline)),
         ]),
@@ -549,7 +565,7 @@ fn default_node(ws: WorkspaceId) -> Node {
         // tempo da composição embaixo de tudo (a de exposição em aba)
         W::Composicao => Col(vec![
             (0.62, Row(vec![
-                (0.17, TabsOf(&[P::Project, P::Layers])),
+                (0.17, TabsOf(&[P::Project, P::Layers, P::History])),
                 (0.55, Pane(P::Canvas)),
                 (0.28, Col(vec![(0.48, TabsOf(&[P::EffectsBrowser, P::Properties, P::Text])), (0.52, Pane(P::EffectControls))])),
             ])),
@@ -613,7 +629,7 @@ fn default_node_v(ws: WorkspaceId, v: LayoutVariant) -> Node {
             (0.80, Row(vec![
                 (0.17, Col(vec![(0.55, TabsOf(&[P::CharRef, P::SceneInfo])), (0.45, Pane(P::Brushes))])),
                 (0.56, Pane(P::Canvas)),
-                (0.27, Col(vec![(0.18, Pane(P::Navigator)), (0.36, Pane(P::LightTable)), (0.46, TabsOf(&[P::Layers, P::Properties, P::Palette]))])),
+                (0.27, Col(vec![(0.24, Pane(P::Navigator)), (0.27, Pane(P::LightTable)), (0.13, Pane(P::LayerProps)), (0.36, TabsOf(&[P::Layers, P::History, P::Properties, P::Palette]))])),
             ])),
             (0.20, Pane(P::Timeline)),
         ]),
@@ -1219,20 +1235,20 @@ mod tests {
     #[test]
     fn douga_factory_changes_bump_the_animation_revision() {
         let (rev, sig) = (factory_rev(W::Animacao), signature_v(W::Animacao, LayoutVariant::Douga));
-        assert_eq!((rev, sig), (3, 0x2b930c446b4a9976), "a fábrica do Douga mudou; suba `factory_rev(Animacao)` e atualize: ({rev}, 0x{sig:016x})");
+        assert_eq!((rev, sig), (4, 0x9fab5d834fcd1573), "a fábrica do Douga mudou; suba `factory_rev(Animacao)` e atualize: ({rev}, 0x{sig:016x})");
     }
 
     #[test]
     fn factory_changes_bump_the_revision() {
         let expected: &[(WorkspaceId, u32, u64)] = &[
             (W::Roteiro, 1, 0x815a21560ccb6c0e),
-            (W::Personagens, 2, 0xcafb2020580c879a),
+            (W::Personagens, 3, 0x6efa1ca125634ae7),
             (W::Storyboard, 1, 0x14d8a62efb1d9b23),
-            (W::Layout, 3, 0xab56ac7b0ef62807),
-            (W::Cenario, 2, 0x10fcc70dc9e4906a),
-            (W::Animacao, 3, 0x5d54281aba1d2f5c),
-            (W::Pintura, 2, 0xfc53133a1f95cbd3),
-            (W::Composicao, 3, 0x25b2c7d156032ce4),
+            (W::Layout, 4, 0x5b24be1ce722c448),
+            (W::Cenario, 3, 0x61b22232c1beb1e1),
+            (W::Animacao, 4, 0xecf233c6ae7e3921),
+            (W::Pintura, 3, 0x15c3e018445ad7d9),
+            (W::Composicao, 4, 0x097fc0aca4a379a6),
             (W::Biblioteca, 3, 0x1a430bf82b451dc2),
             (W::Modelagem, 3, 0x575fe9a79c6ad671),
             (W::Audio, 2, 0xb370ba9cf04cb8ac),

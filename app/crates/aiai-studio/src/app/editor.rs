@@ -844,6 +844,9 @@ pub(crate) struct Editor {
     pub modeling: super::modeling::ModelingState,
     /// Composição (S24 3.1–3.5): viewer, Linha do tempo da composição, Efeitos e predefinições.
     pub comp: super::comp::CompState,
+    /// Lado direito e topo das áreas de desenho (S25): barra de materiais, espelho vertical do Navegador, miniaturas
+    /// das camadas, borda da seleção, janela Filtro.
+    pub workbar: super::workbar::WorkbarState,
 }
 
 impl Default for Editor {
@@ -855,6 +858,7 @@ impl Default for Editor {
             m3d: Default::default(),
             modeling: Default::default(),
             comp: Default::default(),
+            workbar: Default::default(),
             live_stroke: Default::default(),
             move_live: Default::default(),
             text: Default::default(),

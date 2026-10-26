@@ -24,7 +24,7 @@ const PAL_CELL: f32 = 46.0;
 
 const LICENSES: [&str; 8] = ["CC0-1.0", "CC-BY-4.0", "CC-BY-SA-4.0", "CC-BY-NC-4.0", "MIT", "Apache-2.0", aiai_assets::envelope::DEFAULT_LICENSE, aiai_assets::envelope::UNKNOWN_LICENSE];
 
-fn kind_icon(k: Kind) -> IconId {
+pub(crate) fn kind_icon(k: Kind) -> IconId {
     match k {
         Kind::Model3d => IconId::LayerModel3d,
         Kind::Material => IconId::LayerFill,
@@ -109,12 +109,12 @@ fn hex_color(h: &str) -> Option<Color32> {
     aiai_assets::palette::parse_hex(h).map(|c| Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]))
 }
 
-fn palette_of(e: &Entry) -> Palette {
+pub(crate) fn palette_of(e: &Entry) -> Palette {
     Palette::from_payload(&e.env.payload).unwrap_or_default()
 }
 
 /// Material toon (cores no payload, sem imagem)?
-fn is_toon_material(e: &Entry) -> bool {
+pub(crate) fn is_toon_material(e: &Entry) -> bool {
     e.kind == Kind::Material && !IMAGE_EXTS.contains(&ext_of(&e.path).as_str())
 }
 
@@ -483,7 +483,7 @@ fn entry_menu(env: &mut Env, ui: &mut Ui, id: &str) {
     ui.close();
 }
 
-fn swatches(p: &egui::Painter, area: Rect, colors: &[[u8; 4]]) {
+pub(crate) fn swatches(p: &egui::Painter, area: Rect, colors: &[[u8; 4]]) {
     let n = colors.len().min(16);
     if n == 0 {
         return;
@@ -498,7 +498,7 @@ fn swatches(p: &egui::Painter, area: Rect, colors: &[[u8; 4]]) {
 }
 
 /// Esfera toon (base + sombra) para o material de cores.
-fn toon_ball(p: &egui::Painter, area: Rect, e: &Entry) {
+pub(crate) fn toon_ball(p: &egui::Painter, area: Rect, e: &Entry) {
     let col = |k: &str, d: Color32| e.env.payload.get(k).and_then(|v| v.as_str()).and_then(hex_color).unwrap_or(d);
     let base = col("base_color", Color32::from_gray(190));
     let shade = col("shade_color", base.gamma_multiply(0.55));

@@ -17,29 +17,37 @@ use std::time::Instant;
 
 const MARGIN: f32 = 30.0;
 
-pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
+/// Altura da barra de ícones do canvas numa linha (S25: ela também é o cabeçalho do painel quando o canvas não está em
+/// abas: arrastar, maximizar e soltar ficam nela, sem a linha de título "Canvas").
+pub(crate) const TOOLBAR_H: f32 = 32.0;
+
+/// O canvas com a barra de ícones no topo; `reserve` = largura deixada livre no fim da barra (botões do cabeçalho do
+/// painel). Embaixo da barra, à direita, a barra de materiais (`materials`), que tira espaço do canvas quando abre.
+pub(crate) fn show_with_header(env: &mut Env, ui: &mut Ui, body: Rect, reserve: f32) {
     let t = env.t;
     let ctx = ui.ctx().clone();
     let ppp = ctx.pixels_per_point();
     let painter = ui.painter().with_clip_rect(body);
-    painter.rect_filled(body, CornerRadius { nw: 0, ne: 0, sw: CARD_RADIUS, se: CARD_RADIUS }, t.canvas_bg);
+    let top_r = if reserve > 0.0 { CARD_RADIUS } else { 0 };
+    painter.rect_filled(body, CornerRadius { nw: top_r, ne: top_r, sw: CARD_RADIUS, se: CARD_RADIUS }, t.canvas_bg);
 
     // ---- barra de ferramentas (quebra em duas linhas se faltar largura)
     let bg_slot = painter.add(Shape::Noop);
-    let tb_max = Rect::from_min_size(body.min, egui::vec2(body.width(), 96.0));
+    let tb_max = Rect::from_min_size(body.min, egui::vec2((body.width() - reserve).max(40.0), 96.0));
     let mut tb = ui.new_child(UiBuilder::new().max_rect(tb_max.shrink2(egui::vec2(6.0, 3.0))));
     tb.set_clip_rect(tb_max.intersect(body));
     let cut = env.ed.active_cut(env.core);
     toolbar(env, &mut tb, cut.is_some());
-    let tb_h = (tb.min_rect().height() + 6.0).max(32.0);
+    let tb_h = (tb.min_rect().height() + 6.0).max(TOOLBAR_H);
     let bar = Rect::from_min_size(body.min, egui::vec2(body.width(), tb_h));
-    painter.set(bg_slot, Shape::rect_filled(bar, 0.0, t.bg_panel));
+    painter.set(bg_slot, Shape::rect_filled(bar, CornerRadius { nw: top_r, ne: top_r, sw: 0, se: 0 }, t.bg_panel));
     painter.hline(bar.x_range(), bar.bottom(), Stroke::new(1.0, t.border));
     let rect = Rect::from_min_max(egui::pos2(body.min.x, bar.bottom() + 1.0), body.max);
     env.note("canvas:toolbar", bar);
     if rect.width() < 60.0 || rect.height() < 40.0 {
         return;
     }
+    let rect = super::materials::strip(env, ui, rect);
 
     let Some(cut) = cut else {
         env.ed.canvas_rect = None;
@@ -100,6 +108,9 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
 
     let painter = ui.painter().with_clip_rect(rect);
     paint_canvas(env, &painter, rect, &xf, &cut, canvas, ppp);
+    // S25: lançador da seleção (some enquanto se desenha) e Delete limpa a seleção
+    super::sel_ops::launcher(env, &ctx, &xf, rect);
+    super::sel_ops::shortcuts(env, &ctx, rect);
     set_cursor(env, &ctx, &resp, *env.tool);
     if resp.hovered() {
         if let Some(p) = env.ed.cursor {
@@ -193,23 +204,23 @@ fn toolbar(env: &mut Env, ui: &mut Ui, has_cut: bool) {
             return;
         }
         if env.icon_button_sized(ui, IconId::RotateView, "canvas.rotate_left", false, has_cut, "canvas:rot_left", 24.0, true).clicked() {
-            env.ed.view.rotate_by(-15f32.to_radians());
+            env.ed.view.rotate_by(-super::panels::navigator::ROT_STEP_DEG.to_radians());
             env.ed.auto_fit = false;
         }
         if env.icon_button(ui, IconId::RotateView, "canvas.rotate_right", false, has_cut, "canvas:rot_right").clicked() {
-            env.ed.view.rotate_by(15f32.to_radians());
+            env.ed.view.rotate_by(super::panels::navigator::ROT_STEP_DEG.to_radians());
             env.ed.auto_fit = false;
         }
-        let mut deg = env.ed.view.rotation_deg();
-        let r = ui.add_enabled(has_cut, egui::DragValue::new(&mut deg).range(-180.0..=180.0).speed(0.5).suffix("°").max_decimals(0));
-        env.note("canvas:rotation", r.rect);
-        if r.changed() {
-            env.ed.view.rot = deg.to_radians().rem_euclid(std::f32::consts::TAU);
-            env.ed.auto_fit = false;
+        let rotated = super::panels::navigator::user_rotation_deg(&env.ed.view, env.ed.workbar.flip_v).abs() > 0.05;
+        if env.icon_button(ui, IconId::RotateReset, "nav.rot_reset", false, has_cut && rotated, "canvas:rot_reset").clicked() {
+            super::panels::navigator::set_user_rotation(&mut env.ed.view, env.ed.workbar.flip_v, 0.0);
         }
-        let flip = env.ed.view.flip;
-        if env.icon_button(ui, IconId::Flip, "canvas.flip", flip, has_cut, "canvas:flip").clicked() {
-            env.ed.view.flip = !flip;
+        let (fh, fv) = super::panels::navigator::flips(&env.ed.view, env.ed.workbar.flip_v);
+        if env.icon_button(ui, IconId::Flip, "canvas.flip", fh, has_cut, "canvas:flip").clicked() {
+            super::panels::navigator::toggle_flip_h(&mut env.ed.view);
+        }
+        if env.icon_button(ui, IconId::FlipV, "nav.flip_v", fv, has_cut, "canvas:flip_v").clicked() {
+            super::panels::navigator::toggle_flip_v(&mut env.ed.view, &mut env.ed.workbar.flip_v);
         }
         sep(ui, &t);
         let (g, c, gd, rf) = (env.ed.show_grid, env.ed.show_camera, env.ed.show_guides, env.ed.show_reference);
@@ -225,24 +236,22 @@ fn toolbar(env: &mut Env, ui: &mut Ui, has_cut: bool) {
         if env.icon_button(ui, IconId::LayerReference, "canvas.reference", rf, has_cut, "canvas:reference").clicked() {
             env.ed.show_reference = !rf;
         }
-        let on = env.ed.anim.onion.on;
-        if env.icon_button(ui, IconId::OnionSkin, "canvas.onion", on, has_cut, "canvas:onion").clicked() {
-            env.ed.anim.onion.on = !on;
+        // papel cebola só onde se anima e se pinta quadro a quadro
+        if matches!(env.ws, crate::workspace::WorkspaceId::Animacao | crate::workspace::WorkspaceId::Pintura) {
+            let on = env.ed.anim.onion.on;
+            if env.icon_button(ui, IconId::OnionSkin, "canvas.onion", on, has_cut, "canvas:onion").clicked() {
+                env.ed.anim.onion.on = !on;
+            }
         }
-        // réguas: linhas à mostra (Ctrl+;) e encaixe dos traços (Ctrl+Shift+;)
-        let (rs, rn) = (env.ed.rulers.show, env.ed.rulers.snap);
+        // réguas à mostra (Ctrl+;); o encaixe dos traços (Ctrl+Shift+;) está na barra de comandos
+        let rs = env.ed.rulers.show;
         if env.icon_button(ui, IconId::ToolRuler, "canvas.rulers", rs, has_cut, "canvas:rulers").clicked() {
             env.ed.rulers.show = !rs;
         }
-        if env.icon_button(ui, IconId::Snap, "canvas.ruler_snap", rn, has_cut, "canvas:ruler_snap").clicked() {
-            env.ed.rulers.snap = !rn;
-        }
-        sep(ui, &t);
         if env.ws == crate::workspace::WorkspaceId::Animacao && has_cut {
-            phase_bar(env, ui);
             sep(ui, &t);
+            phase_bar(env, ui);
         }
-        super::panels::properties::tool_options(env, ui, true);
     });
 }
 
@@ -1276,7 +1285,7 @@ fn paint_selection(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId
     let Some(sel) = env.ed.selection.clone() else { return };
     super::selection::paint_strokes(env, painter, xf, cut, &sel, false);
     // formigas: a forma de verdade (máscara da varinha/somas, laço, elipse, retângulo), com a transformação pendente
-    if !sel.whole {
+    if !sel.whole && env.ed.workbar.sel_border {
         super::selection::paint_outline(painter, xf, &sel);
     }
     // alças do Mover (cantos: escala; círculo de cima: rotação)
@@ -1448,7 +1457,7 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
 fn readout(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, c: Vec2) {
     let t = env.t;
     let _ = xf;
-    let mut s = format!("{:.0}%   {:+.0}°", env.ed.view.zoom * 100.0, env.ed.view.rotation_deg());
+    let mut s = format!("{:.0}%   {:+.0}°", env.ed.view.zoom * 100.0, super::panels::navigator::user_rotation_deg(&env.ed.view, env.ed.workbar.flip_v));
     if c.x.is_finite() {
         s = format!("x {:.0}  y {:.0}    {s}", c.x.floor(), c.y.floor());
     }

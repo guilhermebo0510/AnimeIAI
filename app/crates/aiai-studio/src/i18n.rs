@@ -45,10 +45,12 @@ pub fn tr(key: &str) -> &str {
 
 #[path = "i18n_modeling.rs"]
 mod modeling_table;
+#[path = "i18n_right.rs"]
+mod right_table;
 
 /// Todas as entradas: a tabela principal e a da Modelagem.
 fn all() -> impl Iterator<Item = &'static (&'static str, &'static str, &'static str)> {
-    TABLE.iter().chain(modeling_table::TABLE.iter())
+    TABLE.iter().chain(modeling_table::TABLE.iter()).chain(right_table::TABLE.iter())
 }
 
 fn index() -> &'static std::collections::HashMap<&'static str, (&'static str, &'static str)> {
@@ -500,6 +502,10 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("panel.palette.empty", "A paleta do projeto está vazia.", "The project palette is empty."),
     ("panel.navigator.title", "Navegador", "Navigator"),
     ("panel.navigator.empty", "Sem quadro aberto para navegar.", "No frame open to navigate."),
+    ("panel.history.title", "Histórico", "History"),
+    ("panel.history.empty", "Nada feito ainda: cada traço e cada comando entram aqui.", "Nothing done yet: every stroke and command shows up here."),
+    ("panel.layer_props.title", "Propriedades da camada", "Layer properties"),
+    ("panel.layer_props.empty", "Escolha uma camada para ver as propriedades e os filtros dela.", "Pick a layer to see its properties and filters."),
     ("panel.timeline.title", "Linha do tempo", "Timeline"),
     ("panel.timeline.empty", "A linha do tempo está vazia.", "The timeline is empty."),
     ("panel.script.title", "Roteiro", "Script"),

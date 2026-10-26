@@ -258,6 +258,12 @@ impl CoreSession {
         )
     }
 
+    /// Os comandos da pilha de undo (mais antigo primeiro) e de redo (próximo a refazer primeiro): o painel Histórico
+    /// monta rótulos legíveis com eles (nome da camada, ferramenta), coisa que a descrição em texto não dá.
+    pub fn history_commands(&self) -> (Vec<&Command>, Vec<&Command>) {
+        (self.undo.iter().map(|a| &a.command).collect(), self.redo.iter().rev().map(|a| &a.command).collect())
+    }
+
     pub fn log(&self) -> &[LogEntry] {
         &self.log
     }

@@ -734,7 +734,7 @@ fn stabilizer_row(ui: &mut Ui, t: &crate::theme::Tokens, compact: bool, o: &mut 
     });
 }
 
-fn layer_properties(env: &mut Env, ui: &mut Ui) {
+pub(crate) fn layer_properties(env: &mut Env, ui: &mut Ui) {
     let t = env.t;
     let Some(layer) = env.ed.active_layer(env.core) else { return };
     let Some(l) = cmds::layer_data(&env.core.project, &layer).cloned() else { return };
