@@ -45,6 +45,7 @@ pub fn is_tool_action(action: &str) -> bool {
         || crate::audio_tools::AUDIO_ACTIONS.contains(&action)
         || crate::ruler_tools::RULER_ACTIONS.contains(&action)
         || crate::line_fix_tools::LINE_FIX_ACTIONS.contains(&action)
+        || crate::fill_area_tools::FILL_AREA_ACTIONS.contains(&action)
         || crate::model3d_tools::MODEL3D_ACTIONS.contains(&action)
         || crate::modeling_tools::MODELING_ACTIONS.contains(&action)
         || crate::library_tools::LIBRARY_ACTIONS.contains(&action)
@@ -59,6 +60,7 @@ pub fn is_mutating_tool(action: &str) -> bool {
         || crate::audio_tools::is_mutating(action)
         || crate::ruler_tools::is_mutating(action)
         || crate::line_fix_tools::is_mutating(action)
+        || crate::fill_area_tools::is_mutating(action)
         || crate::model3d_tools::is_mutating(action)
         || crate::modeling_tools::is_mutating(action)
         || crate::library_tools::is_mutating(action)
@@ -88,6 +90,7 @@ pub fn handle_tool_action(session: &mut CoreSession, action: &str, params: &Valu
         a if crate::audio_tools::AUDIO_ACTIONS.contains(&a) => crate::audio_tools::handle(session, a, params),
         a if crate::ruler_tools::RULER_ACTIONS.contains(&a) => crate::ruler_tools::handle(session, a, params),
         a if crate::line_fix_tools::LINE_FIX_ACTIONS.contains(&a) => crate::line_fix_tools::handle(session, a, params),
+        a if crate::fill_area_tools::FILL_AREA_ACTIONS.contains(&a) => crate::fill_area_tools::handle(session, a, params),
         a if crate::model3d_tools::MODEL3D_ACTIONS.contains(&a) => crate::model3d_tools::handle(session, a, params),
         a if crate::modeling_tools::MODELING_ACTIONS.contains(&a) => crate::modeling_tools::handle(session, a, params),
         a if crate::library_tools::LIBRARY_ACTIONS.contains(&a) => crate::library_tools::handle(session, a, params),

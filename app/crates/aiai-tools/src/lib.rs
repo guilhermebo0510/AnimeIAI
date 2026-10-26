@@ -18,6 +18,7 @@ pub mod erase;
 pub mod export;
 pub mod figure;
 pub mod fill;
+pub mod fill_area;
 pub mod freeform;
 pub mod fx2d;
 pub mod grad_tool;

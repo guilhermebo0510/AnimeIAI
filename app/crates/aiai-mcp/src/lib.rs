@@ -21,6 +21,7 @@ pub mod tools_audio;
 pub mod tools_delivery;
 pub mod tools_library;
 pub mod tools_line_fix;
+pub mod tools_fill_area;
 pub mod tools_model3d;
 pub mod tools_modeling;
 pub mod tools_preprod;

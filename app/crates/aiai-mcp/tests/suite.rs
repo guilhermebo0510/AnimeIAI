@@ -552,7 +552,7 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
     assert!(plan("aiai_zzz", json!({})).is_err());
     // o catálogo é uma lista estável de ferramentas, todas com plano
     let defs = tools::definitions();
-    assert_eq!(defs.as_array().unwrap().len(), 87);
+    assert_eq!(defs.as_array().unwrap().len(), 88);
     // todas as ferramentas de produção: descrição com exemplo de uma linha, schema de objeto, plano com a ação certa e frame 0 por padrão
     for t in defs.as_array().unwrap() {
         let n = t["name"].as_str().unwrap();
@@ -590,6 +590,7 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
         ("aiai_audio_analyze", json!({"asset": "a"}), "AUDIO_ANALYZE"),
         ("aiai_ruler", json!({"layer": "l", "op": "list"}), "RULER"),
         ("aiai_line_fix", json!({"cut": "c", "layer": "l", "op": "dust"}), "LINE_FIX"),
+        ("aiai_fill_area", json!({"cut": "c", "layer": "l", "mode": "enclose", "color": {"rgba": [1, 0, 0, 1]}, "path": [[0, 0], [9, 0], [9, 9]]}), "FILL_AREA"),
         ("aiai_model3d", json!({"op": "list"}), "MODEL3D"),
         ("aiai_modeling", json!({"op": "list"}), "MODELING"),
         ("aiai_library", json!({"op": "list"}), "LIBRARY"),

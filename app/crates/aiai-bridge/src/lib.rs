@@ -13,6 +13,7 @@
 //! * [`audio_tools`] — edição e análise de áudio (S24): AUDIO_EDIT, AUDIO_ANALYZE;
 //! * [`ruler_tools`] — réguas editáveis da camada de guia (S24): RULER;
 //! * [`line_fix_tools`] — Corrigir linha e remover poeira (S25): LINE_FIX;
+//! * [`fill_area_tools`] — balde do S25 (só a camada, cercar e preencher, área não preenchida): FILL_AREA;
 //! * [`model3d_tools`] — camada 3D de referência (S24): MODEL3D;
 //! * [`modeling_tools`] — modelagem por comando (S24): MODELING;
 //! * [`library_tools`] — biblioteca de recursos (S24): LIBRARY;
@@ -38,6 +39,7 @@ pub mod host;
 pub mod http;
 pub mod library_tools;
 pub mod line_fix_tools;
+pub mod fill_area_tools;
 pub mod model3d_tools;
 pub mod modeling_tools;
 pub mod params_check;

@@ -341,6 +341,7 @@ pub fn definitions() -> Value {
     list.extend(crate::tools_audio::definitions());
     list.extend(crate::tools_ruler::definitions());
     list.extend(crate::tools_line_fix::definitions());
+    list.extend(crate::tools_fill_area::definitions());
     list.extend(crate::tools_model3d::definitions());
     list.extend(crate::tools_modeling::definitions());
     list.extend(crate::tools_library::definitions());
@@ -413,6 +414,9 @@ pub fn plan(name: &str, args: &Value) -> Result<Plan, ToolError> {
         return p;
     }
     if let Some(p) = crate::tools_line_fix::plan(name, &m) {
+        return p;
+    }
+    if let Some(p) = crate::tools_fill_area::plan(name, &m) {
         return p;
     }
     if let Some(p) = crate::tools_model3d::plan(name, &m) {
