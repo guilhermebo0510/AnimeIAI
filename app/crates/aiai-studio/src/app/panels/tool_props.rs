@@ -111,6 +111,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
             (ToolId::Gradient, _) => crate::app::gradient_tool::prop_rows(env, ui),
             (ToolId::Eraser, _) => eraser_rows(env, ui, &sub),
             (ToolId::Pen, _) => pen_rows(env, ui),
+            (ToolId::Points, Some(Sub::Fix(_))) => crate::app::line_fix::options(env, ui, false),
             _ => super::properties::tool_options_panel(env, ui),
         }
     });
@@ -261,6 +262,8 @@ fn reset_tool(env: &mut Env, sub: &Option<Sub>) {
         ToolId::Fill => (o.fill_gap, o.fill_expand, o.fill_close_leftovers) = (d.fill_gap, d.fill_expand, d.fill_close_leftovers),
         ToolId::Lasso => (o.select_op, o.sel_feather, o.wand_tolerance, o.wand_contiguous, o.wand_sample_all, o.wand_antialias) = (d.select_op, d.sel_feather, d.wand_tolerance, d.wand_contiguous, d.wand_sample_all, d.wand_antialias),
         ToolId::Move => (o.move_auto, o.keep_aspect) = (d.move_auto, d.keep_aspect),
+        // Corrigir linha: as opções voltam às de fábrica, a sub-ferramenta fica
+        ToolId::Points => o.fix = crate::app::line_fix::FixOptions { tool: o.fix.tool, ..d.fix },
         _ => {}
     }
 }

@@ -506,6 +506,8 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
                 }
             }
         }
+        // Corrigir linha: puxar, simplificar, conectar, largura, redesenhar e poeira têm opções próprias
+        ToolId::Points if crate::app::line_fix::active(env) => crate::app::line_fix::options(env, ui, compact),
         ToolId::Points => {
             use super::super::nodes;
             if !panel {

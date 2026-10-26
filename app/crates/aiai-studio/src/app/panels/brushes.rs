@@ -45,6 +45,7 @@ enum Thumb {
     Fill(u8),
     Select(SelTool),
     Points(PointsMode),
+    Fix(crate::app::line_fix::FixTool),
     Icon(ToolId),
 }
 
@@ -82,6 +83,7 @@ fn thumb_of(env: &Env, s: &Sub) -> Thumb {
         Sub::Fill(i) => Thumb::Fill(*i),
         Sub::Select(m) => Thumb::Select(*m),
         Sub::Points(m) => Thumb::Points(*m),
+        Sub::Fix(f) => Thumb::Fix(*f),
         // degradês: a faixa é desenhada por `gradient_tool::paint_thumb` (ver a lista)
         Sub::Gradient(_) => Thumb::Icon(ToolId::Gradient),
         Sub::Ruler(_) => Thumb::Icon(ToolId::Ruler),
@@ -667,6 +669,7 @@ fn paint_thumb(env: &mut Env, p: &egui::Painter, cell: Rect, th: Thumb) {
                 }
             }
         }
+        Thumb::Fix(f) => crate::app::line_fix::paint_thumb(p, r, f, &t),
         Thumb::Icon(tool) => {
             let side = r.height().min(r.width());
             let ir = Rect::from_center_size(r.center(), egui::vec2(side, side));

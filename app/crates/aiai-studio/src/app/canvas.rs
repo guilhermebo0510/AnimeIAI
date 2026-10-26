@@ -96,6 +96,8 @@ pub(crate) fn show_with_header(env: &mut Env, ui: &mut Ui, body: Rect, reserve: 
             super::nodes::start_live(env, &ctx, t0, xf.scale);
         }
         super::nodes::feed_live(env);
+    } else if matches!(env.ed.gesture, Gesture::LineFix(_)) {
+        super::line_fix::live(env, &ctx, xf.scale);
     } else if env.ed.live_stroke.active() {
         env.ed.live_stroke.release(None); // gesto cancelado
     }
@@ -505,6 +507,7 @@ fn tip_size(env: &Env, tool: ToolId) -> Option<(f32, (f32, f32))> {
         ToolId::Pen => Some((o.pen_width, (0.5, 200.0))),
         ToolId::Brush => Some((o.brush_size, (1.0, 600.0))),
         ToolId::Eraser => Some((o.eraser_size, (1.0, 600.0))),
+        ToolId::Points if o.fix.tool.is_some_and(|f| f.has_size()) => Some((o.fix.size, (1.0, 500.0))),
         _ => None,
     }
 }
@@ -515,6 +518,7 @@ fn set_tip_size(env: &mut Env, tool: ToolId, v: f32) {
         ToolId::Pen => o.pen_width = v,
         ToolId::Brush => o.brush_size = v,
         ToolId::Eraser => o.eraser_size = v,
+        ToolId::Points => o.fix.size = v,
         _ => {}
     }
 }
@@ -735,6 +739,7 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
         }
         Gesture::Shape { cur, .. } => *cur = c,
         Gesture::DragNode { .. } | Gesture::DragHandle { .. } => super::nodes::drag(env, c),
+        Gesture::LineFix(_) => super::line_fix::drag(env, c),
         Gesture::PolyCurve { .. } => {}
         Gesture::ScaleSel { handle, start_scale, start_offset, start_rotate } => {
             let (shift, alt) = (env.ed.shift != env.ed.opts.keep_aspect, env.ed.alt);
@@ -817,6 +822,11 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
         }
         g @ (Gesture::DragNode { .. } | Gesture::DragHandle { .. }) => {
             super::nodes::release(env, g);
+            let counter = env.core.change_counter;
+            env.ed.live_stroke.release(Some(counter));
+        }
+        Gesture::LineFix(g) => {
+            super::line_fix::release(env, *g);
             let counter = env.core.change_counter;
             env.ed.live_stroke.release(Some(counter));
         }

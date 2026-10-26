@@ -33,6 +33,8 @@ pub(crate) fn current_size(env: &Env) -> Option<f32> {
     Some(match *env.tool {
         ToolId::Pen => o.pen_width,
         ToolId::Eraser => o.eraser_size,
+        // Corrigir linha: os pincéis de correção (simplificar, conectar, largura)
+        ToolId::Points => o.fix.size,
         _ => o.brush_size,
     })
 }
@@ -44,6 +46,7 @@ pub(crate) fn set_size(env: &mut Env, s: f32) {
         ToolId::Pen => o.pen_width = s.clamp(0.5, 200.0),
         ToolId::Eraser => o.eraser_size = s.clamp(0.5, 600.0),
         ToolId::Brush => o.brush_size = s.clamp(0.5, 2000.0),
+        ToolId::Points => o.fix.size = s.clamp(1.0, 500.0),
         _ => {}
     }
 }

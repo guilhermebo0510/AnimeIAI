@@ -225,7 +225,7 @@ impl Slot {
             Slot::Figure => &[Tab { key: "figure", title_key: "fig.tab.direct", icon: IconId::ToolFigure, group: None }, Tab { key: "speed", title_key: "fig.tab.speed", icon: IconId::FigSpeed, group: None }, Tab { key: "focus", title_key: "fig.tab.focus", icon: IconId::FigFocus, group: None }],
             Slot::Ruler => &[Tab { key: "ruler", title_key: "shelf.tab.ruler", icon: IconId::ToolRuler, group: None }],
             Slot::Text => &[Tab { key: "text", title_key: "shelf.tab.text", icon: IconId::ToolText, group: None }],
-            Slot::CorrectLine => &[Tab { key: "points", title_key: "shelf.tab.correct", icon: IconId::ToolPoints, group: None }],
+            Slot::CorrectLine => &[Tab { key: "points", title_key: "shelf.tab.correct", icon: IconId::ToolPoints, group: None }, Tab { key: "dust", title_key: "fix.tab.dust", icon: IconId::ToolEraser, group: None }],
         }
     }
 
@@ -297,6 +297,8 @@ pub(crate) enum Sub {
     Fill(u8),
     Select(SelTool),
     Points(PointsMode),
+    /// Corrigir linha além dos pontos de controle: puxar, simplificar, conectar, largura, redesenhar e poeira.
+    Fix(super::line_fix::FixTool),
     /// Tipo de régua que a ferramenta Régua cria (linear, curva, figura, caneta de régua, especiais, guia, perspectiva...).
     Ruler(super::rulers::NewKind),
     /// Degradê pronto, de paleta ou livre (ferramenta Degradê).
@@ -318,7 +320,7 @@ impl Sub {
             Sub::EraserRaster(_) | Sub::EraserTip(_) | Sub::EraserBrush | Sub::EraserPreset(_) | Sub::EraserVector(_) => ToolId::Eraser,
             Sub::Fill(_) => ToolId::Fill,
             Sub::Select(_) => ToolId::Lasso,
-            Sub::Points(_) => ToolId::Points,
+            Sub::Points(_) | Sub::Fix(_) => ToolId::Points,
             Sub::Ruler(_) => ToolId::Ruler,
             Sub::Engine(t) => *t,
             Sub::Gradient(_) => ToolId::Gradient,
@@ -338,6 +340,7 @@ impl Sub {
             Sub::Fill(i) => format!("fill:{i}"),
             Sub::Select(m) => format!("select:{m:?}").to_lowercase(),
             Sub::Points(m) => format!("points:{m:?}").to_lowercase(),
+            Sub::Fix(f) => format!("fix:{}", f.key()),
             Sub::Ruler(k) => format!("ruler:{}", k.id()),
             Sub::Gradient(g) => super::gradient_tool::pick_key(g),
             Sub::Engine(t) => t.key().to_owned(),
@@ -346,12 +349,12 @@ impl Sub {
 
     /// A sub-ferramenta usa tamanho de pincel (senão a paleta Tamanho do pincel fica desabilitada).
     pub fn has_size(&self) -> bool {
-        matches!(self.engine(), ToolId::Brush | ToolId::Pen | ToolId::Eraser)
+        matches!(self.engine(), ToolId::Brush | ToolId::Pen | ToolId::Eraser) || matches!(self, Sub::Fix(f) if f.has_size())
     }
 
     /// Sub-ferramenta vetorial (selo no item da lista).
     pub fn is_vector(&self) -> bool {
-        matches!(self, Sub::PenTip(_) | Sub::PenShape(_) | Sub::EraserVector(_))
+        matches!(self, Sub::PenTip(_) | Sub::PenShape(_) | Sub::EraserVector(_)) || matches!(self, Sub::Fix(f) if !f.dust())
     }
 }
 
@@ -378,7 +381,9 @@ pub(crate) fn fixed_subs(slot: Slot, tab_key: &str) -> Vec<Sub> {
         (Slot::Gradient, _) => super::gradient_tool::fixed_picks().into_iter().map(Sub::Gradient).collect(),
         (Slot::Ruler, _) => super::rulers::NewKind::ALL.into_iter().map(Sub::Ruler).collect(),
         (Slot::Text, _) => vec![Sub::Engine(T::Text)],
-        (Slot::CorrectLine, _) => super::panels::properties::POINTS_MODES.iter().map(|m| Sub::Points(*m)).collect(),
+        // pontos de controle (os modos do Editar pontos) e as correções, na ordem do Clip Studio; a poeira tem aba própria
+        (Slot::CorrectLine, "dust") => super::line_fix::FixTool::DUST.into_iter().map(Sub::Fix).collect(),
+        (Slot::CorrectLine, _) => super::panels::properties::POINTS_MODES.iter().map(|m| Sub::Points(*m)).chain(super::line_fix::FixTool::LINE.into_iter().map(Sub::Fix)).collect(),
         _ => Vec::new(),
     }
 }
@@ -469,6 +474,7 @@ pub(crate) fn sub_label(env: &Env, s: &Sub) -> String {
         Sub::Select(m) => tr(m.label_key()).to_owned(),
         Sub::Gradient(g) => super::gradient_tool::pick_label(env, g),
         Sub::Points(m) => tr(super::panels::properties::points_mode_key(*m)).to_owned(),
+        Sub::Fix(f) => tr(f.label_key()).to_owned(),
         Sub::Ruler(k) => tr(k.key()).to_owned(),
         Sub::Engine(t) => tr(t.title_key()).to_owned(),
     }
@@ -496,7 +502,8 @@ pub(crate) fn is_current(env: &Env, s: &Sub) -> bool {
         }
         Sub::Gradient(g) => env.ed.grad_tool.pick == *g,
         Sub::Select(m) => o.select_mode == *m,
-        Sub::Points(m) => o.points_mode == *m,
+        Sub::Points(m) => o.points_mode == *m && o.fix.tool.is_none(),
+        Sub::Fix(f) => o.fix.tool == Some(*f),
         Sub::Ruler(k) => env.ed.rulers.new_kind == *k,
         Sub::Engine(_) => true,
     }
@@ -628,7 +635,12 @@ pub(crate) fn apply_sub(env: &mut Env, slot: Slot, s: &Sub) {
         Sub::Gradient(g) => env.ed.grad_tool.pick = g.clone(),
         }
         Sub::Select(m) => env.ed.opts.select_mode = *m,
-        Sub::Points(m) => env.ed.opts.points_mode = *m,
+        Sub::Points(m) => (env.ed.opts.points_mode, env.ed.opts.fix.tool) = (*m, None),
+        Sub::Fix(f) => {
+            env.ed.opts.fix.tool = Some(*f);
+            // o traço escolhido do Editar pontos não vale nas correções (pontos e alças somem do canvas)
+            (env.ed.node_stroke, env.ed.node_sel) = (None, None);
+        }
         Sub::Ruler(k) => env.ed.rulers.new_kind = *k,
         Sub::Engine(_) => {}
     }
@@ -948,6 +960,11 @@ mod tests {
         for s in [Sub::Fill(0), Sub::Select(SelTool::Rect), Sub::Engine(ToolId::Hand), Sub::Engine(ToolId::Text), Sub::Points(PointsMode::Move)] {
             assert!(!s.has_size(), "{s:?} não tem tamanho: a paleta fica desabilitada");
         }
+        // Corrigir linha: os pincéis de correção têm tamanho; puxar, redesenhar e poeira não
+        use super::super::line_fix::FixTool;
+        assert!(Sub::Fix(FixTool::Simplify).has_size() && Sub::Fix(FixTool::Width).has_size() && !Sub::Fix(FixTool::Pinch).has_size() && !Sub::Fix(FixTool::Dust).has_size());
+        assert_eq!(fixed_subs(Slot::CorrectLine, "points").len(), 5 + FixTool::LINE.len());
+        assert_eq!(fixed_subs(Slot::CorrectLine, "dust"), vec![Sub::Fix(FixTool::Dust), Sub::Fix(FixTool::SelectDust)]);
         for slot in Slot::ALL {
             for t in slot.tabs() {
                 for s in fixed_subs(slot, t.key) {

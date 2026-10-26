@@ -290,6 +290,7 @@ impl StudioApp {
             "node_stroke": ed.node_stroke.as_ref().map(|i| i.0.clone()),
             "node_sel": ed.node_sel,
             "points_mode": format!("{:?}", ed.opts.points_mode),
+            "fix_tool": ed.opts.fix.tool.map(|f| f.key()),
             "audio": json!({ "live": ed.live.enabled(), "starts": ed.live.starts, "scrubs": ed.live.scrubs, "error": ed.live.last_error }),
             "tool_options": json!({ "pen_width": o.pen_width, "brush_size": o.brush_size, "brush_opacity": o.brush_opacity, "eraser_size": o.eraser_size, "eraser_hardness": o.eraser_hardness, "eraser_opacity": o.eraser_opacity, "eraser_flow": o.eraser_flow, "eraser_tip": format!("{:?}", o.eraser_tip), "eraser_use_brush": o.eraser_use_brush, "fill_gap": o.fill_gap, "fill_expand": o.fill_expand, "fill_close_leftovers": o.fill_close_leftovers }),
             "timeline": { "cell_w": ed.tl_cell_w, "scroll": [round(ed.tl_scroll.x), round(ed.tl_scroll.y)], "header_w": ed.anim.tl.header_w, "ruler_h": ed.anim.tl.ruler_h, "row_h": ed.anim.tl.row_h, "density": if ed.anim.density(self.ws) == super::anim::Density::Compact { "compact" } else { "normal" } },

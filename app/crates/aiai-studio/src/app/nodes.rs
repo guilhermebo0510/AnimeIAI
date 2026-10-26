@@ -103,6 +103,10 @@ fn insert_at(s: &mut Stroke, p: Vec2, tol: f32) -> Option<usize> {
 
 /// Clique no canvas com Editar pontos. `pix` = tamanho de 1 px de tela em px do cel.
 pub(crate) fn press(env: &mut Env, c_canvas: Vec2, pix: f32, button: egui::PointerButton, mods: egui::Modifiers) {
+    // as outras sub-ferramentas do Corrigir linha (puxar, simplificar, conectar...) moram em `line_fix`
+    if env.ed.opts.fix.tool.is_some() {
+        return super::line_fix::press(env, c_canvas, pix, button);
+    }
     let Some(c) = ctx(env) else {
         env.ed.notify(crate::i18n::tr("err.need_vector"));
         return;
@@ -320,6 +324,14 @@ pub(crate) fn release(env: &mut Env, g: Gesture) {
 pub(crate) fn start_live(env: &mut Env, ctx_ui: &egui::Context, t0: std::time::Instant, screen_scale: f32) {
     let Some(c) = ctx(env) else { return };
     let Some(s) = picked(env, &c) else { return };
+    start_live_for(env, ctx_ui, t0, screen_scale, &c.cut, &c.layer, &c.cel, c.fwd, &s);
+}
+
+/// Prévia ao vivo de um traço editado (`s` como está no documento; o editado vem por `feed`): o Editar pontos e o
+/// Puxar linha do Corrigir linha.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn start_live_for(env: &mut Env, ctx_ui: &egui::Context, t0: std::time::Instant, screen_scale: f32, cut: &NodeId, layer: &NodeId, cel: &NodeId, fwd: Option<aiai_paint::Affine>, s: &Stroke) {
+    let c = Ctx { cut: cut.clone(), layer: layer.clone(), cel: cel.clone(), fwd, inv: None };
     let Some(l) = cmds::layer_data(&env.core.project, &c.layer).cloned() else { return };
     let color = cmds::resolve_color(&env.core.project, &s.color).0;
     let spec = super::live::StartSpec {
@@ -414,6 +426,9 @@ fn rdp(p: &[Vec2], a: usize, b: usize, tol: f32, keep: &mut [bool]) {
 /// Pontos de controle do traço escolhido: suave = círculo, canto = quadrado; o escolhido cheio na cor de destaque.
 /// Durante o arrasto, enquanto a prévia do motor não chega, a linha vai em contorno.
 pub(crate) fn paint(env: &mut Env, painter: &egui::Painter, to_screen: impl Fn(Vec2) -> Pos2, accent: Color32) {
+    if env.ed.opts.fix.tool.is_some() {
+        return super::line_fix::paint(env, painter, &to_screen, accent);
+    }
     let Some(c) = ctx(env) else { return };
     let Some(mut s) = picked(env, &c) else { return };
     let live = env.ed.live_stroke.overlay.is_some();

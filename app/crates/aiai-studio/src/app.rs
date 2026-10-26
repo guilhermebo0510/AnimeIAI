@@ -30,6 +30,7 @@ mod input_queue;
 mod layer_merge;
 mod layer_thumbs;
 mod library;
+mod line_fix;
 mod materials;
 mod live;
 mod model3d;

@@ -542,6 +542,8 @@ pub(crate) struct ToolOptions {
     /// Borda suave das áreas novas (px; 0 = dura).
     pub sel_feather: f32,
     pub points_mode: PointsMode,
+    /// Corrigir linha (S25): sub-ferramenta além dos pontos de controle e as opções delas.
+    pub fix: super::line_fix::FixOptions,
     /// Mover com "Seleção automática" (como o Photoshop; desligado por padrão): o clique num traço da camada vetorial
     /// escolhe esse traço antes de arrastar.
     pub move_auto: bool,
@@ -589,6 +591,7 @@ impl Default for ToolOptions {
             select_op: aiai_paint::select::SelectOp::Replace,
             sel_feather: 0.0,
             points_mode: PointsMode::Move,
+            fix: Default::default(),
             move_auto: false,
             keep_aspect: false,
             wand_tolerance: 32.0,
@@ -654,6 +657,8 @@ pub(crate) enum Gesture {
     DragNode { idx: usize, start: Vec2, cur: Vec2, width: bool, t0: std::time::Instant },
     /// Editar pontos: arrasto de uma ponta da alça do ponto `idx` (`side` = +1 a de saída, -1 a de chegada).
     DragHandle { idx: usize, side: f32, cur: Vec2, t0: std::time::Instant },
+    /// Corrigir linha (puxar, pincéis de correção, redesenhar, poeira): o gesto mora em `line_fix`.
+    LineFix(Box<super::line_fix::FixGesture>),
     /// Caneta em forma de régua (linha, retângulo, elipse): do ponto de partida até o cursor.
     /// Figura em vários passos (curva de dois passos, Bézier, laço de preenchimento): o estado fica em `figure.live`.
     Figure,
