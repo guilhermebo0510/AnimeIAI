@@ -259,8 +259,15 @@ fn reset_tool(env: &mut Env, sub: &Option<Sub>) {
                 o.eraser_hardness = shelf::ERASERS[*i as usize % shelf::ERASERS.len()].1;
             }
         }
-        ToolId::Fill => (o.fill_gap, o.fill_expand, o.fill_close_leftovers) = (d.fill_gap, d.fill_expand, d.fill_close_leftovers),
-        ToolId::Lasso => (o.select_op, o.sel_feather, o.wand_tolerance, o.wand_contiguous, o.wand_sample_all, o.wand_antialias) = (d.select_op, d.sel_feather, d.wand_tolerance, d.wand_contiguous, d.wand_sample_all, d.wand_antialias),
+        ToolId::Fill => {
+            (o.fill_gap, o.fill_expand, o.fill_close_leftovers) = (d.fill_gap, d.fill_expand, d.fill_close_leftovers);
+            (o.area.fill_tolerance, o.area.fill_brush) = (d.area.fill_tolerance, d.area.fill_brush);
+        }
+        ToolId::Lasso => {
+            (o.select_op, o.sel_feather, o.wand_tolerance, o.wand_contiguous, o.wand_antialias) = (d.select_op, d.sel_feather, d.wand_tolerance, d.wand_contiguous, d.wand_antialias);
+            // a referência da varinha é a sub-ferramenta: fica
+            (o.area.wand_gap, o.area.wand_scale, o.area.sel_brush, o.area.sel_magnet) = (d.area.wand_gap, d.area.wand_scale, d.area.sel_brush, d.area.sel_magnet);
+        }
         ToolId::Move => (o.move_auto, o.keep_aspect) = (d.move_auto, d.keep_aspect),
         // Corrigir linha: as opções voltam às de fábrica, a sub-ferramenta fica
         ToolId::Points => o.fix = crate::app::line_fix::FixOptions { tool: o.fix.tool, ..d.fix },

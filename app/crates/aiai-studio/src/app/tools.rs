@@ -768,6 +768,11 @@ pub(crate) fn run_lint(env: &mut Env) {
 // ------------------------------------------------------------------------------------------------ conta-gotas
 
 pub(crate) fn do_eyedrop(env: &mut Env, p: Vec2) {
+    // Conta-gotas > cor da camada (S25): lê só a camada ativa (o Alt das outras ferramentas lê o que aparece)
+    if *env.tool == ToolId::Eyedropper && env.ed.opts.area.eyedrop_layer {
+        super::area_tools::eyedrop_layer(env, p);
+        return;
+    }
     let Some(shown) = &env.ed.shown else { return };
     if let Some(c) = shown.rendered.sample(p.x.floor() as i32, p.y.floor() as i32) {
         env.ed.set_color_direct(Rgba([c[0], c[1], c[2], 1.0]));

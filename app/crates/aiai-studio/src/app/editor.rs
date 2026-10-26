@@ -553,10 +553,11 @@ pub(crate) struct ToolOptions {
     pub wand_tolerance: f32,
     /// Varinha: só a região ligada ao clique (senão, todos os pixels parecidos).
     pub wand_contiguous: bool,
-    /// Varinha: lê todas as camadas visíveis (senão, só a ativa).
-    pub wand_sample_all: bool,
     /// Varinha: borda suavizada (sem serrilhado).
     pub wand_antialias: bool,
+    /// Opções novas das ferramentas de área (S25): a que camadas a varinha se refere, fechar intervalo, caneta de
+    /// seleção, laço magnético, jeito do balde, conta-gotas da camada, girar a visão, selecionar camada.
+    pub area: super::area_tools::AreaOpts,
 }
 
 impl Default for ToolOptions {
@@ -596,8 +597,8 @@ impl Default for ToolOptions {
             keep_aspect: false,
             wand_tolerance: 32.0,
             wand_contiguous: true,
-            wand_sample_all: false,
             wand_antialias: true,
+            area: Default::default(),
         }
     }
 }
@@ -672,6 +673,8 @@ pub(crate) enum Gesture {
     Eyedrop,
     /// Balde: o clique age ao soltar.
     FillClick,
+    /// Balde em cercar e preencher (laço) ou pintar área não preenchida (pincel): o caminho em px do canvas.
+    FillPath { pts: Vec<Vec2> },
     /// Régua: arrasto de uma alça da régua ativa (`orig` = como estava no começo; a prévia fica em `rulers.preview`).
     RulerDrag { layer: NodeId, orig: Box<aiai_tools::ruler::Ruler>, handle: aiai_tools::ruler::Handle, start: Vec2 },
     /// Régua: arrasto no vazio que cria uma régua do tipo escolhido.

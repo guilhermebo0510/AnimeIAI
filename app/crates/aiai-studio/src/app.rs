@@ -9,9 +9,11 @@
 
 mod actions;
 mod anim;
+mod area_tools;
 mod audio_out;
 mod autosave;
 mod brushes;
+mod bucket;
 mod bridge_host;
 mod canvas;
 mod commands;

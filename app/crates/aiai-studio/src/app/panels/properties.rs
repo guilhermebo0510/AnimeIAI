@@ -462,6 +462,26 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
             }
         }
         ToolId::Fill => {
+            // jeito do balde (S25): tolerância na camada em edição, pincel na área não preenchida
+            let mode = env.ed.opts.area.fill_mode;
+            if mode == crate::app::area_tools::FillMode::Editing {
+                let mut r0 = None;
+                row(ui, &t, compact, "opt.fill_tolerance", |ui| {
+                    r0 = Some(ui.add(egui::Slider::new(&mut env.ed.opts.area.fill_tolerance, 0.0..=255.0).step_by(1.0).max_decimals(0)).on_hover_text(tr("opt.fill_tolerance.tip")).rect);
+                });
+                if let Some(r) = r0 {
+                    env.note("opt:fill_tolerance", r);
+                }
+            }
+            if mode == crate::app::area_tools::FillMode::Unfilled {
+                let mut r0 = None;
+                row(ui, &t, compact, "opt.fill_brush", |ui| {
+                    r0 = Some(ui.add(egui::DragValue::new(&mut env.ed.opts.area.fill_brush).range(2.0..=1000.0).speed(0.5).max_decimals(0).suffix(" px")).on_hover_text(tr("opt.fill_brush.tip")).rect);
+                });
+                if let Some(r) = r0 {
+                    env.note("opt:fill_brush", r);
+                }
+            }
             let o = &mut env.ed.opts;
             row(ui, &t, compact, "opt.gap", |ui| {
                 ui.add(egui::DragValue::new(&mut o.fill_gap).range(0.0..=30.0).speed(0.1).max_decimals(1).suffix(" px")).on_hover_text(tr("opt.gap.tip"));
@@ -480,7 +500,12 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
                 ui.label(egui::RichText::new(msg).size(12.0).color(t.text_dim));
             }
             if !compact {
-                dim_label(ui, &t, tr("opt.fill_hint"));
+                dim_label(ui, &t, tr(match env.ed.opts.area.fill_mode {
+                    crate::app::area_tools::FillMode::Others => "opt.fill_mode_hint.others",
+                    crate::app::area_tools::FillMode::Editing => "opt.fill_mode_hint.editing",
+                    crate::app::area_tools::FillMode::Enclose => "opt.fill_mode_hint.enclose",
+                    crate::app::area_tools::FillMode::Unfilled => "opt.fill_mode_hint.unfilled",
+                }));
             }
         }
         ToolId::Lasso => crate::app::selection::tool_options(env, ui, compact, panel),

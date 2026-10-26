@@ -592,9 +592,11 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
         egui::PointerButton::Middle => env.ed.gesture = Gesture::Pan { last: pos, button },
         egui::PointerButton::Primary => {
             let c = xf.to_canvas(pos);
-            if space || tool == ToolId::Hand {
+            // Mão > Girar (S25): o arrasto gira a visão, como segurar R
+            let rotate_tool = tool == ToolId::Hand && env.ed.opts.area.hand_rotate;
+            if space || (tool == ToolId::Hand && !rotate_tool) {
                 env.ed.gesture = Gesture::Pan { last: pos, button };
-            } else if r_held {
+            } else if r_held || rotate_tool {
                 let ctr = rect.center();
                 env.ed.gesture = Gesture::Rotate { last_angle: (pos - ctr).angle() };
             } else if mods.alt && !matches!(tool, ToolId::Zoom | ToolId::Ruler | ToolId::Lasso) {
@@ -609,13 +611,16 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
                         let pressure = env.ed.pressure;
                         env.ed.gesture = tools::begin_stroke(env, tool, c, pressure, xf.scale);
                     }
-                    ToolId::Fill => env.ed.gesture = Gesture::FillClick, // o clique age ao soltar
+                    // o clique age ao soltar; cercar e preencher / área não preenchida desenham um caminho
+                    ToolId::Fill => env.ed.gesture = super::bucket::press(env, c),
                     ToolId::Eyedropper => {
                         tools::do_eyedrop(env, c);
                         env.ed.gesture = Gesture::Eyedrop;
                     }
                     // Seleção: retângulo/elipse/laço/laço poligonal/varinha/Selecionar traços (Shift soma, Alt subtrai)
                     ToolId::Lasso => super::selection::press(env, c, mods, xf.scale),
+                    // Mover > Selecionar camada (S25): o clique escolhe a camada desenhada sob o cursor
+                    ToolId::Move if env.ed.opts.area.pick_layer => super::area_tools::pick_layer(env, c),
                     ToolId::Move => {
                         // alças da seleção: cantos escalam, a de cima gira; fora delas, mover
                         let hit = env.ed.selection.as_ref().filter(|s| !s.whole).and_then(|s| {
@@ -674,7 +679,7 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
     }
     // arrasto mínimo: os arrastos de objeto só começam depois que o ponteiro anda a distância das Preferências
     let object_drag = match &env.ed.gesture {
-        Gesture::Select { tool, .. } => *tool != super::selection::SelTool::Lasso,
+        Gesture::Select { tool, .. } => !tool.is_path(),
         Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } | Gesture::StrokePick { .. } | Gesture::Shape { .. } | Gesture::DragNode { .. } | Gesture::DragHandle { .. } | Gesture::RulerDrag { .. } | Gesture::RulerCreate { .. } => true,
         _ => false,
     };
@@ -719,7 +724,7 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
         }
         Gesture::Stroke(g) => g.push(c, pressure),
         Gesture::Select { start, pts, tool, .. } => match tool {
-            super::selection::SelTool::Lasso => {
+            t if t.is_path() => {
                 if pts.last().is_none_or(|l| (*l - c).length() * xf.scale >= 2.0) {
                     pts.push(c);
                 }
@@ -757,6 +762,11 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
         }
         Gesture::Eyedrop => tools::do_eyedrop(env, c),
         Gesture::FillClick => {}
+        Gesture::FillPath { pts } => {
+            if pts.last().is_none_or(|l| (*l - c).length() * xf.scale >= 2.0) {
+                pts.push(c);
+            }
+        }
         Gesture::RulerDrag { .. } => super::rulers::drag_move(env, c),
         Gesture::RulerCreate { .. } => super::rulers::create_move(env, c),
         Gesture::Figure | Gesture::GradDrag { .. } | Gesture::GradFree { .. } => {}
@@ -800,7 +810,7 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
             env.ed.live_stroke.release(Some(counter));
         }
         Gesture::Select { start, mut pts, tool, op } => {
-            if tool != super::selection::SelTool::Lasso {
+            if !tool.is_path() {
                 pts.truncate(1);
                 pts.push(c);
             }
@@ -840,7 +850,8 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
         Gesture::GradFree { .. } => {}
         g @ Gesture::PolyCurve { .. } => env.ed.gesture = g, // a curva continua até Enter/duplo clique
         Gesture::Eyedrop => tools::do_eyedrop(env, c),
-        Gesture::FillClick => tools::do_fill(env, c, at),
+        Gesture::FillClick => super::bucket::click(env, c, at),
+        Gesture::FillPath { pts } => super::bucket::finish_path(env, pts, at),
         Gesture::RulerDrag { layer, orig, .. } => super::rulers::drag_release(env, layer, *orig),
         Gesture::RulerCreate { start, .. } => super::rulers::create_release(env, start, c, xf.scale),
     }
@@ -1571,6 +1582,8 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
         Gesture::Figure => super::figure::paint_live(env, painter, xf),
         // prévia da curva/linha por cliques (próximo trecho até o cursor, fechar no primeiro ponto)
         Gesture::PolyCurve { .. } => super::pen::paint(env, painter, xf),
+        // balde: o laço do cercar e preencher / o rastro do pincel da área não preenchida
+        Gesture::FillPath { pts } => super::bucket::paint_path(env, painter, xf, pts),
         _ => {}
     }
     let _ = t;

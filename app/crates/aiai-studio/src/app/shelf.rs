@@ -294,22 +294,39 @@ pub(crate) enum Sub {
     /// A borracha apaga com um pincel do grupo borracha.
     EraserPreset(String),
     EraserVector(EraseMode),
+    /// Jeito do balde: índice em `area_tools::FillMode::ALL` (outras camadas, só a camada, cercar e preencher, área
+    /// não preenchida).
     Fill(u8),
     Select(SelTool),
+    /// Seleção automática: a que camadas a varinha se refere.
+    Wand(super::area_tools::WandRef),
+    /// Conta-gotas: cor exibida (`false`) ou cor da camada (`true`).
+    Eyedrop(bool),
+    /// Mão: o arrasto gira a visão.
+    RotateView,
+    /// Mover: o clique escolhe a camada desenhada sob o cursor.
+    PickLayer,
+    /// Texto circular: o texto corre em volta de um círculo.
+    TextCircle,
     Points(PointsMode),
     /// Corrigir linha além dos pontos de controle: puxar, simplificar, conectar, largura, redesenhar e poeira.
     Fix(super::line_fix::FixTool),
-    /// Tipo de régua que a ferramenta Régua cria (linear, curva, figura, caneta de régua, especiais, guia, perspectiva...).
-    Ruler(super::rulers::NewKind),
     /// Degradê pronto, de paleta ou livre (ferramenta Degradê).
     Gradient(super::gradient_tool::GradPick),
+    /// Tipo de régua que a ferramenta Régua cria (linear, curva, figura, caneta de régua, especiais, guia, perspectiva...).
+    Ruler(super::rulers::NewKind),
     /// Ferramenta do motor sem variações (mover, objeto 3D, mão, zoom, conta-gotas, texto).
     Engine(ToolId),
 }
 
-/// Borrachas raster (chave, dureza) e jeitos do balde (chave, fresta, expandir, fechar sobras).
+/// Borrachas raster (chave, dureza).
 pub(crate) const ERASERS: [(&str, f32); 2] = [("eraser.hard", 0.9), ("eraser.soft", 0.0)];
-pub(crate) const FILLS: [(&str, f32, u32, bool); 4] = [("fill.normal", 3.0, 2, false), ("fill.wide", 8.0, 2, false), ("fill.exact", 0.0, 0, false), ("fill.leftovers", 3.0, 2, true)];
+
+/// O jeito do balde da sub-ferramenta `Sub::Fill(i)`.
+pub(crate) fn fill_mode(i: u8) -> super::area_tools::FillMode {
+    let all = super::area_tools::FillMode::ALL;
+    all[i as usize % all.len()]
+}
 
 impl Sub {
     /// Ferramenta do motor que a sub-ferramenta usa.
@@ -319,7 +336,11 @@ impl Sub {
             Sub::PenTip(_) | Sub::PenShape(_) => ToolId::Pen,
             Sub::EraserRaster(_) | Sub::EraserTip(_) | Sub::EraserBrush | Sub::EraserPreset(_) | Sub::EraserVector(_) => ToolId::Eraser,
             Sub::Fill(_) => ToolId::Fill,
-            Sub::Select(_) => ToolId::Lasso,
+            Sub::Select(_) | Sub::Wand(_) => ToolId::Lasso,
+            Sub::Eyedrop(_) => ToolId::Eyedropper,
+            Sub::RotateView => ToolId::Hand,
+            Sub::PickLayer => ToolId::Move,
+            Sub::TextCircle => ToolId::Text,
             Sub::Points(_) | Sub::Fix(_) => ToolId::Points,
             Sub::Ruler(_) => ToolId::Ruler,
             Sub::Gradient(_) => ToolId::Gradient,
@@ -337,8 +358,13 @@ impl Sub {
             Sub::EraserTip(t) => format!("eraser:{t:?}").to_lowercase(),
             Sub::EraserBrush => "eraser:brush".into(),
             Sub::EraserVector(m) => format!("eraser:{m:?}").to_lowercase(),
-            Sub::Fill(i) => format!("fill:{i}"),
+            Sub::Fill(i) => format!("fill:{}", fill_mode(*i).id()),
             Sub::Select(m) => format!("select:{m:?}").to_lowercase(),
+            Sub::Wand(w) => format!("wand:{}", w.id()),
+            Sub::Eyedrop(l) => (if *l { "eyedropper:layer" } else { "eyedropper:shown" }).to_owned(),
+            Sub::RotateView => "hand:rotate".to_owned(),
+            Sub::PickLayer => "move:pick_layer".to_owned(),
+            Sub::TextCircle => "text:circle".to_owned(),
             Sub::Points(m) => format!("points:{m:?}").to_lowercase(),
             Sub::Fix(f) => format!("fix:{}", f.key()),
             Sub::Ruler(k) => format!("ruler:{}", k.id()),
@@ -362,25 +388,27 @@ impl Sub {
 pub(crate) fn fixed_subs(slot: Slot, tab_key: &str) -> Vec<Sub> {
     use ToolId as T;
     match (slot, tab_key) {
-        (Slot::Select, "area") => [SelTool::Rect, SelTool::Ellipse, SelTool::Lasso, SelTool::Polygon].into_iter().map(Sub::Select).collect(),
+        // na ordem do Clip Studio: retângulo, elipse, laço, polilinha, caneta de seleção, apagar seleção, encolher
+        // seleção, laço magnético
+        (Slot::Select, "area") => [SelTool::Rect, SelTool::Ellipse, SelTool::Lasso, SelTool::Polygon, SelTool::Pen, SelTool::Erase, SelTool::Shrink, SelTool::Magnetic].into_iter().map(Sub::Select).collect(),
         (Slot::Select, "objects") => vec![Sub::Select(SelTool::Strokes)],
-        (Slot::AutoSelect, _) => vec![Sub::Select(SelTool::Wand)],
-        (Slot::MoveLayer, _) => vec![Sub::Engine(T::Move), Sub::Engine(T::Model3d)],
-        (Slot::Hand, _) => vec![Sub::Engine(T::Hand), Sub::Engine(T::Zoom)],
-        (Slot::Eyedropper, _) => vec![Sub::Engine(T::Eyedropper)],
+        (Slot::AutoSelect, _) => super::area_tools::WandRef::ALL.into_iter().map(Sub::Wand).collect(),
+        (Slot::MoveLayer, _) => vec![Sub::Engine(T::Move), Sub::PickLayer, Sub::Engine(T::Model3d)],
+        (Slot::Hand, _) => vec![Sub::Engine(T::Hand), Sub::RotateView, Sub::Engine(T::Zoom)],
+        (Slot::Eyedropper, _) => vec![Sub::Eyedrop(false), Sub::Eyedrop(true)],
         (Slot::Pen, "caneta") => vec![Sub::PenTip(VectorTip::GPen), Sub::PenTip(VectorTip::MaruPen)],
         (Slot::Pen, "marcador") => vec![Sub::PenTip(VectorTip::Marker)],
         (Slot::Pencil, _) => vec![Sub::PenTip(VectorTip::Pencil)],
         (Slot::Eraser, "raster") => vec![Sub::EraserRaster(0), Sub::EraserRaster(1), Sub::EraserTip(EraserTip::Pencil), Sub::EraserTip(EraserTip::Block), Sub::EraserBrush],
         (Slot::Eraser, "vector") => [EraseMode::Segment, EraseMode::Intersection, EraseMode::Whole].into_iter().map(Sub::EraserVector).collect(),
-        (Slot::Fill, _) => (0..FILLS.len() as u8).map(Sub::Fill).collect(),
+        (Slot::Fill, _) => (0..super::area_tools::FillMode::ALL.len() as u8).map(Sub::Fill).collect(),
         (Slot::Figure, "speed") => vec![Sub::PenShape(PenShape::SpeedLines)],
         (Slot::Figure, "focus") => vec![Sub::PenShape(PenShape::FocusLines)],
         (Slot::Figure, _) => super::figure::DIRECT.into_iter().map(Sub::PenShape).collect(),
         (Slot::Gradient, "freeform") => vec![Sub::Gradient(super::gradient_tool::GradPick::Freeform)],
         (Slot::Gradient, _) => super::gradient_tool::fixed_picks().into_iter().map(Sub::Gradient).collect(),
         (Slot::Ruler, _) => super::rulers::NewKind::ALL.into_iter().map(Sub::Ruler).collect(),
-        (Slot::Text, _) => vec![Sub::Engine(T::Text)],
+        (Slot::Text, _) => vec![Sub::Engine(T::Text), Sub::TextCircle],
         // pontos de controle (os modos do Editar pontos) e as correções, na ordem do Clip Studio; a poeira tem aba própria
         (Slot::CorrectLine, "dust") => super::line_fix::FixTool::DUST.into_iter().map(Sub::Fix).collect(),
         (Slot::CorrectLine, _) => super::panels::properties::POINTS_MODES.iter().map(|m| Sub::Points(*m)).chain(super::line_fix::FixTool::LINE.into_iter().map(Sub::Fix)).collect(),
@@ -420,15 +448,15 @@ pub(crate) fn preset_group(p: &BrushPreset) -> &'static str {
 fn explicit_group(p: &BrushPreset) -> Option<&'static str> {
     GROUPS.iter().find(|g| **g == p.group).copied()
 }
-    // degradês guardados nas paletas do projeto entram como prontos
-    }
 
 /// Sub-ferramentas de uma aba neste workspace: as fixas cuja ferramenta do motor vale no perfil e os pincéis do grupo.
 pub(crate) fn subs(env: &Env, slot: Slot, t: &Tab) -> Vec<Sub> {
     let p = env.ws.profile();
     let mut v: Vec<Sub> = fixed_subs(slot, t.key).into_iter().filter(|s| p.allows(s.engine())).collect();
+    // degradês guardados nas paletas do projeto entram como prontos
     if slot == Slot::Gradient && t.key == "gradient" && p.allows(ToolId::Gradient) {
         v.extend(super::gradient_tool::palette_picks(env).into_iter().map(Sub::Gradient));
+    }
     if let Some(g) = t.group {
         let eraser = slot == Slot::Eraser;
         if p.allows(if eraser { ToolId::Eraser } else { ToolId::Brush }) {
@@ -470,8 +498,13 @@ pub(crate) fn sub_label(env: &Env, s: &Sub) -> String {
             EraseMode::Whole => "eraser.item.whole",
         })
         .to_owned(),
-        Sub::Fill(i) => tr(FILLS[*i as usize % FILLS.len()].0).to_owned(),
+        Sub::Fill(i) => tr(fill_mode(*i).label_key()).to_owned(),
         Sub::Select(m) => tr(m.label_key()).to_owned(),
+        Sub::Wand(w) => tr(w.label_key()).to_owned(),
+        Sub::Eyedrop(l) => tr(if *l { "eyedrop.layer" } else { "eyedrop.shown" }).to_owned(),
+        Sub::RotateView => tr("hand.rotate").to_owned(),
+        Sub::PickLayer => tr("move.pick_layer").to_owned(),
+        Sub::TextCircle => tr("text.circle").to_owned(),
         Sub::Points(m) => tr(super::panels::properties::points_mode_key(*m)).to_owned(),
         Sub::Fix(f) => tr(f.label_key()).to_owned(),
         Sub::Ruler(k) => tr(k.key()).to_owned(),
@@ -496,11 +529,16 @@ pub(crate) fn is_current(env: &Env, s: &Sub) -> bool {
         Sub::EraserBrush => o.eraser_use_brush && !preset_is_eraser(env),
         Sub::EraserPreset(k) => o.eraser_use_brush && preset_is(k),
         Sub::EraserVector(m) => o.eraser_mode == *m,
-        Sub::Fill(i) => {
-            let (_, gap, expand, left) = FILLS[*i as usize % FILLS.len()];
-            (o.fill_gap - gap).abs() < 1e-3 && o.fill_expand == expand && o.fill_close_leftovers == left
-        }
+        Sub::Fill(i) => o.area.fill_mode == fill_mode(*i),
         Sub::Select(m) => o.select_mode == *m,
+        Sub::Wand(w) => o.select_mode == SelTool::Wand && o.area.wand_ref == *w,
+        Sub::Eyedrop(l) => o.area.eyedrop_layer == *l,
+        Sub::RotateView => o.area.hand_rotate,
+        Sub::PickLayer => o.area.pick_layer,
+        Sub::Engine(ToolId::Hand) => !o.area.hand_rotate,
+        Sub::Engine(ToolId::Move) => !o.area.pick_layer,
+        Sub::TextCircle => o.area.text_circle,
+        Sub::Engine(ToolId::Text) => !o.area.text_circle,
         Sub::Points(m) => o.points_mode == *m && o.fix.tool.is_none(),
         Sub::Fix(f) => o.fix.tool == Some(*f),
         Sub::Ruler(k) => env.ed.rulers.new_kind == *k,
@@ -628,12 +666,16 @@ pub(crate) fn apply_sub(env: &mut Env, slot: Slot, s: &Sub) {
             (env.ed.opts.eraser_tip, env.ed.opts.eraser_use_brush) = (EraserTip::Brush, true);
         }
         Sub::EraserVector(m) => env.ed.opts.eraser_mode = *m,
-        Sub::Fill(i) => {
-            let (_, gap, expand, left) = FILLS[*i as usize % FILLS.len()];
-            let o = &mut env.ed.opts;
-            (o.fill_gap, o.fill_expand, o.fill_close_leftovers) = (gap, expand, left);
-        }
+        Sub::Fill(i) => env.ed.opts.area.fill_mode = fill_mode(*i),
         Sub::Select(m) => env.ed.opts.select_mode = *m,
+        Sub::Wand(w) => (env.ed.opts.select_mode, env.ed.opts.area.wand_ref) = (SelTool::Wand, *w),
+        Sub::Eyedrop(l) => env.ed.opts.area.eyedrop_layer = *l,
+        Sub::RotateView => env.ed.opts.area.hand_rotate = true,
+        Sub::PickLayer => env.ed.opts.area.pick_layer = true,
+        Sub::Engine(ToolId::Hand) => env.ed.opts.area.hand_rotate = false,
+        Sub::Engine(ToolId::Move) => env.ed.opts.area.pick_layer = false,
+        Sub::TextCircle => env.ed.opts.area.text_circle = true,
+        Sub::Engine(ToolId::Text) => env.ed.opts.area.text_circle = false,
         Sub::Points(m) => (env.ed.opts.points_mode, env.ed.opts.fix.tool) = (*m, None),
         Sub::Fix(f) => {
             env.ed.opts.fix.tool = Some(*f);

@@ -33,10 +33,24 @@ pub(crate) enum SelTool {
     Wand,
     /// Selecionar traços (camada vetorial): clique escolhe o traço, arrasto no vazio = caixa dos traços que ela toca.
     Strokes,
+    /// Caneta de seleção (S25): pinta a área com um pincel redondo (soma; com Alt/subtrair, apaga).
+    Pen,
+    /// Apagar seleção: o mesmo pincel tirando da área.
+    Erase,
+    /// Encolher seleção: um laço em volta do desenho encolhe até o contorno do que está pintado.
+    Shrink,
+    /// Laço magnético: o laço gruda na borda mais forte por perto.
+    Magnetic,
 }
 
 impl SelTool {
-    pub(crate) const ALL: [SelTool; 6] = [SelTool::Rect, SelTool::Ellipse, SelTool::Lasso, SelTool::Polygon, SelTool::Wand, SelTool::Strokes];
+    pub(crate) const ALL: [SelTool; 10] = [SelTool::Rect, SelTool::Ellipse, SelTool::Lasso, SelTool::Polygon, SelTool::Wand, SelTool::Strokes, SelTool::Pen, SelTool::Erase, SelTool::Shrink, SelTool::Magnetic];
+
+    /// O gesto é um caminho à mão (laço, caneta/borracha de seleção, encolher, laço magnético): guarda cada ponto
+    /// do arrasto (os outros guardam só o começo e o fim).
+    pub(crate) fn is_path(self) -> bool {
+        matches!(self, SelTool::Lasso | SelTool::Pen | SelTool::Erase | SelTool::Shrink | SelTool::Magnetic)
+    }
 
     pub(crate) fn label_key(self) -> &'static str {
         match self {
@@ -46,6 +60,10 @@ impl SelTool {
             SelTool::Polygon => "sel.polygon",
             SelTool::Wand => "sel.wand",
             SelTool::Strokes => "sel.strokes",
+            SelTool::Pen => "sel.pen",
+            SelTool::Erase => "sel.erase",
+            SelTool::Shrink => "sel.shrink",
+            SelTool::Magnetic => "sel.magnetic",
         }
     }
 
@@ -58,6 +76,10 @@ impl SelTool {
             SelTool::Polygon => "polygon",
             SelTool::Wand => "wand",
             SelTool::Strokes => "strokes",
+            SelTool::Pen => "pen",
+            SelTool::Erase => "erase",
+            SelTool::Shrink => "shrink",
+            SelTool::Magnetic => "magnetic",
         }
     }
 }
@@ -120,8 +142,8 @@ pub(crate) struct WandClick {
     op: SelectOp,
     base: Option<Arc<Cov>>,
     reference: Arc<aiai_paint::Image>,
-    /// (documento, camada, quadro, todas as camadas) da referência.
-    sig: (u64, NodeId, u32, bool),
+    /// (documento, camada, quadro, camadas de referência) da imagem lida.
+    sig: (u64, NodeId, u32, super::area_tools::WandRef),
     result: Option<Arc<SelMask>>,
 }
 
@@ -130,6 +152,8 @@ pub(crate) struct SelState {
     pub wand: Option<WandClick>,
     /// Traços que a área leva (cache por documento, camada, quadro e área).
     area_ids: Option<(String, Arc<Vec<Id>>)>,
+    /// Render da camada ativa (ou das de referência) e as bordas dela: conta-gotas da camada e laço magnético.
+    pub layer_cache: super::area_tools::LayerCache,
 }
 
 /// Operação pelas teclas no momento do clique: Shift soma, Alt subtrai, Shift+Alt intersecta; sem tecla, a da barra.
@@ -194,6 +218,15 @@ fn combine_area(env: &mut Env, mut new: Cov, op: SelectOp, simple: Option<Select
 /// Fim do arrasto do retângulo/elipse/laço (ou do laço poligonal fechado). Clique sem arrastar com "nova" tira a seleção.
 pub(crate) fn finish_select(env: &mut Env, tool: SelTool, start: Vec2, pts: Vec<Vec2>, op: SelectOp, scale: f32) {
     let Some((w, h)) = canvas_wh(env) else { return };
+    match tool {
+        SelTool::Pen | SelTool::Erase => return finish_brush(env, tool, pts, op, w, h),
+        SelTool::Shrink => return finish_shrink(env, pts, op, w, h, scale),
+        SelTool::Magnetic => {
+            let snapped = magnetic_pts(env, &pts);
+            return finish_select(env, SelTool::Lasso, start, snapped, op, scale);
+        }
+        _ => {}
+    }
     let end = pts.last().copied().unwrap_or(start);
     let sel = match tool {
         SelTool::Lasso | SelTool::Polygon => Selection::new(SelMode::Lasso, pts, false),
@@ -211,6 +244,63 @@ pub(crate) fn finish_select(env: &mut Env, tool: SelTool, start: Vec2, pts: Vec<
     let Ok(cov) = Cov::from_shape(&shape, w, h, None) else { return };
     env.ed.selection = combine_area(env, cov, op, Some(sel));
     env.ed.sel_state.wand = None;
+}
+
+/// Caneta de seleção / apagar seleção: o pincel redondo (diâmetro das opções) pinta ou tira da área atual. A caneta
+/// soma; com "subtrair" (Alt) ela apaga, como a borracha de seleção.
+fn finish_brush(env: &mut Env, tool: SelTool, pts: Vec<Vec2>, op: SelectOp, w: u32, h: u32) {
+    let add = tool == SelTool::Pen && op != SelectOp::Subtract;
+    // seleção com transformação pendente: grava a transformação antes de pintar por cima
+    if let Some(s) = env.ed.selection.as_mut().filter(|s| !s.is_identity()) {
+        s.bake_offset();
+    }
+    let mut base = env.ed.selection.as_ref().and_then(|s| area_cov(s, w, h)).unwrap_or_else(|| Cov::none(w, h));
+    let path: Vec<[f32; 2]> = pts.iter().map(|p| [p.x, p.y]).collect();
+    aiai_paint::area::paint_selection(&mut base, &path, env.ed.opts.area.sel_brush.max(1.0) / 2.0, add);
+    env.ed.selection = selection_from_cov(base);
+    env.ed.sel_state.wand = None;
+}
+
+/// Encolher seleção: o laço vira área, e a área encolhe até o desenho das camadas de referência (as mesmas da
+/// varinha: a camada em edição, todas ou as de referência).
+fn finish_shrink(env: &mut Env, pts: Vec<Vec2>, op: SelectOp, w: u32, h: u32, scale: f32) {
+    let sel = Selection::new(SelMode::Lasso, pts, false);
+    let tiny = sel.rect_of().is_none_or(|r| r[2] * scale < 3.0 || r[3] * scale < 3.0);
+    let (Some(shape), false) = (sel.shape(), tiny) else {
+        if op == SelectOp::Replace {
+            env.ed.selection = None;
+        }
+        return;
+    };
+    let Ok(lasso) = Cov::from_shape(&shape, w, h, None) else { return };
+    let img = match super::area_tools::cached_image(env, env.ed.opts.area.wand_ref) {
+        Ok(i) => i,
+        Err(e) => {
+            env.ed.notify(e);
+            return;
+        }
+    };
+    let shrunk = aiai_paint::area::shrink_to_drawing(&lasso, &img, 0.1);
+    if shrunk.is_empty() {
+        env.ed.notify(tr("sel.shrink.empty"));
+        if op == SelectOp::Replace {
+            env.ed.selection = None;
+        }
+        return;
+    }
+    env.ed.selection = combine_area(env, shrunk, op, None);
+    env.ed.sel_state.wand = None;
+}
+
+/// Pontos do laço magnético grudados na borda (as bordas ficam prontas no clique; sem elas, o laço como foi traçado).
+fn magnetic_pts(env: &Env, pts: &[Vec2]) -> Vec<Vec2> {
+    match super::area_tools::edges_ready(env) {
+        Some((e, w, h)) => {
+            let path: Vec<[f32; 2]> = pts.iter().map(|p| [p.x, p.y]).collect();
+            aiai_paint::area::magnetic_path(&e, w, h, &path, env.ed.opts.area.sel_magnet).into_iter().map(|q| Vec2::new(q[0], q[1])).collect()
+        }
+        None => pts.to_vec(),
+    }
 }
 
 /// Clique do laço poligonal com o gesto aberto: põe um vértice, ou fecha (clique perto do primeiro, duplo clique,
@@ -244,6 +334,13 @@ pub(crate) fn press(env: &mut Env, c: Vec2, mods: egui::Modifiers, scale: f32) {
     match tool {
         SelTool::Wand => wand_click(env, c, op),
         SelTool::Polygon => env.ed.gesture = Gesture::PolyLasso { pts: vec![c], op, last_click: Instant::now() },
+        SelTool::Magnetic => {
+            // as bordas da imagem de referência ficam prontas no clique (a prévia gruda enquanto arrasta)
+            if let Err(e) = super::area_tools::cached_edges(env, env.ed.opts.area.wand_ref) {
+                env.ed.notify(e);
+            }
+            env.ed.gesture = Gesture::Select { start: c, pts: vec![c], tool, op };
+        }
         SelTool::Strokes => {
             let vector = env.ed.active_layer(env.core).and_then(|l| cmds::layer_data(&env.core.project, &l).map(|d| d.kind)) == Some(LayerType::Vector);
             if vector {
@@ -260,10 +357,9 @@ pub(crate) fn press(env: &mut Env, c: Vec2, mods: egui::Modifiers, scale: f32) {
 // ------------------------------------------------------------------------------------------------ varinha
 
 /// Imagem que a varinha lê, em px do canvas (com o movimento da camada): a camada ativa renderizada (vetor ou raster),
-/// ou todas as camadas visíveis.
-fn wand_reference(env: &Env, cut: &NodeId, layer: &NodeId, all: bool) -> Result<aiai_paint::Image, String> {
-    let opts = aiai_render::RenderOptions { include_guides: false, include_reference: false, only_layers: if all { None } else { Some(vec![layer.clone()]) }, background: None, camera: false, layer_motion: true };
-    aiai_render::render_frame(&env.core.project, &env.core.blobs, cut, env.ed.frame, &opts).map(|o| o.image).map_err(|e| e.to_string())
+/// todas as camadas visíveis ou as camadas de referência (as sub-ferramentas da Seleção automática).
+fn wand_reference(env: &Env, cut: &NodeId, layer: &NodeId, r: super::area_tools::WandRef) -> Result<aiai_paint::Image, String> {
+    super::area_tools::reference_image(env, cut, layer, r)
 }
 
 pub(crate) fn wand_click(env: &mut Env, p: Vec2, op: SelectOp) {
@@ -279,7 +375,7 @@ pub(crate) fn wand_click(env: &mut Env, p: Vec2, op: SelectOp) {
         }
         return;
     }
-    let all = env.ed.opts.wand_sample_all;
+    let all = env.ed.opts.area.wand_ref;
     let reference = match wand_reference(env, &cut, &layer, all) {
         Ok(r) => Arc::new(r),
         Err(e) => {
@@ -296,7 +392,8 @@ pub(crate) fn wand_click(env: &mut Env, p: Vec2, op: SelectOp) {
 fn run_wand(env: &mut Env, click: &mut WandClick) {
     let o = &env.ed.opts;
     let seed = (click.p.x.max(0.0) as u32, click.p.y.max(0.0) as u32);
-    let mut new = aiai_paint::select::magic_wand(&click.reference, seed, o.wand_tolerance, o.wand_contiguous, o.wand_antialias);
+    let wo = aiai_paint::area::WandOptions { tolerance: o.wand_tolerance, contiguous: o.wand_contiguous, gap: o.area.wand_gap, scale: o.area.wand_scale, antialias: o.wand_antialias };
+    let mut new = aiai_paint::area::wand(&click.reference, seed, &wo);
     let feather = o.sel_feather.round().clamp(0.0, 250.0) as u32;
     if feather > 0 {
         new.feather(feather);
@@ -325,7 +422,7 @@ pub(crate) fn wand_refresh(env: &mut Env) {
     if !(same_sel && same_doc) {
         return;
     }
-    let all = env.ed.opts.wand_sample_all;
+    let all = env.ed.opts.area.wand_ref;
     if click.sig.3 != all {
         let Some(cut) = env.ed.active_cut(env.core) else { return };
         match wand_reference(env, &cut, &click.sig.1, all) {
@@ -780,8 +877,21 @@ pub(crate) fn paint_gesture(env: &Env, painter: &egui::Painter, xf: &Xf) {
     let op = match &env.ed.gesture {
         Gesture::Select { start, pts, tool, op } => {
             let end = pts.last().copied().unwrap_or(*start);
+            if matches!(tool, SelTool::Pen | SelTool::Erase) {
+                // o rastro do pincel com o diâmetro de verdade
+                let v: Vec<Pos2> = pts.iter().map(|p| xf.to_screen(*p)).collect();
+                let wpx = (env.ed.opts.area.sel_brush * xf.scale).max(1.0);
+                let col = if *tool == SelTool::Erase || *op == SelectOp::Subtract { Color32::from_rgba_unmultiplied(230, 70, 70, 90) } else { env.t.accent.gamma_multiply(0.45) };
+                if v.len() == 1 {
+                    painter.circle_filled(v[0], wpx / 2.0, col);
+                } else {
+                    painter.add(Shape::line(v, EStroke::new(wpx, col)));
+                }
+                return;
+            }
+            let path = if *tool == SelTool::Magnetic { magnetic_pts(env, pts) } else { pts.clone() };
             let s = match tool {
-                SelTool::Lasso => Selection::new(SelMode::Lasso, pts.clone(), false),
+                SelTool::Lasso | SelTool::Shrink | SelTool::Magnetic => Selection::new(SelMode::Lasso, path, false),
                 SelTool::Ellipse => Selection::new(SelMode::Ellipse, vec![*start, end], false),
                 _ => Selection::new(SelMode::Rect, vec![*start, end], false),
             };
@@ -932,8 +1042,46 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut egui::Ui, compact: bool, pane
             ui.add(egui::DragValue::new(&mut env.ed.opts.sel_feather).range(0.0..=250.0).speed(0.25).max_decimals(0).suffix(" px")).on_hover_text(tr("opt.feather.tip"));
         });
     }
+    if matches!(tool, SelTool::Pen | SelTool::Erase) {
+        let mut note = None;
+        super::panels::properties::row(ui, &t, compact, "opt.sel_brush", |ui| {
+            note = Some(ui.add(egui::DragValue::new(&mut env.ed.opts.area.sel_brush).range(1.0..=1000.0).speed(0.5).max_decimals(0).suffix(" px")).on_hover_text(tr("opt.sel_brush.tip")).rect);
+        });
+        if let Some(r) = note {
+            env.note("opt:sel_brush", r);
+        }
+    }
+    if tool == SelTool::Magnetic {
+        let mut note = None;
+        super::panels::properties::row(ui, &t, compact, "opt.sel_magnet", |ui| {
+            note = Some(ui.add(egui::DragValue::new(&mut env.ed.opts.area.sel_magnet).range(2.0..=60.0).speed(0.2).max_decimals(0).suffix(" px")).on_hover_text(tr("opt.sel_magnet.tip")).rect);
+        });
+        if let Some(r) = note {
+            env.note("opt:sel_magnet", r);
+        }
+    }
+    if matches!(tool, SelTool::Wand | SelTool::Shrink | SelTool::Magnetic) {
+        // a que camadas a varinha / o encolher / o ímã se referem (na lista do painel são as sub-ferramentas da varinha)
+        let before = env.ed.opts.area.wand_ref;
+        let mut notes = Vec::new();
+        super::panels::properties::row(ui, &t, compact, "opt.wand_ref", |ui| {
+            for r in super::area_tools::WandRef::ALL {
+                let b = ui.selectable_label(env.ed.opts.area.wand_ref == r, tr(r.label_key()));
+                notes.push((format!("opt:wand_ref:{}", r.id()), b.rect));
+                if b.clicked() {
+                    env.ed.opts.area.wand_ref = r;
+                }
+            }
+        });
+        for (k, r) in notes {
+            env.note(k, r);
+        }
+        if before != env.ed.opts.area.wand_ref && tool == SelTool::Wand {
+            wand_refresh(env);
+        }
+    }
     if tool == SelTool::Wand {
-        let before = (env.ed.opts.wand_tolerance, env.ed.opts.wand_contiguous, env.ed.opts.wand_sample_all, env.ed.opts.wand_antialias, env.ed.opts.sel_feather);
+        let before = (env.ed.opts.wand_tolerance, env.ed.opts.wand_contiguous, env.ed.opts.area.wand_gap, env.ed.opts.area.wand_scale, env.ed.opts.wand_antialias, env.ed.opts.sel_feather);
         let mut note = None;
         super::panels::properties::row(ui, &t, compact, "opt.wand_tolerance", |ui| {
             let r = ui.add(egui::Slider::new(&mut env.ed.opts.wand_tolerance, 0.0..=255.0).step_by(1.0).max_decimals(0)).on_hover_text(tr("opt.wand_tolerance.tip"));
@@ -942,18 +1090,36 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut egui::Ui, compact: bool, pane
         if let Some(r) = note {
             env.note("opt:wand_tolerance", r);
         }
-        for (key, tip, id) in [("opt.wand_contiguous", "opt.wand_contiguous.tip", 0), ("opt.wand_sample_all", "opt.wand_sample_all.tip", 1), ("opt.wand_antialias", "opt.wand_antialias.tip", 2)] {
+        // fechar intervalo (a fresta da linha que a seleção não atravessa) e dimensionamento de área
+        let mut gap_on = env.ed.opts.area.wand_gap > 0.0;
+        let mut rects = Vec::new();
+        super::panels::properties::row(ui, &t, compact, "opt.wand_gap", |ui| {
+            let r = ui.checkbox(&mut gap_on, "").on_hover_text(tr("opt.wand_gap.tip"));
+            rects.push(("opt:wand_gap_on", r.rect));
+            if r.changed() {
+                env.ed.opts.area.wand_gap = if gap_on { 4.0 } else { 0.0 };
+            }
+            let r = ui.add_enabled(gap_on, egui::DragValue::new(&mut env.ed.opts.area.wand_gap).range(0.0..=30.0).speed(0.1).max_decimals(1).suffix(" px")).on_hover_text(tr("opt.wand_gap.tip"));
+            rects.push(("opt:wand_gap", r.rect));
+        });
+        super::panels::properties::row(ui, &t, compact, "opt.wand_scale", |ui| {
+            let r = ui.add(egui::DragValue::new(&mut env.ed.opts.area.wand_scale).range(-50.0..=50.0).speed(0.1).max_decimals(1).suffix(" px")).on_hover_text(tr("opt.wand_scale.tip"));
+            rects.push(("opt:wand_scale", r.rect));
+        });
+        for (k, r) in rects {
+            env.note(k, r);
+        }
+        for (key, tip, id) in [("opt.wand_contiguous", "opt.wand_contiguous.tip", 0), ("opt.wand_antialias", "opt.wand_antialias.tip", 2)] {
             let o = &mut env.ed.opts;
             let v = match id {
                 0 => &mut o.wand_contiguous,
-                1 => &mut o.wand_sample_all,
                 _ => &mut o.wand_antialias,
             };
             let r = ui.checkbox(v, tr(key));
             env.note(format!("opt:{}", key.trim_start_matches("opt.")), r.rect);
             r.on_hover_text(tr(tip));
         }
-        let after = (env.ed.opts.wand_tolerance, env.ed.opts.wand_contiguous, env.ed.opts.wand_sample_all, env.ed.opts.wand_antialias, env.ed.opts.sel_feather);
+        let after = (env.ed.opts.wand_tolerance, env.ed.opts.wand_contiguous, env.ed.opts.area.wand_gap, env.ed.opts.area.wand_scale, env.ed.opts.wand_antialias, env.ed.opts.sel_feather);
         if before != after {
             wand_refresh(env);
         }
@@ -993,7 +1159,9 @@ pub(crate) fn state_json(ed: &Editor) -> serde_json::Value {
         "tool": o.select_mode.id(),
         "op": op_id(o.select_op),
         "feather": o.sel_feather,
-        "wand": { "tolerance": o.wand_tolerance, "contiguous": o.wand_contiguous, "sample_all": o.wand_sample_all, "antialias": o.wand_antialias },
+        "wand": { "tolerance": o.wand_tolerance, "contiguous": o.wand_contiguous, "refer": o.area.wand_ref.id(), "sample_all": o.area.wand_ref == super::area_tools::WandRef::All, "gap": o.area.wand_gap, "scale": o.area.wand_scale, "antialias": o.wand_antialias },
+        "brush": o.area.sel_brush,
+        "magnet": o.area.sel_magnet,
         "move_auto_select": o.move_auto,
         "covered_px": ed.selection.as_ref().and_then(|s| s.mask.as_ref()).map(|m| m.cov.iter().filter(|&&v| v >= 0.5).count()),
         "outline_loops": ed.selection.as_ref().and_then(|s| s.mask.as_ref()).map(|m| m.outline.len()),

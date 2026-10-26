@@ -601,7 +601,17 @@ pub(crate) fn release(env: &mut Env, c: Vec2, scale: f32) {
         Some(Drag::NewBox { start, .. }) => {
             let Some(cut) = env.ed.active_cut(env.core) else { return };
             let d = c - start;
-            if d.length() * scale < 6.0 {
+            if env.ed.opts.area.text_circle {
+                // Texto circular (S25): o arrasto dá o centro e o raio; o texto corre por fora do círculo no sentido
+                // horário a partir do topo (o caminho do texto em caminho, `WarpStyle::Path`). Clique sem arrasto: raio
+                // de 120 px.
+                let r = if d.length() * scale < 6.0 { 120.0 } else { d.length() };
+                begin_new(env, cut, Vec2::new(start.x, start.y - r), None);
+                if let Some(s) = env.ed.text.session.as_mut() {
+                    s.params.warp = Some(circle_warp(start, r));
+                    s.params.align = tl::TextAlign::Left;
+                }
+            } else if d.length() * scale < 6.0 {
                 begin_new(env, cut, start, None);
             } else {
                 let (x0, y0) = (start.x.min(c.x), start.y.min(c.y));
@@ -612,6 +622,18 @@ pub(crate) fn release(env: &mut Env, c: Vec2, scale: f32) {
         Some(Drag::Move { .. }) => finish(env),
         None => {}
     }
+}
+
+/// Caminho do texto circular: círculo de centro `c` e raio `r` (px do canvas), do topo no sentido horário, fechado.
+pub(crate) fn circle_warp(c: Vec2, r: f32) -> tl::TextWarp {
+    let n = 128;
+    let pts: Vec<[f32; 2]> = (0..=n)
+        .map(|k| {
+            let a = k as f32 / n as f32 * std::f32::consts::TAU;
+            [c.x + r * a.sin(), c.y - r * a.cos()]
+        })
+        .collect();
+    tl::TextWarp { style: tl::WarpStyle::Path, bend: 0.0, distort: 0.0, path: Some(pts), path_offset: 0.0 }
 }
 
 fn is_line_axis_swapped(s: &Session) -> bool {
@@ -800,9 +822,16 @@ pub(crate) fn paint(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeI
     let accent = env.t.accent;
     let ctx = painter.ctx().clone();
     if let Some(Drag::NewBox { start, cur }) = &env.ed.text.drag {
-        let r = egui::Rect::from_two_pos(xf.to_screen(*start), xf.to_screen(*cur));
-        painter.rect_filled(r, 0.0, accent.gamma_multiply(0.10));
-        painter.add(Shape::dashed_line(&[r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()], Stroke::new(1.0, accent), 5.0, 4.0));
+        if env.ed.opts.area.text_circle {
+            // texto circular: o círculo do centro até o cursor
+            let rad = (*cur - *start).length() * xf.scale;
+            painter.circle(xf.to_screen(*start), rad, accent.gamma_multiply(0.10), Stroke::new(1.0, accent));
+            painter.circle_filled(xf.to_screen(*start), 2.5, accent);
+        } else {
+            let r = egui::Rect::from_two_pos(xf.to_screen(*start), xf.to_screen(*cur));
+            painter.rect_filled(r, 0.0, accent.gamma_multiply(0.10));
+            painter.add(Shape::dashed_line(&[r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()], Stroke::new(1.0, accent), 5.0, 4.0));
+        }
     }
     let frame_no = env.ed.frame;
     // texto sob o mouse (ferramenta Texto, sem edição): contorno fino

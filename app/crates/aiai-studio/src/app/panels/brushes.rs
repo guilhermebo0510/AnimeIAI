@@ -46,6 +46,8 @@ enum Thumb {
     Select(SelTool),
     Points(PointsMode),
     Fix(crate::app::line_fix::FixTool),
+    /// Sub-ferramentas novas da varinha, do conta-gotas e da mão/mover (S25): desenhadas em `area_tools`.
+    Area(crate::app::area_tools::AreaThumb),
     Icon(ToolId),
 }
 
@@ -81,6 +83,11 @@ fn thumb_of(env: &Env, s: &Sub) -> Thumb {
         Sub::EraserBrush => Thumb::Brush(env.ed.opts.brush_preset),
         Sub::EraserVector(m) => Thumb::Erase(*m),
         Sub::Fill(i) => Thumb::Fill(*i),
+        Sub::Wand(w) => Thumb::Area(crate::app::area_tools::AreaThumb::Wand(*w)),
+        Sub::Eyedrop(l) => Thumb::Area(crate::app::area_tools::AreaThumb::Eyedrop(*l)),
+        Sub::RotateView => Thumb::Area(crate::app::area_tools::AreaThumb::Rotate),
+        Sub::PickLayer => Thumb::Area(crate::app::area_tools::AreaThumb::PickLayer),
+        Sub::TextCircle => Thumb::Area(crate::app::area_tools::AreaThumb::TextCircle),
         Sub::Select(m) => Thumb::Select(*m),
         Sub::Points(m) => Thumb::Points(*m),
         Sub::Fix(f) => Thumb::Fix(*f),
@@ -557,25 +564,9 @@ fn paint_thumb(env: &mut Env, p: &egui::Painter, cell: Rect, th: Thumb) {
             }
             p.circle_stroke(cut, r.height() * 0.32, Stroke::new(1.0, t.accent));
         }
-        Thumb::Fill(i) => {
-            // contorno (com fresta no "fechar frestas largas"); o balde enche ou não conforme o jeito
-            let rr = Rect::from_min_max(at(0.18, 0.15), at(0.82, 0.85));
-            if i != 2 {
-                p.rect_filled(rr.shrink(2.0), 2.0, t.accent.gamma_multiply(0.55));
-            }
-            if i == 1 {
-                p.line_segment([rr.left_top(), rr.right_top()], ink);
-                p.line_segment([rr.right_top(), rr.right_bottom()], ink);
-                p.line_segment([rr.left_top(), rr.left_bottom()], ink);
-                p.line_segment([rr.left_bottom(), rr.left_bottom() + Vec2::new(rr.width() * 0.35, 0.0)], ink);
-                p.line_segment([rr.right_bottom(), rr.right_bottom() - Vec2::new(rr.width() * 0.35, 0.0)], ink);
-            } else {
-                p.rect_stroke(rr, 2.0, ink, StrokeKind::Inside);
-            }
-            if i == 3 {
-                p.circle_filled(at(0.7, 0.32), 3.0, t.text);
-            }
-        }
+        // jeitos do balde (outras camadas, só a camada, cercar e preencher, área não preenchida)
+        Thumb::Fill(i) => crate::app::area_tools::paint_fill_thumb(p, r, i, &t),
+        Thumb::Area(a) => crate::app::area_tools::paint_thumb(env, p, r, a),
         Thumb::Select(m) => {
             let dash = Stroke::new(1.2, t.text);
             match m {
@@ -616,6 +607,8 @@ fn paint_thumb(env: &mut Env, p: &egui::Painter, cell: Rect, th: Thumb) {
                         p.line_segment([c, c + Vec2::new(a.cos(), a.sin()) * 6.0], Stroke::new(1.2, t.accent));
                     }
                 }
+                // caneta/borracha de seleção, encolher, laço magnético (S25)
+                other => crate::app::area_tools::paint_select_thumb(p, r, other, &t),
             }
         }
         Thumb::Points(m) => {
