@@ -306,9 +306,11 @@ pub(crate) enum SelMode {
 pub(crate) enum PenShape {
     #[default]
     Freehand,
-    /// Curva contínua: um clique por ponto, spline suave pelos pontos.
     Line,
+    /// Curva contínua: um clique por ponto, spline suave pelos pontos.
     Curve,
+    Rect,
+    Ellipse,
     /// Curva de dois passos: arrasta a reta, depois puxa a curva até o clique.
     TwoStepCurve,
     /// Polilinha: um clique por ponto, lados retos.
@@ -323,8 +325,6 @@ pub(crate) enum PenShape {
     SpeedLines,
     /// Linhas de foco: o arrasto dá o centro e a área livre.
     FocusLines,
-    Rect,
-    Ellipse,
 }
 
 /// Seleção atual (em pixels do desenho) e o deslocamento ainda não aplicado (Enter aplica, Esc cancela).
@@ -660,12 +660,6 @@ pub(crate) enum Gesture {
     /// Corrigir linha (puxar, pincéis de correção, redesenhar, poeira): o gesto mora em `line_fix`.
     LineFix(Box<super::line_fix::FixGesture>),
     /// Caneta em forma de régua (linha, retângulo, elipse): do ponto de partida até o cursor.
-    /// Figura em vários passos (curva de dois passos, Bézier, laço de preenchimento): o estado fica em `figure.live`.
-    Figure,
-    /// Degradê: arrasto de `start` até `cur`; `handle` = arrastando a ponta 0/1 da camada de degradê ativa.
-    GradDrag { start: Vec2, cur: Vec2, handle: Option<u8> },
-    /// Degradê livre: arrastando o ponto `idx`.
-    GradFree { idx: usize },
     Shape { start: Vec2, cur: Vec2 },
     /// Caneta em curva por cliques: cada clique põe um ponto; Enter, duplo clique ou botão direito termina.
     /// `line` = linha encadeada (polilinha; forma Linha começada com um clique sem arrasto).
@@ -682,6 +676,12 @@ pub(crate) enum Gesture {
     RulerDrag { layer: NodeId, orig: Box<aiai_tools::ruler::Ruler>, handle: aiai_tools::ruler::Handle, start: Vec2 },
     /// Régua: arrasto no vazio que cria uma régua do tipo escolhido.
     RulerCreate { start: Vec2, cur: Vec2 },
+    /// Figura em vários passos (curva de dois passos, Bézier, laço de preenchimento): o estado fica em `figure.live`.
+    Figure,
+    /// Degradê: arrasto de `start` até `cur`; `handle` = arrastando a ponta 0/1 da camada de degradê ativa.
+    GradDrag { start: Vec2, cur: Vec2, handle: Option<u8> },
+    /// Degradê livre: arrastando o ponto `idx`.
+    GradFree { idx: usize },
 }
 
 /// Formas "fantasma": o que o gesto acabou de fazer, mostrado no overlay até o render novo chegar.
@@ -880,10 +880,6 @@ pub(crate) struct Editor {
     /// Workspace Entrega: preset, pedido e fila de exportação (uma por vez, em segundo plano).
     pub deliver: super::panels::deliver::DeliverState,
     /// Workspace Áudio: clipe selecionado, monitor do corte, durações dos WAV, última medição de loudness.
-    /// Figura (S25): opções e a forma em vários passos em andamento.
-    pub figure: super::figure::FigureState,
-    /// Ferramenta Degradê (S25): degradê escolhido, opções e os pontos do degradê livre.
-    pub grad_tool: super::gradient_tool::GradTool,
     pub audio: super::panels::audio::AudioState,
     /// Workspace Áudio (S24): forma de onda, rack, medidores, multipista, voz sintética e a reprodução deles.
     pub audio_ws: super::panels::audio_ws::AudioWsState,
@@ -892,8 +888,6 @@ pub(crate) struct Editor {
     /// Pedido de troca de workspace feito por um painel (o app atende no fim do quadro).
     pub want_workspace: Option<crate::workspace::WorkspaceId>,
     /// Corte de desenho aberto a partir de um painel do storyboard: o canvas mostra "Voltar ao storyboard".
-            figure: Default::default(),
-            grad_tool: Default::default(),
     pub back_to_board: Option<NodeId>,
     /// Animação: mesa de luz, densidade da linha do tempo, cels-chave destravados no douga, Cena e Referências.
     pub anim: super::anim::AnimState,
@@ -908,6 +902,10 @@ pub(crate) struct Editor {
     /// Lado direito e topo das áreas de desenho (S25): barra de materiais, espelho vertical do Navegador, miniaturas
     /// das camadas, borda da seleção, janela Filtro.
     pub workbar: super::workbar::WorkbarState,
+    /// Figura (S25): opções e a forma em vários passos em andamento.
+    pub figure: super::figure::FigureState,
+    /// Ferramenta Degradê (S25): degradê escolhido, opções e os pontos do degradê livre.
+    pub grad_tool: super::gradient_tool::GradTool,
 }
 
 impl Default for Editor {
@@ -920,6 +918,8 @@ impl Default for Editor {
             modeling: Default::default(),
             comp: Default::default(),
             workbar: Default::default(),
+            figure: Default::default(),
+            grad_tool: Default::default(),
             live_stroke: Default::default(),
             move_live: Default::default(),
             text: Default::default(),

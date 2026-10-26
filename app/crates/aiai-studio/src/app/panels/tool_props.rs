@@ -106,10 +106,10 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
                 let _ = s;
                 brush_rows(env, ui, &sub);
             }
+            (ToolId::Eraser, _) => eraser_rows(env, ui, &sub),
             // Figura (formas e linhas) e Degradê: as opções moram nos módulos deles
             (ToolId::Pen, Some(Sub::PenShape(m))) if *m != crate::app::editor::PenShape::Freehand => crate::app::figure::prop_rows(env, ui, *m),
             (ToolId::Gradient, _) => crate::app::gradient_tool::prop_rows(env, ui),
-            (ToolId::Eraser, _) => eraser_rows(env, ui, &sub),
             (ToolId::Pen, _) => pen_rows(env, ui),
             (ToolId::Points, Some(Sub::Fix(_))) => crate::app::line_fix::options(env, ui, false),
             _ => super::properties::tool_options_panel(env, ui),

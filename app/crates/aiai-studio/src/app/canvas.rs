@@ -445,11 +445,11 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
                 let _ = modifiers;
                 let xf = env.ed.view.xf(rect, ppp);
                 super::pen::press(env, xf.to_canvas(*pos), xf.scale, *button);
+            }
             // Figura em vários passos (curva de dois passos, Bézier): o clique continua a forma aberta
             Event::PointerButton { pos, button, pressed: true, .. } if matches!(env.ed.gesture, Gesture::Figure) && over_canvas(ui, rect, *pos) => {
                 let xf = env.ed.view.xf(rect, ppp);
                 super::figure::press_open(env, xf.to_canvas(*pos), xf.scale, *button);
-            }
             }
             Event::PointerButton { pos, button, pressed: true, modifiers } => {
                 if matches!(env.ed.gesture, Gesture::None) && over_canvas(ui, rect, *pos) {
@@ -692,11 +692,11 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
     if env.ed.comp.drag.is_some() {
         let mods = egui::Modifiers { shift: env.ed.shift, alt: env.ed.alt, ..Default::default() };
         let ctrl = env.ed.comp.ctrl;
-    // Figura em vários passos e Degradê
-    if super::figure::moved(env, c) || super::gradient_tool::moved(env, c) {
+        super::comp_viewer::drag(env, &xf, pos, egui::Modifiers { ctrl, command: ctrl, ..mods });
         return;
     }
-        super::comp_viewer::drag(env, &xf, pos, egui::Modifiers { ctrl, command: ctrl, ..mods });
+    // Figura em vários passos e Degradê
+    if super::figure::moved(env, c) || super::gradient_tool::moved(env, c) {
         return;
     }
     match &mut env.ed.gesture {
@@ -752,7 +752,6 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
         Gesture::RotateSel { start_angle, start_rot } => {
             if let Some(s) = env.ed.selection.as_mut() {
                 let d = c - (s.center() + s.offset);
-        Gesture::Figure | Gesture::GradDrag { .. } | Gesture::GradFree { .. } => {}
                 s.rotate = *start_rot + d.y.atan2(d.x).to_degrees() - *start_angle;
             }
         }
@@ -760,6 +759,7 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
         Gesture::FillClick => {}
         Gesture::RulerDrag { .. } => super::rulers::drag_move(env, c),
         Gesture::RulerCreate { .. } => super::rulers::create_move(env, c),
+        Gesture::Figure | Gesture::GradDrag { .. } | Gesture::GradFree { .. } => {}
     }
 }
 
@@ -1234,7 +1234,6 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
         if let Some(cd) = cmds::cut_data(&env.core.project, cut).cloned() {
             paint_camera(env, painter, xf, &cd, canvas);
         }
-    super::gradient_tool::paint(env, painter, xf, cut);
     }
 
     // réguas da camada de guia (só visão) e, com a ferramenta Régua, as alças
@@ -1242,6 +1241,7 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
     super::model3d::paint(env, painter, rect, xf, cut);
     paint_selection(env, painter, xf, cut);
     paint_gestures(env, painter, xf, cut);
+    super::gradient_tool::paint(env, painter, xf, cut);
     super::text_tool::paint(env, painter, xf, cut);
     if comp_ws {
         super::comp_viewer::paint_overlay(env, painter, rect, xf, cut, canvas);
@@ -1555,7 +1555,6 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
                 _ => {
                     // sem prévia ao vivo para esta camada: os traços vetoriais que a borracha apagaria agora
                     if let Some(cel) = cmds::exposed_cel(&env.core.project, cut, &g.layer, env.ed.frame).and_then(|c| cmds::cel_data(&env.core.project, &c)) {
-        // prévia da forma da Figura (com as opções: do centro, proporção, preenchimento) e das linhas
                         for s in cel.strokes.iter().filter(|s| g.hits.contains(&s.id)) {
                             let sp: Vec<Vec2> = aiai_paint::sample_stroke(s).iter().map(|q| g.to_canvas(Vec2::new(q.x, q.y))).collect();
                             polyline(painter, &sp, s.width.max(2.0), env.t.danger.gamma_multiply(0.8), xf);
@@ -1564,11 +1563,12 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
                 }
             }
         }
-        Gesture::Figure => super::figure::paint_live(env, painter, xf),
+        // prévia da forma da Figura (com as opções: do centro, proporção, preenchimento) e das linhas
         Gesture::Shape { start, cur } => {
             let (start, cur) = (*start, *cur);
             super::figure::paint_shape(env, painter, xf, start, cur);
         }
+        Gesture::Figure => super::figure::paint_live(env, painter, xf),
         // prévia da curva/linha por cliques (próximo trecho até o cursor, fechar no primeiro ponto)
         Gesture::PolyCurve { .. } => super::pen::paint(env, painter, xf),
         _ => {}

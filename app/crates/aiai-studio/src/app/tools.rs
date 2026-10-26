@@ -317,6 +317,8 @@ pub(crate) fn shape_points(shape: PenShape, a: Vec2, b: Vec2, shift: bool) -> (V
 
 /// Grava um traço de forma (pontos no canvas) na camada vetorial ativa com a ponta/largura/cor da caneta; os pontos
 /// vão para o espaço do cel (camada com movimento) como os da mão livre.
+/// (S25: o app grava as formas pela Figura, `figure::commit`; esta fica para os testes da caneta com régua.)
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn commit_vector_shape(env: &mut Env, pts: Vec<Vec2>, geometry: StrokeGeometry, closed: bool) {
     let released_at = Instant::now();
     if pts.len() < 2 || pts.windows(2).all(|w| (w[1] - w[0]).length() < 0.5) {
@@ -903,10 +905,10 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
     use crate::keymap::Action as A;
     use egui::{Key, Modifiers};
     // curva/linha por cliques: Enter termina, Esc/Backspace tiram o último ponto (antes dos atalhos gerais)
+    super::pen::shortcuts(ctx, env);
     // Figura em vários passos (Bézier, curva de dois passos) e degradê livre: Enter/Esc/Backspace/Delete deles
     super::figure::shortcuts(ctx, env);
     super::gradient_tool::shortcuts(ctx, env);
-    super::pen::shortcuts(ctx, env);
     let none = Modifiers::NONE;
     let keys = env.ed.keys.clone();
     // Editar pontos com um ponto escolhido: Delete apaga, . e , passam de ponto, C alterna canto/suave,

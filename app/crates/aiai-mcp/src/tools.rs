@@ -288,11 +288,6 @@ Só grava em pastas permitidas (AIAI_MCP_ALLOWED_DIRS; padrão producoes/, calib
             "inputSchema": paint_schema()
         },
         {
-            "name": "aiai_figure",
-            "description": FIGURE_DESC,
-            "inputSchema": schema_of::<aiai_tools::figure::FigureRequest>()
-        },
-        {
             "name": "aiai_gradient",
             "description": GRADIENT_DESC,
             "inputSchema": schema_of::<aiai_tools::paint::GradientRequest>()
@@ -301,6 +296,11 @@ Só grava em pastas permitidas (AIAI_MCP_ALLOWED_DIRS; padrão producoes/, calib
             "name": "aiai_transform",
             "description": TRANSFORM_DESC,
             "inputSchema": schema_of::<aiai_tools::transform::TransformRequest>()
+        },
+        {
+            "name": "aiai_figure",
+            "description": FIGURE_DESC,
+            "inputSchema": schema_of::<aiai_tools::figure::FigureRequest>()
         },
         {
             "name": "aiai_erase",
@@ -480,10 +480,6 @@ pub fn plan(name: &str, args: &Value) -> Result<Plan, ToolError> {
         }
         "aiai_lint" => {
             required(&m, &["cut", "layer"])?;
-        "aiai_figure" => {
-            required(&m, &["cut", "layer", "shape", "color"])?;
-            simple("FIGURE", with_frame(m))
-        }
             simple("LINT", Value::Object(m))
         }
         "aiai_paint" => {
@@ -493,6 +489,10 @@ pub fn plan(name: &str, args: &Value) -> Result<Plan, ToolError> {
         "aiai_gradient" => {
             required(&m, &["cut", "layer"])?;
             simple("GRADIENT", with_frame(m))
+        }
+        "aiai_figure" => {
+            required(&m, &["cut", "layer", "shape", "color"])?;
+            simple("FIGURE", with_frame(m))
         }
         "aiai_transform" => {
             required(&m, &["cut", "layer", "deform"])?;

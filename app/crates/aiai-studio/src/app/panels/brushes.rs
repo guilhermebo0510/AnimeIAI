@@ -84,9 +84,9 @@ fn thumb_of(env: &Env, s: &Sub) -> Thumb {
         Sub::Select(m) => Thumb::Select(*m),
         Sub::Points(m) => Thumb::Points(*m),
         Sub::Fix(f) => Thumb::Fix(*f),
+        Sub::Ruler(_) => Thumb::Icon(ToolId::Ruler),
         // degradês: a faixa é desenhada por `gradient_tool::paint_thumb` (ver a lista)
         Sub::Gradient(_) => Thumb::Icon(ToolId::Gradient),
-        Sub::Ruler(_) => Thumb::Icon(ToolId::Ruler),
         Sub::Engine(t) => Thumb::Icon(*t),
     }
 }
@@ -530,14 +530,14 @@ fn paint_thumb(env: &mut Env, p: &egui::Painter, cell: Rect, th: Thumb) {
                     p.rect_filled(Rect::from_center_size(at(fx, fy), egui::vec2(4.0, 4.0)), 0.0, t.accent);
                 }
             }
-            // as outras formas da Figura (S25)
-            other => crate::app::figure::paint_thumb(env, p, r, other),
             PenShape::Rect => {
                 p.rect_stroke(Rect::from_min_max(at(0.25, 0.18), at(0.75, 0.82)), 0.0, ink, StrokeKind::Inside);
             }
             PenShape::Ellipse => {
                 p.add(egui::Shape::line(ellipse(r.center()), ink));
             }
+            // as outras formas da Figura (S25)
+            other => crate::app::figure::paint_thumb(env, p, r, other),
         },
         Thumb::Erase(m) => {
             // dois traços que se cruzam; o círculo é a borracha e some o que o modo apaga

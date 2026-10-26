@@ -497,13 +497,24 @@ fn extend_key(e: GradientExtend) -> &'static str {
 pub(crate) fn prop_rows(env: &mut Env, ui: &mut Ui) {
     let t = env.t;
     let free = env.ed.grad_tool.pick == GradPick::Freeform;
+    // onde criar (o mais usado vem primeiro: o painel é baixo)
+    ui.horizontal_wrapped(|ui| {
+        ui.label(egui::RichText::new(tr("grad.tool.where")).size(12.0));
+        for (v, key, note) in [(false, "grad.tool.where.edit", "grad:tool:where:edit"), (true, if free { "grad.tool.where.new_raster" } else { "grad.tool.where.layer" }, "grad:tool:where:layer")] {
+            let r = ui.selectable_label(env.ed.grad_tool.editable == v, tr(key));
+            env.note(note, r.rect);
+            if r.clicked() {
+                env.ed.grad_tool.editable = v;
+            }
+        }
+    });
     // amostra do degradê em uso
     if !free {
         if let Some(g) = current(env) {
             let r = super::panels::gradient_edit::swatch(env, ui, &g, egui::vec2(ui.available_width().min(240.0), 16.0), false);
             env.note("grad:tool:swatch", r.rect);
         }
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             for s in [GradientShape::Linear, GradientShape::Radial, GradientShape::Angular, GradientShape::Diamond] {
                 let r = ui.selectable_label(env.ed.grad_tool.shape == s, tr(shape_key(s)));
                 env.note(format!("grad:tool:shape:{}", shape_key(s)), r.rect);
@@ -542,16 +553,6 @@ pub(crate) fn prop_rows(env: &mut Env, ui: &mut Ui) {
                 ui.selectable_value(&mut o.blend, b, tr(cmds::blend_key(b)));
             }
         });
-    });
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(tr("grad.tool.where")).size(12.0));
-        let o = &mut env.ed.grad_tool;
-        let cur = if o.editable { "grad.tool.where.layer" } else { "grad.tool.where.edit" };
-        let r = egui::ComboBox::from_id_salt("grad_tool_where").selected_text(tr(cur)).show_ui(ui, |ui| {
-            ui.selectable_value(&mut o.editable, false, tr("grad.tool.where.edit"));
-            ui.selectable_value(&mut o.editable, true, tr(if free { "grad.tool.where.new_raster" } else { "grad.tool.where.layer" }));
-        });
-        env.note("grad:tool:where", r.response.rect);
     });
     if free {
         let n = env.ed.grad_tool.free.len();

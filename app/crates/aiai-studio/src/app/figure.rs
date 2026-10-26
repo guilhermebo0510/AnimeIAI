@@ -479,7 +479,9 @@ pub(crate) fn commit_lines(env: &mut Env, a: Vec2, b: Vec2, focus: bool) {
     let Some(cut) = env.ed.active_cut(env.core) else { return env.ed.notify(tr("err.no_cut")) };
     let mut req = lines_request(env, &cut, a, b, focus);
     let active = env.ed.active_layer(env.core);
-    let lines_layer = active.clone().filter(|l| cmds::layer_data(&env.core.project, l).is_some_and(|d| d.kind == LayerType::Vector && lines_params(d).is_some()));
+    // só refaz uma camada de linhas do MESMO tipo (foco não vira velocidade: a outra ganha camada própria)
+    let same_kind = |d: &LayerData| lines_params(d).is_some_and(|r| matches!(r.kind, LinesKind::Focus { .. }) == focus);
+    let lines_layer = active.clone().filter(|l| cmds::layer_data(&env.core.project, l).is_some_and(|d| d.kind == LayerType::Vector && same_kind(d)));
     if let Some(layer) = lines_layer {
         if cmds::layer_data(&env.core.project, &layer).is_some_and(|l| l.locked) {
             return env.ed.notify(tr("err.layer_locked"));
@@ -683,7 +685,7 @@ pub(crate) fn prop_rows(env: &mut Env, ui: &mut Ui, shape: PenShape) {
         });
     }
     if can_fill(shape) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             small(ui, env, "fig.opt.mode");
             for (m, key) in [(FigureMode::Line, "fig.mode.line"), (FigureMode::Fill, "fig.mode.fill"), (FigureMode::LineFill, "fig.mode.line_fill")] {
                 let on = env.ed.figure.opts.mode == m;
@@ -754,8 +756,9 @@ pub(crate) fn prop_rows(env: &mut Env, ui: &mut Ui, shape: PenShape) {
         _ => "fig.hint.drag",
     };
     // camada de linhas ativa: o arrasto refaz as linhas dela
+    let focus = shape == PenShape::FocusLines;
     let lines_active = lines
-        && env.ed.layer.as_ref().and_then(|l| cmds::layer_data(&env.core.project, l)).is_some_and(|d| d.params.get(LINES_PARAM).is_some());
+        && env.ed.layer.as_ref().and_then(|l| cmds::layer_data(&env.core.project, l)).is_some_and(|d| d.params.get(LINES_PARAM).is_some() && lines_params(d).is_some_and(|r| matches!(r.kind, LinesKind::Focus { .. }) == focus));
     ui.label(egui::RichText::new(tr(if lines_active { "fig.hint.lines_redo" } else { hint })).size(11.5).color(env.t.text_dim));
 }
 
@@ -990,6 +993,12 @@ mod tests {
         assert_eq!(d.cel(&layer).strokes.len(), 12);
         d.core.undo().unwrap();
         assert_eq!(d.cel(&layer).strokes.len(), 30, "um passo de desfazer");
+        // linhas de velocidade com a de foco ativa: camada nova (a de foco fica)
+        d.ed.opts.pen_shape = PenShape::SpeedLines;
+        let mut env = d.env();
+        release_shape(&mut env, Vec2::new(50.0, 50.0), Vec2::new(250.0, 60.0), 1.0);
+        assert_eq!(cmds::layer_rows(&d.core.project, &d.cut).len(), n0 + 2);
+        assert_eq!(d.cel(&layer).strokes.len(), 30, "a camada de foco não foi trocada");
     }
 
     #[test]

@@ -322,8 +322,8 @@ impl Sub {
             Sub::Select(_) => ToolId::Lasso,
             Sub::Points(_) | Sub::Fix(_) => ToolId::Points,
             Sub::Ruler(_) => ToolId::Ruler,
-            Sub::Engine(t) => *t,
             Sub::Gradient(_) => ToolId::Gradient,
+            Sub::Engine(t) => *t,
         }
     }
 
@@ -421,14 +421,14 @@ fn explicit_group(p: &BrushPreset) -> Option<&'static str> {
     GROUPS.iter().find(|g| **g == p.group).copied()
 }
     // degradês guardados nas paletas do projeto entram como prontos
-    if slot == Slot::Gradient && t.key == "gradient" && p.allows(ToolId::Gradient) {
-        v.extend(super::gradient_tool::palette_picks(env).into_iter().map(Sub::Gradient));
     }
 
 /// Sub-ferramentas de uma aba neste workspace: as fixas cuja ferramenta do motor vale no perfil e os pincéis do grupo.
 pub(crate) fn subs(env: &Env, slot: Slot, t: &Tab) -> Vec<Sub> {
     let p = env.ws.profile();
     let mut v: Vec<Sub> = fixed_subs(slot, t.key).into_iter().filter(|s| p.allows(s.engine())).collect();
+    if slot == Slot::Gradient && t.key == "gradient" && p.allows(ToolId::Gradient) {
+        v.extend(super::gradient_tool::palette_picks(env).into_iter().map(Sub::Gradient));
     if let Some(g) = t.group {
         let eraser = slot == Slot::Eraser;
         if p.allows(if eraser { ToolId::Eraser } else { ToolId::Brush }) {
@@ -472,10 +472,10 @@ pub(crate) fn sub_label(env: &Env, s: &Sub) -> String {
         .to_owned(),
         Sub::Fill(i) => tr(FILLS[*i as usize % FILLS.len()].0).to_owned(),
         Sub::Select(m) => tr(m.label_key()).to_owned(),
-        Sub::Gradient(g) => super::gradient_tool::pick_label(env, g),
         Sub::Points(m) => tr(super::panels::properties::points_mode_key(*m)).to_owned(),
         Sub::Fix(f) => tr(f.label_key()).to_owned(),
         Sub::Ruler(k) => tr(k.key()).to_owned(),
+        Sub::Gradient(g) => super::gradient_tool::pick_label(env, g),
         Sub::Engine(t) => tr(t.title_key()).to_owned(),
     }
 }
@@ -500,11 +500,11 @@ pub(crate) fn is_current(env: &Env, s: &Sub) -> bool {
             let (_, gap, expand, left) = FILLS[*i as usize % FILLS.len()];
             (o.fill_gap - gap).abs() < 1e-3 && o.fill_expand == expand && o.fill_close_leftovers == left
         }
-        Sub::Gradient(g) => env.ed.grad_tool.pick == *g,
         Sub::Select(m) => o.select_mode == *m,
         Sub::Points(m) => o.points_mode == *m && o.fix.tool.is_none(),
         Sub::Fix(f) => o.fix.tool == Some(*f),
         Sub::Ruler(k) => env.ed.rulers.new_kind == *k,
+        Sub::Gradient(g) => env.ed.grad_tool.pick == *g,
         Sub::Engine(_) => true,
     }
 }
@@ -632,7 +632,6 @@ pub(crate) fn apply_sub(env: &mut Env, slot: Slot, s: &Sub) {
             let (_, gap, expand, left) = FILLS[*i as usize % FILLS.len()];
             let o = &mut env.ed.opts;
             (o.fill_gap, o.fill_expand, o.fill_close_leftovers) = (gap, expand, left);
-        Sub::Gradient(g) => env.ed.grad_tool.pick = g.clone(),
         }
         Sub::Select(m) => env.ed.opts.select_mode = *m,
         Sub::Points(m) => (env.ed.opts.points_mode, env.ed.opts.fix.tool) = (*m, None),
@@ -642,6 +641,7 @@ pub(crate) fn apply_sub(env: &mut Env, slot: Slot, s: &Sub) {
             (env.ed.node_stroke, env.ed.node_sel) = (None, None);
         }
         Sub::Ruler(k) => env.ed.rulers.new_kind = *k,
+        Sub::Gradient(g) => env.ed.grad_tool.pick = g.clone(),
         Sub::Engine(_) => {}
     }
     *env.tool = s.engine();
