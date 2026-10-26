@@ -98,7 +98,7 @@ impl MoveLive {
                 }
             }
         }
-        if let Some((c, _, t)) = self.hold {
+        if let Some((c, t)) = self.hold.as_ref().map(|h| (h.0, h.2)) {
             if shown_counter.is_some_and(|s| s >= c) || t.elapsed().as_secs_f32() > 5.0 {
                 self.hold = None;
             }

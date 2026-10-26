@@ -783,7 +783,29 @@ pub(crate) fn plan_move(env: &mut Env, sel: &Selection, cut: &NodeId, layer: &No
         }
         _ => None,
     };
+    // malha: a grade da caixa vai para os vértices arrastados, levada ao espaço do cel
+    let mesh = match sel.mesh_warp() {
+        Some(m) => {
+            let to_cel = |x: f32, y: f32| -> Result<[f32; 2], String> {
+                match &place {
+                    None => Ok([x, y]),
+                    Some(pl) => {
+                        let inv = pl.inverse().ok_or_else(|| tr("err.move_layer").to_owned())?;
+                        let (a, b) = inv.apply(x, y);
+                        Ok([a, b])
+                    }
+                }
+            };
+            let a = to_cel(m.rect[0], m.rect[1])?;
+            let b = to_cel(m.rect[0] + m.rect[2], m.rect[1] + m.rect[3])?;
+            let rect = [a[0].min(b[0]), a[1].min(b[1]), (b[0] - a[0]).abs(), (b[1] - a[1]).abs()];
+            let points = m.points.iter().map(|p| to_cel(p[0], p[1])).collect::<Result<Vec<_>, _>>()?;
+            Some(aiai_tools::transform::Deform::Mesh(aiai_paint::warp::MeshWarp { rect, cols: m.cols, rows: m.rows, points }))
+        }
+        None => None,
+    };
     let deform = match &place {
+        _ if mesh.is_some() => mesh.expect("malha"),
         _ if distort.is_some() => distort.expect("distorção"),
         None => {
             let c = sel.center();

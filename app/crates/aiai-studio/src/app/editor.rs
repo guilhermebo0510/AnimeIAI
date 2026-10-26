@@ -377,13 +377,26 @@ pub(crate) struct Selection {
     /// Distorção livre (Ctrl + canto do Mover, auditoria 2.17): para onde vão os quatro cantos da caixa (sup-esq,
     /// sup-dir, inf-dir, inf-esq), em px do canvas. Com ela, a transformação pendente é uma homografia.
     pub corners: Option<[Vec2; 4]>,
+    /// Malha (Mover > Malha, auditoria 2.17): grade regular sobre a caixa da seleção e para onde foi cada vértice
+    /// (px do canvas). Fica pendente entre os arrastos; Enter grava, Esc desfaz.
+    pub mesh: Option<SelMesh>,
 }
 
-/// Transformação pendente da seleção para a prévia ao vivo: afim (mover, escalar, girar) ou perspectiva (distorção).
-#[derive(Debug, Clone, Copy)]
+/// Grade da malha do Mover: `cols × rows` células; `pts` = (cols+1)×(rows+1) vértices deslocados, linha maior.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct SelMesh {
+    pub cols: u32,
+    pub rows: u32,
+    pub pts: Vec<Vec2>,
+}
+
+/// Transformação pendente da seleção para a prévia ao vivo: afim (mover, escalar, girar), perspectiva (distorção) ou
+/// malha.
+#[derive(Debug, Clone)]
 pub(crate) enum LiveXf {
     Affine(aiai_paint::Affine),
     Persp(aiai_paint::warp::Homography),
+    Mesh(std::sync::Arc<aiai_paint::warp::MeshWarp>),
 }
 
 impl LiveXf {
@@ -391,13 +404,14 @@ impl LiveXf {
         match self {
             LiveXf::Affine(a) => a.apply(x, y),
             LiveXf::Persp(h) => h.apply(x, y),
+            LiveXf::Mesh(m) => m.forward(x, y),
         }
     }
 }
 
 impl Selection {
     pub(crate) fn new(mode: SelMode, pts: Vec<Vec2>, whole: bool) -> Self {
-        Selection { mode, pts, offset: Vec2::ZERO, whole, scale: Vec2::splat(1.0), rotate: 0.0, mask: None, strokes: Vec::new(), strokes_layer: None, corners: None }
+        Selection { mode, pts, offset: Vec2::ZERO, whole, scale: Vec2::splat(1.0), rotate: 0.0, mask: None, strokes: Vec::new(), strokes_layer: None, corners: None, mesh: None }
     }
 
     /// Centro da caixa da seleção (pivô da escala e da rotação), antes do deslocamento.
@@ -432,8 +446,35 @@ impl Selection {
         aiai_paint::warp::Homography::from_quads(from.map(|p| [p.x, p.y]), to.map(|p| [p.x, p.y]))
     }
 
-    /// A transformação pendente: perspectiva quando há distorção, senão a afim.
+    /// Malha pendente no espaço do canvas (a caixa da seleção -> os vértices arrastados).
+    pub(crate) fn mesh_warp(&self) -> Option<aiai_paint::warp::MeshWarp> {
+        let m = self.mesh.as_ref()?;
+        let rect = self.rect_of()?;
+        Some(aiai_paint::warp::MeshWarp { rect, cols: m.cols, rows: m.rows, points: m.pts.iter().map(|p| [p.x, p.y]).collect() })
+    }
+
+    /// Liga a malha: grade `n × n` que começa da transformação que já estiver pendente.
+    pub(crate) fn start_mesh(&mut self, n: u32) {
+        let Some(r) = self.rect_of() else { return };
+        let n = n.clamp(1, 16);
+        let mut pts = Vec::new();
+        for j in 0..=n {
+            for i in 0..=n {
+                pts.push(self.map(Vec2::new(r[0] + r[2] * i as f32 / n as f32, r[1] + r[3] * j as f32 / n as f32)));
+            }
+        }
+        self.offset = Vec2::ZERO;
+        self.scale = Vec2::splat(1.0);
+        self.rotate = 0.0;
+        self.corners = None;
+        self.mesh = Some(SelMesh { cols: n, rows: n, pts });
+    }
+
+    /// A transformação pendente: malha, perspectiva quando há distorção, senão a afim.
     pub(crate) fn live_xf(&self) -> LiveXf {
+        if let Some(m) = self.mesh_warp() {
+            return LiveXf::Mesh(std::sync::Arc::new(m));
+        }
         match self.homography() {
             Some(h) => LiveXf::Persp(h),
             None => LiveXf::Affine(self.affine()),
@@ -441,7 +482,14 @@ impl Selection {
     }
 
     pub(crate) fn is_identity(&self) -> bool {
-        self.offset == Vec2::ZERO && self.plain_scale() && self.rotate.abs() < 1e-3 && self.corners.is_none()
+        self.offset == Vec2::ZERO && self.plain_scale() && self.rotate.abs() < 1e-3 && self.corners.is_none() && self.mesh_is_identity()
+    }
+
+    /// Sem malha, ou com a malha ainda na grade regular.
+    pub(crate) fn mesh_is_identity(&self) -> bool {
+        let (Some(m), Some(r)) = (&self.mesh, self.rect_of()) else { return true };
+        let id = aiai_paint::warp::MeshWarp::identity(r, m.cols, m.rows);
+        id.points.iter().zip(&m.pts).all(|(a, b)| (a[0] - b.x).abs() < 0.01 && (a[1] - b.y).abs() < 0.01)
     }
     pub(crate) fn rect_of(&self) -> Option<[f32; 4]> {
         if let Some(m) = &self.mask {
@@ -469,6 +517,9 @@ impl Selection {
 
     /// `p` (px do canvas, já com a transformação pendente) cai dentro da escolha?
     pub(crate) fn contains_mapped(&self, p: Vec2) -> bool {
+        if let Some(m) = self.mesh_warp() {
+            return m.inverse_point(p.x, p.y).is_some_and(|(x, y)| self.contains(Vec2::new(x, y)));
+        }
         if let Some(inv) = self.homography().and_then(|h| h.inverse()) {
             let (x, y) = inv.apply(p.x, p.y);
             return self.contains(Vec2::new(x, y));
@@ -501,8 +552,9 @@ impl Selection {
     /// Aplica a transformação pendente às coordenadas (depois de um Enter). Com escala/rotação, retângulo, elipse e
     /// varinha viram laço (o contorno transformado).
     pub(crate) fn bake_offset(&mut self) {
-        // depois de uma distorção a seleção vira a caixa dos cantos novos
-        if let Some(c) = self.corners.take() {
+        // depois de uma distorção (ou malha) a seleção vira a caixa dos cantos (vértices) novos
+        let moved = self.corners.take().map(|c| c.to_vec()).or_else(|| self.mesh.take().map(|m| m.pts));
+        if let Some(c) = moved {
             let (x0, y0) = c.iter().fold((f32::MAX, f32::MAX), |(a, b), p| (a.min(p.x), b.min(p.y)));
             let (x1, y1) = c.iter().fold((f32::MIN, f32::MIN), |(a, b), p| (a.max(p.x), b.max(p.y)));
             self.mode = SelMode::Rect;
@@ -630,6 +682,8 @@ pub(crate) struct ToolOptions {
     /// Mover com "Seleção automática" (como o Photoshop; desligado por padrão): o clique num traço da camada vetorial
     /// escolhe esse traço antes de arrastar.
     pub move_auto: bool,
+    /// Células da malha do Mover (por lado).
+    pub mesh_cells: u32,
     /// Transformação: cantos mantêm a proporção (Shift libera), como o Photoshop atual; desligado = livre (Shift trava).
     pub keep_aspect: bool,
     /// Tolerância da varinha (0..255, diferença máxima por canal).
@@ -677,6 +731,7 @@ impl Default for ToolOptions {
             points_mode: PointsMode::Move,
             fix: Default::default(),
             move_auto: false,
+            mesh_cells: 3,
             keep_aspect: false,
             wand_tolerance: 32.0,
             wand_contiguous: true,
@@ -752,6 +807,8 @@ pub(crate) enum Gesture {
     ScaleSel { handle: usize, start_scale: Vec2, start_offset: Vec2, start_rotate: f32 },
     /// Ctrl + canto do Mover: distorção livre (o canto vai sozinho para o cursor).
     DistortSel { corner: usize },
+    /// Vértice da malha do Mover.
+    MeshSel { vertex: usize },
     /// Alça de rotação do Mover.
     RotateSel { start_angle: f32, start_rot: f32 },
     /// Conta-gotas: amostra ao apertar e enquanto arrasta.

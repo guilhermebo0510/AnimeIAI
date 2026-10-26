@@ -742,6 +742,22 @@ fn editor_script2(c: &Client) {
     c.drag_canvas(&[(30.0, 150.0), (60.0, 150.0), (90.0, 150.0)], false);
     c.wait_canvas(n);
     assert!(c.render_px(&cut1, 0, 60, 150)[3] > 0, "pintou no raster");
+    // conta-gotas (auditoria 2.18): cor da paleta ativa volta como a cor DA PALETA; outra cor, direta
+    c.ok("UI_ACTION", json!({"action": "set_color", "color": "#336699"}));
+    let n = c.latency_count();
+    c.drag_canvas(&[(200.0, 150.0), (215.0, 150.0), (230.0, 150.0)], false);
+    c.wait_canvas(n);
+    c.ok("UI_ACTION", json!({"action": "set_color", "color": "#00ff00"}));
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "eyedropper"}));
+    c.click_canvas(215.0, 150.0);
+    let st = c.state();
+    assert_eq!(st["editor"]["color_ref"]["palette"].as_str(), Some(pal.as_str()), "o conta-gotas pegou a cor da paleta: {}", st["editor"]["color_ref"]);
+    assert_eq!(st["editor"]["color"], "#336699ff");
+    c.click_canvas(60.0, 150.0);
+    let st = c.state();
+    assert_eq!(st["editor"]["color_ref"], "direct", "vermelho não está na paleta");
+    assert_eq!(st["editor"]["color"], "#ff0000ff");
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "brush"}));
     c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "eraser"}));
     let n = c.latency_count();
     c.drag_canvas(&[(60.0, 140.0), (60.0, 160.0)], false);
@@ -1145,6 +1161,47 @@ fn lint_and_pen_selection_script(c: &Client) {
     let sel = c.state()["editor"]["selection"].clone();
     let rect: Vec<f64> = sel["rect"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
     assert!((rect[0] + rect[2] - 230.0).abs() < 2.0 && (rect[1] + rect[3] - 170.0).abs() < 2.0, "a seleção virou a caixa dos cantos novos: {rect:?}");
+    // Malha (auditoria 2.17): numa camada com uma barra em y = 90, grade 2x2 sobre a seleção; o vértice do meio desce
+    // 30 px e só grava no Enter
+    c.input(json!([{"kind": "key", "key": "Escape"}, {"kind": "wait", "frames": 2}]));
+    let q = mk("Malha", Some(&cut), json!({"type": "layer", "kind": "raster"}));
+    mk("c1", Some(&q), json!({"type": "cel", "number": 1}));
+    c.ok("PAINT", json!({"cut": cut, "frame": 0, "layer": q, "preset": "redondo duro", "preset_overrides": {"size": 10}, "color": {"type": "direct", "rgba": [0.0, 0.0, 0.0, 1.0]},
+        "strokes": [{"points": [[70, 90], [150, 90]]}]}));
+    let px = |x: u32, y: u32| {
+        use base64::Engine as _;
+        let r = c.ok("RENDER", json!({"cut": cut, "frame": 0, "layers": [q], "inline": true}));
+        let png = base64::engine::general_purpose::STANDARD.decode(r["png_base64"].as_str().unwrap()).unwrap();
+        image::load_from_memory(&png).unwrap().to_rgba8().get_pixel(x, y).0
+    };
+    c.ok("UI_ACTION", json!({"action": "select_layer", "layer": q}));
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "select", "mode": "rect"}));
+    c.drag_canvas(&[(60.0, 40.0), (160.0, 140.0)], false);
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "move"}));
+    c.input(json!([{"kind": "wait", "frames": 2}]));
+    assert!(px(110, 90)[3] > 200 && px(110, 120)[3] < 10, "antes: barra em y 90");
+    c.click_widget("opt:move_mesh_cells");
+    c.input(json!([{"kind": "key", "key": "A", "modifiers": ["ctrl"]}, {"kind": "text", "text": "2"}, {"kind": "key", "key": "Enter"}, {"kind": "wait", "frames": 2}]));
+    c.click_widget("opt:move_mesh");
+    let st = c.state();
+    assert!(st["widgets"]["transform:mesh:4"]["rect_logical"].is_array(), "a malha 2x2 tem o vértice do meio (4)");
+    assert!(st["widgets"]["transform:mesh:9"].is_null(), "só 9 vértices numa grade 2x2");
+    assert!(st["editor"]["selection"]["mesh"].is_array(), "a malha está pendente: {}", st["editor"]["selection"]);
+    let rev1 = st["project"]["revision"].as_u64().unwrap();
+    c.drag_canvas(&[(110.0, 90.0), (110.0, 100.0), (110.0, 110.0), (110.0, 120.0)], false);
+    c.input(json!([{"kind": "wait", "frames": 3}]));
+    assert_eq!(c.state()["project"]["revision"].as_u64().unwrap(), rev1, "arrastar o vértice não grava sozinho");
+    c.input(json!([{"kind": "key", "key": "Enter"}, {"kind": "wait", "frames": 3}]));
+    let t0 = Instant::now();
+    while c.state()["project"]["revision"].as_u64().unwrap() == rev1 {
+        assert!(t0.elapsed() < Duration::from_secs(20), "o Enter não gravou a malha");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(px(110, 120)[3] > 200, "o meio da barra desceu com o vértice: {:?}", px(110, 120));
+    assert!(px(110, 90)[3] < 30, "e saiu de y 90: {:?}", px(110, 90));
+    // perto da borda (vértices parados) desce menos: em x 75 a fração é 15/50, 9 px (interpolação bilinear)
+    assert!(px(75, 99)[3] > 200 && px(75, 120)[3] < 10, "perto da borda desceu só 9 px: {:?} {:?}", px(75, 99), px(75, 120));
+    assert!(c.state()["editor"]["selection"]["mesh"].is_null(), "a malha foi gravada e saiu");
 }
 
 #[test]

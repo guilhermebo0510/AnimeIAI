@@ -627,6 +627,13 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
                         let hit = env.ed.selection.as_ref().filter(|s| !s.whole).and_then(|s| {
                             let (corners, knob, center) = handles(s);
                             let near = |q: Vec2| (xf.to_screen(q) - pos).length() <= 9.0;
+                            // malha: só os vértices andam (o resto do clique não faz nada até o Enter/Esc)
+                            if let Some(m) = &s.mesh {
+                                return Some(match m.pts.iter().position(|q| near(*q)) {
+                                    Some(k) => Gesture::MeshSel { vertex: k },
+                                    None => Gesture::None,
+                                });
+                            }
                             let corner = s.box_corners().and_then(|b| b.iter().position(|q| near(s.map(*q))));
                             if let Some(k) = corner.filter(|_| ctrl || s.corners.is_some()) {
                                 return Some(Gesture::DistortSel { corner: k });
@@ -688,7 +695,7 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
     // arrasto mínimo: os arrastos de objeto só começam depois que o ponteiro anda a distância das Preferências
     let object_drag = match &env.ed.gesture {
         Gesture::Select { tool, .. } => !tool.is_path(),
-        Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } | Gesture::DistortSel { .. } | Gesture::StrokePick { .. } | Gesture::Shape { .. } | Gesture::DragNode { .. } | Gesture::DragHandle { .. } | Gesture::RulerDrag { .. } | Gesture::RulerCreate { .. } => true,
+        Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } | Gesture::DistortSel { .. } | Gesture::MeshSel { .. } | Gesture::StrokePick { .. } | Gesture::Shape { .. } | Gesture::DragNode { .. } | Gesture::DragHandle { .. } | Gesture::RulerDrag { .. } | Gesture::RulerCreate { .. } => true,
         _ => false,
     };
     if object_drag && !env.ed.beh.drag_armed {
@@ -751,6 +758,12 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
                     Some(c4) => c4.iter_mut().for_each(|p| *p += d),
                     None => s.offset += d,
                 }
+            }
+        }
+        Gesture::MeshSel { vertex } => {
+            let k = *vertex;
+            if let Some(p) = env.ed.selection.as_mut().and_then(|s| s.mesh.as_mut()).and_then(|m| m.pts.get_mut(k)) {
+                *p = c;
             }
         }
         Gesture::DistortSel { corner } => {
@@ -857,6 +870,8 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
                 }
             }
         }
+        // malha: o arrasto de um vértice não grava; a malha fica pendente até o Enter (como no Clip Studio)
+        Gesture::MeshSel { .. } => {}
         g @ (Gesture::DragNode { .. } | Gesture::DragHandle { .. }) => {
             super::nodes::release(env, g);
             let counter = env.core.change_counter;
@@ -1225,11 +1240,12 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
         painter.add(quad(chk.id(), sp, uv));
     }
     // Mover ao vivo: o que fica abaixo, a parte que fica, a que anda (transformada) e o que fica acima
-    let moving = matches!(env.ed.gesture, Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } | Gesture::DistortSel { .. });
+    let moving = matches!(env.ed.gesture, Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } | Gesture::DistortSel { .. } | Gesture::MeshSel { .. })
+        || env.ed.selection.as_ref().is_some_and(|s| s.mesh.is_some());
     let live_aff = if moving {
         tools::move_key(env).filter(|k| env.ed.move_live.ready_for(k)).and_then(|_| env.ed.selection.as_ref().map(|s| s.live_xf()))
     } else {
-        env.ed.move_live.hold.as_ref().filter(|_| env.ed.move_live.key.as_ref().is_some_and(|k| k.cut == *cut)).map(|h| h.1)
+        env.ed.move_live.hold.as_ref().filter(|_| env.ed.move_live.key.as_ref().is_some_and(|k| k.cut == *cut)).map(|h| h.1.clone())
     };
     let shown_counter = env.ed.shown.as_ref().map(|s| s.rendered.key.counter);
     if super::model3d::paint_live(env, painter, xf, cut, shown_counter) {
@@ -1251,8 +1267,8 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
                 });
                 painter.add(quad(mt.moving.id(), moved, full));
             }
-            // perspectiva: malha fina (cada vértice pela homografia) em vez de um quadrilátero só
-            super::editor::LiveXf::Persp(_) => {
+            // perspectiva e malha: malha fina (cada vértice pela transformação) em vez de um quadrilátero só
+            super::editor::LiveXf::Persp(_) | super::editor::LiveXf::Mesh(_) => {
                 painter.add(warped_mesh(mt.moving.id(), mw, mh, |x, y| aff.apply(x, y), xf));
             }
         }
@@ -1484,7 +1500,21 @@ fn paint_selection(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId
     if *env.tool == ToolId::Points {
         return;
     }
-    if *env.tool == ToolId::Move && !sel.whole {
+    if let (true, Some(m)) = (*env.tool == ToolId::Move, sel.mesh.as_ref()) {
+        let w = (m.cols + 1) as usize;
+        let sp: Vec<Pos2> = m.pts.iter().map(|p| xf.to_screen(*p)).collect();
+        let line = Stroke::new(1.0, env.t.accent);
+        for j in 0..=m.rows as usize {
+            painter.add(Shape::line((0..w).map(|i| sp[j * w + i]).collect(), line));
+        }
+        for i in 0..w {
+            painter.add(Shape::line((0..=m.rows as usize).map(|j| sp[j * w + i]).collect(), line));
+        }
+        for (k, p) in sp.iter().enumerate() {
+            painter.circle(*p, 4.5, Color32::WHITE, Stroke::new(1.5, env.t.accent));
+            env.note(format!("transform:mesh:{k}"), Rect::from_center_size(*p, egui::vec2(9.0, 9.0)));
+        }
+    } else if *env.tool == ToolId::Move && !sel.whole {
         let (corners, knob, _) = handles(&sel);
         if let Some(r) = sel.rect_of() {
             for (k, q) in handle_points(r).iter().enumerate() {
@@ -1555,7 +1585,42 @@ pub(super) fn variable_line(painter: &egui::Painter, pts: &[Vec2], radii: &[f32]
     }
 }
 
+/// Lupa do conta-gotas (auditoria 2.18): 11×11 pixels do que aparece em volta do cursor, ampliados, com o pixel do
+/// centro marcado e a cor que vai ser escolhida.
+fn paint_loupe(env: &Env, painter: &egui::Painter, xf: &Xf) {
+    let (Some(shown), Some(cur)) = (env.ed.shown.as_ref(), env.ed.cursor) else { return };
+    const N: i32 = 11;
+    const CELL: f32 = 9.0;
+    // `cursor` é a posição na tela; o pixel é o do desenho sob ela
+    let cc = xf.to_canvas(cur);
+    let (cx, cy) = (cc.x.floor() as i32, cc.y.floor() as i32);
+    let at = cur + egui::vec2(24.0, 24.0);
+    let side = N as f32 * CELL;
+    let frame = Rect::from_min_size(at, egui::vec2(side, side + 18.0));
+    painter.rect_filled(frame.expand(3.0), 4.0, Color32::from_black_alpha(200));
+    for j in 0..N {
+        for i in 0..N {
+            let c = shown.rendered.sample(cx + i - N / 2, cy + j - N / 2).unwrap_or([0.0; 4]);
+            let k = |v: f32| (v.clamp(0.0, 1.0) * 255.0) as u8;
+            let col = Color32::from_rgba_premultiplied(k(c[0]), k(c[1]), k(c[2]), k(c[3]));
+            let r = Rect::from_min_size(at + egui::vec2(i as f32 * CELL, j as f32 * CELL), egui::vec2(CELL, CELL));
+            painter.rect_filled(r, 0.0, Color32::from_gray(if (i + j) % 2 == 0 { 200 } else { 160 }));
+            painter.rect_filled(r, 0.0, col);
+        }
+    }
+    let mid = Rect::from_min_size(at + egui::vec2((N / 2) as f32 * CELL, (N / 2) as f32 * CELL), egui::vec2(CELL, CELL));
+    painter.rect_stroke(mid, 0.0, Stroke::new(1.5, Color32::WHITE), egui::StrokeKind::Outside);
+    if let Some(c) = shown.rendered.sample(cx, cy) {
+        let k = |v: f32| (v.clamp(0.0, 1.0) * 255.0) as u8;
+        let sw = Rect::from_min_size(at + egui::vec2(0.0, side + 3.0), egui::vec2(side, 13.0));
+        painter.rect_filled(sw, 2.0, Color32::from_rgba_premultiplied(k(c[0]), k(c[1]), k(c[2]), 255));
+    }
+}
+
 fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId) {
+    if matches!(env.ed.gesture, Gesture::Eyedrop) {
+        paint_loupe(env, painter, xf);
+    }
     // o que o gesto anterior acabou de fazer, até o render novo chegar
     env.ed.ghosts.retain(|g| g.born.elapsed().as_secs_f32() < 5.0);
     for g in &env.ed.ghosts {

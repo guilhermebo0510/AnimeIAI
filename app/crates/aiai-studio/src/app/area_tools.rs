@@ -220,7 +220,7 @@ pub(crate) fn eyedrop_layer(env: &mut Env, p: Vec2) {
         }
     };
     if let Some(c) = straight_at(&img, p) {
-        env.ed.set_color_direct(Rgba([c[0], c[1], c[2], 1.0]));
+        super::tools::set_picked_color(env, c);
     }
 }
 

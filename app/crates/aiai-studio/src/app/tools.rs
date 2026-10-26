@@ -878,8 +878,28 @@ pub(crate) fn do_eyedrop(env: &mut Env, p: Vec2) {
     }
     let Some(shown) = &env.ed.shown else { return };
     if let Some(c) = shown.rendered.sample(p.x.floor() as i32, p.y.floor() as i32) {
-        env.ed.set_color_direct(Rgba([c[0], c[1], c[2], 1.0]));
+        set_picked_color(env, c);
     }
+}
+
+/// Cor tirada pelo conta-gotas (auditoria 2.18): se ela é uma cor da paleta ativa (até 1,5/255 por canal), escolhe a
+/// cor DA PALETA (mudar a paleta continua mudando tudo o que usa essa cor); senão, uma cor direta.
+pub(crate) fn set_picked_color(env: &mut Env, c: [f32; 4]) {
+    let rgb = if c[3] > 1e-4 { [c[0] / c[3], c[1] / c[3], c[2] / c[3]] } else { [c[0], c[1], c[2]] };
+    if let Some(pal) = env.ed.palette.clone() {
+        if let Some(pd) = cmds::palette_data(&env.core.project, &pal) {
+            let hit = pd.colors.iter().find(|pc| {
+                let v = pd.resolve(&pc.id).unwrap_or(pc.rgba);
+                (0..3).all(|k| (v.0[k] - rgb[k]).abs() <= 1.5 / 255.0)
+            });
+            if let Some(pc) = hit {
+                env.ed.color = aiai_core::ColorRef::Palette { palette: pal, color: pc.id.clone() };
+                env.ed.color_edit = None;
+                return;
+            }
+        }
+    }
+    env.ed.set_color_direct(Rgba([rgb[0], rgb[1], rgb[2], 1.0]));
 }
 
 // ------------------------------------------------------------------------------------------------ seleção e mover
@@ -935,7 +955,7 @@ pub(crate) fn commit_move(env: &mut Env) {
     if sel.is_identity() {
         return;
     }
-    let plain = sel.plain_scale() && sel.rotate.abs() < 1e-3 && sel.corners.is_none();
+    let plain = sel.plain_scale() && sel.rotate.abs() < 1e-3 && sel.corners.is_none() && sel.mesh.is_none();
     let Some(t) = target(env, &[LayerType::Vector, LayerType::Raster], "err.move_layer") else { return };
     if t.kind == LayerType::Raster && plain {
         sel.offset = Vec2::new(sel.offset.x.round(), sel.offset.y.round());
@@ -988,10 +1008,12 @@ pub(crate) fn free_transform(env: &mut Env) {
 
 pub(crate) fn cancel_move(ed: &mut Editor) {
     if let Some(s) = ed.selection.as_mut() {
-        if !s.is_identity() {
+        if !s.is_identity() || s.mesh.is_some() {
             s.offset = Vec2::ZERO;
             s.scale = Vec2::splat(1.0);
             s.rotate = 0.0;
+            s.corners = None;
+            s.mesh = None;
             if s.whole {
                 ed.selection = None;
             }

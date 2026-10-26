@@ -560,6 +560,28 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
             if !compact {
                 dim_label(ui, &t, tr("opt.move_distort_hint"));
             }
+            // Malha (como a do Clip Studio): grade sobre a seleção, cada vértice arrasta; Enter grava, Esc desfaz
+            if env.ed.selection.as_ref().is_some_and(|s| !s.whole) {
+                ui.horizontal(|ui| {
+                    let on = env.ed.selection.as_ref().is_some_and(|s| s.mesh.is_some());
+                    let b = ui.selectable_label(on, tr("opt.move_mesh"));
+                    env.note("opt:move_mesh", b.rect);
+                    if b.on_hover_text(tr("opt.move_mesh.tip")).clicked() {
+                        let n = env.ed.opts.mesh_cells;
+                        if let Some(s) = env.ed.selection.as_mut() {
+                            if on {
+                                s.mesh = None;
+                            } else {
+                                s.start_mesh(n);
+                            }
+                        }
+                    }
+                    if !on {
+                        let r = ui.add(egui::DragValue::new(&mut env.ed.opts.mesh_cells).range(1..=8).suffix("×"));
+                        env.note("opt:move_mesh_cells", r.rect);
+                    }
+                });
+            }
             if env.ed.selection.as_ref().is_some_and(|s| !s.whole) {
                 let b = ui.button(tr("opt.move_deselect"));
                 env.note("opt:move_deselect", b.rect);
