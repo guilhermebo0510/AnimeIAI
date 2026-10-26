@@ -19,7 +19,9 @@ pub(crate) struct SizeUi {
 }
 
 /// Largura mínima de uma célula da grade.
-const CELL_W: f32 = 38.0;
+const CELL_W: f32 = 34.0;
+/// Faixa à direita da grade com o lápis que edita a lista (sem rodapé: a grade fica com a altura toda).
+const STRIP_W: f32 = 20.0;
 
 /// O tamanho em uso da ferramenta (px), se ela tem tamanho.
 pub(crate) fn current_size(env: &Env) -> Option<f32> {
@@ -64,16 +66,17 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
     let enabled = cur.is_some();
     let sizes = env.ed.draw_ui.prefs.sizes.clone();
     let active = cur.and_then(|c| active_index(&sizes, c));
-    let footer_h = if env.ed.draw_ui.sizes.editing.is_some() { 64.0 } else { 26.0 };
+    let footer_h = if env.ed.draw_ui.sizes.editing.is_some() { 64.0 } else { 0.0 };
+    let full = ui.max_rect();
     let max_h = (ui.available_height() - footer_h).max(CELL_W);
     let mut pick: Option<f32> = None;
     let r = ui.add_enabled_ui(enabled, |ui| {
         egui::ScrollArea::vertical().id_salt("brush_size_scroll").max_height(max_h).auto_shrink([false, false]).show(ui, |ui| {
-            let w = ui.available_width();
+            let w = ui.available_width() - STRIP_W;
             let cols = ((w / CELL_W).floor() as usize).max(1);
             let cw = w / cols as f32;
-            let ch = (cw * 1.08).clamp(34.0, 52.0);
-            let cap = (cw.min(ch - 14.0) / 2.0 - 3.0).max(2.0);
+            let ch = (cw * 0.95).clamp(30.0, 44.0);
+            let cap = (cw.min(ch - 13.0) / 2.0 - 2.0).max(2.0);
             for (row, chunk) in sizes.chunks(cols).enumerate() {
                 let (rr, _) = ui.allocate_exact_size(egui::vec2(w, ch), Sense::hover());
                 for (k, s) in chunk.iter().enumerate() {
@@ -105,24 +108,17 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
     if let Some(s) = pick {
         set_size(env, s);
     }
-    // ---- rodapé: o tamanho em uso e o lápis que edita a lista
+    // ---- o lápis que edita a lista fica na faixa à direita da grade; editando, o campo entra embaixo
     ui.add_space(2.0);
     let editing = env.ed.draw_ui.sizes.editing.clone();
     match editing {
         None => {
-            ui.horizontal(|ui| {
-                let txt = match cur {
-                    Some(c) => format!("{} px", format_size(c)),
-                    None => "—".to_owned(),
-                };
-                ui.label(egui::RichText::new(txt).size(11.5).color(if enabled { t.text } else { t.text_dim }));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if env.icon_button(ui, IconId::ToolPencil, "bsize.edit", false, true, "size:edit").clicked() {
-                        env.ed.draw_ui.sizes.editing = Some(sizes_text(&sizes));
-                        env.ed.draw_ui.sizes.error = None;
-                    }
-                });
-            });
+            let er = Rect::from_min_size(egui::pos2(full.right() - STRIP_W, full.top()), egui::vec2(STRIP_W, STRIP_W));
+            let mut c = ui.new_child(egui::UiBuilder::new().max_rect(er));
+            if env.icon_button_sized(&mut c, IconId::ToolPencil, "bsize.edit", false, true, "size:edit", STRIP_W, false).clicked() {
+                env.ed.draw_ui.sizes.editing = Some(sizes_text(&sizes));
+                env.ed.draw_ui.sizes.error = None;
+            }
         }
         Some(mut text) => {
             let te = ui.add(egui::TextEdit::singleline(&mut text).desired_width(f32::INFINITY).hint_text(tr("bsize.edit.hint")));

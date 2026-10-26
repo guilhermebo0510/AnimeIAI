@@ -67,7 +67,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
     };
     let custom = brushy && env.ed.opts.brush_custom.is_some();
     let hw = ui.available_width();
-    let (hr, _) = ui.allocate_exact_size(egui::vec2(hw, 40.0), Sense::hover());
+    let (hr, _) = ui.allocate_exact_size(egui::vec2(hw, 34.0), Sense::hover());
     env.note("tprop:header", hr);
     ui.painter().rect(hr, 3.0, t.bg_widget, Stroke::new(1.0, t.border), StrokeKind::Inside);
     if brushy {

@@ -124,7 +124,8 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
     ui.add_space(3.0);
     // ---- lista: traço + nome
     let items = shelf::subs(env, slot, cur_tab);
-    let footer_h = 28.0;
+    // rodapé (26) + o respiro antes dele + o espaço entre itens: a lista nunca empurra os ícones para fora do painel
+    let footer_h = 36.0;
     let list_h = (ui.available_height() - footer_h).max(ROW_H);
     let mut req: Option<Req> = None;
     let rename = env.ed.draw_ui.rename.clone();

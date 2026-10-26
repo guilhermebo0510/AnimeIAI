@@ -367,14 +367,14 @@ fn disabled_row(ui: &mut Ui, e: &mut Edit, label: &str) {
 fn bar(ui: &mut Ui, e: &mut Edit, label: &str, v: &mut f32, lo: f32, hi: f32, log: bool, decimals: usize, suffix: &str, d: Dyn) {
     let t = e.t;
     let w = ui.available_width();
-    let h = 28.0;
+    let h = 26.0;
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, h), Sense::hover());
     let enabled = ui.is_enabled();
     let right = rect.right() - DYN_W;
     let ink = if enabled { t.text } else { t.text_dim };
-    ui.painter().with_clip_rect(rect).text(egui::pos2(rect.left() + 2.0, rect.top() + 8.0), egui::Align2::LEFT_CENTER, tr(label), egui::FontId::proportional(11.5), ink);
+    ui.painter().with_clip_rect(rect).text(egui::pos2(rect.left() + 2.0, rect.top() + 7.0), egui::Align2::LEFT_CENTER, tr(label), egui::FontId::proportional(11.5), ink);
     // valor (arrastar ou digitar)
-    let vr = Rect::from_min_max(egui::pos2(right - 62.0, rect.top()), egui::pos2(right - 4.0, rect.top() + 17.0));
+    let vr = Rect::from_min_max(egui::pos2(right - 62.0, rect.top()), egui::pos2(right - 4.0, rect.top() + 15.0));
     let mut dv = *v;
     let r = ui.put(vr, egui::DragValue::new(&mut dv).range(lo..=hi).speed(((hi - lo) / 300.0).max(0.01)).max_decimals(decimals).suffix(suffix));
     e.notes.push((format!("tprop:{label}:value"), r.rect));
@@ -382,7 +382,7 @@ fn bar(ui: &mut Ui, e: &mut Edit, label: &str, v: &mut f32, lo: f32, hi: f32, lo
         *v = dv;
     }
     // barra
-    let br = Rect::from_min_max(egui::pos2(rect.left() + 2.0, rect.top() + 19.0), egui::pos2(right - 4.0, rect.top() + 24.0));
+    let br = Rect::from_min_max(egui::pos2(rect.left() + 2.0, rect.top() + 18.0), egui::pos2(right - 4.0, rect.top() + 23.0));
     let resp = ui.interact(br.expand2(egui::vec2(0.0, 4.0)), ui.id().with(("tprop_bar", label, e.salt)), if enabled { Sense::click_and_drag() } else { Sense::hover() });
     e.notes.push((format!("tprop:{label}"), br));
     let to_f = |x: f32| if log { (x.max(lo.max(1e-3)) / lo.max(1e-3)).ln() / (hi / lo.max(1e-3)).ln() } else { (x - lo) / (hi - lo) };
