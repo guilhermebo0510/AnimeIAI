@@ -317,7 +317,8 @@ impl StudioApp {
     /// set_theme {theme: light|dark}, set_language {language: pt|en}, open_dialog/close_dialog {dialog: about|prefs|start, tab?: general|keys|folders|performance},
     /// set_window_size {width, height, maximized?} (pontos lógicos), library_import {files} (abre a janela de importar da Biblioteca),
     /// select_layer {layer}, select_cut {cut}, set_frame {frame}, set_color {color}, fit_view,
-    /// set_brush {preset (nome, sem diferenciar maiúsculas), size?, opacity?} (pincel da biblioteca em uso).
+    /// set_brush {preset (nome, sem diferenciar maiúsculas), size?, opacity?} (pincel da biblioteca em uso; um do grupo
+    /// borracha vira também a ponta da ferramenta Borracha).
     /// dock {op: list|maximize|restore|detach|redock|redock_all, panel?, group?} (painel maximizado e janelas soltas).
     /// Apelidos aceitos: set_tool = select_tool; open_panel = toggle_panel com visible=true.
     pub(crate) fn bridge_ui_action(&mut self, ctx: &egui::Context, params: &Value) -> BridgeResult {
@@ -421,6 +422,12 @@ impl StudioApp {
                 o.brush_custom = None;
                 o.brush_size = num("size").unwrap_or(p.size).clamp(0.5, 2000.0);
                 o.brush_opacity = num("opacity").unwrap_or(p.opacity).clamp(0.0, 1.0);
+                // pincel do grupo borracha: a ferramenta Borracha apaga com ele (como escolher a borracha na prateleira)
+                if p.group == "borracha" {
+                    o.eraser_use_brush = true;
+                    o.eraser_tip = super::editor::EraserTip::Brush;
+                    o.eraser_size = o.brush_size;
+                }
                 json!({ "preset": p.name, "group": p.group, "size": o.brush_size, "opacity": o.brush_opacity })
             }
             "toggle_panel" | "open_panel" => {

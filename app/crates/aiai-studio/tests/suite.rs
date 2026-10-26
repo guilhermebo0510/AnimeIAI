@@ -953,6 +953,80 @@ fn prefs_script(c: &Client) {
     c.ok("UI_ACTION", json!({"action": "close_dialog", "dialog": "prefs"}));
 }
 
+/// Borrachas de fábrica do S25 pela ferramenta Borracha: a de várias camadas apaga nas duas camadas raster; a áspera
+/// leva o traço vetorial inteiro e a dura só o trecho.
+fn eraser_presets_script(c: &Client) {
+    c.ok("NEW_PROJECT", json!({"name": "borrachas", "settings": {"width": 320, "height": 180}}));
+    let mk = |name: &str, parent: Option<&str>, data: Value| c.ok("APPLY_COMMAND", create_node(name, parent, data))["created"][0].as_str().unwrap().to_string();
+    let ep = mk("EP", None, json!({"type": "episode", "number": 1}));
+    let sc = mk("S", Some(&ep), json!({"type": "scene", "number": 1}));
+    let cut = mk("C001", Some(&sc), json!({"type": "cut", "number": 1, "duration": 12}));
+    let mut rasters = Vec::new();
+    for n in ["A", "B"] {
+        let l = mk(n, Some(&cut), json!({"type": "layer", "kind": "raster"}));
+        mk("c1", Some(&l), json!({"type": "cel", "number": 1}));
+        c.ok("PAINT", json!({"cut": cut, "frame": 0, "layer": l, "preset": "redondo duro", "preset_overrides": {"size": 120}, "color": {"type": "direct", "rgba": [0.0, 0.0, 0.0, 1.0]},
+            "strokes": [{"points": [[0, 90], [320, 90]]}]}));
+        rasters.push(l);
+    }
+    c.ok("UI_ACTION", json!({"action": "select_cut", "cut": cut}));
+    c.ok("UI_ACTION", json!({"action": "select_layer", "layer": rasters[0]}));
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "eraser"}));
+    let b = c.ok("UI_ACTION", json!({"action": "set_brush", "preset": "Borracha de várias camadas", "size": 20}));
+    assert_eq!(b["group"], "borracha");
+    c.ok("UI_ACTION", json!({"action": "fit_view"}));
+    c.input(json!([{"kind": "wait", "frames": 3}]));
+    let rev0 = c.state()["project"]["revision"].as_u64().unwrap();
+    c.drag_canvas(&[(40.0, 90.0), (280.0, 90.0)], false);
+    let t0 = Instant::now();
+    while c.state()["project"]["revision"].as_u64().unwrap() == rev0 {
+        assert!(t0.elapsed() < Duration::from_secs(20), "a borracha não gravou");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let alpha = |layer: &str, x: u32, y: u32| {
+        use base64::Engine as _;
+        let r = c.ok("RENDER", json!({"cut": cut, "frame": 0, "layers": [layer], "inline": true}));
+        let png = base64::engine::general_purpose::STANDARD.decode(r["png_base64"].as_str().unwrap()).unwrap();
+        image::load_from_memory(&png).unwrap().to_rgba8().get_pixel(x, y).0
+    };
+    for l in &rasters {
+        let mid = alpha(l, 160, 90);
+        let off = alpha(l, 160, 50);
+        assert!(mid[0] > 200 || mid[3] < 60, "apagou na camada {l}: {mid:?}");
+        assert!(off[0] < 60 && off[3] > 200, "longe do traço continua preto na camada {l}: {off:?}");
+    }
+    // camada vetorial: dois traços; a áspera leva o primeiro inteiro, a dura só divide o segundo
+    let v = mk("V", Some(&cut), json!({"type": "layer", "kind": "vector"}));
+    let cel = mk("c1", Some(&v), json!({"type": "cel", "number": 1}));
+    c.ok("UI_ACTION", json!({"action": "select_layer", "layer": v}));
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "pen"}));
+    for y in [40.0, 140.0] {
+        let n0 = c.strokes(&cel).len();
+        c.drag_canvas(&[(30.0, y), (290.0, y)], false);
+        let t0 = Instant::now();
+        while c.strokes(&cel).len() == n0 {
+            assert!(t0.elapsed() < Duration::from_secs(20), "a caneta não gravou");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    assert_eq!(c.strokes(&cel).len(), 2);
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "eraser"}));
+    c.ok("UI_ACTION", json!({"action": "set_brush", "preset": "Borracha áspera", "size": 12}));
+    c.drag_canvas(&[(160.0, 30.0), (160.0, 50.0)], false);
+    let t0 = Instant::now();
+    while c.strokes(&cel).len() != 1 {
+        assert!(t0.elapsed() < Duration::from_secs(20), "a borracha áspera não levou o traço inteiro: {} traços", c.strokes(&cel).len());
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    c.ok("UI_ACTION", json!({"action": "set_brush", "preset": "Borracha dura", "size": 12}));
+    c.drag_canvas(&[(160.0, 130.0), (160.0, 150.0)], false);
+    let t0 = Instant::now();
+    while c.strokes(&cel).len() != 2 {
+        assert!(t0.elapsed() < Duration::from_secs(20), "a borracha dura devia dividir o traço em dois: {} traços", c.strokes(&cel).len());
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 #[test]
 fn the_app_serves_the_bridge_and_reacts_to_real_egui_input() {
     let dir = tempfile::tempdir().unwrap();
@@ -978,6 +1052,7 @@ fn the_app_serves_the_bridge_and_reacts_to_real_egui_input() {
             editor_script2(&client);
             merge_script(&client);
             prefs_script(&client);
+            eraser_presets_script(&client);
         }));
         done2.store(true, Ordering::SeqCst);
         r

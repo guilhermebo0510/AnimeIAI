@@ -749,6 +749,7 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("opt.erase_intersection", "Até a interseção", "Up to intersection"),
     ("opt.erase_whole", "Traço inteiro", "Whole stroke"),
     ("brush.settings", "Ajustes do pincel", "Brush settings"),
+    ("brush.erase_all_layers", "Apagar em várias camadas", "Erase on multiple layers"),
     ("brush.flow", "Fluxo", "Flow"),
     ("brush.tip", "Ponta", "Tip"),
     ("brush.aspect", "Proporção da forma", "Shape aspect"),

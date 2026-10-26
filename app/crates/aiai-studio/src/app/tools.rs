@@ -497,7 +497,7 @@ pub(crate) fn start_live(env: &mut Env, ctx: &egui::Context, g: &StrokeGesture, 
         reference: env.ed.show_reference,
         checker: (super::canvas::checker_colors(env.ed.checker_dark), 8.0 / screen_scale.max(1e-3)),
         erase_radius: env.ed.opts.eraser_size / 2.0,
-        erase_mode: env.ed.opts.eraser_mode,
+        erase_mode: eraser_vector_mode(env),
         hide: None,
         clip: match (paint_clip_mask(env), mode) {
             (Some(m), super::live::Mode::Brush | super::live::Mode::EraseRaster) => Some(std::sync::Arc::new(m)),
@@ -566,13 +566,56 @@ fn commit_brush(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Insta
     let (cut, layer, frame, pref) = (t.cut.clone(), t.layer.clone(), t.frame, env.ed.cel_number);
     let clip = paint_clip_mask(env);
     let ghost_pts: Vec<Vec2> = g.samples.iter().map(|s| g.to_canvas(s.p)).collect();
+    // borracha de várias camadas: apaga também nas outras camadas do quadro (visíveis, destravadas, com cel exposto)
+    let others: Vec<(NodeId, LayerType)> = if erase && preset.all_layers {
+        cmds::layer_rows(&env.core.project, &cut)
+            .into_iter()
+            .filter(|r| r.id != layer)
+            .filter_map(|r| cmds::layer_data(&env.core.project, &r.id).filter(|l| l.visible && !l.locked && matches!(l.kind, LayerType::Raster | LayerType::Vector)).map(|l| (r.id.clone(), l.kind)))
+            .filter(|(id, _)| cmds::exposed_cel(&env.core.project, &cut, id, frame).is_some())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let vec_mode = eraser_vector_mode(env);
+    let radius = env.ed.opts.eraser_size / 2.0;
+    let path: Vec<[f32; 2]> = g.path.iter().map(|p| [p.x, p.y]).collect();
     let planned = cmds::plan_with_prep(env.core, &cut, &layer, frame, pref, vec![], |p, blobs| {
-        let req = tpaint::PaintRequest { cut: cut.clone(), frame, layer: layer.clone(), preset, color, strokes: specs, seed };
-        tpaint::paint_command_masked(p, blobs, &req, clip.as_ref()).map_err(|e| e.to_string())
+        let mut req = tpaint::PaintRequest { cut: cut.clone(), frame, layer: layer.clone(), preset, color, strokes: specs, seed };
+        let main = tpaint::paint_command_masked(p, blobs, &req, clip.as_ref()).map_err(|e| e.to_string())?;
+        if others.is_empty() {
+            return Ok(main);
+        }
+        let mut all = vec![main];
+        for (id, kind) in &others {
+            let c = match kind {
+                LayerType::Raster => {
+                    req.layer = id.clone();
+                    tpaint::paint_command_masked(p, blobs, &req, clip.as_ref()).ok()
+                }
+                _ => aiai_tools::erase::erase_vector_command(p, &aiai_tools::erase::EraseVectorRequest { cut: cut.clone(), frame, layer: id.clone(), path: path.clone(), radius, mode: vec_mode }).ok(),
+            };
+            all.extend(c);
+        }
+        Ok(Command::Batch { commands: all, label: Some(tr("brush.erase_all_layers").to_owned()) })
     });
     // com a prévia ao vivo na tela, ela mesma fica até o render chegar (o fantasma em polilinha "mudava" o traço)
     let ghost = if erase || env.ed.live_stroke.overlay.is_some() { None } else { Some((ghost_pts, Vec::new(), size, ghost_color(env, opacity.min(0.9)))) };
     commit(env, planned, released_at, if erase { "erase_raster" } else { "brush" }, ghost);
+}
+
+/// O que a borracha tira de um traço vetorial: o do pincel do grupo borracha em uso (Borracha vetorial = até as
+/// interseções, áspera = traço inteiro...), senão o modo escolhido na ferramenta.
+pub(crate) fn eraser_vector_mode(env: &Env) -> aiai_tools::erase::EraseMode {
+    use aiai_paint::brush::VectorErase;
+    let o = &env.ed.opts;
+    let from_brush = o.eraser_use_brush.then(|| brush_preset(env)).and_then(|p| p.vector_erase);
+    match from_brush {
+        Some(VectorErase::Segment) => aiai_tools::erase::EraseMode::Segment,
+        Some(VectorErase::Intersection) => aiai_tools::erase::EraseMode::Intersection,
+        Some(VectorErase::Whole) => aiai_tools::erase::EraseMode::Whole,
+        None => o.eraser_mode,
+    }
 }
 
 fn commit_erase_vector(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant) {
@@ -583,7 +626,7 @@ fn commit_erase_vector(env: &mut Env, t: &Target, g: &StrokeGesture, released_at
         layer: t.layer.clone(),
         path: g.path.iter().map(|p| [p.x, p.y]).collect(),
         radius: env.ed.opts.eraser_size / 2.0,
-        mode: env.ed.opts.eraser_mode,
+        mode: eraser_vector_mode(env),
     };
     // a prévia ao vivo usa este mesmo comando; o erro só vira aviso se a borracha passou por algum traço
     let planned = match aiai_tools::erase::erase_vector_command(&env.core.project, &req) {

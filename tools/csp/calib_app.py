@@ -18,7 +18,7 @@ import time
 sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from csp_sheet import sheet  # noqa: E402
-from calib_render import FACTORY, PENS  # noqa: E402
+from calib_render import GROUPS  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 TMP = os.path.join(ROOT, "calibracao", "tmp")
@@ -139,13 +139,18 @@ def draw_sheet(cut, layer, size, quant, rev_wait=20.0):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
-    ap.add_argument("--pens", default=",".join(PENS))
-    ap.add_argument("--sizes", default="3,10,30")
+    ap.add_argument("--group", default="caneta", choices=list(GROUPS))
+    ap.add_argument("--pens", default=None)
+    ap.add_argument("--sizes", default=None)
     ap.add_argument("--quant", type=float, default=0.0, help="grade inteira da entrada (mouse do Clip Studio); -1 = posições exatas")
     ap.add_argument("--exe", default=os.path.join(ROOT, "app", "target", "release", "aiai-studio.exe"))
     ap.add_argument("--keep", action="store_true", help="deixa o app aberto no fim")
     a = ap.parse_args()
     quant = None if a.quant < 0 else a.quant
+    _, factory, sizes0 = GROUPS[a.group]
+    a.pens = a.pens or ",".join(factory)
+    a.sizes = a.sizes or sizes0
+    eraser = a.group == "borracha"
     os.makedirs(a.out, exist_ok=True)
     os.makedirs(TMP, exist_ok=True)
     if os.path.exists(DISCOVERY):
@@ -163,7 +168,7 @@ def main():
         sc = made("S", ep, {"type": "scene", "number": 1})
         cut = made("C001", sc, {"type": "cut", "number": 1, "duration": 12})
         aiai.call("UI_ACTION", {"action": "select_cut", "cut": cut})
-        aiai.call("UI_ACTION", {"action": "set_tool", "tool": "brush"})
+        aiai.call("UI_ACTION", {"action": "set_tool", "tool": "eraser" if eraser else "brush"})
         aiai.call("UI_ACTION", {"action": "set_color", "color": "#000000"})
         settle()
         aiai.call("UI_ACTION", {"action": "fit_view"})
@@ -174,9 +179,14 @@ def main():
                 assert_test_project()
                 layer = made(f"{pen}_s{s}", cut, {"type": "layer", "kind": "raster"})
                 made("c1", layer, {"type": "cel", "number": 1})
+                if eraser:
+                    # folha das borrachas: a camada começa preta
+                    aiai.call("PAINT", {"cut": cut, "frame": 0, "layer": layer, "preset": "redondo duro", "preset_overrides": {"size": 400},
+                                        "color": {"type": "direct", "rgba": [0.0, 0.0, 0.0, 1.0]},
+                                        "strokes": [{"points": [[-100, y], [1000, y]], "smooth": False} for y in range(0, 900, 150)]})
                 aiai.call("UI_ACTION", {"action": "select_layer", "layer": layer})
                 size = 1 if pen == "dot-pen" else s
-                aiai.call("UI_ACTION", {"action": "set_brush", "preset": FACTORY[pen], "size": size})
+                aiai.call("UI_ACTION", {"action": "set_brush", "preset": factory[pen], "size": size})
                 settle()
                 draw_sheet(cut, layer, s, quant)
                 r = aiai.call("RENDER", {"cut": cut, "frame": 0, "layers": [layer], "background": "#ffffff"}, timeout=60)
