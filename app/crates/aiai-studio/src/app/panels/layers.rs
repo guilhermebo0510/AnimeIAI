@@ -128,9 +128,9 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
     }
     ui.add_space(2.0);
 
-    // ---- tudo rola junto num painel pequeno; a lista tem altura própria (até ~60% do painel) com rolagem interna
+    // ---- tudo rola junto num painel pequeno; a lista fica com quase toda a altura (os cels rolam embaixo dela)
     let total_h = ui.available_height();
-    let list_h = ((rows.len().max(1) as f32) * (ROW_H + 1.0) + 4.0).clamp(ROW_H + 8.0, (total_h * 0.62).max(ROW_H + 8.0));
+    let list_h = ((rows.len().max(1) as f32) * (ROW_H + 1.0) + 4.0).clamp(ROW_H + 8.0, (total_h - 64.0).max(ROW_H * 2.0 + 8.0));
     let snap = env.ed.render.as_mut().map(|r| r.snapshot(env.core));
     let idle = matches!(env.ed.gesture, crate::app::editor::Gesture::None) && !ctx.input(|i| i.pointer.any_down());
     egui::ScrollArea::vertical().id_salt("layers_outer").auto_shrink([false, false]).show(ui, |ui| {
