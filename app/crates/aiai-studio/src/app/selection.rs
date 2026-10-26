@@ -763,7 +763,28 @@ pub(crate) struct MovePlan {
 pub(crate) fn plan_move(env: &mut Env, sel: &Selection, cut: &NodeId, layer: &NodeId, frame: u32, kind: LayerType) -> Result<MovePlan, String> {
     let (w, h) = cmds::canvas_size(&env.core.project, cut);
     let place = cmds::layer_placement(&env.core.project, cut, layer, frame);
+    // distorção livre: a caixa vai para os cantos novos (homografia), no espaço do cel da camada
+    let distort = match (sel.corners, sel.box_corners()) {
+        (Some(to), Some(from)) => {
+            let to_cel = |p: Vec2| -> Result<[f32; 2], String> {
+                match &place {
+                    None => Ok([p.x, p.y]),
+                    Some(pl) => {
+                        let inv = pl.inverse().ok_or_else(|| tr("err.move_layer").to_owned())?;
+                        let (x, y) = inv.apply(p.x, p.y);
+                        Ok([x, y])
+                    }
+                }
+            };
+            Some(aiai_tools::transform::Deform::Perspective {
+                from: [to_cel(from[0])?, to_cel(from[1])?, to_cel(from[2])?, to_cel(from[3])?],
+                to: [to_cel(to[0])?, to_cel(to[1])?, to_cel(to[2])?, to_cel(to[3])?],
+            })
+        }
+        _ => None,
+    };
     let deform = match &place {
+        _ if distort.is_some() => distort.expect("distorção"),
         None => {
             let c = sel.center();
             aiai_tools::transform::Deform::Affine { translate: [sel.offset.x, sel.offset.y], scale: [sel.scale.x, sel.scale.y], rotate: sel.rotate, shear: [0.0, 0.0], pivot: [c.x, c.y] }

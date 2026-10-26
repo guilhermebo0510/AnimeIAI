@@ -557,6 +557,9 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
             if n > 0 && !compact {
                 dim_label(ui, &t, &format!("{} {n}", tr("opt.move_picked")));
             }
+            if !compact {
+                dim_label(ui, &t, tr("opt.move_distort_hint"));
+            }
             if env.ed.selection.as_ref().is_some_and(|s| !s.whole) {
                 let b = ui.button(tr("opt.move_deselect"));
                 env.note("opt:move_deselect", b.rect);

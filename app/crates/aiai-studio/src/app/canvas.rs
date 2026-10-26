@@ -623,9 +623,17 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
                     ToolId::Move if env.ed.opts.area.pick_layer => super::area_tools::pick_layer(env, c),
                     ToolId::Move => {
                         // alças da seleção: cantos escalam, a de cima gira; fora delas, mover
+                        let ctrl = mods.ctrl || mods.command;
                         let hit = env.ed.selection.as_ref().filter(|s| !s.whole).and_then(|s| {
                             let (corners, knob, center) = handles(s);
                             let near = |q: Vec2| (xf.to_screen(q) - pos).length() <= 9.0;
+                            let corner = s.box_corners().and_then(|b| b.iter().position(|q| near(s.map(*q))));
+                            if let Some(k) = corner.filter(|_| ctrl || s.corners.is_some()) {
+                                return Some(Gesture::DistortSel { corner: k });
+                            }
+                            if s.corners.is_some() {
+                                return None;
+                            }
                             if near(knob) {
                                 let d = c - center;
                                 Some(Gesture::RotateSel { start_angle: d.y.atan2(d.x).to_degrees(), start_rot: s.rotate })
@@ -680,7 +688,7 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
     // arrasto mínimo: os arrastos de objeto só começam depois que o ponteiro anda a distância das Preferências
     let object_drag = match &env.ed.gesture {
         Gesture::Select { tool, .. } => !tool.is_path(),
-        Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } | Gesture::StrokePick { .. } | Gesture::Shape { .. } | Gesture::DragNode { .. } | Gesture::DragHandle { .. } | Gesture::RulerDrag { .. } | Gesture::RulerCreate { .. } => true,
+        Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } | Gesture::DistortSel { .. } | Gesture::StrokePick { .. } | Gesture::Shape { .. } | Gesture::DragNode { .. } | Gesture::DragHandle { .. } | Gesture::RulerDrag { .. } | Gesture::RulerCreate { .. } => true,
         _ => false,
     };
     if object_drag && !env.ed.beh.drag_armed {
@@ -739,7 +747,26 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
             let d = c - *last;
             *last = c;
             if let Some(s) = env.ed.selection.as_mut() {
-                s.offset += d;
+                match s.corners.as_mut() {
+                    Some(c4) => c4.iter_mut().for_each(|p| *p += d),
+                    None => s.offset += d,
+                }
+            }
+        }
+        Gesture::DistortSel { corner } => {
+            let k = *corner;
+            if let Some(s) = env.ed.selection.as_mut() {
+                if s.corners.is_none() {
+                    // começa da transformação que já estiver pendente
+                    let start = s.box_corners().map(|b| b.map(|q| s.map(q)));
+                    s.offset = Vec2::ZERO;
+                    s.scale = Vec2::splat(1.0);
+                    s.rotate = 0.0;
+                    s.corners = start;
+                }
+                if let Some(c4) = s.corners.as_mut() {
+                    c4[k] = c;
+                }
             }
         }
         Gesture::Shape { cur, .. } => *cur = c,
@@ -818,10 +845,10 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
         }
         Gesture::StrokePick { start, op, .. } => super::selection::strokes_release(env, start, c, op, xf.scale),
         g @ Gesture::PolyLasso { .. } => env.ed.gesture = g, // o laço poligonal continua até fechar
-        Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } => {
+        Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } | Gesture::DistortSel { .. } => {
             let key = tools::move_key(env);
             let ready = key.as_ref().is_some_and(|k| env.ed.move_live.ready_for(k));
-            let aff = env.ed.selection.as_ref().filter(|s| !s.is_identity()).map(|s| s.affine());
+            let aff = env.ed.selection.as_ref().filter(|s| !s.is_identity()).map(|s| s.live_xf());
             if let Some(aff) = aff {
                 let before = env.core.change_counter;
                 tools::commit_move(env);
@@ -1198,9 +1225,9 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
         painter.add(quad(chk.id(), sp, uv));
     }
     // Mover ao vivo: o que fica abaixo, a parte que fica, a que anda (transformada) e o que fica acima
-    let moving = matches!(env.ed.gesture, Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. });
+    let moving = matches!(env.ed.gesture, Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } | Gesture::DistortSel { .. });
     let live_aff = if moving {
-        tools::move_key(env).filter(|k| env.ed.move_live.ready_for(k)).and_then(|_| env.ed.selection.as_ref().map(|s| s.affine()))
+        tools::move_key(env).filter(|k| env.ed.move_live.ready_for(k)).and_then(|_| env.ed.selection.as_ref().map(|s| s.live_xf()))
     } else {
         env.ed.move_live.hold.as_ref().filter(|_| env.ed.move_live.key.as_ref().is_some_and(|k| k.cut == *cut)).map(|h| h.1)
     };
@@ -1215,12 +1242,20 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
         if let Some(st) = &mt.stay {
             painter.add(quad(st.id(), plain, full));
         }
-        let moved: [Pos2; 4] = std::array::from_fn(|i| {
-            let c = corners(mw, mh)[i];
-            let (x, y) = aff.apply(c.x, c.y);
-            xf.to_screen(Vec2::new(x, y))
-        });
-        painter.add(quad(mt.moving.id(), moved, full));
+        match aff {
+            super::editor::LiveXf::Affine(_) => {
+                let moved: [Pos2; 4] = std::array::from_fn(|i| {
+                    let c = corners(mw, mh)[i];
+                    let (x, y) = aff.apply(c.x, c.y);
+                    xf.to_screen(Vec2::new(x, y))
+                });
+                painter.add(quad(mt.moving.id(), moved, full));
+            }
+            // perspectiva: malha fina (cada vértice pela homografia) em vez de um quadrilátero só
+            super::editor::LiveXf::Persp(_) => {
+                painter.add(warped_mesh(mt.moving.id(), mw, mh, |x, y| aff.apply(x, y), xf));
+            }
+        }
         painter.add(quad(mt.above.id(), plain, full));
     } else if let Some(shown) = &env.ed.shown {
         if shown.rendered.key.cut == *cut {
@@ -1391,6 +1426,27 @@ fn paint_camera(env: &mut Env, painter: &egui::Painter, xf: &Xf, cd: &CutData, c
 /// Cantos (transformados), alça de rotação e centro (transformado) da seleção, em coordenadas do canvas.
 /// Alças da transformação na caixa original (sem a transformação pendente): 0..4 cantos (sup-esq, sup-dir, inf-dir,
 /// inf-esq) e 4..8 meios dos lados (cima, direita, baixo, esquerda).
+/// Textura do canvas (`mw`×`mh`) desenhada por uma transformação qualquer: malha de 24×24 células.
+fn warped_mesh(tex: egui::TextureId, mw: f32, mh: f32, f: impl Fn(f32, f32) -> (f32, f32), xf: &Xf) -> Shape {
+    const N: u32 = 24;
+    let mut mesh = egui::Mesh::with_texture(tex);
+    for j in 0..=N {
+        for i in 0..=N {
+            let (u, v) = (i as f32 / N as f32, j as f32 / N as f32);
+            let (x, y) = f(u * mw, v * mh);
+            mesh.vertices.push(egui::epaint::Vertex { pos: xf.to_screen(Vec2::new(x, y)), uv: Pos2::new(u, v), color: Color32::WHITE });
+        }
+    }
+    for j in 0..N {
+        for i in 0..N {
+            let a = j * (N + 1) + i;
+            let (b, c, d) = (a + 1, a + N + 1, a + N + 2);
+            mesh.indices.extend_from_slice(&[a, b, d, a, d, c]);
+        }
+    }
+    Shape::mesh(mesh)
+}
+
 pub(crate) fn handle_points(r: [f32; 4]) -> [Vec2; 8] {
     let (x0, y0, x1, y1) = (r[0], r[1], r[0] + r[2], r[1] + r[3]);
     let (mx, my) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);

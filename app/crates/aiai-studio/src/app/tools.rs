@@ -935,7 +935,7 @@ pub(crate) fn commit_move(env: &mut Env) {
     if sel.is_identity() {
         return;
     }
-    let plain = sel.plain_scale() && sel.rotate.abs() < 1e-3;
+    let plain = sel.plain_scale() && sel.rotate.abs() < 1e-3 && sel.corners.is_none();
     let Some(t) = target(env, &[LayerType::Vector, LayerType::Raster], "err.move_layer") else { return };
     if t.kind == LayerType::Raster && plain {
         sel.offset = Vec2::new(sel.offset.x.round(), sel.offset.y.round());

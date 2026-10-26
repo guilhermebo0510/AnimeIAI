@@ -41,7 +41,7 @@ pub(crate) struct MoveLive {
     pending: Option<(MoveKey, crossbeam_channel::Receiver<Result<Images, String>>)>,
     pub tex: Option<MoveTex>,
     /// Depois de soltar: a transformação aplicada fica na tela até o render do documento novo chegar.
-    pub hold: Option<(u64, aiai_paint::Affine, Instant)>,
+    pub hold: Option<(u64, super::editor::LiveXf, Instant)>,
     pub error: Option<String>,
 }
 

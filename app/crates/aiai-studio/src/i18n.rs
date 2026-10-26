@@ -722,6 +722,7 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("opt.wand_tolerance.tip", "0 a 255: quanto a cor pode diferir da do pixel clicado (por canal). Mudar refaz a última varinha", "0 to 255: how much a color may differ from the clicked pixel (per channel). Changing it redoes the last wand click"),
     ("opt.wand_contiguous", "Contíguo", "Contiguous"),
     ("menu.select", "Selecionar", "Select"),
+    ("opt.move_distort_hint", "Ctrl + arrastar um canto: distorcer (perspectiva); arrastar no meio move os quatro cantos juntos", "Ctrl + drag a corner: distort (perspective); dragging inside moves the four corners together"),
     ("sel.menu.all", "Selecionar tudo", "Select all"),
     ("sel.menu.none", "Cancelar seleção", "Deselect"),
     ("sel.menu.invert", "Inverter seleção", "Invert selection"),

@@ -1106,6 +1106,45 @@ fn lint_and_pen_selection_script(c: &Client) {
     assert_eq!(sel["mode"], "Mask", "seleção por máscara: {sel}");
     let rect: Vec<f64> = sel["rect"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
     assert!(rect[1] > 20.0 && rect[1] + rect[3] < 65.0, "só a faixa vermelha (y 30..50): {rect:?}");
+    // Mover com Ctrl + canto: distorção livre (auditoria 2.17); o canto de baixo à direita vai para (230, 170)
+    c.input(json!([{"kind": "key", "key": "Escape"}, {"kind": "wait", "frames": 2}]));
+    let q = mk("Quadrado", Some(&cut), json!({"type": "layer", "kind": "raster"}));
+    mk("c1", Some(&q), json!({"type": "cel", "number": 1}));
+    c.ok("PAINT", json!({"cut": cut, "frame": 0, "layer": q, "preset": "redondo duro", "preset_overrides": {"size": 70}, "color": {"type": "direct", "rgba": [0.0, 0.0, 0.0, 1.0]},
+        "strokes": [{"points": [[110, 90], [130, 90]]}]}));
+    c.ok("UI_ACTION", json!({"action": "select_layer", "layer": q}));
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "select", "mode": "rect"}));
+    c.drag_canvas(&[(70.0, 50.0), (170.0, 130.0)], false);
+    c.ok("UI_ACTION", json!({"action": "select_tool", "tool": "move"}));
+    let px = |x: u32, y: u32| {
+        use base64::Engine as _;
+        let r = c.ok("RENDER", json!({"cut": cut, "frame": 0, "layers": [q], "inline": true}));
+        let png = base64::engine::general_purpose::STANDARD.decode(r["png_base64"].as_str().unwrap()).unwrap();
+        image::load_from_memory(&png).unwrap().to_rgba8().get_pixel(x, y).0
+    };
+    // (170, 130) fica fora da cápsula original (a 56 px do fim do traço, raio 35)
+    assert!(px(170, 130)[3] < 10, "antes, nada em (170, 130)");
+    let rev0 = c.state()["project"]["revision"].as_u64().unwrap();
+    let (a0, a1) = (c.canvas_pt(170.0, 130.0), c.canvas_pt(230.0, 170.0));
+    let mut ev = vec![json!({"kind": "mouse_move", "x": a0.0, "y": a0.1}), json!({"kind": "wait", "frames": 1}),
+        json!({"kind": "mouse_down", "x": a0.0, "y": a0.1, "button": "primary", "modifiers": ["ctrl"]})];
+    for k in 1..=12 {
+        let t = k as f64 / 12.0;
+        ev.push(json!({"kind": "mouse_move", "x": a0.0 + (a1.0 - a0.0) * t, "y": a0.1 + (a1.1 - a0.1) * t, "modifiers": ["ctrl"]}));
+    }
+    ev.push(json!({"kind": "mouse_up", "x": a1.0, "y": a1.1, "button": "primary", "modifiers": ["ctrl"]}));
+    ev.push(json!({"kind": "wait", "frames": 3}));
+    c.input(Value::Array(ev));
+    let t0 = Instant::now();
+    while c.state()["project"]["revision"].as_u64().unwrap() == rev0 {
+        assert!(t0.elapsed() < Duration::from_secs(20), "a distorção não gravou");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(px(170, 130)[3] > 200, "o desenho foi esticado para o canto novo: {:?}", px(170, 130));
+    assert!(px(110, 90)[3] > 200, "o meio continua pintado");
+    let sel = c.state()["editor"]["selection"].clone();
+    let rect: Vec<f64> = sel["rect"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    assert!((rect[0] + rect[2] - 230.0).abs() < 2.0 && (rect[1] + rect[3] - 170.0).abs() < 2.0, "a seleção virou a caixa dos cantos novos: {rect:?}");
 }
 
 #[test]

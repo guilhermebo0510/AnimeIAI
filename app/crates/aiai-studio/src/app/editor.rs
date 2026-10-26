@@ -374,11 +374,30 @@ pub(crate) struct Selection {
     pub strokes: Vec<aiai_core::Id>,
     /// Camada dos traços escolhidos (trocar de camada desfaz a escolha).
     pub strokes_layer: Option<aiai_core::Id>,
+    /// Distorção livre (Ctrl + canto do Mover, auditoria 2.17): para onde vão os quatro cantos da caixa (sup-esq,
+    /// sup-dir, inf-dir, inf-esq), em px do canvas. Com ela, a transformação pendente é uma homografia.
+    pub corners: Option<[Vec2; 4]>,
+}
+
+/// Transformação pendente da seleção para a prévia ao vivo: afim (mover, escalar, girar) ou perspectiva (distorção).
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum LiveXf {
+    Affine(aiai_paint::Affine),
+    Persp(aiai_paint::warp::Homography),
+}
+
+impl LiveXf {
+    pub(crate) fn apply(&self, x: f32, y: f32) -> (f32, f32) {
+        match self {
+            LiveXf::Affine(a) => a.apply(x, y),
+            LiveXf::Persp(h) => h.apply(x, y),
+        }
+    }
 }
 
 impl Selection {
     pub(crate) fn new(mode: SelMode, pts: Vec<Vec2>, whole: bool) -> Self {
-        Selection { mode, pts, offset: Vec2::ZERO, whole, scale: Vec2::splat(1.0), rotate: 0.0, mask: None, strokes: Vec::new(), strokes_layer: None }
+        Selection { mode, pts, offset: Vec2::ZERO, whole, scale: Vec2::splat(1.0), rotate: 0.0, mask: None, strokes: Vec::new(), strokes_layer: None, corners: None }
     }
 
     /// Centro da caixa da seleção (pivô da escala e da rotação), antes do deslocamento.
@@ -396,12 +415,33 @@ impl Selection {
     }
 
     pub(crate) fn map(&self, p: Vec2) -> Vec2 {
-        let (x, y) = self.affine().apply(p.x, p.y);
+        let (x, y) = self.live_xf().apply(p.x, p.y);
         Vec2::new(x, y)
     }
 
+    /// Cantos da caixa da seleção (sup-esq, sup-dir, inf-dir, inf-esq), antes da transformação pendente.
+    pub(crate) fn box_corners(&self) -> Option<[Vec2; 4]> {
+        let r = self.rect_of()?;
+        Some([Vec2::new(r[0], r[1]), Vec2::new(r[0] + r[2], r[1]), Vec2::new(r[0] + r[2], r[1] + r[3]), Vec2::new(r[0], r[1] + r[3])])
+    }
+
+    /// Homografia da distorção livre (caixa → `corners`).
+    pub(crate) fn homography(&self) -> Option<aiai_paint::warp::Homography> {
+        let to = self.corners?;
+        let from = self.box_corners()?;
+        aiai_paint::warp::Homography::from_quads(from.map(|p| [p.x, p.y]), to.map(|p| [p.x, p.y]))
+    }
+
+    /// A transformação pendente: perspectiva quando há distorção, senão a afim.
+    pub(crate) fn live_xf(&self) -> LiveXf {
+        match self.homography() {
+            Some(h) => LiveXf::Persp(h),
+            None => LiveXf::Affine(self.affine()),
+        }
+    }
+
     pub(crate) fn is_identity(&self) -> bool {
-        self.offset == Vec2::ZERO && self.plain_scale() && self.rotate.abs() < 1e-3
+        self.offset == Vec2::ZERO && self.plain_scale() && self.rotate.abs() < 1e-3 && self.corners.is_none()
     }
     pub(crate) fn rect_of(&self) -> Option<[f32; 4]> {
         if let Some(m) = &self.mask {
@@ -429,6 +469,10 @@ impl Selection {
 
     /// `p` (px do canvas, já com a transformação pendente) cai dentro da escolha?
     pub(crate) fn contains_mapped(&self, p: Vec2) -> bool {
+        if let Some(inv) = self.homography().and_then(|h| h.inverse()) {
+            let (x, y) = inv.apply(p.x, p.y);
+            return self.contains(Vec2::new(x, y));
+        }
         match self.affine().inverse() {
             Some(inv) => {
                 let (x, y) = inv.apply(p.x, p.y);
@@ -457,6 +501,18 @@ impl Selection {
     /// Aplica a transformação pendente às coordenadas (depois de um Enter). Com escala/rotação, retângulo, elipse e
     /// varinha viram laço (o contorno transformado).
     pub(crate) fn bake_offset(&mut self) {
+        // depois de uma distorção a seleção vira a caixa dos cantos novos
+        if let Some(c) = self.corners.take() {
+            let (x0, y0) = c.iter().fold((f32::MAX, f32::MAX), |(a, b), p| (a.min(p.x), b.min(p.y)));
+            let (x1, y1) = c.iter().fold((f32::MIN, f32::MIN), |(a, b), p| (a.max(p.x), b.max(p.y)));
+            self.mode = SelMode::Rect;
+            self.pts = vec![Vec2::new(x0, y0), Vec2::new(x1, y1)];
+            self.mask = None;
+            self.offset = Vec2::ZERO;
+            self.scale = Vec2::splat(1.0);
+            self.rotate = 0.0;
+            return;
+        }
         if let Some(m) = self.mask.clone() {
             // a máscara anda junto (o contorno de verdade, não a caixa)
             match m.transformed(&self.affine()) {
@@ -694,6 +750,8 @@ pub(crate) enum Gesture {
     PolyCurve { pts: Vec<Vec2>, last_click: std::time::Instant, line: bool },
     /// Alça de canto do Mover: escala em volta do centro.
     ScaleSel { handle: usize, start_scale: Vec2, start_offset: Vec2, start_rotate: f32 },
+    /// Ctrl + canto do Mover: distorção livre (o canto vai sozinho para o cursor).
+    DistortSel { corner: usize },
     /// Alça de rotação do Mover.
     RotateSel { start_angle: f32, start_rot: f32 },
     /// Conta-gotas: amostra ao apertar e enquanto arrasta.
