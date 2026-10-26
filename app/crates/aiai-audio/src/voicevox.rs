@@ -272,6 +272,12 @@ impl VoicevoxClient {
         Ok(r.body)
     }
 
+    /// O mesmo cliente com outro limite de espera (a verificação de saúde não espera 2 minutos).
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
     pub fn available(&self) -> bool {
         self.version().is_ok()
     }

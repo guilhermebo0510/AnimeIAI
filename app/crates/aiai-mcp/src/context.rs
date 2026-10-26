@@ -88,7 +88,7 @@ impl Ctx {
             "TEXT" => &["font"],
             "BGM" => &["soundfont"],
             "EXPORT_VIDEO" => &["srt"],
-            "LOUDNESS" | "AUDIO_ANALYZE" | "IMPORT_AUDIO" | "IMPORT_IMAGE" | "EDIT_CAPTIONS" => &["path"],
+            "LOUDNESS" | "AUDIO_ANALYZE" | "IMPORT_AUDIO" | "IMPORT_IMAGE" | "IMPORT_LAYERS" | "EDIT_CAPTIONS" => &["path"],
             "LIBRARY" => &["path"],
             _ => &[],
         };

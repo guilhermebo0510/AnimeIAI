@@ -127,6 +127,45 @@ fn fill_ignores_animated_layer_offset() {
 }
 
 #[test]
+fn color_trace_line_bounds_the_bucket_and_hides_without_a_gap() {
+    // Iro-Tresse (auditoria 4.7d): quadrado de linha normal cortado ao meio por uma linha de cor (6 px); a camada
+    // esconde as linhas de cor no render. O balde ainda vê a linha de cor e cada lado vai por baixo dela até o meio.
+    let mut s = CoreSession::for_tests("tools-irotresse");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 400, "height": 300}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = create(&mut s, Some(&sc), "C001", NodeKind::Cut(CutData::new(24)));
+    let fill_layer = create(&mut s, Some(&cut), "cor", NodeKind::Layer(LayerData::new(LayerType::Fill)));
+    let line_layer = create(&mut s, Some(&cut), "linha", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+    create(&mut s, Some(&fill_layer), "cor1", NodeKind::Cel(CelData::new(1)));
+    create(&mut s, Some(&line_layer), "linha1", NodeKind::Cel(CelData::new(1)));
+    s.apply(Command::SetProps { id: fill_layer.clone(), name: None, data: json!({"line_refs": [line_layer.0]}) }).unwrap();
+    let ink = ColorRef::Direct { rgba: Rgba::from_hex("#202020").unwrap() };
+    let mut sq = curve(&[[100.0, 50.0, 1.0], [300.0, 50.0, 1.0], [300.0, 250.0, 1.0], [100.0, 250.0, 1.0]], 3.0, &ink, true);
+    sq.geometry = serde_json::from_value(json!("polyline")).unwrap();
+    let shadow_ink = ColorRef::Direct { rgba: Rgba::from_hex("#3060ff").unwrap() };
+    let mut tr = curve(&[[200.0, 40.0, 1.0], [200.0, 260.0, 1.0]], 6.0, &shadow_ink, false);
+    tr.geometry = serde_json::from_value(json!("polyline")).unwrap();
+    tr.color_trace = true;
+    s.apply(draw_command(&s.project, &DrawRequest { cut: cut.clone(), frame: 0, layer: line_layer.clone(), curves: vec![sq, tr], mirror_x: None }).unwrap()).unwrap();
+    s.apply(Command::SetProps { id: line_layer.clone(), name: None, data: json!({"params": {"hide_color_trace": true}}) }).unwrap();
+    let (skin, shade) = (ColorRef::Direct { rgba: Rgba::from_hex("#f0c0a0").unwrap() }, ColorRef::Direct { rgba: Rgba::from_hex("#c08070").unwrap() });
+    let seeds = vec![FillSeed { x: 150.0, y: 150.0, color: skin }, FillSeed { x: 250.0, y: 150.0, color: shade }];
+    let req = FillRequest { cut: cut.clone(), frame: 0, layer: fill_layer.clone(), seeds, line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35, close_leftovers: None, skip_seeds_on_line: false, only_unpainted: false };
+    let cmd = fill_command(&s.project, &mut s.blobs, &req).unwrap();
+    s.apply(cmd).unwrap();
+    let all = RenderOptions { camera: false, layer_motion: false, ..Default::default() };
+    let img = render_frame(&s.project, &s.blobs, &cut, 0, &all).unwrap().image;
+    let (l, r) = (img.get(150, 150), img.get(250, 150));
+    assert!((l[0] - r[0]).abs() > 0.1, "as duas cores ficaram separadas pela linha de cor: {l:?} {r:?}");
+    for x in 196..=204 {
+        let p = img.get(x, 150);
+        assert!(p[3] > 0.99, "sem fresta debaixo da linha de cor escondida em x = {x}: {p:?}");
+        assert!(p[2] < 0.75, "e sem o azul da linha (escondida): {p:?}");
+    }
+}
+
+#[test]
 fn paint_sky_study_with_brushes() {
     use aiai_paint::brush::{BrushPreset, GradientKind};
     use aiai_tools::paint::{GradientRequest, PaintRequest, PaintStrokeSpec, gradient_command, paint_command};
@@ -741,5 +780,81 @@ fn svg_and_otio_exports() {
     assert_eq!(kids[3]["media_references"]["DEFAULT_MEDIA"]["OTIO_SCHEMA"], "GeneratorReference.1");
     assert_eq!(v["tracks"]["children"][0]["markers"][0]["name"], "Olá");
     assert_eq!(r["frames"].as_u64(), Some(26 + 24));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cut_lighting_variant_recolors_palette_colors_in_that_cut_only() {
+    // Iluminação por corte (auditoria 4.7e): a mesma linha de cor de paleta, um corte de dia e um de noite
+    let mut s = CoreSession::for_tests("tools-variant");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 120, "height": 80}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let mut variants = std::collections::BTreeMap::new();
+    variants.insert("noite".to_string(), Rgba::from_hex("#203060").unwrap());
+    let pal = create(&mut s, None, "Settei", NodeKind::Palette(PaletteData {
+        colors: vec![NamedColor { id: Id::from("pele"), name: "pele".into(), group: String::new(), role: "normal".into(), rgba: Rgba::from_hex("#f0c0a0").unwrap(), variants }],
+        active_variant: String::new(),
+        gradients: Vec::new(),
+    }));
+    let skin = ColorRef::Palette { palette: pal.clone(), color: Id::from("pele") };
+    let mut cuts = Vec::new();
+    for n in 0..2 {
+        let cut = create(&mut s, Some(&sc), &format!("C00{n}"), NodeKind::Cut(CutData::new(12)));
+        let l = create(&mut s, Some(&cut), "linha", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+        create(&mut s, Some(&l), "c1", NodeKind::Cel(CelData::new(1)));
+        let mut line = curve(&[[10.0, 40.0, 1.0], [110.0, 40.0, 1.0]], 12.0, &skin, false);
+        line.geometry = serde_json::from_value(json!("polyline")).unwrap();
+        s.apply(draw_command(&s.project, &DrawRequest { cut: cut.clone(), frame: 0, layer: l, curves: vec![line], mirror_x: None }).unwrap()).unwrap();
+        cuts.push(cut);
+    }
+    s.apply(Command::SetProps { id: cuts[1].clone(), name: None, data: json!({"palette_variant": "noite"}) }).unwrap();
+    let px = |s: &CoreSession, cut: &Id| render_frame(&s.project, &s.blobs, cut, 0, &RenderOptions { camera: false, ..Default::default() }).unwrap().image.get(60, 40);
+    let (day, night) = (px(&s, &cuts[0]), px(&s, &cuts[1]));
+    assert!(day[0] > 0.9 && day[2] < 0.7, "corte de dia: a cor normal {day:?}");
+    assert!(night[0] < 0.2 && night[2] > 0.3, "corte de noite: a variante {night:?}");
+    // tirar a variante do corte volta à cor da paleta
+    s.apply(Command::SetProps { id: cuts[1].clone(), name: None, data: json!({"palette_variant": null}) }).unwrap();
+    assert!(px(&s, &cuts[1])[0] > 0.9, "sem variante: normal de novo");
+}
+
+#[test]
+fn psd_written_by_us_imports_back_into_layers() {
+    // Importar PSD (auditoria 4.2d): o PSD exportado volta como camadas raster com nome, visibilidade e pixels
+    use aiai_tools::export::{ExportPsdRequest, export_psd};
+    use aiai_tools::import_layers::{ImportLayersRequest, import_layers_command, read_psd};
+    let dir = std::env::temp_dir().join(format!("aiai-import-psd-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = CoreSession::for_tests("import");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 160, "height": 90}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = create(&mut s, Some(&sc), "C001", NodeKind::Cut(CutData::new(12)));
+    let a = create(&mut s, Some(&cut), "線画", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+    let b = create(&mut s, Some(&cut), "Sombra", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+    create(&mut s, Some(&a), "1", NodeKind::Cel(CelData::new(1)));
+    create(&mut s, Some(&b), "1", NodeKind::Cel(CelData::new(1)));
+    let red = ColorRef::Direct { rgba: Rgba::from_hex("#d02020").unwrap() };
+    let blue = ColorRef::Direct { rgba: Rgba::from_hex("#2040d0").unwrap() };
+    s.apply(draw_command(&s.project, &DrawRequest { cut: cut.clone(), frame: 0, layer: a.clone(), curves: vec![curve(&[[20.0, 40.0, 1.0], [70.0, 40.0, 1.0]], 8.0, &red, false)], mirror_x: None }).unwrap()).unwrap();
+    s.apply(draw_command(&s.project, &DrawRequest { cut: cut.clone(), frame: 0, layer: b.clone(), curves: vec![curve(&[[90.0, 50.0, 1.0], [140.0, 50.0, 1.0]], 8.0, &blue, false)], mirror_x: None }).unwrap()).unwrap();
+    s.apply(Command::SetProps { id: b.clone(), name: None, data: json!({"visible": false}) }).unwrap();
+    let psd = dir.join("ida.psd");
+    export_psd(&s.project, &s.blobs, &ExportPsdRequest { cut: cut.clone(), frame: 0, out: psd.display().to_string(), camera: false }).unwrap();
+    let doc = read_psd(&std::fs::read(&psd).unwrap()).unwrap();
+    assert_eq!((doc.width, doc.height, doc.layers.len()), (160, 90, 2));
+    assert_eq!(doc.layers[0].name, "線画", "nome unicode, de baixo para cima");
+    assert!(doc.layers[0].visible && !doc.layers[1].visible);
+    let px = doc.layers[0].image.get(45, 40);
+    assert!(px[3] > 0.99 && px[0] > 0.7 && px[2] < 0.3, "o vermelho no lugar: {px:?}");
+    // num corte novo: duas camadas raster no topo
+    let cut2 = create(&mut s, Some(&sc), "C002", NodeKind::Cut(CutData::new(12)));
+    let cmd = import_layers_command(&s.project, &mut s.blobs, &mut s.ids, &ImportLayersRequest { cut: cut2.clone(), path: psd.display().to_string() }).unwrap();
+    s.apply(cmd).unwrap();
+    let kids = s.project.node(&cut2).unwrap().children.clone();
+    assert_eq!(kids.len(), 2);
+    let img = render_frame(&s.project, &s.blobs, &cut2, 0, &RenderOptions { camera: false, ..Default::default() }).unwrap().image;
+    assert!(img.get(45, 40)[3] > 0.99, "a camada importada aparece no corte");
+    assert!(img.get(115, 50)[3] < 0.01, "a oculta continua oculta");
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -5,7 +5,7 @@
 
 use aiai_paint::blend::blend_pixel;
 use aiai_core::*;
-use aiai_paint::{Affine, Image, Mask, sample_stroke, rasterize_stroke, tile, transform_image};
+use aiai_paint::{Affine, Image, Mask, sample_stroke, tile, transform_image};
 use rayon::prelude::*;
 use std::sync::Arc;
 
@@ -60,6 +60,8 @@ pub struct Renderer<'a> {
     camera: Option<CameraState>,
     layer_motion: bool,
     warnings: Vec<String>,
+    /// Iluminação do corte: variante das paletas (`CutData::palette_variant`).
+    variant: Option<String>,
 }
 
 /// Câmera avaliada num quadro.
@@ -408,7 +410,7 @@ pub fn render_frame_cached(project: &Project, blobs: &BlobStore, cut_id: &Id, fr
 /// nem o movimento da camada e sem a opacidade/modo dela: o "conteúdo cru" que a mesclagem de camadas compõe.
 /// Devolve também os avisos do render (cor de paleta ausente, blob ilegível...).
 pub fn render_cel_image(project: &Project, blobs: &BlobStore, cel: &CelData, hide_color_trace: bool, canvas: (u32, u32), layer_name: &str) -> (Image, Vec<String>) {
-    let mut r = Renderer { project, blobs, width: canvas.0, height: canvas.1, out_w: canvas.0, out_h: canvas.1, camera: None, layer_motion: false, warnings: Vec::new() };
+    let mut r = Renderer { project, blobs, width: canvas.0, height: canvas.1, out_w: canvas.0, out_h: canvas.1, camera: None, layer_motion: false, warnings: Vec::new(), variant: None };
     let img = r.render_cel(cel, hide_color_trace, layer_name);
     (img, r.warnings)
 }
@@ -428,7 +430,7 @@ fn render_frame_impl(project: &Project, blobs: &BlobStore, cut_id: &Id, frame: u
     } else {
         (w, h, None)
     };
-    let mut r = Renderer { project, blobs, width: w, height: h, out_w, out_h, camera, layer_motion: opts.layer_motion, warnings: Vec::new() };
+    let mut r = Renderer { project, blobs, width: w, height: h, out_w, out_h, camera, layer_motion: opts.layer_motion, warnings: Vec::new(), variant: cut.palette_variant.clone() };
     let allowed = opts.only_layers.as_ref().map(|ids| {
         let mut set = std::collections::BTreeSet::new();
         for id in ids {
@@ -938,7 +940,7 @@ impl<'a> Renderer<'a> {
             ColorRef::Direct { rgba } => rgba.0,
             ColorRef::Palette { palette, color } => {
                 let found = match self.project.node(palette).map(|n| &n.data) {
-                    Some(NodeKind::Palette(p)) => p.resolve(color),
+                    Some(NodeKind::Palette(p)) => p.resolve_in(color, self.variant.as_deref()),
                     _ => None,
                 };
                 match found {
@@ -1035,7 +1037,7 @@ impl<'a> Renderer<'a> {
                     q.r *= k;
                 }
             }
-            let Some(cov) = rasterize_stroke(&samples, s.aliased, w, h) else { continue };
+            let Some(cov) = aiai_paint::stroke_raster::rasterize_with_tip(s, &samples, w, h) else { continue };
             let a = color[3] * s.opacity;
             let premul = [color[0] * a, color[1] * a, color[2] * a, a];
             for yy in 0..cov.height {

@@ -94,6 +94,56 @@ pub fn rasterize_stroke(samples: &[StrokeSample], aliased: bool, clip_w: u32, cl
     Some(StrokeCoverage { x0, y0, width: w as u32, height: h as u32, cov })
 }
 
+/// Rasteriza com o acabamento da ponta do traço: ponta quadrada (as pontas cortadas retas no primeiro/último ponto) e
+/// grão de papel do lápis de genga (fixo no canvas, como o papel). Os outros traços saem como [`rasterize_stroke`].
+pub fn rasterize_with_tip(stroke: &aiai_core::Stroke, samples: &[StrokeSample], clip_w: u32, clip_h: u32) -> Option<StrokeCoverage> {
+    use aiai_core::VectorTip;
+    let mut c = rasterize_stroke(samples, stroke.aliased, clip_w, clip_h)?;
+    match stroke.tip {
+        VectorTip::Square if !stroke.closed && samples.len() >= 2 => {
+            let n = samples.len();
+            let ends = [(samples[0], samples[1..].iter().find(|q| (q.x - samples[0].x).hypot(q.y - samples[0].y) > 0.01).copied()),
+                (samples[n - 1], samples[..n - 1].iter().rev().find(|q| (q.x - samples[n - 1].x).hypot(q.y - samples[n - 1].y) > 0.01).copied())];
+            for (a, b) in ends {
+                let Some(b) = b else { continue };
+                let l = (a.x - b.x).hypot(a.y - b.y);
+                let (ux, uy) = ((a.x - b.x) / l, (a.y - b.y) / l);
+                let reach = a.r + 1.5;
+                for yy in 0..c.height {
+                    let py = (c.y0 + yy as i32) as f32 + 0.5;
+                    for xx in 0..c.width {
+                        let px = (c.x0 + xx as i32) as f32 + 0.5;
+                        if (px - a.x).hypot(py - a.y) > reach {
+                            continue;
+                        }
+                        let t = (px - a.x) * ux + (py - a.y) * uy;
+                        if t > -0.5 {
+                            let k = if stroke.aliased { if t > 0.0 { 0.0 } else { 1.0 } } else { (0.5 - t).clamp(0.0, 1.0) };
+                            c.cov[(yy * c.width + xx) as usize] *= k;
+                        }
+                    }
+                }
+            }
+        }
+        VectorTip::Genga => {
+            for yy in 0..c.height {
+                let y = (c.y0 + yy as i32) as f32;
+                for xx in 0..c.width {
+                    let i = (yy * c.width + xx) as usize;
+                    if c.cov[i] <= 0.0 {
+                        continue;
+                    }
+                    let x = (c.x0 + xx as i32) as f32;
+                    let g = 0.6 * crate::noise::fbm(x * 0.35, y * 0.35, 3, 2.0, 0.5, 7) + 0.4 * crate::noise::value_noise(x * 1.1, y * 1.1, 11);
+                    c.cov[i] *= (0.2 + 1.15 * g).clamp(0.0, 1.0);
+                }
+            }
+        }
+        _ => {}
+    }
+    Some(c)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,5 +172,31 @@ mod tests {
         assert!((sum - 6.0).abs() < 0.05, "largura integrada ≈ 2r: {sum}");
         let ca = rasterize_stroke(&smp, true, 200, 50).unwrap();
         assert!(ca.cov.iter().all(|&v| v == 0.0 || v == 1.0), "linha de cel sem cinzas");
+    }
+
+    fn line(tip: aiai_core::VectorTip) -> aiai_core::Stroke {
+        let mut st: aiai_core::Stroke = serde_json::from_value(serde_json::json!({"points": [{"x": 20.0, "y": 25.0}, {"x": 120.0, "y": 25.0}], "width": 10.0, "geometry": "polyline"})).unwrap();
+        st.tip = tip;
+        st
+    }
+
+    #[test]
+    fn square_tip_cuts_the_ends_flat_and_genga_has_grain() {
+        use aiai_core::VectorTip;
+        let at = |c: &StrokeCoverage, x: i32, y: i32| c.cov[((y - c.y0) as u32 * c.width + (x - c.x0) as u32) as usize];
+        let st = line(VectorTip::Square);
+        let sq = rasterize_with_tip(&st, &crate::sample_stroke(&st), 200, 50).unwrap();
+        let mk = line(VectorTip::Marker);
+        let round = rasterize_with_tip(&mk, &crate::sample_stroke(&mk), 200, 50).unwrap();
+        assert!(at(&round, 17, 25) > 0.9, "a tampa redonda passa da ponta");
+        assert!(at(&sq, 17, 25) < 0.01 && at(&sq, 21, 25) > 0.99, "ponta quadrada: corte reto em x = 20");
+        assert!(at(&sq, 21, 29) > 0.99, "e cheia até a borda (canto vivo)");
+        let gs = line(VectorTip::Genga);
+        let g = rasterize_with_tip(&gs, &crate::sample_stroke(&gs), 200, 50).unwrap();
+        let mid: Vec<f32> = (30..110).map(|x| at(&g, x, 25)).collect();
+        let (lo, hi) = mid.iter().fold((1.0f32, 0.0f32), |(a, b), &v| (a.min(v), b.max(v)));
+        assert!(hi - lo > 0.3, "o grão varia a tinta no meio do traço: {lo}..{hi}");
+        let mean = mid.iter().sum::<f32>() / mid.len() as f32;
+        assert!(mean > 0.5 && mean < 0.95, "lápis: na média mais claro que a caneta, mas presente: {mean}");
     }
 }

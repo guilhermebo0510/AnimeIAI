@@ -167,3 +167,28 @@ fn exterior_background_painted_with_tools() {
     let bottom = out.image.get(20, h - 5);
     assert!(top[2] > 0.3 && bottom[1] > bottom[2], "céu {top:?} / grama {bottom:?}");
 }
+
+#[test]
+fn lock_alpha_paints_only_where_the_layer_has_ink() {
+    // Bloquear transparência (auditoria 4.5l): um quadrado azul; o pincel vermelho atravessa a camada inteira
+    let mut s = CoreSession::for_tests("tools-lock-alpha");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 200, "height": 100}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = create(&mut s, Some(&sc), "C001", NodeKind::Cut(CutData::new(12)));
+    let l = create(&mut s, Some(&cut), "R", NodeKind::Layer(LayerData::new(LayerType::Raster)));
+    create(&mut s, Some(&l), "c1", NodeKind::Cel(CelData::new(1)));
+    let pts = |v: &[[f32; 3]]| PaintStrokeSpec { points: v.iter().map(|p| p.to_vec()).collect(), smooth: false };
+    let hard = BrushPreset::round("duro", 30.0, 1.0);
+    let blue = PaintRequest { cut: cut.clone(), frame: 0, layer: l.clone(), preset: hard.clone(), color: ColorRef::Direct { rgba: Rgba::from_hex("#2040ff").unwrap() }, strokes: vec![pts(&[[90.0, 50.0, 1.0], [110.0, 50.0, 1.0]])], seed: 1 };
+    let cmd = paint_command(&s.project, &mut s.blobs, &blue).unwrap();
+    s.apply(cmd).unwrap();
+    s.apply(Command::SetProps { id: l.clone(), name: None, data: json!({"params": {"lock_alpha": true}}) }).unwrap();
+    let red = PaintRequest { cut: cut.clone(), frame: 0, layer: l.clone(), preset: hard, color: ColorRef::Direct { rgba: Rgba::from_hex("#ff2020").unwrap() }, strokes: vec![pts(&[[10.0, 50.0, 1.0], [190.0, 50.0, 1.0]])], seed: 2 };
+    let cmd = paint_command(&s.project, &mut s.blobs, &red).unwrap();
+    s.apply(cmd).unwrap();
+    let img = render_frame(&s.project, &s.blobs, &cut, 0, &RenderOptions { camera: false, ..Default::default() }).unwrap().image;
+    let mid = img.get(100, 50);
+    assert!(mid[3] > 0.99 && mid[0] > 0.9 && mid[2] < 0.3, "no quadrado azul a tinta virou vermelha: {mid:?}");
+    assert!(img.get(30, 50)[3] < 0.01 && img.get(170, 50)[3] < 0.01, "fora da tinta nada foi pintado");
+}

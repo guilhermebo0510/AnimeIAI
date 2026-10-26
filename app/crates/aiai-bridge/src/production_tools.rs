@@ -47,14 +47,14 @@ use std::time::Instant;
 
 pub const PRODUCTION_ACTIONS: &[&str] = &[
     "SKY", "PATTERN_FILL", "TEXT", "TEXT_LAYER", "LAYER_MERGE", "LINES", "GAG_BG", "PARTICLES", "GUIDE3D", "PERSPECTIVE", "MODEL_SHEET", "CHARACTER_MATERIAL", "CONSISTENCY", "INBETWEEN", "PROPAGATE_FILLS",
-    "TTS_LINE", "TTS_KOKORO", "VOICE_PROFILE", "LIPSYNC", "SFX", "BGM", "IMPORT_AUDIO", "IMPORT_IMAGE", "EXPORT_PSD", "EXPORT_XDTS", "EXPORT_SVG", "EXPORT_OTIO", "MIX_CUT", "LOUDNESS", "COMPARE", "PROBE_COLOR", "MEASURE_LINE", "MEASURE_EDGE", "FILL_SHAPE", "EDIT_SET", "EXPORT_VIDEO", "GRADIENT_PAINT",
+    "TTS_LINE", "TTS_KOKORO", "VOICE_PROFILE", "LIPSYNC", "SFX", "BGM", "IMPORT_AUDIO", "IMPORT_IMAGE", "IMPORT_LAYERS", "EXPORT_PSD", "EXPORT_XDTS", "EXPORT_SVG", "EXPORT_OTIO", "MIX_CUT", "LOUDNESS", "COMPARE", "PROBE_COLOR", "MEASURE_LINE", "MEASURE_EDGE", "FILL_SHAPE", "EDIT_SET", "EXPORT_VIDEO", "GRADIENT_PAINT",
 ];
 
 /// Ações que mudam o documento (o headless salva o projeto depois delas).
 pub fn is_mutating(action: &str) -> bool {
     matches!(
         action,
-        "SKY" | "PATTERN_FILL" | "TEXT" | "TEXT_LAYER" | "LAYER_MERGE" | "LINES" | "GAG_BG" | "PARTICLES" | "GUIDE3D" | "PERSPECTIVE" | "MODEL_SHEET" | "CHARACTER_MATERIAL" | "INBETWEEN" | "PROPAGATE_FILLS" | "TTS_LINE" | "TTS_KOKORO" | "VOICE_PROFILE" | "LIPSYNC" | "SFX" | "BGM" | "IMPORT_AUDIO" | "IMPORT_IMAGE" | "FILL_SHAPE" | "EDIT_SET" | "GRADIENT_PAINT"
+        "SKY" | "PATTERN_FILL" | "TEXT" | "TEXT_LAYER" | "LAYER_MERGE" | "LINES" | "GAG_BG" | "PARTICLES" | "GUIDE3D" | "PERSPECTIVE" | "MODEL_SHEET" | "CHARACTER_MATERIAL" | "INBETWEEN" | "PROPAGATE_FILLS" | "TTS_LINE" | "TTS_KOKORO" | "VOICE_PROFILE" | "LIPSYNC" | "SFX" | "BGM" | "IMPORT_AUDIO" | "IMPORT_IMAGE" | "IMPORT_LAYERS" | "FILL_SHAPE" | "EDIT_SET" | "GRADIENT_PAINT"
     )
 }
 
@@ -219,6 +219,12 @@ pub fn handle(session: &mut CoreSession, action: &str, params: &Value) -> Result
             let r: aiai_tools::import::ImportImageRequest = request(params, action)?;
             check_abs(&r.path, "path")?;
             let cmd = aiai_tools::import::import_image_command(&session.project, &mut session.blobs, &r).map_err(tool_error)?;
+            apply(session, params, cmd)
+        }
+        "IMPORT_LAYERS" => {
+            let r: aiai_tools::import_layers::ImportLayersRequest = request(params, action)?;
+            check_abs(&r.path, "path")?;
+            let cmd = aiai_tools::import_layers::import_layers_command(&session.project, &mut session.blobs, &mut session.ids, &r).map_err(tool_error)?;
             apply(session, params, cmd)
         }
         "EXPORT_PSD" => {
@@ -855,7 +861,7 @@ pub(crate) fn export_video(session: &mut CoreSession, params: &Value) -> Result<
                 return Err(BridgeError::invalid_params("'out' deve terminar em .webm (ou .mkv) para vp9"));
             }
         }
-        VideoCodec::Prores => {
+        VideoCodec::Prores | VideoCodec::Prores4444 => {
             if !name.ends_with(".mov") {
                 return Err(BridgeError::invalid_params("'out' deve terminar em .mov para prores"));
             }
@@ -955,7 +961,8 @@ pub(crate) fn export_video(session: &mut CoreSession, params: &Value) -> Result<
     let mut encoder: Option<Encoder> = None;
     let mut size = (0u32, 0u32);
     let mut warnings: BTreeMap<String, u32> = BTreeMap::new();
-    let opts = RenderOptions { camera: true, background: Some(bg), ..Default::default() };
+    // com alfa (ProRes 4444) o render vai sem fundo: o que é transparente no corte sai transparente no vídeo
+    let opts = RenderOptions { camera: true, background: if r.codec.has_alpha() { None } else { Some(bg) }, ..Default::default() };
     // lista de (corte, quadro); None = quadro da edição
     let jobs: Vec<(Option<&Id>, u32)> = match &edit_doc {
         Some(_) => (0..total as u32).map(|f| (None, f)).collect(),

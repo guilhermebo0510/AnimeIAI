@@ -315,6 +315,75 @@ pub fn simplify_area(s: &Stroke, path: &[[f32; 2]], radius: f32, tol: f32) -> Re
     Ok(Some((keep_only(&ns, &keep), removed)))
 }
 
+// ------------------------------------------------------------------------------------------------------- soldar
+
+/// Soldagem de pontas (auditoria 4.9b): cada ponta solta de `s` que termina a até `radius` px de outra linha de
+/// `others` vai até ela e entra na linha de lá (sem passar para o outro lado), e a ponta fica reta (sem afinar: a ponta
+/// fina deixava o balde vazar pela fresta; fim da camada "Fecho do balde"). A ponta que já está dentro da outra linha
+/// só fica reta. Devolve o traço e quantas pontas soldou. Tudo em px do cel.
+pub fn weld_endpoints(s: &Stroke, others: &[Stroke], radius: f32) -> (Stroke, usize) {
+    if s.closed || s.points.len() < 2 || s.geometry == StrokeGeometry::Bezier || radius <= 0.0 {
+        return (s.clone(), 0);
+    }
+    let lines: Vec<(Vec<(f32, f32, f32)>, f32)> = others.iter().map(|o| (aiai_paint::flatten_points(o), o.width * 0.5)).collect();
+    // ponto mais perto (centro da linha) e a meia largura de lá
+    let nearest = |x: f32, y: f32| -> Option<(f32, f32, f32, f32)> {
+        let mut best: Option<(f32, f32, f32, f32)> = None;
+        for (flat, half) in &lines {
+            for w in flat.windows(2) {
+                let (ax, ay, bx, by) = (w[0].0, w[0].1, w[1].0, w[1].1);
+                let (dx, dy) = (bx - ax, by - ay);
+                let l2 = dx * dx + dy * dy;
+                let t = if l2 > 0.0 { (((x - ax) * dx + (y - ay) * dy) / l2).clamp(0.0, 1.0) } else { 0.0 };
+                let (qx, qy) = (ax + dx * t, ay + dy * t);
+                let d = (x - qx).hypot(y - qy);
+                if best.is_none_or(|b| d < b.2) {
+                    let p = w[0].2 + (w[1].2 - w[0].2) * t;
+                    best = Some((qx, qy, d, half * crate::line_fix::pressure_width(p.clamp(0.0, 1.0)).max(0.3)));
+                }
+            }
+        }
+        best
+    };
+    let mut ns = s.clone();
+    ns.materialize_point_ids();
+    let mut welded = 0;
+    for start in [true, false] {
+        let n = ns.points.len();
+        let (end, prev) = if start { (ns.points[0], ns.points[1]) } else { (ns.points[n - 1], ns.points[n - 2]) };
+        let Some((qx, qy, d, half)) = nearest(end.x, end.y) else { continue };
+        if d > radius {
+            continue;
+        }
+        let k = if start { 0 } else { n - 1 };
+        if d <= half * 0.6 {
+            ns.points[k].corner = true;
+            welded += 1;
+            continue;
+        }
+        // entra na linha pela direção ponta -> centro (ou, colada, pela direção do traço)
+        let (mut ux, mut uy) = (qx - end.x, qy - end.y);
+        let l = ux.hypot(uy);
+        if l < 1e-3 {
+            (ux, uy) = (end.x - prev.x, end.y - prev.y);
+        }
+        let l = ux.hypot(uy).max(1e-6);
+        // a ponta (reta, com a largura cheia) para dentro da outra linha: entra até onde a tampa não sai do outro lado
+        let own = aiai_paint::width_at_point(&ns, k) * 0.5;
+        let depth = (half - own).clamp(-half * 0.5, half * 0.6);
+        let target = (qx + ux / l * depth, qy + uy / l * depth);
+        let id = ns.points.iter().map(|q| q.id).max().unwrap_or(0) + 1;
+        let q = StrokePoint { x: target.0, y: target.1, corner: true, handle: None, id, ..end };
+        if start {
+            ns.points.insert(0, q);
+        } else {
+            ns.points.push(q);
+        }
+        welded += 1;
+    }
+    (ns, welded)
+}
+
 // ------------------------------------------------------------------------------------------------------ conectar
 
 /// Opções do Conectar.
@@ -1291,6 +1360,30 @@ mod tests {
         s.points = pts.iter().map(|&(x, y)| pt(x, y)).collect();
         s.geometry = geometry;
         s
+    }
+
+    #[test]
+    fn weld_takes_loose_ends_into_the_nearby_line() {
+        // parede vertical em x = 100; um traço que para em x = 95 (5 px antes) e outro que para longe (x = 60)
+        let wall = stroke("w", &[(100.0, 0.0), (100.0, 200.0)], StrokeGeometry::Polyline);
+        let near = stroke("n", &[(20.0, 50.0), (60.0, 50.0), (95.0, 50.0)], StrokeGeometry::Polyline);
+        let (w, k) = weld_endpoints(&near, std::slice::from_ref(&wall), 8.0);
+        assert_eq!(k, 1, "só a ponta perto da parede");
+        let last = w.points.last().unwrap();
+        // larguras iguais (4): a ponta reta para no centro da parede, a tampa cobre até a borda de lá
+        assert!(last.x > 98.9 && last.x < 101.0 && (last.y - 50.0).abs() < 0.01 && last.corner, "entrou na parede, reta: {last:?}");
+        assert_eq!(w.points[0].x, 20.0, "a outra ponta ficou");
+        let far = stroke("f", &[(20.0, 80.0), (60.0, 80.0)], StrokeGeometry::Polyline);
+        assert_eq!(weld_endpoints(&far, std::slice::from_ref(&wall), 8.0).1, 0, "longe demais");
+        // já dentro da parede (meia largura 2): nada
+        let inside = stroke("i", &[(20.0, 120.0), (99.5, 120.0)], StrokeGeometry::Polyline);
+        let (w, k) = weld_endpoints(&inside, std::slice::from_ref(&wall), 8.0);
+        assert!(k == 1 && w.points.len() == 2 && w.points[1].corner, "já dentro: só fica reta");
+        // ponta do começo também
+        let rev = stroke("r", &[(96.0, 150.0), (40.0, 150.0)], StrokeGeometry::Polyline);
+        let (w, k) = weld_endpoints(&rev, std::slice::from_ref(&wall), 8.0);
+        assert_eq!(k, 1);
+        assert!(w.points[0].x > 98.9 && w.points[0].corner, "{:?}", w.points[0]);
     }
 
     fn y_at(s: &Stroke, x: f32) -> f32 {

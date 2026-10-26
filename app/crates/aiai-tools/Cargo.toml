@@ -27,6 +27,7 @@ thiserror = { workspace = true }
 rayon = { workspace = true }
 image = { workspace = true }
 base64 = { workspace = true }
+miniz_oxide = "0.8"
 
 [dev-dependencies]
 glam = { workspace = true }

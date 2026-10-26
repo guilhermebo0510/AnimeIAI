@@ -243,6 +243,32 @@ impl CoreSession {
         Ok(())
     }
 
+    /// Junta os últimos `n` comandos aplicados num passo só de desfazer/refazer (ex.: a camada criada sozinha no começo
+    /// de um gesto e o traço gravado nela, auditoria V2-04). Só vale se eles foram os últimos registros e todos
+    /// aplicações; o WAL já gravado continua igual (repetir as partes dá o mesmo estado). `false` = nada mudou.
+    pub fn merge_last(&mut self, n: usize, label: &str) -> bool {
+        if n < 2 || self.undo.len() < n || self.log.len() < n || !self.log[self.log.len() - n..].iter().all(|e| e.op == "apply") {
+            return false;
+        }
+        let parts = self.undo.split_off(self.undo.len() - n);
+        let command = Command::Batch { commands: parts.iter().map(|a| a.command.clone()).collect(), label: Some(label.to_owned()) };
+        let inverse = Command::Batch { commands: parts.iter().rev().map(|a| a.inverse.clone()).collect(), label: None };
+        let mut created = Vec::new();
+        let mut affected = Vec::new();
+        for a in &parts {
+            created.extend(a.created.iter().cloned());
+            affected.extend(a.affected.iter().cloned());
+        }
+        affected.dedup();
+        self.undo.push(Applied { command: command.clone(), inverse, created, affected });
+        let entries = self.log.split_off(self.log.len() - n);
+        let (first, last) = (entries.first().cloned(), entries.last().cloned());
+        if let (Some(first), Some(last)) = (first, last) {
+            self.log.push(LogEntry { seq: first.seq, revision: last.revision, op: "apply".into(), description: label.to_owned(), author: last.author, time_ms: last.time_ms, command: Some(command) });
+        }
+        true
+    }
+
     pub fn can_undo(&self) -> bool {
         !self.undo.is_empty()
     }

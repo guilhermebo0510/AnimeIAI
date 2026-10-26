@@ -49,13 +49,14 @@ const fn video(id: &'static str, key: &'static str, tip: &'static str, codec: &'
     FormatPreset { id, key, tip, kind: Kind::Video, codec, crf, loudness, audio: true, ext, sidecar_srt, height: None, speed: None }
 }
 
-pub const PRESETS: [FormatPreset; 13] = [
+pub const PRESETS: [FormatPreset; 14] = [
     video("tv", "deliver.p.tv", "deliver.p.tv.tip", "h264", Some(18), Some("arib"), "mp4", true),
     video("web", "deliver.p.web", "deliver.p.web.tip", "h264", Some(20), Some("streaming"), "mp4", true),
     FormatPreset { height: Some(1080), ..video("youtube", "deliver.p.youtube", "deliver.p.youtube.tip", "h264", Some(18), Some("streaming"), "mp4", true) },
     FormatPreset { speed: Some("slow"), ..video("master", "deliver.p.master", "deliver.p.master.tip", "h264", Some(10), Some("ebu"), "mp4", false) },
     video("nvenc", "deliver.p.nvenc", "deliver.p.nvenc.tip", "h264_nvenc", Some(19), Some("arib"), "mp4", false),
     video("prores", "deliver.p.prores", "deliver.p.prores.tip", "prores", None, Some("ebu"), "mov", false),
+    FormatPreset { audio: false, ..video("prores4444", "deliver.p.prores4444", "deliver.p.prores4444.tip", "prores4444", None, None, "mov", false) },
     video("h265", "deliver.p.h265", "deliver.p.h265.tip", "h265", Some(23), Some("streaming"), "mp4", true),
     video("webm", "deliver.p.webm", "deliver.p.webm.tip", "vp9", Some(32), Some("streaming"), "webm", true),
     FormatPreset { height: Some(360), speed: Some("veryfast"), ..video("preview", "deliver.p.preview", "deliver.p.preview.tip", "h264", Some(30), None, "mp4", false) },

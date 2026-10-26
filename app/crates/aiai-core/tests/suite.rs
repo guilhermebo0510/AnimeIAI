@@ -538,3 +538,23 @@ fn lowering_the_undo_limit_drops_the_excess_at_once() {
     s.apply(Command::SetProps { id: cel.clone(), name: Some("ultimo".into()), data: json!({}) }).unwrap();
     assert_eq!(s.history().0.len(), 10, "o histórico foi cortado de uma vez no limite novo");
 }
+
+#[test]
+fn merge_last_makes_one_undo_step() {
+    // auditoria V2-04: a camada criada sozinha e o traço nela viram um passo de desfazer/refazer
+    let mut s = CoreSession::for_tests("merge");
+    let ep = s.apply(Command::CreateNode { id: None, parent: None, index: None, name: "EP".into(), data: NodeKind::Episode(EpisodeData::default()) }).unwrap().created[0].clone();
+    let r0 = s.project.revision;
+    let a = s.apply(Command::CreateNode { id: None, parent: Some(ep.clone()), index: None, name: "S".into(), data: NodeKind::Scene(SceneData::default()) }).unwrap().created[0].clone();
+    s.apply(Command::CreateNode { id: None, parent: Some(a.clone()), index: None, name: "C".into(), data: NodeKind::Cut(CutData::new(12)) }).unwrap();
+    let before = s.history().0.len();
+    assert!(s.merge_last(2, "cena e corte"));
+    assert_eq!(s.history().0.len(), before - 1);
+    assert_eq!(s.history().0.last().map(String::as_str), Some("cena e corte"));
+    s.undo().unwrap();
+    assert!(s.project.node(&a).is_none(), "um desfazer tira os dois");
+    assert!(s.project.revision > r0);
+    s.redo().unwrap();
+    assert!(s.project.node(&a).is_some_and(|n| n.children.len() == 1), "um refazer põe os dois");
+    assert!(!s.merge_last(5, "x"), "não junta mais do que existe");
+}

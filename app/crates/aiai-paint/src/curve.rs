@@ -217,16 +217,22 @@ fn tip_factor(tip: VectorTip, p: f32) -> f32 {
         VectorTip::GPen => 0.12 + 0.88 * p.powf(0.8),
         VectorTip::MaruPen => 0.55 + 0.45 * p,
         VectorTip::Marker => 1.0,
-        VectorTip::Pencil => 0.4 + 0.6 * p,
+        VectorTip::Pencil | VectorTip::Genga => 0.4 + 0.6 * p,
+        VectorTip::School => 0.75 + 0.25 * p,
+        VectorTip::Fude => 0.04 + 0.96 * p.powf(1.3),
+        VectorTip::Square => 1.0,
     }
 }
 
 /// Afinamento de entrada/saída (0..1) para pontas que afinam.
-fn taper(tip: VectorTip, s: f32, total: f32, width: f32) -> f32 {
+/// `blunt` = [começo, fim] sem afinar (ponta reta: ponto da ponta marcado como canto, como a ponta soldada).
+fn taper(tip: VectorTip, s: f32, total: f32, width: f32, blunt: [bool; 2]) -> f32 {
     let len = match tip {
         VectorTip::GPen => (total * 0.18).min(width * 5.0),
         VectorTip::MaruPen => (total * 0.08).min(width * 2.0),
-        VectorTip::Marker | VectorTip::Pencil => 0.0,
+        VectorTip::School => (total * 0.06).min(width * 1.5),
+        VectorTip::Fude => (total * 0.25).min(width * 7.0),
+        VectorTip::Marker | VectorTip::Pencil | VectorTip::Genga | VectorTip::Square => 0.0,
     };
     if len <= 0.0 {
         return 1.0;
@@ -235,7 +241,9 @@ fn taper(tip: VectorTip, s: f32, total: f32, width: f32) -> f32 {
         let t = (d / len).clamp(0.0, 1.0);
         0.15 + 0.85 * (t * t * (3.0 - 2.0 * t))
     };
-    ramp(s).min(ramp(total - s))
+    let a = if blunt[0] { 1.0 } else { ramp(s) };
+    let b = if blunt[1] { 1.0 } else { ramp(total - s) };
+    a.min(b)
 }
 
 fn profile_at(profile: &[[f32; 2]], t: f32) -> f32 {
@@ -270,6 +278,7 @@ pub fn sample_stroke(stroke: &Stroke) -> Vec<StrokeSample> {
     }
     let total = acc.max(1e-6);
     let min_r = if stroke.aliased { 0.5 } else { 0.25 };
+    let blunt = [stroke.points.first().is_some_and(|q| q.corner), stroke.points.last().is_some_and(|q| q.corner)];
     flat.iter()
         .zip(&cum)
         .map(|(q, &s)| {
@@ -278,7 +287,7 @@ pub fn sample_stroke(stroke: &Stroke) -> Vec<StrokeSample> {
             // (0,12 × 0,15) derrubava a ponta para o raio mínimo e as linhas não se encontravam nos cantos.
             let mut k = profile_at(&stroke.profile.0, t);
             if !stroke.closed {
-                k = k.min(taper(stroke.tip, s, total, stroke.width));
+                k = k.min(taper(stroke.tip, s, total, stroke.width, blunt));
             }
             let r = 0.5 * stroke.width * tip_factor(stroke.tip, q.p) * q.w.max(0.0) * k;
             StrokeSample { x: q.x, y: q.y, r: r.max(min_r) }
@@ -327,5 +336,16 @@ mod tests {
         let mid = smp[smp.len() / 2].r;
         assert!(smp[0].r < mid * 0.3 && smp[smp.len() - 1].r < mid * 0.3, "{} {} {}", smp[0].r, mid, smp.last().unwrap().r);
         assert!((mid - 5.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn corner_on_an_end_makes_it_blunt() {
+        // ponta soldada: o último ponto é canto e não afina; o começo continua afinando
+        let mut s = mk(&[(0.0, 0.0, 1.0), (300.0, 0.0, 1.0)], StrokeGeometry::Polyline, VectorTip::GPen, 10.0);
+        s.points[1].corner = true;
+        let smp = sample_stroke(&s);
+        let mid = smp[smp.len() / 2].r;
+        assert!(smp[0].r < mid * 0.3, "o começo afina");
+        assert!((smp[smp.len() - 1].r - mid).abs() < 0.01, "o fim fica reto: {}", smp.last().unwrap().r);
     }
 }

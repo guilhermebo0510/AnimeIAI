@@ -174,10 +174,63 @@ impl MeshWarp {
         (top[0] + (bot[0] - top[0]) * fv, top[1] + (bot[1] - top[1]) * fv)
     }
 
-    /// Deforma uma imagem (para raster): inversão por busca local de Newton a partir da posição sem deformação.
+    /// Deforma uma imagem (para raster), como a prévia na GPU: cada célula vira 16×16 quadradinhos levados pela malha e
+    /// rasterizados em triângulos (coordenada de origem por baricêntricas). Não depende de inverter a malha, então
+    /// células muito tortas não abrem buracos. O que estava dentro do retângulo sai do lugar; o resto fica.
     pub fn warp_image(&self, src: &Image) -> Image {
-        let m = self.clone();
-        resample_inverse(src, src.width, src.height, move |x, y| m.inverse_point(x, y))
+        const S: u32 = 16;
+        let (w, h) = (src.width, src.height);
+        let mut out = src.clone();
+        if self.validate().is_err() {
+            return out;
+        }
+        let r = self.rect;
+        for y in 0..h {
+            let cy = y as f32 + 0.5;
+            if cy < r[1] || cy >= r[1] + r[3] {
+                continue;
+            }
+            for x in 0..w {
+                let cx = x as f32 + 0.5;
+                if cx >= r[0] && cx < r[0] + r[2] {
+                    out.data[(y * w + x) as usize] = [0.0; 4];
+                }
+            }
+        }
+        let (nu, nv) = (self.cols * S, self.rows * S);
+        let src_pt = |i: u32, j: u32| [r[0] + r[2] * i as f32 / nu as f32, r[1] + r[3] * j as f32 / nv as f32];
+        let mut dst = Vec::with_capacity(((nu + 1) * (nv + 1)) as usize);
+        for j in 0..=nv {
+            for i in 0..=nu {
+                let p = src_pt(i, j);
+                // o último vértice de cada lado fica exatamente no ponto da malha
+                let q = self.edge_forward(i == nu, j == nv, p);
+                dst.push([q.0, q.1]);
+            }
+        }
+        let at = |i: u32, j: u32| dst[(j * (nu + 1) + i) as usize];
+        for j in 0..nv {
+            for i in 0..nu {
+                let (s00, s10, s01, s11) = (src_pt(i, j), src_pt(i + 1, j), src_pt(i, j + 1), src_pt(i + 1, j + 1));
+                let (d00, d10, d01, d11) = (at(i, j), at(i + 1, j), at(i, j + 1), at(i + 1, j + 1));
+                raster_tri(src, &mut out, [d00, d10, d11], [s00, s10, s11]);
+                raster_tri(src, &mut out, [d00, d11, d01], [s00, s11, s01]);
+            }
+        }
+        out
+    }
+
+    /// `forward` dentro do retângulo, incluindo as bordas de baixo/direita (onde a busca de célula cairia fora).
+    fn edge_forward(&self, right: bool, bottom: bool, p: [f32; 2]) -> (f32, f32) {
+        let u = if right { self.cols as f32 } else { (p[0] - self.rect[0]) / self.rect[2] * self.cols as f32 };
+        let v = if bottom { self.rows as f32 } else { (p[1] - self.rect[1]) / self.rect[3] * self.rows as f32 };
+        let i = (u.floor() as u32).min(self.cols - 1);
+        let j = (v.floor() as u32).min(self.rows - 1);
+        let (fu, fv) = (u - i as f32, v - j as f32);
+        let (a, b, c, d) = (self.vtx(i, j), self.vtx(i + 1, j), self.vtx(i, j + 1), self.vtx(i + 1, j + 1));
+        let top = [a[0] + (b[0] - a[0]) * fu, a[1] + (b[1] - a[1]) * fu];
+        let bot = [c[0] + (d[0] - c[0]) * fu, c[1] + (d[1] - c[1]) * fu];
+        (top[0] + (bot[0] - top[0]) * fv, top[1] + (bot[1] - top[1]) * fv)
     }
 
     /// Inverte `forward` por Newton (com jacobiano numérico); `None` se não convergir (fora da malha deformada).
@@ -203,6 +256,33 @@ impl MeshWarp {
         }
         let (fx, fy) = self.forward(px, py);
         ((fx - x).abs() < 0.5 && (fy - y).abs() < 0.5).then_some((px, py))
+    }
+}
+
+/// Pinta em `out` o triângulo de destino `d`, com a cor de `src` no ponto correspondente do triângulo `s`.
+fn raster_tri(src: &Image, out: &mut Image, d: [[f32; 2]; 3], s: [[f32; 2]; 3]) {
+    let area = (d[1][0] - d[0][0]) * (d[2][1] - d[0][1]) - (d[2][0] - d[0][0]) * (d[1][1] - d[0][1]);
+    if area.abs() < 1e-6 {
+        return;
+    }
+    let x0 = d.iter().map(|p| p[0]).fold(f32::MAX, f32::min).floor().max(0.0) as i64;
+    let x1 = d.iter().map(|p| p[0]).fold(f32::MIN, f32::max).ceil().min(out.width as f32) as i64;
+    let y0 = d.iter().map(|p| p[1]).fold(f32::MAX, f32::min).floor().max(0.0) as i64;
+    let y1 = d.iter().map(|p| p[1]).fold(f32::MIN, f32::max).ceil().min(out.height as f32) as i64;
+    const E: f32 = 1e-4;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
+            let w0 = ((d[1][0] - px) * (d[2][1] - py) - (d[2][0] - px) * (d[1][1] - py)) / area;
+            let w1 = ((d[2][0] - px) * (d[0][1] - py) - (d[0][0] - px) * (d[2][1] - py)) / area;
+            let w2 = 1.0 - w0 - w1;
+            if w0 < -E || w1 < -E || w2 < -E {
+                continue;
+            }
+            let sx = w0 * s[0][0] + w1 * s[1][0] + w2 * s[2][0];
+            let sy = w0 * s[0][1] + w1 * s[1][1] + w2 * s[2][1];
+            out.data[(y as u32 * out.width + x as u32) as usize] = sample_bilinear(src, sx, sy);
+        }
     }
 }
 
@@ -264,6 +344,27 @@ impl Liquify {
         }
     }
 
+    /// O passo oposto (inverso aproximado, bom para passos pequenos como os de uma pincelada).
+    pub fn opposite(&self) -> Liquify {
+        let opposite = Liquify {
+            strength: -self.strength,
+            kind: match self.kind {
+                LiquifyKind::Bulge => LiquifyKind::Pinch,
+                LiquifyKind::Pinch => LiquifyKind::Bulge,
+                k => k,
+            },
+            ..*self
+        };
+        if matches!(self.kind, LiquifyKind::Bulge | LiquifyKind::Pinch) { Liquify { strength: self.strength, ..opposite } } else { opposite }
+    }
+
+    /// O ponto cai na área de efeito?
+    #[inline]
+    fn touches(&self, x: f32, y: f32) -> bool {
+        let (dx, dy) = (x - self.center[0], y - self.center[1]);
+        dx * dx + dy * dy < self.radius * self.radius
+    }
+
     pub fn liquify_image(&self, src: &Image) -> Image {
         // inverso aproximado: aplica o oposto (bom para intensidades moderadas, como no Photoshop por pinceladas)
         let opposite = Liquify {
@@ -278,6 +379,33 @@ impl Liquify {
         let opp = if matches!(self.kind, LiquifyKind::Bulge | LiquifyKind::Pinch) { Liquify { strength: self.strength, ..opposite } } else { opposite };
         resample_inverse(src, src.width, src.height, move |x, y| Some(opp.forward(x, y)))
     }
+}
+
+/// Pincelada de liquify (Liquefazer do Mover): passos em ordem. Para um ponto, um passo depois do outro.
+pub fn liquify_path_forward(steps: &[Liquify], x: f32, y: f32) -> (f32, f32) {
+    steps.iter().fold((x, y), |(x, y), s| if s.touches(x, y) { s.forward(x, y) } else { (x, y) })
+}
+
+/// Pincelada de liquify numa imagem: os opostos na ordem contrária, numa reamostragem só (sem borrar a cada passo).
+/// Fora da caixa de todos os passos a imagem fica igual.
+pub fn liquify_path_image(steps: &[Liquify], src: &Image) -> Image {
+    if steps.is_empty() {
+        return src.clone();
+    }
+    let opp: Vec<Liquify> = steps.iter().rev().map(Liquify::opposite).collect();
+    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+    for s in steps {
+        x0 = x0.min(s.center[0] - s.radius);
+        y0 = y0.min(s.center[1] - s.radius);
+        x1 = x1.max(s.center[0] + s.radius);
+        y1 = y1.max(s.center[1] + s.radius);
+    }
+    resample_inverse(src, src.width, src.height, move |x, y| {
+        if x < x0 || x > x1 || y < y0 || y > y1 {
+            return Some((x, y));
+        }
+        Some(opp.iter().fold((x, y), |(x, y), s| if s.touches(x, y) { s.forward(x, y) } else { (x, y) }))
+    })
 }
 
 // ---------------------------------------------------------------- repetição

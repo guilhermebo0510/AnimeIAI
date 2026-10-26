@@ -130,6 +130,11 @@ impl EditDoc {
             Some(ids) => self.with_linked(ids),
             None => self.items.iter().map(|i| i.id).collect(),
         };
+        // navalha dirigida a itens: se o clicado (ou um vinculado a ele que atravessa o quadro) está numa trilha travada,
+        // nada é cortado — cortar só a parte livre do par tiraria o áudio de sincronia em silêncio (auditoria M-03)
+        if ids.is_some() && targets.iter().any(|id| self.item(*id).is_some_and(|i| f > i.start && f < i.end() && self.is_locked(i.track))) {
+            return Vec::new();
+        }
         let targets: Vec<u32> = targets.into_iter().filter(|id| self.item(*id).is_some_and(|i| f > i.start && f < i.end() && !self.is_locked(i.track))).collect();
         let mut relink: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
         let mut made = Vec::new();

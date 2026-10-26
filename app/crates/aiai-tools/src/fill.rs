@@ -131,10 +131,43 @@ fn compute_regions_uncached(
     params: &FillParams,
 ) -> ToolResult<LineRegions> {
     let opts = RenderOptions { only_layers: Some(line_layers.to_vec()), include_guides: false, include_reference: false, background: None, camera: false, layer_motion: false };
-    let out = render_frame(p, blobs, cut_id, frame, &opts).map_err(|e| ToolError::Render(e.to_string()))?;
+    // Iro-Tresse (auditoria 4.7d): as linhas de cor delimitam o balde mesmo quando a camada as esconde no render, e as
+    // regiões avançam por baixo delas até o meio: escondida a linha, as duas cores se encontram sem fresta
+    let cut = cut_data(p, cut_id)?;
+    let mut trace_half = 0.0f32;
+    let mut hidden = false;
+    for l in line_layers {
+        let Some(cel) = exposed_cel(p, cut, l, frame) else { continue };
+        if let NodeKind::Cel(c) = &cel.data {
+            for st in c.strokes.iter().filter(|st| st.color_trace) {
+                trace_half = trace_half.max(st.width * 0.5);
+                hidden |= layer_data(p, l).is_ok_and(|ld| ld.params.get("hide_color_trace").and_then(|v| v.as_bool()).unwrap_or(false));
+            }
+        }
+    }
+    let shown;
+    let src = if hidden {
+        let mut q = p.clone();
+        for l in line_layers {
+            if let Some(NodeKind::Layer(ld)) = q.node_mut(l).map(|n| &mut n.data) {
+                if let Some(m) = ld.params.as_object_mut() {
+                    m.remove("hide_color_trace");
+                }
+            }
+        }
+        shown = q;
+        &shown
+    } else {
+        p
+    };
+    let out = render_frame(src, blobs, cut_id, frame, &opts).map_err(|e| ToolError::Render(e.to_string()))?;
     let (w, h) = (out.image.width, out.image.height);
     let boundary = boundary_from_alpha(&out.image, params.line_threshold);
-    let regions = label_regions(&boundary, w as usize, h as usize, params);
+    let mut params = *params;
+    if trace_half > 0.0 {
+        params.expand = params.expand.max((trace_half + 1.0).ceil() as u32);
+    }
+    let regions = label_regions(&boundary, w as usize, h as usize, &params);
     Ok(LineRegions { regions, width: w, height: h, boundary })
 }
 

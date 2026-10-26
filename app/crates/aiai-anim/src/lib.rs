@@ -8,7 +8,8 @@
 //!    cada ponto. Interpolar ângulo e escala em vez de coordenadas evita o "encolhimento" da interpolação linear em
 //!    rotações (cabeça virando, braço girando). `bend` curva a trajetória do centro em arco.
 //! 3. **Spacing**: os tempos t de cada intercalação vêm de uma tabela (gráfico de espaçamento do genga) ou de easing.
-//! 4. Traços sem par aparecem/somem na metade do caminho.
+//! 4. Traços sem par se apagam (os de A, do fim para o começo) ou se desenham (os de B) ao longo das intercalações,
+//!    andando junto com o movimento do desenho, em vez de pularem na metade do caminho.
 
 pub mod particles;
 
@@ -246,6 +247,89 @@ fn lerp_color(a: &ColorRef, b: &ColorRef, t: f32) -> ColorRef {
     }
 }
 
+/// O movimento global de A para B (o mesmo das intercalações em `MotionMode::Global`): rotação, escala e trajetória do
+/// centro pelos traços casados. Serve para levar outras coisas junto com o desenho, como as sementes do balde.
+#[derive(Debug, Clone, Copy)]
+pub struct GlobalMotion {
+    rigid: Option<(f32, f32, [f32; 2], [f32; 2])>,
+    bend: f32,
+}
+
+impl GlobalMotion {
+    pub fn of(a: &[Stroke], b: &[Stroke], opts: &InbetweenOptions) -> GlobalMotion {
+        let (mut all_a, mut all_b) = (Vec::new(), Vec::new());
+        for (ia, ib) in correspond(a, b, opts) {
+            if let (Some(i), Some(j)) = (ia, ib) {
+                let n = a[i].points.len().max(b[j].points.len()).max(8) * 2;
+                let pa = resample(&a[i], n);
+                let pb = align(&pa, &resample(&b[j], n), a[i].closed);
+                all_a.extend(pa);
+                all_b.extend(pb);
+            }
+        }
+        GlobalMotion { rigid: (!all_a.is_empty()).then(|| procrustes(&all_a, &all_b)), bend: opts.bend }
+    }
+
+    /// Ponto `pa` (em A) cujo par em B é `pb`, no tempo `t`: o movimento rígido mais o resto que falta, como os pontos
+    /// dos traços. Sem traços casados, reta de `pa` a `pb`.
+    pub fn at(&self, pa: [f32; 2], pb: [f32; 2], t: f32) -> [f32; 2] {
+        let q = interpolate_points(&[P { x: pa[0], y: pa[1], p: 1.0 }], &[P { x: pb[0], y: pb[1], p: 1.0 }], t, self.rigid, self.bend);
+        [q[0].x, q[0].y]
+    }
+}
+
+/// Primeira fração `f` (0..1) do comprimento da polilinha `pts`.
+fn trim(pts: &[P], f: f32) -> Vec<P> {
+    if pts.len() < 2 || f >= 1.0 {
+        return pts.to_vec();
+    }
+    let total: f32 = pts.windows(2).map(|w| ((w[1].x - w[0].x).powi(2) + (w[1].y - w[0].y).powi(2)).sqrt()).sum();
+    let target = total * f.max(0.0);
+    let mut out = vec![pts[0]];
+    let mut acc = 0.0f32;
+    for w in pts.windows(2) {
+        let d = ((w[1].x - w[0].x).powi(2) + (w[1].y - w[0].y).powi(2)).sqrt();
+        if acc + d >= target {
+            let k = if d > 1e-6 { (target - acc) / d } else { 0.0 };
+            out.push(P { x: w[0].x + (w[1].x - w[0].x) * k, y: w[0].y + (w[1].y - w[0].y) * k, p: w[0].p + (w[1].p - w[0].p) * k });
+            return out;
+        }
+        acc += d;
+        out.push(w[1]);
+    }
+    out
+}
+
+/// Traço sem par no tempo `t`: os pontos (no espaço de A) levados pelo movimento rígido e cortados na fração `f`.
+fn unmatched(s: &Stroke, to_a: impl Fn(P) -> P, t: f32, rigid: Option<(f32, f32, [f32; 2], [f32; 2])>, bend: f32, f: f32) -> Option<Stroke> {
+    let pa: Vec<P> = s.points.iter().map(|q| to_a(P { x: q.x, y: q.y, p: q.pressure })).collect();
+    // sem resíduo: o traço anda com o corpo (o alvo do resíduo é o próprio movimento rígido)
+    let moved = match rigid {
+        Some((ang, sc, ca, cb)) => {
+            let (s1, c1) = ang.sin_cos();
+            let pb: Vec<P> = pa.iter().map(|a| {
+                let (ax, ay) = (a.x - ca[0], a.y - ca[1]);
+                P { x: sc * (c1 * ax - s1 * ay) + cb[0], y: sc * (s1 * ax + c1 * ay) + cb[1], p: a.p }
+            }).collect();
+            interpolate_points(&pa, &pb, t, rigid, bend)
+        }
+        None => pa,
+    };
+    let part = trim(&moved, f);
+    let len: f32 = part.windows(2).map(|w| ((w[1].x - w[0].x).powi(2) + (w[1].y - w[0].y).powi(2)).sqrt()).sum();
+    if len < 0.5 {
+        return None;
+    }
+    let mut out = s.clone();
+    out.id = Id(String::new());
+    out.closed = false;
+    out.points = part.iter().map(|q| StrokePoint { x: q.x, y: q.y, pressure: q.p.clamp(0.0, 1.0), tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect();
+    if out.geometry == StrokeGeometry::Bezier {
+        out.geometry = StrokeGeometry::Polyline;
+    }
+    Some(out)
+}
+
 /// Desenho intercalado no tempo `t` (0 = A, 1 = B).
 pub fn inbetween(a: &[Stroke], b: &[Stroke], t: f32, opts: &InbetweenOptions) -> Vec<Stroke> {
     let pairs = correspond(a, b, opts);
@@ -306,15 +390,37 @@ pub fn inbetween(a: &[Stroke], b: &[Stroke], t: f32, opts: &InbetweenOptions) ->
                 s.color = lerp_color(&pr.sa.color, &pr.sb.color, t);
                 out.push(s);
             }
-            (None, Some(i), None) if t < 0.5 => {
-                let mut s = a[i].clone();
-                s.id = Id(String::new());
-                out.push(s);
+            // sem par: o de A se apaga do fim para o começo; o de B se desenha (começa na pose de A, chega na de B)
+            (None, Some(i), None) => {
+                if t <= 0.0 {
+                    let mut s = a[i].clone();
+                    s.id = Id(String::new());
+                    out.push(s);
+                } else if let Some(s) = unmatched(&a[i], |p| p, t, global, opts.bend, 1.0 - t) {
+                    out.push(s);
+                }
             }
-            (None, None, Some(j)) if t >= 0.5 => {
-                let mut s = b[j].clone();
-                s.id = Id(String::new());
-                out.push(s);
+            (None, None, Some(j)) => {
+                if t >= 1.0 {
+                    let mut s = b[j].clone();
+                    s.id = Id(String::new());
+                    out.push(s);
+                } else {
+                    let inv = global.map(|(ang, sc, ca, cb)| {
+                        let (s1, c1) = (-ang).sin_cos();
+                        move |q: P| {
+                            let (bx, by) = ((q.x - cb[0]) / sc.max(1e-6), (q.y - cb[1]) / sc.max(1e-6));
+                            P { x: c1 * bx - s1 * by + ca[0], y: s1 * bx + c1 * by + ca[1], p: q.p }
+                        }
+                    });
+                    let st = match inv {
+                        Some(f) => unmatched(&b[j], f, t, global, opts.bend, t),
+                        None => unmatched(&b[j], |p| p, t, None, opts.bend, t),
+                    };
+                    if let Some(s) = st {
+                        out.push(s);
+                    }
+                }
             }
             _ => {}
         }
@@ -392,8 +498,29 @@ mod tests {
         assert!(pairs.contains(&(Some(0), Some(1))), "linha horizontal (invertida) casa: {pairs:?}");
         assert!(pairs.contains(&(Some(1), Some(0))), "{pairs:?}");
         assert!(pairs.contains(&(None, Some(2))), "traço novo aparece: {pairs:?}");
-        assert_eq!(inbetween(&a, &b, 0.25, &InbetweenOptions::default()).len(), 2);
-        assert_eq!(inbetween(&a, &b, 0.75, &InbetweenOptions::default()).len(), 3);
+        // o traço novo (10 px) se desenha aos poucos: 1/4 em t = 0,25, 3/4 em t = 0,75
+        let q = inbetween(&a, &b, 0.25, &InbetweenOptions::default());
+        let h = inbetween(&a, &b, 0.75, &InbetweenOptions::default());
+        assert_eq!((q.len(), h.len()), (3, 3));
+        let new_len = |v: &[Stroke]| v.iter().map(len).fold(f32::MAX, f32::min);
+        assert!((new_len(&q) - 2.5).abs() < 0.6 && (new_len(&h) - 7.5).abs() < 0.6, "{} {}", new_len(&q), new_len(&h));
+        assert_eq!(inbetween(&a, &b, 0.0, &InbetweenOptions::default()).len(), 2, "em A o traço novo ainda não existe");
+    }
+
+    #[test]
+    fn global_motion_carries_points_around_the_rotation() {
+        // braço girando 90° em volta de (0, 0): a ponta (100, 0) que vai para (0, 100) passa por fora da reta (girando),
+        // como os pontos do traço intercalado
+        let a = vec![st(&[(0.0, 0.0), (100.0, 0.0)], false)];
+        let b = vec![st(&[(0.0, 0.0), (0.0, 100.0)], false)];
+        let m = GlobalMotion::of(&a, &b, &InbetweenOptions::default());
+        let h = m.at([100.0, 0.0], [0.0, 100.0], 0.5);
+        let mid = inbetween(&a, &b, 0.5, &InbetweenOptions::default());
+        let tip = mid[0].points.last().unwrap();
+        assert!((h[0] - tip.x).abs() < 0.5 && (h[1] - tip.y).abs() < 0.5, "a semente vai com a ponta do traço: {h:?} {tip:?}");
+        assert!((h[0] * h[0] + h[1] * h[1]).sqrt() > 80.0, "fora da reta (70,7 do pivô): {h:?}");
+        let e = m.at([100.0, 0.0], [0.0, 100.0], 1.0);
+        assert!((e[0]).abs() < 0.01 && (e[1] - 100.0).abs() < 0.01, "chega no ponto de B: {e:?}");
     }
 
     #[test]

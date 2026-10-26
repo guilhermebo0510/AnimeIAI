@@ -190,6 +190,21 @@ pub fn propagate_fills(p: &Project, blobs: &mut BlobStore, req: &PropagateFillsR
         pairs.push((ra.clone(), best.map(|j| fb[j].clone())));
     }
     let span = (req.key_frame_b as f32 - req.key_frame_a as f32).max(1.0);
+    // as sementes andam com o desenho (auditoria 4.6c): o mesmo movimento global das intercalações, medido nas linhas
+    // de referência da camada de cor nas duas chaves; numa rotação (cabeça virando) a semente segue o arco e não sai
+    // da região como na reta
+    let refs = layer_data(p, &req.fill_layer).map(|l| l.line_refs.clone()).unwrap_or_default();
+    let strokes_at = |frame: u32| -> Vec<Stroke> {
+        refs.iter()
+            .filter_map(|l| exposed_cel(p, cut, l, frame))
+            .filter_map(|n| match &n.data {
+                NodeKind::Cel(c) => Some(c.strokes.clone()),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    };
+    let motion = aiai_anim::GlobalMotion::of(&strokes_at(req.key_frame_a), &strokes_at(req.key_frame_b), &aiai_anim::InbetweenOptions::default());
     let mut out = Vec::new();
     for &f in &req.frames {
         let t = ((f as f32 - req.key_frame_a as f32) / span).clamp(0.0, 1.0);
@@ -197,7 +212,8 @@ pub fn propagate_fills(p: &Project, blobs: &mut BlobStore, req: &PropagateFillsR
             .iter()
             .map(|(ra, rb)| {
                 let sb = rb.as_ref().map(|r| r.seed).unwrap_or(ra.seed);
-                FillSeed { x: ra.seed[0] + (sb[0] - ra.seed[0]) * t, y: ra.seed[1] + (sb[1] - ra.seed[1]) * t, color: ra.color.clone() }
+                let q = motion.at(ra.seed, sb, t);
+                FillSeed { x: q[0], y: q[1], color: ra.color.clone() }
             })
             .collect();
         let req_f = FillRequest { cut: req.cut.clone(), frame: f, layer: req.fill_layer.clone(), seeds, line_layers: vec![], gap: req.gap, expand: 2, line_threshold: 0.35, close_leftovers: None, skip_seeds_on_line: false, only_unpainted: false };

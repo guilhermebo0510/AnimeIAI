@@ -26,6 +26,8 @@ pub enum VideoCodec {
     H264Nvenc,
     /// ProRes 422 HQ (MOV) — intermediário de edição.
     Prores,
+    /// ProRes 4444 com alfa (MOV, 10 bits + alfa de 16) — para compor por cima de outro vídeo (auditoria 4.6e).
+    Prores4444,
     /// Sequência PNG (o `out` deve conter `%05d`).
     PngSequence,
     /// H.265/HEVC (libx265, MP4 com a marca hvc1 para tocar no Apple/Windows) — só se o ffmpeg tiver o codificador.
@@ -40,11 +42,16 @@ impl VideoCodec {
         match self {
             VideoCodec::H264 => &["libx264"],
             VideoCodec::H264Nvenc => &["h264_nvenc"],
-            VideoCodec::Prores => &["prores_ks"],
+            VideoCodec::Prores | VideoCodec::Prores4444 => &["prores_ks"],
             VideoCodec::PngSequence => &["png"],
             VideoCodec::H265 => &["libx265"],
             VideoCodec::Vp9 => &["libvpx-vp9", "libopus"],
         }
+    }
+
+    /// Leva a transparência (o render vai sem fundo e os quadros em RGBA de 16 bits).
+    pub fn has_alpha(self) -> bool {
+        self == VideoCodec::Prores4444
     }
 
     /// `Ok` se o ffmpeg deste PC tem tudo o que o codec precisa; senão o motivo em texto (para a interface).
@@ -144,7 +151,7 @@ impl Encoder {
             return Err("largura e altura precisam ser pares (yuv420p)".into());
         }
         let mut cmd = Command::new(ffmpeg());
-        cmd.args(["-hide_banner", "-loglevel", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24"]);
+        cmd.args(["-hide_banner", "-loglevel", "error", "-y", "-f", "rawvideo", "-pix_fmt", if opts.codec.has_alpha() { "rgba64le" } else { "rgb24" }]);
         cmd.args(["-s", &format!("{}x{}", opts.width, opts.height), "-framerate", &format!("{}/{}", opts.fps_num, opts.fps_den), "-i", "-"]);
         if let Some(a) = &opts.audio {
             cmd.arg("-i").arg(a);
@@ -181,13 +188,16 @@ impl Encoder {
             VideoCodec::Prores => {
                 cmd.args(["-c:v", "prores_ks", "-profile:v", "3", "-pix_fmt", "yuv422p10le"]);
             }
+            VideoCodec::Prores4444 => {
+                cmd.args(["-c:v", "prores_ks", "-profile:v", "4", "-pix_fmt", "yuva444p10le", "-alpha_bits", "16", "-vendor", "apl0"]);
+            }
             VideoCodec::PngSequence => {
                 cmd.args(["-c:v", "png"]);
             }
         }
         if opts.audio.is_some() {
             match opts.codec {
-                VideoCodec::Prores => cmd.args(["-c:a", "pcm_s24le"]),
+                VideoCodec::Prores | VideoCodec::Prores4444 => cmd.args(["-c:a", "pcm_s24le"]),
                 VideoCodec::PngSequence => cmd.args(["-an"]),
                 VideoCodec::Vp9 => cmd.args(["-c:a", "libopus", "-b:a", "192k", "-shortest"]),
                 _ => cmd.args(["-c:a", "aac", "-b:a", "320k", "-shortest"]),
@@ -204,8 +214,8 @@ impl Encoder {
         if img.width != self.opts.width || img.height != self.opts.height {
             return Err(format!("quadro {}x{} ≠ {}x{}", img.width, img.height, self.opts.width, self.opts.height));
         }
-        let rgb = img.to_rgb8_over(self.opts.background);
-        self.stdin.as_mut().ok_or("ffmpeg já finalizado")?.write_all(&rgb).map_err(|e| format!("ffmpeg recusou o quadro: {e}"))?;
+        let bytes = if self.opts.codec.has_alpha() { rgba16_straight(img) } else { img.to_rgb8_over(self.opts.background) };
+        self.stdin.as_mut().ok_or("ffmpeg já finalizado")?.write_all(&bytes).map_err(|e| format!("ffmpeg recusou o quadro: {e}"))?;
         self.frames += 1;
         Ok(())
     }
@@ -226,6 +236,19 @@ impl Encoder {
         }
         Ok(EncodeReport { frames: self.frames, path: self.out })
     }
+}
+
+/// Quadro em RGBA de 16 bits little-endian, sem pré-multiplicar (o que o `rgba64le` do ffmpeg espera).
+pub fn rgba16_straight(img: &Image) -> Vec<u8> {
+    let mut out = Vec::with_capacity(img.data.len() * 8);
+    for p in &img.data {
+        let a = p[3].clamp(0.0, 1.0);
+        let un = |c: f32| if a > 1e-6 { (c / a).clamp(0.0, 1.0) } else { 0.0 };
+        for v in [un(p[0]), un(p[1]), un(p[2]), a] {
+            out.extend_from_slice(&((v * 65535.0 + 0.5) as u16).to_le_bytes());
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -356,6 +379,38 @@ mod tests {
         assert_eq!(info.frames, Some(24));
         let f = extract_frame(&out, 0.5).unwrap();
         assert_eq!((f.width, f.height), (64, 36));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn prores_4444_keeps_the_alpha() {
+        // metade esquerda opaca, direita transparente: o .mov sai com canal alfa (yuva444p10le)
+        let mut img = Image::new(64, 36);
+        for y in 0..36 {
+            for x in 0..32 {
+                img.data[y * 64 + x] = [0.8, 0.2, 0.1, 1.0];
+            }
+        }
+        let raw = rgba16_straight(&img);
+        assert_eq!(raw.len(), 64 * 36 * 8);
+        assert_eq!(u16::from_le_bytes([raw[6], raw[7]]), 65535, "alfa cheio à esquerda");
+        assert_eq!(u16::from_le_bytes([raw[40 * 8 + 6], raw[40 * 8 + 7]]), 0, "transparente à direita");
+        if VideoCodec::Prores4444.availability().is_err() {
+            eprintln!("ffmpeg sem prores_ks: parte do vídeo pulada");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("aiai-media-a-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("a.mov");
+        let opts = EncodeOptions { width: 64, height: 36, fps_num: 24, fps_den: 1, codec: VideoCodec::Prores4444, crf: 18, audio: None, burn_subtitles: None, background: [0.0; 3] };
+        let mut enc = Encoder::start(&out, &opts).unwrap();
+        for _ in 0..3 {
+            enc.push(&img).unwrap();
+        }
+        enc.finish().unwrap();
+        let o = Command::new(ffprobe()).args(["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=pix_fmt,codec_name", "-of", "csv=p=0"]).arg(&out).output().unwrap();
+        let txt = String::from_utf8_lossy(&o.stdout).to_string();
+        assert!(txt.contains("prores") && txt.contains("yuva444p"), "ProRes com alfa: {txt}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -19,7 +19,8 @@ pub struct StrokePoint {
     /// Tempo relativo ao início do traço, em segundos (opcional; replay e dinâmica por velocidade).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub t: Option<f32>,
-    /// Canto: a curva quebra neste ponto (entra e sai em linha, sem arredondar). Só vale para Spline/Freehand.
+    /// Canto: a curva quebra neste ponto (entra e sai em linha, sem arredondar). Só vale para Spline/Freehand. Na
+    /// primeira ou na última ponta de um traço aberto: ponta reta (não afina), como a ponta soldada em outra linha.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub corner: bool,
     /// Multiplicador da largura neste ponto (1 = a do traço), interpolado ao longo da curva como a pressão; vale
@@ -79,8 +80,25 @@ pub enum VectorTip {
     MaruPen,
     /// Largura constante.
     Marker,
-    /// Lápis vetorial (textura de grafite; P1).
+    /// Lápis vetorial (largura pela pressão, sem afinar).
     Pencil,
+    /// Pena escolar (school pen): fina e quase uniforme, pontas curtas.
+    School,
+    /// Pincel japonês (fude): muita variação com a pressão e pontas longas e finas.
+    Fude,
+    /// Ponta quadrada: largura constante e pontas cortadas retas (sem tampa redonda).
+    Square,
+    /// Lápis de genga: como o Lápis, com grão de papel no traço.
+    Genga,
+}
+
+impl VectorTip {
+    pub const ALL: [VectorTip; 8] = [VectorTip::GPen, VectorTip::MaruPen, VectorTip::School, VectorTip::Fude, VectorTip::Marker, VectorTip::Square, VectorTip::Pencil, VectorTip::Genga];
+
+    /// Ponta de lápis (fica no grupo Lápis da prateleira).
+    pub fn is_pencil(self) -> bool {
+        matches!(self, VectorTip::Pencil | VectorTip::Genga)
+    }
 }
 
 /// Perfil de largura ao longo do traço: pares (t em 0..=1, multiplicador da largura base).

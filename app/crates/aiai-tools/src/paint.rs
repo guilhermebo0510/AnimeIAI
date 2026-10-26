@@ -93,10 +93,20 @@ fn d_kind() -> GradientKind {
 }
 
 pub fn resolve_color(p: &Project, c: &ColorRef) -> ToolResult<[f32; 4]> {
+    resolve_color_in(p, c, None)
+}
+
+/// Como [`resolve_color`], na iluminação de um corte (`CutData::palette_variant`).
+pub fn resolve_color_cut(p: &Project, cut: &Id, c: &ColorRef) -> ToolResult<[f32; 4]> {
+    let v = cut_data(p, cut).ok().and_then(|c| c.palette_variant.clone());
+    resolve_color_in(p, c, v.as_deref())
+}
+
+fn resolve_color_in(p: &Project, c: &ColorRef, variant: Option<&str>) -> ToolResult<[f32; 4]> {
     match c {
         ColorRef::Direct { rgba } => Ok(rgba.0),
         ColorRef::Palette { palette, color } => match p.node(palette).map(|n| &n.data) {
-            Some(NodeKind::Palette(pd)) => pd.resolve(color).map(|c| c.0).ok_or_else(|| ToolError::NotFound(format!("cor {color} na paleta"))),
+            Some(NodeKind::Palette(pd)) => pd.resolve_in(color, variant).map(|c| c.0).ok_or_else(|| ToolError::NotFound(format!("cor {color} na paleta"))),
             _ => Err(ToolError::NotFound(format!("paleta {palette}"))),
         },
     }
@@ -316,12 +326,16 @@ pub fn paint_command_in(p: &Project, blobs: &mut BlobStore, req: &PaintRequest, 
 pub fn paint_command_masked(p: &Project, blobs: &mut BlobStore, req: &PaintRequest, mask: Option<&(Vec<f32>, u32, u32)>) -> ToolResult<Command> {
     req.preset.validate().map_err(ToolError::Invalid)?;
     let (node, cel, w, h) = raster_cel(p, &req.cut, &req.layer, req.frame)?;
-    let color = resolve_color(p, &req.color)?;
+    let color = resolve_color_cut(p, &req.cut, &req.color)?;
     let preset = load_tip_mask(blobs, &req.preset)?;
-    let mut r = paint_on_cel(blobs, Some(cel), w, h, &preset, color, &req.strokes, req.seed, mask.is_some())?;
+    let lock = layer_locks_alpha(p, &req.layer);
+    let mut r = paint_on_cel(blobs, Some(cel), w, h, &preset, color, &req.strokes, req.seed, mask.is_some() || lock)?;
     if let Some(mask) = mask {
         let place = crate::points::cel_placement(p, &req.cut, &req.layer, req.frame).ok();
         clip_region(&mut r, mask, place.as_ref());
+    }
+    if lock {
+        lock_alpha_region(&mut r);
     }
     Ok(Command::SetTiles { cel: node.id.clone(), tiles: tiles_for_region_at(blobs, &r.after, r.origin, r.bounds) })
 }
@@ -360,6 +374,26 @@ pub fn clip_region(r: &mut PaintedRegion, mask: &(Vec<f32>, u32, u32), place: Op
             let (a, b) = (r.after.data[i], before.data[i]);
             r.after.data[i] = [b[0] + (a[0] - b[0]) * k, b[1] + (a[1] - b[1]) * k, b[2] + (a[2] - b[2]) * k, b[3] + (a[3] - b[3]) * k];
         }
+    }
+}
+
+/// Bloquear transparência (auditoria 4.5l, o "Bloquear pixels transparentes" do Clip Studio): a camada raster com
+/// `params.lock_alpha` só muda a cor onde já tinha tinta; o alfa de cada pixel fica o de antes (o pincel não pinta no
+/// vazio e a borracha não apaga).
+pub fn layer_locks_alpha(p: &Project, layer: &Id) -> bool {
+    layer_data(p, layer).is_ok_and(|l| l.params.get("lock_alpha").and_then(|v| v.as_bool()).unwrap_or(false))
+}
+
+/// Aplica o bloqueio de transparência ao recorte pintado (precisa de `r.before`): a cor nova com o alfa de antes.
+pub fn lock_alpha_region(r: &mut PaintedRegion) {
+    let Some(before) = &r.before else { return };
+    for (a, b) in r.after.data.iter_mut().zip(&before.data) {
+        if b[3] <= 1e-5 {
+            *a = *b;
+            continue;
+        }
+        let rgb = if a[3] > 1e-5 { [a[0] / a[3], a[1] / a[3], a[2] / a[3]] } else { [b[0] / b[3], b[1] / b[3], b[2] / b[3]] };
+        *a = [rgb[0] * b[3], rgb[1] * b[3], rgb[2] * b[3], b[3]];
     }
 }
 

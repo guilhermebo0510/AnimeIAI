@@ -30,6 +30,8 @@ pub enum Deform {
     Perspective { from: [[f32; 2]; 4], to: [[f32; 2]; 4] },
     Mesh(MeshWarp),
     Liquify(Liquify),
+    /// Pincelada de liquify: os passos em ordem (o Liquefazer do Mover grava uma por pincelada).
+    LiquifyPath { steps: Vec<Liquify> },
     /// Espelha no eixo vertical x = valor (horizontal = true) ou horizontal y = valor.
     Flip { horizontal: bool, axis: f32 },
 }
@@ -87,6 +89,7 @@ impl Deform {
                 Ok(m.forward(x, y))
             }
             Deform::Liquify(l) => Ok(l.forward(x, y)),
+            Deform::LiquifyPath { steps } => Ok(aiai_paint::warp::liquify_path_forward(steps, x, y)),
             _ => unreachable!(),
         }
     }
@@ -114,6 +117,7 @@ impl Deform {
                 Ok(mw.warp_image(src))
             }
             Deform::Liquify(l) => Ok(l.liquify_image(src)),
+            Deform::LiquifyPath { steps } => Ok(aiai_paint::warp::liquify_path_image(steps, src)),
             _ => Ok(resample_inverse(src, w, h, |x, y| Some((x, y)))),
         }
     }

@@ -559,3 +559,133 @@ mod tests {
         assert!((a - b).abs() < 0.2, "salto na emenda: {a} → {b}");
     }
 }
+
+/// Clima de BGM para o botão do workspace Áudio (auditoria 4.7c): uma trilha original curta em loop, composta por
+/// regra (progressão de acordes do clima, baixo, acompanhamento e uma melodia em passeio pela escala com a semente).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Mood {
+    Calm,
+    Happy,
+    Tense,
+    Sad,
+}
+
+impl Mood {
+    pub const ALL: [Mood; 4] = [Mood::Calm, Mood::Happy, Mood::Tense, Mood::Sad];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Mood::Calm => "calm",
+            Mood::Happy => "happy",
+            Mood::Tense => "tense",
+            Mood::Sad => "sad",
+        }
+    }
+}
+
+/// Música do clima com pelo menos `seconds` de duração (compassos inteiros, fecha em loop).
+pub fn mood_song(mood: Mood, seconds: f32, seed: u64) -> Song {
+    // (andamento, tônica MIDI, menor?, graus da progressão, programa do acompanhamento, programa da melodia, bateria)
+    let (bpm, root, minor, prog, pad, lead, drums): (f32, i32, bool, [i32; 4], u8, u8, bool) = match mood {
+        Mood::Calm => (78.0, 60, false, [0, 5, 3, 4], 48, 0, false),
+        Mood::Happy => (124.0, 62, false, [0, 4, 5, 3], 0, 73, true),
+        Mood::Tense => (100.0, 57, true, [0, 0, 5, 4], 48, 32, true),
+        Mood::Sad => (66.0, 57, true, [0, 5, 2, 6], 0, 40, false),
+    };
+    let scale: [i32; 7] = if minor { [0, 2, 3, 5, 7, 8, 10] } else { [0, 2, 4, 5, 7, 9, 11] };
+    let deg = |d: i32| -> i32 {
+        let o = d.div_euclid(7);
+        root + scale[d.rem_euclid(7) as usize] + 12 * o
+    };
+    let beats_per_bar = 4u32;
+    let need = (seconds.max(1.0) * bpm / 60.0 / beats_per_bar as f32).ceil() as u32;
+    let bars = (need.div_ceil(4) * 4).max(4);
+    let mut rng = crate::rng::Rng::new(seed);
+    let (mut bass, mut chords, mut melody) = (BgmTrack::new("baixo", 32), BgmTrack::new("acordes", pad), BgmTrack::new("melodia", lead));
+    bass.volume = 90;
+    chords.volume = 70;
+    melody.volume = 95;
+    let mut drum = BgmTrack::new("bateria", 0);
+    drum.drums = true;
+    drum.volume = 80;
+    let mut step: i32 = 7 + 2; // começa na terça, uma oitava acima
+    for bar in 0..bars {
+        let b0 = (bar * beats_per_bar) as f64;
+        let c = prog[(bar % 4) as usize];
+        // baixo: tônica do acorde (oitava de baixo), duas mínimas
+        for h in 0..2 {
+            bass.notes.push(Note { pitch: (deg(c) - 24) as u8, start_beat: b0 + 2.0 * h as f64, length_beats: 1.9, velocity: 85 });
+        }
+        // acordes: tríade do grau, o compasso inteiro (tenso: pulsos de colcheia)
+        let triad = [deg(c), deg(c + 2), deg(c + 4)];
+        if mood == Mood::Tense {
+            for k in 0..8 {
+                for &n in &triad {
+                    chords.notes.push(Note { pitch: (n - 12) as u8, start_beat: b0 + 0.5 * k as f64, length_beats: 0.4, velocity: if k % 2 == 0 { 70 } else { 55 } });
+                }
+            }
+        } else {
+            for &n in &triad {
+                chords.notes.push(Note { pitch: (n - 12) as u8, start_beat: b0, length_beats: 3.9, velocity: 60 });
+            }
+        }
+        // melodia: passeio pela escala perto das notas do acorde; o último compasso da frase volta à tônica
+        let durs: &[f64] = match mood {
+            Mood::Happy => &[0.5, 0.5, 1.0, 0.5, 0.5, 1.0],
+            Mood::Tense => &[1.0, 0.5, 0.5, 2.0],
+            _ => &[1.0, 1.0, 2.0],
+        };
+        let mut t = 0.0;
+        for (i, &d) in durs.iter().enumerate() {
+            let last = bar % 4 == 3 && i + 1 == durs.len();
+            if last {
+                step = 7;
+            } else {
+                let mv = (rng.range(-2.5, 2.5)).round() as i32;
+                step = (step + mv).clamp(5, 13);
+                // tempo forte: puxa para nota do acorde
+                if i == 0 {
+                    let chord_tones = [c + 7, c + 9, c + 11];
+                    step = *chord_tones.iter().min_by_key(|&&x| (x - step).abs()).unwrap_or(&step);
+                }
+            }
+            let rest = !last && rng.f32() < 0.12;
+            if !rest {
+                melody.notes.push(Note { pitch: deg(step) as u8, start_beat: b0 + t, length_beats: d * 0.92, velocity: 80 + (rng.f32() * 20.0) as u8 });
+            }
+            t += d;
+        }
+        if drums {
+            for k in 0..4 {
+                let beat = b0 + k as f64;
+                drum.notes.push(Note { pitch: if k % 2 == 0 { 36 } else { 38 }, start_beat: beat, length_beats: 0.25, velocity: if k % 2 == 0 { 90 } else { 75 } });
+                drum.notes.push(Note { pitch: 42, start_beat: beat, length_beats: 0.2, velocity: 55 });
+                drum.notes.push(Note { pitch: 42, start_beat: beat + 0.5, length_beats: 0.2, velocity: 45 });
+            }
+        }
+    }
+    let mut tracks = vec![bass, chords, melody];
+    if drums {
+        tracks.push(drum);
+    }
+    Song { tempo_bpm: bpm, beats_per_bar, bars, tracks, tail_s: 2.0, looped: true, rate: d_rate(), gain_db: -3.0 }
+}
+
+#[cfg(test)]
+mod mood_tests {
+    use super::*;
+
+    #[test]
+    fn mood_songs_cover_the_time_and_stay_in_range() {
+        for m in Mood::ALL {
+            let s = mood_song(m, 10.0, 7);
+            let secs = s.bars as f32 * s.beats_per_bar as f32 * 60.0 / s.tempo_bpm;
+            assert!(secs >= 10.0 && s.bars % 4 == 0, "{m:?}: {secs} s em {} compassos", s.bars);
+            assert!(s.tracks.iter().all(|t| !t.notes.is_empty()), "{m:?}: todas as trilhas tocam");
+            let end = s.bars as f64 * s.beats_per_bar as f64;
+            assert!(s.tracks.iter().flat_map(|t| &t.notes).all(|n| n.start_beat + n.length_beats <= end + 1e-6 && n.pitch >= 20), "{m:?}: notas dentro da música");
+        }
+        assert_ne!(mood_song(Mood::Calm, 10.0, 1).tracks[2].notes, mood_song(Mood::Calm, 10.0, 2).tracks[2].notes, "a semente muda a melodia");
+    }
+}

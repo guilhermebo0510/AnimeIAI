@@ -326,6 +326,10 @@ pub struct CutData {
     /// Gestão: peso/dificuldade do corte (esforço estimado, 1 = corte médio).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weight: Option<f32>,
+    /// Iluminação do corte (auditoria 4.7e): a variante das paletas usada neste corte ("entardecer", "noite"...). `None`
+    /// = a variante ativa de cada paleta. Cores sem essa variante ficam com a normal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub palette_variant: Option<String>,
 }
 
 /// Fase da animação de um corte.
@@ -402,6 +406,7 @@ impl CutData {
             due: None,
             assignee: None,
             weight: None,
+            palette_variant: None,
         }
     }
 
@@ -918,8 +923,23 @@ impl PaletteData {
 
     /// Cor efetiva considerando a variante ativa.
     pub fn resolve(&self, id: &Id) -> Option<Rgba> {
+        self.resolve_in(id, None)
+    }
+
+    /// Cor efetiva na variante `variant` (a de um corte); `None` = a variante ativa da paleta. Sem a variante, a normal.
+    pub fn resolve_in(&self, id: &Id, variant: Option<&str>) -> Option<Rgba> {
         let c = self.color(id)?;
-        Some(c.variants.get(&self.active_variant).copied().unwrap_or(c.rgba))
+        let v = variant.unwrap_or(&self.active_variant);
+        Some(c.variants.get(v).copied().unwrap_or(c.rgba))
+    }
+
+    /// Nomes das variantes que alguma cor tem (sem a normal), em ordem.
+    pub fn variant_names(&self) -> Vec<String> {
+        let mut v: std::collections::BTreeSet<String> = self.colors.iter().flat_map(|c| c.variants.keys().cloned()).collect();
+        if !self.active_variant.is_empty() {
+            v.insert(self.active_variant.clone());
+        }
+        v.into_iter().collect()
     }
 
     fn validate(&self) -> Result<(), String> {

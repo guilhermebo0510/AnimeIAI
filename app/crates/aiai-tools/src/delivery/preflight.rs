@@ -10,7 +10,7 @@ use super::formats::{FormatPreset, Kind};
 use super::{SourceKind, SourceRef, mix};
 use crate::edit::captions::{CaptionIssue, CaptionLimits, check_captions};
 use crate::edit::{ItemSource, TrackKind, load_edit};
-use aiai_core::{BlobStore, NodeKind, Project};
+use aiai_core::{BlobStore, LayerType, NodeKind, Project};
 use serde::Serialize;
 use std::path::Path;
 
@@ -264,6 +264,23 @@ fn media_checks(i: &Input, out: &mut Vec<Check>) {
                 }
                 if let Some(img) = &c.image {
                     hit(img, "imagem");
+                }
+            }
+        }
+    }
+    // camadas 3D que entram no render (visíveis, fora do modo referência): o modelo precisa estar no projeto
+    // (auditoria F02: o blob do modelo faltando passava como "mídia completa")
+    for cut in &cuts {
+        for id in p.subtree(cut) {
+            let Some(n) = p.node(&id) else { continue };
+            let NodeKind::Layer(l) = &n.data else { continue };
+            if l.kind != LayerType::Model3d || !l.visible {
+                continue;
+            }
+            if let Some(Ok(mp)) = aiai_core::model3d::Model3dParams::from_layer_params(&l.params) {
+                if !mp.render.reference && (missing.contains(&mp.model_hash) || !i.blobs.contains(&mp.model_hash)) {
+                    damaged += 1;
+                    first.get_or_insert_with(|| format!("camada 3D \"{}\" (modelo)", n.name));
                 }
             }
         }
