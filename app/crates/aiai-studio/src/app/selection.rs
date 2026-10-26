@@ -630,6 +630,33 @@ fn raster_content_box(env: &Env, cut: &NodeId, layer: &NodeId) -> Option<[f32; 4
     (x0 < x1).then(|| [x0 as f32, y0 as f32, (x1 - x0) as f32, (y1 - y0) as f32])
 }
 
+/// Selecionar a cor atual (menu Selecionar, auditoria 2.12): todos os pixels da referência da varinha (a camada ou o
+/// que aparece, como na varinha) com a cor ativa, dentro da tolerância da varinha (a faixa de cor do Clip Studio).
+pub(crate) fn select_color(env: &mut Env) {
+    let (Some(cut), Some(layer)) = (env.ed.active_cut(env.core), env.ed.active_layer(env.core)) else { return };
+    let (w, h) = cmds::canvas_size(&env.core.project, &cut);
+    let reference = match wand_reference(env, &cut, &layer, env.ed.opts.area.wand_ref) {
+        Ok(r) => r,
+        Err(e) => {
+            env.ed.notify(e);
+            return;
+        }
+    };
+    let c = cmds::resolve_color(&env.core.project, &env.ed.color);
+    let shape = aiai_paint::select::SelectShape::ColorRange { color: [c.0[0], c.0[1], c.0[2]], tolerance: (env.ed.opts.wand_tolerance / 255.0).clamp(0.0, 1.0) };
+    env.ed.sel_state.wand = None;
+    match aiai_paint::select::Selection::from_shape(&shape, w, h, Some(&reference)) {
+        Ok(cov) => match selection_from_cov(cov) {
+            Some(sel) => env.ed.selection = Some(sel),
+            None => {
+                env.ed.selection = None;
+                env.ed.notify(tr("sel.color_none"));
+            }
+        },
+        Err(e) => env.ed.notify(e),
+    }
+}
+
 /// Ctrl+Shift+I: área = o resto do canvas; traços = os outros traços da camada.
 pub(crate) fn invert(env: &mut Env) {
     let Some((w, h)) = canvas_wh(env) else { return };

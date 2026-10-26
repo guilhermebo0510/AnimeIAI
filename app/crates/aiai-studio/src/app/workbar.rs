@@ -480,6 +480,51 @@ impl StudioApp {
     }
 
     /// Menu Filtro da barra de menus (os mesmos filtros da barra de comandos), nos workspaces de canvas.
+    /// Menu Selecionar (como o do Clip Studio): tudo, cancelar, inverter, expandir/encolher e a cor atual.
+    pub(super) fn menu_select(&mut self, ui: &mut Ui) {
+        if !self.ws.profile().canvas {
+            return;
+        }
+        let mut notes = Vec::new();
+        let mut pick: Option<&'static str> = None;
+        let has_sel = self.ed.selection.is_some();
+        let has_layer = self.ed.layer.is_some();
+        let r = ui.menu_button(tr("menu.select"), |ui| {
+            for (key, enabled, shortcut) in [
+                ("sel.menu.all", has_layer, "Ctrl+A"),
+                ("sel.menu.none", has_sel, "Ctrl+D"),
+                ("sel.menu.invert", has_sel, "Ctrl+Shift+I"),
+                ("sel.menu.grow", has_sel, ""),
+                ("sel.menu.shrink", has_sel, ""),
+                ("sel.menu.color", has_layer, ""),
+            ] {
+                if key == "sel.menu.grow" || key == "sel.menu.color" {
+                    ui.separator();
+                }
+                let b = ui.add_enabled(enabled, egui::Button::new(tr(key)).shortcut_text(shortcut));
+                notes.push((format!("menu_item:{key}"), b.rect));
+                if b.clicked() {
+                    pick = Some(key);
+                    ui.close();
+                }
+            }
+        });
+        self.rects.note("menu:select", r.response.rect);
+        for (n, rect) in notes {
+            self.rects.note(n, rect);
+        }
+        if let Some(k) = pick {
+            self.with_env(|env| match k {
+                "sel.menu.all" => super::selection::select_all(env),
+                "sel.menu.none" => super::sel_ops::run(env, Cmd::Deselect),
+                "sel.menu.invert" => super::sel_ops::run(env, Cmd::InvertSelection),
+                "sel.menu.grow" => super::sel_ops::run(env, Cmd::Grow),
+                "sel.menu.shrink" => super::sel_ops::run(env, Cmd::Shrink),
+                _ => super::selection::select_color(env),
+            });
+        }
+    }
+
     pub(super) fn menu_filter(&mut self, ui: &mut Ui) {
         if !self.ws.profile().canvas {
             return;

@@ -590,6 +590,7 @@ impl StudioApp {
                         self.menu_file(ui);
                         self.menu_edit(ui);
                         self.menu_view(ui);
+                        self.menu_select(ui);
                         self.menu_filter(ui);
                         self.menu_window(ui);
                         self.menu_help(ui);

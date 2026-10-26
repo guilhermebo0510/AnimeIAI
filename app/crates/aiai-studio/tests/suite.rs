@@ -1090,6 +1090,22 @@ fn lint_and_pen_selection_script(c: &Client) {
     let xs: Vec<f64> = last["points"].as_array().unwrap().iter().map(|p| p["x"].as_f64().unwrap()).collect();
     let (lo, hi) = xs.iter().fold((f64::MAX, f64::MIN), |(a, b), &x| (a.min(x), b.max(x)));
     assert!(lo > 95.0 && hi < 225.0, "o traço ficou só dentro da seleção: x {lo}..{hi}");
+    // menu Selecionar > Selecionar a cor atual (auditoria 2.12): só a faixa com a cor ativa
+    c.input(json!([{"kind": "key", "key": "Escape"}, {"kind": "wait", "frames": 2}]));
+    let r = mk("Pintura", Some(&cut), json!({"type": "layer", "kind": "raster"}));
+    mk("c1", Some(&r), json!({"type": "cel", "number": 1}));
+    for (y, rgba) in [(40, [1.0, 0.0, 0.0, 1.0]), (140, [0.0, 0.0, 1.0, 1.0])] {
+        c.ok("PAINT", json!({"cut": cut, "frame": 0, "layer": r, "preset": "redondo duro", "preset_overrides": {"size": 20}, "color": {"type": "direct", "rgba": rgba},
+            "strokes": [{"points": [[20, y], [300, y]]}]}));
+    }
+    c.ok("UI_ACTION", json!({"action": "select_layer", "layer": r}));
+    c.ok("UI_ACTION", json!({"action": "set_color", "color": "#ff0000"}));
+    c.click_widget("menu:select");
+    c.click_widget("menu_item:sel.menu.color");
+    let sel = c.state()["editor"]["selection"].clone();
+    assert_eq!(sel["mode"], "Mask", "seleção por máscara: {sel}");
+    let rect: Vec<f64> = sel["rect"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+    assert!(rect[1] > 20.0 && rect[1] + rect[3] < 65.0, "só a faixa vermelha (y 30..50): {rect:?}");
 }
 
 #[test]
