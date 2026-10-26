@@ -1648,6 +1648,74 @@ fn points_are_read_and_edited_by_stroke_and_index_behind_a_revision_guard() {
     assert_eq!(undone["point_count"], 3);
 }
 
+/// LINE_FIX (S25, Corrigir linha): puxar com a camada deslocada (px do canvas), conectar duas pontas num traço só,
+/// engrossar debaixo do pincel e remover poeira vetorial e raster; cada pedido é um passo de undo; ensaio não muda nada.
+#[test]
+fn line_fix_pinches_connects_widens_and_removes_dust() {
+    let (mut s, cut, line, _, bg) = tool_doc();
+    let black = json!({"type": "direct", "rgba": [0, 0, 0, 1]});
+    act(&mut s, "DRAW_CURVES", json!({"cut": cut, "frame": 0, "layer": line, "curves": [
+        {"points": [[20, 90], [100, 90]], "width": 4, "tip": "marker", "geometry": "spline", "color": black},
+        {"points": [[106, 90], [200, 90], [300, 90]], "width": 4, "tip": "marker", "geometry": "spline", "color": black},
+        {"points": [[40, 30], [41, 31]], "width": 2, "tip": "marker", "geometry": "polyline", "color": black}]}));
+    act(&mut s, "APPLY_COMMAND", json!({"command": {"kind": "set_props", "id": line, "data": {"offset": [0.0, 10.0]}}}));
+    let base = |op: &str, extra: Value| {
+        let mut p = json!({"cut": cut, "frame": 0, "layer": line, "op": op});
+        for (k, v) in extra.as_object().unwrap() {
+            p[k] = v.clone();
+        }
+        p
+    };
+    let strokes = |s: &CoreSession| -> Vec<aiai_core::Stroke> {
+        let c = aiai_tools::context::exposed_cel(&s.project, aiai_tools::context::cut_data(&s.project, &cut.as_str().into()).unwrap(), &line.as_str().into(), 0).unwrap();
+        match &c.data {
+            aiai_core::NodeKind::Cel(d) => d.strokes.clone(),
+            _ => unreachable!(),
+        }
+    };
+    // ensaio da poeira: acha o traço minúsculo e não muda nada
+    let rev = s.project.revision;
+    let d = act(&mut s, "LINE_FIX", base("dust", json!({"size": 6, "dry_run": true})));
+    assert_eq!((d["dust"].as_u64(), s.project.revision), (Some(1), rev), "{d}");
+    act(&mut s, "LINE_FIX", base("dust", json!({"size": 6})));
+    assert_eq!(strokes(&s).len(), 2);
+    // conectar: o pincel passa entre as pontas (canvas y = 100 por causa do deslocamento)
+    let c = act(&mut s, "LINE_FIX", base("connect", json!({"path": [[103, 100]], "radius": 10, "distance": 12})));
+    assert_eq!(c["joins"], 1, "{c}");
+    let st = strokes(&s);
+    assert_eq!(st.len(), 1);
+    assert_eq!((st[0].points.first().unwrap().x, st[0].points.last().unwrap().x), (20.0, 300.0));
+    // puxar: o meio (canvas 200,100) vai até (200,140); no cel, y 90 → 130
+    act(&mut s, "LINE_FIX", base("pinch", json!({"from": [200, 100], "to": [200, 140], "range": 60})));
+    let st = strokes(&s);
+    let near = st[0].points.iter().min_by(|a, b| (a.x - 200.0).abs().total_cmp(&(b.x - 200.0).abs())).unwrap();
+    assert!((near.y - 130.0).abs() < 0.5, "{near:?}");
+    assert!(st[0].points.iter().filter(|q| q.x < 130.0).all(|q| (q.y - 90.0).abs() < 1e-3), "fora do alcance não anda");
+    // engrossar debaixo do pincel
+    let w = act(&mut s, "LINE_FIX", base("width", json!({"path": [[60, 100]], "radius": 12, "mode": "widen", "amount": 4})));
+    assert_eq!(w["changed"].as_array().unwrap().len(), 1);
+    let st = strokes(&s);
+    let i = (0..st[0].points.len()).min_by(|&a, &b| (st[0].points[a].x - 60.0).abs().total_cmp(&(st[0].points[b].x - 60.0).abs())).unwrap();
+    assert!((aiai_paint::width_at_point(&st[0], i) - 8.0).abs() < 0.1);
+    // erros: camada raster para ferramenta vetorial, chave desconhecida, redesenhar fora da linha
+    assert_eq!(act_err(&mut s, "LINE_FIX", json!({"cut": cut, "frame": 0, "layer": bg, "op": "width", "path": [[1, 1]]})).code, code::INVALID_PARAMS);
+    assert_eq!(act_err(&mut s, "LINE_FIX", base("width", json!({"path": [[1, 1]], "raio": 3}))).code, code::INVALID_PARAMS);
+    assert!(act_err(&mut s, "LINE_FIX", base("redraw", json!({"path": [[20, 10], [300, 10]]}))).message.contains("redraw"));
+    // um undo por pedido: volta o puxão
+    act(&mut s, "UNDO", json!({}));
+    act(&mut s, "UNDO", json!({}));
+    let st = strokes(&s);
+    assert!(st[0].points.iter().all(|q| (q.y - 90.0).abs() < 1e-3), "sem o puxão");
+    // poeira raster: um pingo pequeno sai, a pincelada grande fica
+    act(&mut s, "PAINT", json!({"cut": cut, "frame": 0, "layer": bg, "preset": "redondo duro", "preset_overrides": {"size": 3}, "color": black,
+        "strokes": [{"points": [[150, 40]]}, {"points": [[20, 150], [120, 150]]}]}));
+    let d = act(&mut s, "LINE_FIX", json!({"cut": cut, "frame": 0, "layer": bg, "op": "dust", "size": 6}));
+    assert_eq!(d["dust"], 1, "{d}");
+    let r = act(&mut s, "RENDER", json!({"cut": cut, "frame": 0, "layers": [bg], "background": "#ffffff"}));
+    assert_eq!(px(&r, 150, 40), WHITE, "o pingo saiu");
+    assert!(px(&r, 70, 150)[0] < 100, "a pincelada ficou");
+}
+
 #[test]
 fn audio_edit_and_analyze_actions() {
     let mut d = prod_doc();
