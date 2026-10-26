@@ -49,10 +49,22 @@ mod modeling_table;
 mod left_table;
 #[path = "i18n_right.rs"]
 mod right_table;
+#[path = "i18n_tools.rs"]
+mod tools_table;
+#[path = "i18n_rulers.rs"]
+mod rulers_table;
+#[path = "i18n_fix.rs"]
+mod fix_table;
+#[path = "i18n_figure.rs"]
+mod figure_table;
 
 /// Todas as entradas: a tabela principal e a da Modelagem.
 fn all() -> impl Iterator<Item = &'static (&'static str, &'static str, &'static str)> {
     TABLE.iter().chain(modeling_table::TABLE.iter()).chain(left_table::TABLE.iter()).chain(right_table::TABLE.iter())
+        .chain(tools_table::TABLE.iter())
+        .chain(rulers_table::TABLE.iter())
+        .chain(fix_table::TABLE.iter())
+        .chain(figure_table::TABLE.iter())
 }
 
 fn index() -> &'static std::collections::HashMap<&'static str, (&'static str, &'static str)> {
