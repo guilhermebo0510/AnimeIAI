@@ -749,6 +749,8 @@ pub(crate) struct Editor {
     /// Biblioteca de pincéis (fábrica + usuário) e estado do painel Pincéis.
     pub brushes: super::brushes::BrushLibrary,
     pub brush_panel: super::panels::brushes::BrushPanelState,
+    /// Lado esquerdo das áreas de desenho (S25): prateleira, propriedades, tamanhos e cores.
+    pub draw_ui: super::shelf::DrawUi,
     /// Biblioteca de recursos (painéis Biblioteca e Prévia do recurso).
     pub library: super::library::LibraryState,
     /// Painel a trazer para a frente no próximo quadro (aba do layout).
@@ -901,6 +903,7 @@ impl Default for Editor {
             library: Default::default(),
             want_panel: None,
             live: super::audio_out::AudioOut::new(false),
+            draw_ui: Default::default(),
             keys: crate::keymap::Keymap::default(),
             cut: None,
             layer: None,

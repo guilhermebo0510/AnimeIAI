@@ -34,6 +34,8 @@ pub(crate) struct Maker {
     preview: Option<egui::TextureHandle>,
     preview_of: Option<BrushPreset>,
     error: Option<String>,
+    /// Categoria aberta dos ajustes (as mesmas das configurações avançadas da ferramenta, S25).
+    cat_ui: super::tool_detail::Cat,
 }
 
 pub(crate) struct Importer {
@@ -127,7 +129,7 @@ pub(crate) fn open_maker(env: &mut Env, base: Option<usize>) {
         "importados" => "meus".to_owned(),
         c => c.to_owned(),
     };
-    env.ed.brush_panel.maker = Some(Maker { preset: p, name, cat, author: profile, license, source, tags, tip_bytes: None, tex_bytes: None, preview: None, preview_of: None, error: None });
+    env.ed.brush_panel.maker = Some(Maker { preset: p, name, cat, author: profile, license, source, tags, tip_bytes: None, tex_bytes: None, preview: None, preview_of: None, error: None, cat_ui: Default::default() });
 }
 
 /// Escolhe arquivos de pincel e lê o que tiverem.
@@ -361,12 +363,6 @@ fn maker_window(env: &mut Env, ctx: &egui::Context) {
             let r = ui.add(egui::TextEdit::singleline(&mut m.tags).hint_text(tr("brushes.tags.hint")).desired_width(260.0));
             env.note("maker:tags", r.rect);
             ui.end_row();
-            ui.label(tr("brush.size"));
-            ui.add(egui::Slider::new(&mut m.preset.size, 1.0..=600.0).logarithmic(true).max_decimals(1));
-            ui.end_row();
-            ui.label(tr("brush.opacity"));
-            ui.add(egui::Slider::new(&mut m.preset.opacity, 0.0..=1.0).max_decimals(2));
-            ui.end_row();
             // ponta de imagem
             ui.label(tr("maker.tip_image"));
             ui.horizontal(|ui| {
@@ -440,8 +436,10 @@ fn maker_window(env: &mut Env, ctx: &egui::Context) {
         ui.separator();
         // a janela cresceu com autor/licença/fonte/etiquetas: a lista de ajustes encolhe em telas baixas (o Salvar fica à vista)
         let grid_h = (ctx.content_rect().height() - 640.0).clamp(100.0, 300.0);
+        // os ajustes do motor nas categorias das configurações avançadas (tamanho e opacidade estão em Tamanho e Tinta)
         egui::ScrollArea::vertical().max_height(grid_h).show(ui, |ui| {
-            super::properties::preset_grid(ui, &mut m.preset, true, None, "maker");
+            let mut e = super::tool_detail::Edit { p: &mut m.preset, o: None, t: env.t, icons: env.icons, notes: env.notes, compact: false, salt: "maker" };
+            super::tool_detail::categories_ui(ui, &mut e, &mut m.cat_ui, None);
         });
         if let Some(e) = &m.error {
             ui.colored_label(env.t.danger, e);

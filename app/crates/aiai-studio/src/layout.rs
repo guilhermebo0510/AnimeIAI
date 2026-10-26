@@ -54,8 +54,12 @@ pub enum PanelKind {
     Project,
     /// Sub View: imagens de referência do disco com conta-gotas.
     SubView,
-    /// Pincéis por categoria e propriedades da ferramenta.
+    /// Grupo de ferramentas (S25): abas de grupo e a lista das sub-ferramentas da ferramenta da prateleira.
     Brushes,
+    /// Propriedades da ferramenta (S25): prévia do traço e os parâmetros com o olho aceso.
+    ToolProps,
+    /// Tamanho do pincel (S25): tamanhos prontos em bolinhas.
+    BrushSize,
     /// Biblioteca de recursos: árvore de tipos e etiquetas, busca e grade de miniaturas (modelos 3D, materiais, texturas, paletas, poses, pincéis).
     Library,
     /// Prévia do recurso da Biblioteca: turntable 3D, teste de repetição 3×3, amostras da paleta; ações e metadados.
@@ -177,7 +181,7 @@ const DRAWING_WS: &[WorkspaceId] = &[W::Personagens, W::Layout, W::Cenario, W::A
 const LIBRARY_WS: &[WorkspaceId] = &[W::Biblioteca, W::Modelagem, W::Personagens, W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Composicao];
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 55] = [
+    pub const ALL: [PanelKind; 57] = [
         PanelKind::Canvas,
         PanelKind::Layers,
         PanelKind::Properties,
@@ -212,6 +216,8 @@ impl PanelKind {
         PanelKind::Project,
         PanelKind::SubView,
         PanelKind::Brushes,
+        PanelKind::ToolProps,
+        PanelKind::BrushSize,
         PanelKind::Library,
         PanelKind::LibraryPreview,
         PanelKind::Modeling,
@@ -281,6 +287,8 @@ impl PanelKind {
             PanelKind::Project => "panel.project.title",
             PanelKind::SubView => "panel.subview.title",
             PanelKind::Brushes => "panel.brushes.title",
+            PanelKind::ToolProps => "panel.tool_props.title",
+            PanelKind::BrushSize => "panel.brush_size.title",
             PanelKind::Library => "panel.library.title",
             PanelKind::LibraryPreview => "panel.library_preview.title",
             PanelKind::Modeling => "panel.modeling.title",
@@ -342,6 +350,8 @@ impl PanelKind {
             PanelKind::Project => "panel.project.empty",
             PanelKind::SubView => "panel.subview.empty",
             PanelKind::Brushes => "panel.brushes.empty",
+            PanelKind::ToolProps => "panel.tool_props.empty",
+            PanelKind::BrushSize => "panel.brush_size.empty",
             PanelKind::Library => "panel.library.empty",
             PanelKind::LibraryPreview => "panel.library_preview.empty",
             PanelKind::Modeling => "panel.modeling.empty",
@@ -405,6 +415,8 @@ impl PanelKind {
             PanelKind::Project => (C::General, Left, DRAWING_WS, false),
             PanelKind::SubView => (C::Reference, Left, &[W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Biblioteca, W::Modelagem], false),
             PanelKind::Brushes => (C::Drawing, Left, &[W::Personagens, W::Layout, W::Cenario, W::Animacao, W::Pintura], false),
+            PanelKind::ToolProps => (C::Drawing, Left, &[W::Personagens, W::Layout, W::Cenario, W::Animacao, W::Pintura], false),
+            PanelKind::BrushSize => (C::Drawing, Left, &[W::Personagens, W::Layout, W::Cenario, W::Animacao, W::Pintura], false),
             PanelKind::Library => (C::Resources, Bottom, LIBRARY_WS, false),
             PanelKind::LibraryPreview => (C::Resources, Right, LIBRARY_WS, false),
             PanelKind::Modeling => (C::Resources, Center, &[W::Modelagem], false),
@@ -476,14 +488,16 @@ pub fn factory_rev(ws: WorkspaceId) -> u32 {
     match ws {
         // S24: Animação com Cena, Referências do personagem e Mesa de luz no lugar de Projeto e Sub View, linha do tempo
         // mais baixa (compacta) e a variante Douga
-        // S25: à direita, como nos programas de pintura: Navegador no topo, Propriedades da camada e Camadas | Histórico
+        // S25: lado esquerdo como nos programas de pintura (grupo de ferramentas, propriedades, tamanho, cores embaixo)
         W::Animacao => 4,
         // S24: pasta do personagem (materiais por tipo) e canvas para desenhar neles
-        // S25: Histórico em aba com as Camadas
+        // S25: coluna da ferramenta (grupo, propriedades, cores) ao lado da pasta
         W::Personagens => 3,
         // S24: fábricas novas (cada etapa de desenho com a sua cara) e os workspaces novos
         // S24: Réguas (perspectiva) em aba com os pincéis
-        // S25: à direita o Navegador no topo, as Propriedades da camada e Camadas | Histórico | Propriedades em abas
+        // S25: lado esquerdo novo (grupo de ferramentas, propriedades, tamanho do pincel, cores embaixo)
+        // S25 (direita, a mesma revisão do lado esquerdo): Navegador no topo, propriedades da camada e Camadas |
+        // Histórico em abas, nos workspaces de desenho
         W::Layout => 4,
         W::Cenario | W::Pintura => 3,
         // S24 3D (fase 12): viewport 3D no centro, Objetos e Biblioteca à esquerda, Propriedades do objeto e
@@ -517,10 +531,12 @@ fn default_node(ws: WorkspaceId) -> Node {
         W::Roteiro => Row(vec![(0.22, Pane(P::Outline)), (0.52, Pane(P::Script)), (0.26, Pane(P::Properties))]),
         // pasta do personagem: a lista e a pasta (materiais por tipo) à esquerda, o canvas do material aberto no centro
         // (a folha com guias em aba) e à direita cores, camadas e a ficha em abas (ficha, paleta, consistência, voz, material)
+        // S25: a coluna da ferramenta (grupo de ferramentas, propriedades e cores) entre a pasta e o canvas
         W::Personagens => Row(vec![
-            (0.19, Col(vec![(0.30, Pane(P::Characters)), (0.70, Pane(P::CharFolder))])),
-            (0.49, TabsOf(&[P::Canvas, P::Sheet])),
-            (0.32, Col(vec![(0.22, Pane(P::Palette)), (0.30, TabsOf(&[P::Layers, P::History])), (0.48, Pane(P::Properties))])),
+            (0.17, Col(vec![(0.30, Pane(P::Characters)), (0.70, Pane(P::CharFolder))])),
+            (0.16, Col(vec![(0.34, Pane(P::Brushes)), (0.30, Pane(P::ToolProps)), (0.36, Pane(P::Palette))])),
+            (0.42, TabsOf(&[P::Canvas, P::Sheet])),
+            (0.25, Col(vec![(0.44, TabsOf(&[P::Layers, P::History])), (0.56, Pane(P::Properties))])),
         ]),
         W::Storyboard => Col(vec![
             (0.72, Row(vec![(0.20, Pane(P::Shots)), (0.56, Pane(P::Board)), (0.24, Pane(P::Properties))])),
@@ -528,37 +544,39 @@ fn default_node(ws: WorkspaceId) -> Node {
         ]),
         // enquadramento e construção: a cena (cortes) em cima à esquerda, réguas, pincéis e referências embaixo; à direita o
         // navegador (área de câmera), camadas e propriedades com a paleta em aba
+        // S25: à esquerda o grupo de ferramentas (réguas em aba), as propriedades, o tamanho do pincel e as cores embaixo
+        // (a cena e as referências em aba com elas)
         W::Layout => Row(vec![
-            (0.19, Col(vec![(0.45, Pane(P::Project)), (0.55, TabsOf(&[P::Rulers, P::Brushes, P::SubView]))])),
+            (0.19, Col(vec![(0.26, TabsOf(&[P::Brushes, P::Rulers])), (0.28, Pane(P::ToolProps)), (0.14, Pane(P::BrushSize)), (0.32, TabsOf(&[P::Palette, P::Project, P::SubView]))])),
             (0.53, Pane(P::Canvas)),
-            (0.28, Col(vec![(0.28, Pane(P::Navigator)), (0.20, TabsOf(&[P::LayerProps, P::Palette, P::Text])), (0.52, TabsOf(&[P::Layers, P::History, P::Properties]))])),
+            (0.28, Col(vec![(0.28, Pane(P::Navigator)), (0.20, TabsOf(&[P::LayerProps, P::Text])), (0.52, TabsOf(&[P::Layers, P::History, P::Properties]))])),
         ]),
         // fundo: pincéis e referências grandes à esquerda (pintura de fundo vive de referência), paleta, camadas (planos)
         // e propriedades à direita
+        // S25: à esquerda o grupo de ferramentas, as propriedades, o tamanho e as cores embaixo (referências em aba)
         W::Cenario => Row(vec![
-            (0.17, Col(vec![(0.40, Pane(P::Brushes)), (0.60, Pane(P::SubView))])),
-            (0.54, Pane(P::Canvas)),
-            (0.29, Col(vec![(0.28, Pane(P::Navigator)), (0.20, TabsOf(&[P::LayerProps, P::Palette, P::Text])), (0.52, TabsOf(&[P::Layers, P::History, P::Properties, P::Project]))])),
+            (0.18, Col(vec![(0.25, Pane(P::Brushes)), (0.28, Pane(P::ToolProps)), (0.14, Pane(P::BrushSize)), (0.33, TabsOf(&[P::Palette, P::SubView]))])),
+            (0.53, Pane(P::Canvas)),
+            (0.29, Col(vec![(0.28, Pane(P::Navigator)), (0.20, TabsOf(&[P::LayerProps, P::Text])), (0.52, TabsOf(&[P::Layers, P::History, P::Properties, P::Project]))])),
         ]),
         // genga: a cena do roteiro/storyboard e os pincéis em cima à esquerda, as referências do personagem embaixo; à
         // direita o navegador, a mesa de luz (com as cores pequenas em aba, para o balde de conferir linha) e camadas;
         // a linha do tempo compacta embaixo de tudo (22 %)
-        W::Animacao => Col(vec![
-            (0.78, Row(vec![
-                (0.18, Col(vec![(0.52, TabsOf(&[P::SceneInfo, P::Brushes])), (0.48, Pane(P::CharRef))])),
-                (0.55, Pane(P::Canvas)),
-                (0.27, Col(vec![(0.25, Pane(P::Navigator)), (0.15, Pane(P::LayerProps)), (0.22, TabsOf(&[P::LightTable, P::Palette])), (0.38, TabsOf(&[P::Layers, P::History, P::Properties]))])),
-            ])),
-            (0.22, Pane(P::Timeline)),
+        // S25: à esquerda o grupo de ferramentas, as propriedades, o tamanho e as cores embaixo, com as referências do
+        // personagem e a cena em aba; a mesa de luz fica sozinha à direita. As colunas dos lados vão na altura toda (como
+        // nos programas de pintura) e a linha do tempo fica embaixo do canvas
+        W::Animacao => Row(vec![
+            (0.18, Col(vec![(0.25, Pane(P::Brushes)), (0.28, Pane(P::ToolProps)), (0.13, Pane(P::BrushSize)), (0.34, TabsOf(&[P::Palette, P::CharRef, P::SceneInfo]))])),
+            (0.55, Col(vec![(0.78, Pane(P::Canvas)), (0.22, Pane(P::Timeline))])),
+            (0.27, Col(vec![(0.25, Pane(P::Navigator)), (0.15, Pane(P::LayerProps)), (0.22, Pane(P::LightTable)), (0.38, TabsOf(&[P::Layers, P::History, P::Properties]))])),
         ]),
         // shiage: as cores (settei) em destaque à esquerda, referências à direita e os quadros do corte embaixo
-        W::Pintura => Col(vec![
-            (0.80, Row(vec![
-                (0.18, Col(vec![(0.58, Pane(P::Palette)), (0.42, TabsOf(&[P::Brushes, P::Project]))])),
-                (0.54, Pane(P::Canvas)),
-                (0.28, Col(vec![(0.28, Pane(P::Navigator)), (0.18, TabsOf(&[P::LayerProps, P::SubView])), (0.54, TabsOf(&[P::Layers, P::History, P::Properties]))])),
-            ])),
-            (0.20, Pane(P::Timeline)),
+        // S25: à esquerda o grupo de ferramentas, as propriedades, o tamanho e as cores (grandes) embaixo; as colunas dos
+        // lados na altura toda e os quadros do corte embaixo do canvas
+        W::Pintura => Row(vec![
+            (0.18, Col(vec![(0.25, Pane(P::Brushes)), (0.28, Pane(P::ToolProps)), (0.13, Pane(P::BrushSize)), (0.34, TabsOf(&[P::Palette, P::Project]))])),
+            (0.54, Col(vec![(0.80, Pane(P::Canvas)), (0.20, Pane(P::Timeline))])),
+            (0.28, Col(vec![(0.28, Pane(P::Navigator)), (0.18, TabsOf(&[P::LayerProps, P::SubView])), (0.54, TabsOf(&[P::Layers, P::History, P::Properties]))])),
         ]),
         // satsuei como no After Effects (S24 3.1–3.5): projeto e camadas à esquerda, viewer no centro, Efeitos e
         // predefinições (com a câmera/cor e o texto em aba) em cima e Controles de efeito embaixo à direita; a Linha do
@@ -625,13 +643,11 @@ fn default_node_v(ws: WorkspaceId, v: LayoutVariant) -> Node {
     match (ws, v) {
         // douga: limpar e intercalar; a mesa de luz ganha painel próprio e mais altura, as referências e a cena ficam
         // em aba (consulta) e os pincéis embaixo delas; a linha do tempo compacta embaixo
-        (W::Animacao, LayoutVariant::Douga) => Col(vec![
-            (0.80, Row(vec![
-                (0.17, Col(vec![(0.55, TabsOf(&[P::CharRef, P::SceneInfo])), (0.45, Pane(P::Brushes))])),
-                (0.56, Pane(P::Canvas)),
-                (0.27, Col(vec![(0.24, Pane(P::Navigator)), (0.27, Pane(P::LightTable)), (0.13, Pane(P::LayerProps)), (0.36, TabsOf(&[P::Layers, P::History, P::Properties, P::Palette]))])),
-            ])),
-            (0.20, Pane(P::Timeline)),
+        // S25: o mesmo lado esquerdo do Genga, com as referências na frente das cores
+        (W::Animacao, LayoutVariant::Douga) => Row(vec![
+            (0.17, Col(vec![(0.25, Pane(P::Brushes)), (0.28, Pane(P::ToolProps)), (0.13, Pane(P::BrushSize)), (0.34, TabsOf(&[P::CharRef, P::SceneInfo, P::Palette]))])),
+            (0.56, Col(vec![(0.80, Pane(P::Canvas)), (0.20, Pane(P::Timeline))])),
+            (0.27, Col(vec![(0.24, Pane(P::Navigator)), (0.27, Pane(P::LightTable)), (0.13, Pane(P::LayerProps)), (0.36, TabsOf(&[P::Layers, P::History, P::Properties]))])),
         ]),
         _ => default_node(ws),
     }
@@ -1235,19 +1251,19 @@ mod tests {
     #[test]
     fn douga_factory_changes_bump_the_animation_revision() {
         let (rev, sig) = (factory_rev(W::Animacao), signature_v(W::Animacao, LayoutVariant::Douga));
-        assert_eq!((rev, sig), (4, 0x9fab5d834fcd1573), "a fábrica do Douga mudou; suba `factory_rev(Animacao)` e atualize: ({rev}, 0x{sig:016x})");
+        assert_eq!((rev, sig), (4, 0x2bf904a88dbb37fd), "a fábrica do Douga mudou; suba `factory_rev(Animacao)` e atualize: ({rev}, 0x{sig:016x})");
     }
 
     #[test]
     fn factory_changes_bump_the_revision() {
         let expected: &[(WorkspaceId, u32, u64)] = &[
             (W::Roteiro, 1, 0x815a21560ccb6c0e),
-            (W::Personagens, 3, 0x6efa1ca125634ae7),
+            (W::Personagens, 3, 0x08fdd539382db287),
             (W::Storyboard, 1, 0x14d8a62efb1d9b23),
-            (W::Layout, 4, 0x5b24be1ce722c448),
-            (W::Cenario, 3, 0x61b22232c1beb1e1),
-            (W::Animacao, 4, 0xecf233c6ae7e3921),
-            (W::Pintura, 3, 0x15c3e018445ad7d9),
+            (W::Layout, 4, 0x36461d480a6344e7),
+            (W::Cenario, 3, 0xc0a1b6dbbb07993b),
+            (W::Animacao, 4, 0xf237f016758a7838),
+            (W::Pintura, 3, 0x0a54291b26ef485b),
             (W::Composicao, 4, 0x097fc0aca4a379a6),
             (W::Biblioteca, 3, 0x1a430bf82b451dc2),
             (W::Modelagem, 3, 0x575fe9a79c6ad671),

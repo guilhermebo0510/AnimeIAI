@@ -118,8 +118,12 @@ pub enum Action {
     ToolText,
     /// Régua (U, como no Clip Studio: o R segurado gira a visão).
     ToolRuler,
-    /// Camada 3D: gizmo e câmera da camada (M).
+    /// Camada 3D: gizmo e câmera da camada (Shift+M; o K do Mover camada também passa por ela).
     ToolModel3d,
+    /// Seleção automática (varinha), W como no Clip Studio.
+    ToolWand,
+    /// Mistura (borrar), J como no Clip Studio.
+    ToolBlend,
     /// Réguas: mostrar/ocultar as linhas no canvas.
     RulersShow,
     /// Réguas: encaixe dos traços liga/desliga.
@@ -164,20 +168,24 @@ pub enum Action {
 }
 
 /// (ação, id guardado nas preferências, chave i18n do nome, atalho padrão), na ordem do editor de atalhos.
-pub const ACTIONS: [(Action, &str, &str, Chord); 45] = [
-    (Action::ToolMove, "tool.move", "tool.move", Chord::plain(Key::V)),
+pub const ACTIONS: [(Action, &str, &str, Chord); 47] = [
+    // S25: letras do Clip Studio (M seleção, W varinha, K mover camada, Y corrigir linha, J mistura); a mesma letra de
+    // novo passa para a próxima ferramenta da prateleira que a divide (P caneta/lápis, B pincel/aerógrafo/decoração...)
+    (Action::ToolMove, "tool.move", "tool.move", Chord::plain(Key::K)),
     (Action::ToolBrush, "tool.brush", "tool.brush", Chord::plain(Key::B)),
     (Action::ToolPen, "tool.pen", "tool.pen", Chord::plain(Key::P)),
-    (Action::ToolPoints, "tool.points", "tool.points", Chord::plain(Key::A)),
+    (Action::ToolPoints, "tool.points", "tool.points", Chord::plain(Key::Y)),
     (Action::ToolEraser, "tool.eraser", "tool.eraser", Chord::plain(Key::E)),
     (Action::ToolFill, "tool.fill", "tool.fill", Chord::plain(Key::G)),
-    (Action::ToolLasso, "tool.lasso", "tool.lasso", Chord::plain(Key::S)),
+    (Action::ToolLasso, "tool.lasso", "tool.lasso", Chord::plain(Key::M)),
+    (Action::ToolWand, "tool.wand", "tool.wand", Chord::plain(Key::W)),
+    (Action::ToolBlend, "tool.blend", "tool.blend", Chord::plain(Key::J)),
     (Action::ToolEyedropper, "tool.eyedropper", "tool.eyedropper", Chord::plain(Key::I)),
     (Action::ToolHand, "tool.hand", "tool.hand", Chord::plain(Key::H)),
     (Action::ToolZoom, "tool.zoom", "tool.zoom", Chord::plain(Key::Z)),
     (Action::ToolText, "tool.text", "tool.text", Chord::plain(Key::T)),
     (Action::ToolRuler, "tool.ruler", "tool.ruler", Chord::plain(Key::U)),
-    (Action::ToolModel3d, "tool.model3d", "tool.model3d", Chord::plain(Key::M)),
+    (Action::ToolModel3d, "tool.model3d", "tool.model3d", Chord::shift(Key::M)),
     (Action::RulersShow, "ruler.show", "keys.rulers_show", Chord::ctrl(Key::Semicolon)),
     (Action::RulerSnap, "ruler.snap", "keys.ruler_snap", Chord::ctrl_shift(Key::Semicolon)),
     (Action::RulerNext, "ruler.next", "keys.ruler_next", Chord::shift(Key::U)),
@@ -200,7 +208,7 @@ pub const ACTIONS: [(Action, &str, &str, Chord); 45] = [
     (Action::PointPrev, "point.prev", "keys.point_prev", Chord::plain(Key::Comma)),
     (Action::PointCorner, "point.corner", "keys.point_corner", Chord::plain(Key::C)),
     (Action::PointAutoHandle, "point.auto_handle", "keys.point_auto_handle", Chord::shift(Key::C)),
-    (Action::CelRoleCycle, "animation.cel_role", "keys.cel_role", Chord::plain(Key::K)),
+    (Action::CelRoleCycle, "animation.cel_role", "keys.cel_role", Chord::shift(Key::K)),
     (Action::KeyNext, "animation.key_next", "keys.key_next", Chord::ctrl(Key::ArrowRight)),
     (Action::KeyPrev, "animation.key_prev", "keys.key_prev", Chord::ctrl(Key::ArrowLeft)),
     (Action::DrawingNext, "animation.drawing_next", "keys.drawing_next", Chord::alt(Key::ArrowRight)),
@@ -244,6 +252,7 @@ impl Action {
             T::Text => Action::ToolText,
             T::Ruler => Action::ToolRuler,
             T::Model3d => Action::ToolModel3d,
+            // S25: a varinha e a mistura são ferramentas da prateleira (`shelf::Slot`), não do motor
             T::Rotate | T::Anchor | T::Camera => return None,
             // Modelagem: as teclas do Blender, só no viewport 3D (fora do mapa de atalhos)
             _ => return None,
@@ -357,13 +366,13 @@ mod tests {
     #[test]
     fn taking_a_used_chord_unassigns_the_other_action() {
         let mut k = Keymap::default();
-        let lost = k.set(Action::ToolBrush, Some(Chord::plain(Key::V)));
+        let lost = k.set(Action::ToolBrush, Some(Chord::plain(Key::K)));
         assert_eq!(lost, Some(Action::ToolMove));
         assert_eq!(k.get(Action::ToolMove), None);
-        assert_eq!(k.get(Action::ToolBrush), Some(Chord::plain(Key::V)));
+        assert_eq!(k.get(Action::ToolBrush), Some(Chord::plain(Key::K)));
         assert!(k.conflicts().is_empty());
         let over = k.to_overrides();
-        assert_eq!(over.get("tool.brush").map(String::as_str), Some("V"));
+        assert_eq!(over.get("tool.brush").map(String::as_str), Some("K"));
         assert_eq!(over.get("tool.move").map(String::as_str), Some(""));
         assert_eq!(Keymap::from_overrides(&over), k);
     }

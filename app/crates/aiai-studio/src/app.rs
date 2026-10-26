@@ -40,6 +40,7 @@ mod render_service;
 mod rulers;
 mod sel_ops;
 mod selection;
+mod shelf;
 mod text_tool;
 mod tools;
 mod ui_kit;
@@ -215,6 +216,7 @@ impl StudioApp {
             screenshot_requested: false,
         };
         app.ed.keys = crate::keymap::Keymap::from_overrides(&app.prefs.shortcuts);
+        app.ed.draw_ui.prefs = app.prefs.drawing.clone();
         app.fit_tool_to_workspace();
         // pincéis de fábrica + os .aiaibrush da pasta do usuário (sem sessão: só os de fábrica, nada é lido nem gravado)
         crate::splash::status(tr("splash.library"));
@@ -985,9 +987,31 @@ impl StudioApp {
         self.rects.note("statusbar", bar.response.rect);
     }
 
-    /// Prateleira de ferramentas dos workspaces de canvas: as do perfil do workspace (`WorkspaceProfile::tools`).
+    /// Prateleira de ferramentas dos workspaces de canvas. Nas áreas de desenho, a de grupos (`shelf`, S25); na
+    /// Composição e na Modelagem, as do perfil do workspace (`WorkspaceProfile::tools`).
     fn tool_shelf(&mut self, ui: &mut egui::Ui) {
         let t = self.tokens();
+        if !shelf::slots_for(self.ws).is_empty() {
+            let mut notes: Vec<(String, Rect)> = Vec::new();
+            let ws = self.ws;
+            let panel = egui::Panel::left("toolshelf")
+                .exact_size(CARD_GAP + 46.0)
+                .resizable(false)
+                .frame(egui::Frame::NONE.fill(t.bg_frame).inner_margin(egui::Margin { left: CARD_GAP as i8, right: 0, top: CARD_GAP as i8, bottom: CARD_GAP as i8 }))
+                .show(ui, |ui| {
+                    egui::Frame::NONE.fill(t.bg_panel).corner_radius(CARD_RADIUS).inner_margin(egui::Margin::symmetric(4, 6)).show(ui, |ui| {
+                        ui.set_width(38.0);
+                        ui.set_min_height(ui.available_height());
+                        let mut env = ui_kit::Env { t, core: &mut self.core, ed: &mut self.ed, icons: &mut self.icons, notes: &mut notes, tool: &mut self.tool, ws };
+                        shelf::show(&mut env, ui);
+                    });
+                });
+            for (name, rect) in notes {
+                self.rects.note(name, rect);
+            }
+            self.rects.note("toolshelf", panel.response.rect);
+            return;
+        }
         let shelf = egui::Panel::left("toolshelf")
             .exact_size(CARD_GAP + 46.0)
             .resizable(false)
@@ -1011,7 +1035,9 @@ impl StudioApp {
                             let ink = if selected || resp.hovered() { t.text } else { t.text_dim };
                             self.icons.paint(p, tool.icon(), rect.shrink(7.0), ink);
                             // dica com o atalho em uso (Preferências > Atalhos)
-                            let key = crate::keymap::Action::for_tool(tool).and_then(|a| self.ed.keys.get(a)).map(|c| c.label()).or(tool.comp_key().map(str::to_owned)).or(self.ed.modeling.keys.tool_label(tool)).or(tool.modeling_key().map(str::to_owned));
+                            // na Composição o Mover é o V do After Effects (o K do mapa geral anda nas chaves lá)
+                            let comp_move = (self.ws == WorkspaceId::Composicao && tool == ToolId::Move).then(|| "V".to_owned());
+                            let key = comp_move.or_else(|| crate::keymap::Action::for_tool(tool).and_then(|a| self.ed.keys.get(a)).map(|c| c.label())).or(tool.comp_key().map(str::to_owned)).or(self.ed.modeling.keys.tool_label(tool)).or(tool.modeling_key().map(str::to_owned));
                             let tip = match key {
                                 Some(k) => format!("{} ({k})", tr(tool.title_key())),
                                 None => tr(tool.title_key()).to_owned(),
@@ -1051,6 +1077,10 @@ impl StudioApp {
         self.last_tool = Some((self.tool, ws));
         if let Some(want) = self.ed.want_panel.take() {
             tree.make_active(|_, tile| matches!(tile, egui_tiles::Tile::Pane(k) if *k == want));
+        }
+        // um botão pediu um painel que pode não estar no layout (a Biblioteca, no "adicionar sub-ferramenta")
+        if let Some(want) = self.ed.draw_ui.insert_panel.take() {
+            layout::insert_panel(tree, want);
         }
         let mut notes: Vec<(String, Rect)> = Vec::new();
         let env = ui_kit::Env { t, core: &mut self.core, ed: &mut self.ed, icons: &mut self.icons, notes: &mut notes, tool: &mut self.tool, ws };
@@ -1099,6 +1129,8 @@ impl StudioApp {
             panels::edit_timeline::shortcuts(ctx, &mut env);
         }
         anim::shortcuts(ctx, &mut env);
+        // letras da prateleira das áreas de desenho (a mesma letra passa para a próxima ferramenta que a divide)
+        shelf::shortcuts(ctx, &mut env);
         tools::shortcuts(ctx, &mut env);
         // a tecla de uma ferramenta que não está na prateleira deste workspace não troca a ferramenta
         if !profile.allows(self.tool) && self.tool != before {
@@ -1203,6 +1235,12 @@ impl StudioApp {
         self.ed.pressure_curve = (self.prefs.pen_pressure_min, self.prefs.pen_pressure_gamma);
         self.ed.cursor_precise = self.prefs.cursor_precise;
         self.autosave_tick();
+        panels::colors::tick(&self.core, &mut self.ed);
+        // tamanhos prontos, olhos e histórico de cores vão para as preferências quando mudam
+        if self.ed.draw_ui.prefs != self.prefs.drawing {
+            self.prefs.drawing = self.ed.draw_ui.prefs.clone();
+            self.mark_dirty();
+        }
         panels::timeline::tick(&self.core, &mut self.ed, &ctx);
         panels::deliver::tick(&self.core, &mut self.ed, &ctx);
         panels::char_folder::tick(&self.core, &mut self.ed, self.ws);
@@ -1400,6 +1438,8 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::LayerProps => panels::layer_props::show(&mut self.env, ui, body),
             PanelKind::SubView => panels::subview::show(&mut self.env, ui, body),
             PanelKind::Brushes => panels::brushes::show(&mut self.env, ui, body),
+            PanelKind::ToolProps => panels::tool_props::show(&mut self.env, ui, body),
+            PanelKind::BrushSize => panels::brush_size::show(&mut self.env, ui, body),
             PanelKind::Text => panels::text::show(&mut self.env, ui, body),
             PanelKind::LightTable => panels::light_table::show(&mut self.env, ui, body),
             PanelKind::SceneInfo => panels::scene_info::show(&mut self.env, ui, body),

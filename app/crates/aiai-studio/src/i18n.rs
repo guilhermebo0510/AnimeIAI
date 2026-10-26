@@ -45,12 +45,14 @@ pub fn tr(key: &str) -> &str {
 
 #[path = "i18n_modeling.rs"]
 mod modeling_table;
+#[path = "i18n_left.rs"]
+mod left_table;
 #[path = "i18n_right.rs"]
 mod right_table;
 
 /// Todas as entradas: a tabela principal e a da Modelagem.
 fn all() -> impl Iterator<Item = &'static (&'static str, &'static str, &'static str)> {
-    TABLE.iter().chain(modeling_table::TABLE.iter()).chain(right_table::TABLE.iter())
+    TABLE.iter().chain(modeling_table::TABLE.iter()).chain(left_table::TABLE.iter()).chain(right_table::TABLE.iter())
 }
 
 fn index() -> &'static std::collections::HashMap<&'static str, (&'static str, &'static str)> {
@@ -1106,7 +1108,11 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("opt.preset", "Pincel", "Brush"),
     ("opt.preset.tip", "Escolha o pincel no painel Pincéis (categorias e miniaturas)", "Pick the brush in the Brushes panel (categories and previews)"),
     ("opt.stabilizer.tip", "Correção de tremura: Média móvel suaviza o traço pela média das últimas amostras (número = força); Corda (lazy) só anda quando o cursor puxa além do raio (traço bem firme)", "Shake correction: Moving average smooths the stroke over the last samples (number = strength); Lazy rope only moves when the cursor pulls past the radius (very steady line)"),
-    ("panel.brushes.title", "Ferramenta", "Tool"),
+    ("panel.brushes.title", "Grupo de ferramentas", "Tool group"),
+    ("panel.tool_props.title", "Propriedades da ferramenta", "Tool properties"),
+    ("panel.tool_props.empty", "A prévia do traço e os ajustes da sub-ferramenta em uso; a chave inglesa abre todos.", "The stroke preview and the settings of the sub tool in use; the wrench opens all of them."),
+    ("panel.brush_size.title", "Tamanho do pincel", "Brush size"),
+    ("panel.brush_size.empty", "Tamanhos prontos do pincel; fica cinza quando a ferramenta não tem tamanho.", "Preset brush sizes; greyed out when the tool has no size."),
     ("tc.pens", "Canetas", "Pens"),
     ("tc.shapes", "Formas", "Shapes"),
     ("tc.raster", "Raster", "Raster"),
@@ -1279,7 +1285,7 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("pts.all_corner", "Tudo canto", "All corners"),
     ("brushes.divider.tip", "Arraste para dar mais espaço à lista ou às propriedades; dois cliques voltam ao automático", "Drag to give more room to the list or the properties; double-click returns to automatic"),
     ("brush.show_all.tip", "Sem marcar, aparecem só os ajustes que este pincel usa", "Unchecked, only the settings this brush uses are shown"),
-    ("panel.brushes.empty", "Os pincéis por categoria e as propriedades da ferramenta.", "Brushes by category and the tool properties."),
+    ("panel.brushes.empty", "As sub-ferramentas da ferramenta escolhida na prateleira, por grupo.", "The sub tools of the tool picked on the shelf, by group."),
     ("brushes.props", "Propriedades da ferramenta", "Tool properties"),
     ("brushes.other_tool", "Esta ferramenta não usa pincéis; as opções dela estão aqui.", "This tool does not use brushes; its options are here."),
     ("brushes.search", "Buscar pincel", "Search brush"),
@@ -3006,6 +3012,11 @@ mod tests {
             ("app/panels/char_folder.rs", include_str!("app/panels/char_folder.rs")),
             ("app/panels/navigator.rs", include_str!("app/panels/navigator.rs")),
             ("app/panels/colors.rs", include_str!("app/panels/colors.rs")),
+            ("app/shelf.rs", include_str!("app/shelf.rs")),
+            ("app/panels/brushes.rs", include_str!("app/panels/brushes.rs")),
+            ("app/panels/tool_props.rs", include_str!("app/panels/tool_props.rs")),
+            ("app/panels/tool_detail.rs", include_str!("app/panels/tool_detail.rs")),
+            ("app/panels/brush_size.rs", include_str!("app/panels/brush_size.rs")),
             ("app/panels/gradient_edit.rs", include_str!("app/panels/gradient_edit.rs")),
             ("app/panels/text_styles.rs", include_str!("app/panels/text_styles.rs")),
             ("app/panels/layers.rs", include_str!("app/panels/layers.rs")),

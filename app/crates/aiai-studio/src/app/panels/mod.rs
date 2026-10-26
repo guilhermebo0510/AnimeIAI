@@ -5,6 +5,7 @@ pub(crate) mod audio;
 pub(crate) mod audio_ws;
 pub(crate) mod board;
 pub(crate) mod brush_maker;
+pub(crate) mod brush_size;
 pub(crate) mod brushes;
 pub(crate) mod char_folder;
 pub(crate) mod char_ref;
@@ -43,6 +44,8 @@ pub(crate) mod subview;
 pub(crate) mod text;
 pub(crate) mod text_styles;
 pub(crate) mod timeline;
+pub(crate) mod tool_detail;
+pub(crate) mod tool_props;
 
 use egui::{Id, Response, Ui};
 

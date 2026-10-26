@@ -1,14 +1,16 @@
-//! Painel Ferramenta (como o de subferramentas dos programas de pintura), igual para todas as ferramentas: à esquerda
-//! a busca e as categorias, à direita os itens da categoria com miniatura, e embaixo só as propriedades do item
-//! escolhido. Pincel: a biblioteca (fábrica + usuário) com o traço de verdade de cada pincel; caneta: as penas e as
-//! formas; borracha: as raster (dura, macia) e os modos vetoriais; balde: os jeitos de preencher; seleção: os modos.
-//! Escolher uma ferramenta traz este painel para a frente.
+//! Painel Grupo de ferramentas (S25, no espírito do painel de sub-ferramentas do Clip Studio): as abas de grupo da
+//! ferramenta escolhida na prateleira (ícone e nome curto: Caneta | Marcador, Lápis, Pincel...), a lista das
+//! sub-ferramentas com o traço de verdade de cada uma e o nome, e no rodapé só ícones: adicionar da Biblioteca,
+//! importar (.aiaibrush/.aiaibrushes), duplicar e apagar. O botão direito num pincel renomeia, duplica, exporta, volta ao
+//! inicial ou apaga. As propriedades ficam no painel Propriedades da ferramenta (`tool_props`).
 
-use crate::app::brushes::{CATEGORIES, cat_label, cat_of};
+use crate::app::brushes::cat_of;
 use crate::app::editor::{EraserTip, PenShape, PointsMode};
 use crate::app::selection::SelTool;
-use crate::app::ui_kit::{Env, body_ui, section};
+use crate::app::shelf::{self, Slot, Sub};
+use crate::app::ui_kit::{Env, body_ui};
 use crate::i18n::tr;
+use crate::icons::IconId;
 use crate::workspace::ToolId;
 use aiai_core::VectorTip;
 use aiai_tools::erase::EraseMode;
@@ -16,55 +18,22 @@ use egui::{Color32, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
 
 #[derive(Default)]
 pub(crate) struct BrushPanelState {
-    /// Categoria aberta no pincel (`None` = todas).
-    pub cat: Option<String>,
-    /// Categoria aberta nas outras ferramentas.
-    cat_other: std::collections::HashMap<&'static str, String>,
-    pub search: String,
-    /// Formulário "salvar como pincel novo": (nome, categoria).
-    pub saving: Option<(String, String)>,
     thumbs: Vec<egui::TextureHandle>,
     thumbs_key: (u64, bool),
     /// Miniaturas feitas pelo motor para as penas e as borrachas raster (refeitas com o tema).
     extra: std::collections::HashMap<String, egui::TextureHandle>,
     extra_dark: Option<bool>,
-    /// Altura da lista escolhida arrastando a divisória (`None` = automática: as propriedades ficam com o que
-    /// precisam e a lista com o resto). Dois cliques na divisória voltam ao automático.
-    pub list_h: Option<f32>,
-    /// Janelas "Criar pincel" e "Importar pincéis".
+    /// Janelas "Criar pincel", "Importar pincéis" e "Exportar pincel / categoria".
     pub maker: Option<super::brush_maker::Maker>,
     pub importer: Option<super::brush_maker::Importer>,
-    /// Janela "Exportar pincel / categoria".
     pub export: Option<super::brush_maker::ExportDialog>,
-    /// Altura que as propriedades e a lista (itens e categorias) ocuparam no quadro anterior (divisória automática).
-    props_h: f32,
-    list_need: f32,
+    /// Categoria aberta (o criador ainda grava a categoria escolhida ao salvar).
+    pub cat: Option<String>,
 }
 
-/// Cartão de item: largura mínima, altura, espaço entre cartões e altura da miniatura (proporção fixa 5:1).
-const CARD_MIN_W: f32 = 100.0;
-const CARD_H: f32 = 38.0;
-const CARD_GAP: f32 = 3.0;
-const THUMB_H: f32 = 20.0;
+/// Altura de uma linha da lista e proporção fixa da miniatura do traço (5:1, nunca achatada).
+const ROW_H: f32 = 30.0;
 const THUMB_ASPECT: f32 = 5.0;
-
-/// O que escolher um item faz.
-#[derive(Clone, Copy, PartialEq)]
-enum Act {
-    Brush(usize),
-    PenTip(VectorTip),
-    PenShape(PenShape),
-    EraserRaster(u8),
-    /// Lápis / Bloco da borracha raster.
-    EraserTip(EraserTip),
-    /// A borracha apaga com a ponta do pincel atual.
-    EraserBrush,
-    EraserVector(EraseMode),
-    Fill(u8),
-    Select(SelTool),
-    Points(PointsMode),
-    Only,
-}
 
 /// Como desenhar a miniatura.
 #[derive(Clone, Copy)]
@@ -79,250 +48,300 @@ enum Thumb {
     Icon(ToolId),
 }
 
-struct Item {
-    name: String,
-    cat: String,
-    act: Act,
-    thumb: Thumb,
-    /// Pincel do usuário (pode apagar).
-    user: bool,
+/// O que um pedido do menu ou do rodapé faz depois de desenhar a lista.
+enum Req {
+    Pick(Sub),
+    Duplicate(usize),
+    Delete(usize),
+    Reset(usize),
+    Export(usize),
+    ExportCat(String),
+    Rename(usize),
+    Library,
+    Import,
+    Maker,
+    Rescan,
+    OpenDir,
 }
 
-/// Borrachas raster (dureza) e jeitos do balde (vão, expandir, fechar sobras).
-const ERASERS: [(&str, f32); 2] = [("eraser.hard", 0.9), ("eraser.soft", 0.0)];
-const FILLS: [(&str, f32, u32, bool); 4] = [("fill.normal", 3.0, 2, false), ("fill.wide", 8.0, 2, false), ("fill.exact", 0.0, 0, false), ("fill.leftovers", 3.0, 2, true)];
+fn thumb_of(env: &Env, s: &Sub) -> Thumb {
+    match s {
+        Sub::Preset(k) | Sub::EraserPreset(k) => shelf::preset_index(env, k).map(Thumb::Brush).unwrap_or(Thumb::Icon(ToolId::Brush)),
+        Sub::PenTip(t) => Thumb::Tex(match t {
+            VectorTip::GPen => "pen:g",
+            VectorTip::MaruPen => "pen:maru",
+            VectorTip::Marker => "pen:marker",
+            VectorTip::Pencil => "pen:pencil",
+        }),
+        Sub::PenShape(m) => Thumb::Pen(*m),
+        Sub::EraserRaster(i) => Thumb::Tex(if *i == 0 { "erase:hard" } else { "erase:soft" }),
+        Sub::EraserTip(EraserTip::Pencil) => Thumb::Tex("erase:pencil"),
+        Sub::EraserTip(_) => Thumb::Tex("erase:block"),
+        Sub::EraserBrush => Thumb::Brush(env.ed.opts.brush_preset),
+        Sub::EraserVector(m) => Thumb::Erase(*m),
+        Sub::Fill(i) => Thumb::Fill(*i),
+        Sub::Select(m) => Thumb::Select(*m),
+        Sub::Points(m) => Thumb::Points(*m),
+        Sub::Engine(t) => Thumb::Icon(*t),
+    }
+}
 
 pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
-    let mut child = body_ui(ui, body, 8.0);
+    let mut child = body_ui(ui, body, 6.0);
     let ui = &mut child;
-    let tool = *env.tool;
     ensure_thumbs(env, ui);
-    ui.label(egui::RichText::new(tr(tool.title_key())).strong().size(13.0));
-    ui.add_space(2.0);
-    let items = items_for(env, tool);
-    let cats = categories(&items, tool);
-    // categoria aberta (o pincel começa em "todas"; as outras ferramentas na do item em uso)
-    let key = tool.key();
-    let mut cur_cat: Option<String> = if tool == ToolId::Brush {
-        env.ed.brush_panel.cat.clone()
-    } else {
-        env.ed.brush_panel.cat_other.get(key).cloned().or_else(|| items.iter().find(|it| is_selected(env, it.act)).map(|it| it.cat.clone())).or_else(|| cats.first().cloned())
+    let Some(slot) = env.ed.draw_ui.shelf.slot.filter(|_| !shelf::slots_for(env.ws).is_empty()) else {
+        ui.label(egui::RichText::new(tr("subtool.none")).color(env.t.text_dim));
+        return;
     };
-    // ---- em cima: categorias à esquerda, itens à direita; a divisória embaixo regula a altura
-    let avail_h = ui.available_height();
-    let max_list = (avail_h - 70.0).max(80.0);
-    let below = env.ed.brush_panel.props_h + if tool == ToolId::Brush { 64.0 } else { 36.0 };
-    let need = env.ed.brush_panel.list_need.max(60.0);
-    // automático: cabendo tudo, a lista fica do tamanho dos itens; senão, os itens até ~metade do painel e as
-    // propriedades com o resto (rolando)
-    let auto = if need + below + 10.0 <= avail_h { need } else { need.min(avail_h * 0.5).max(avail_h - below - 10.0) };
-    let list_h = match env.ed.brush_panel.list_h {
-        Some(h) => h,
-        None => auto,
-    }
-    .min(max_list)
-    .max(80.0f32.min(max_list));
-    let total_w = ui.available_width();
-    let left_w = (total_w * 0.36).clamp(92.0, 170.0);
-    let side = tool == ToolId::Brush || cats.len() > 1;
-    let mut pick: Option<Act> = None;
-    let mut delete: Option<usize> = None;
-    let mut make_from: Option<usize> = None;
-    let mut export_req: Option<super::brush_maker::ExportTarget> = None;
-    let (mut cats_need, mut items_need) = (0.0f32, 0.0f32);
-    // a linha de cima tem altura fixa (o separador vertical não pode esticar até o fim do painel)
-    ui.allocate_ui_with_layout(egui::vec2(total_w, list_h), egui::Layout::left_to_right(egui::Align::Min), |ui| {
-        ui.set_max_height(list_h);
-        // uma categoria só (balde, seleção, editar pontos...): sem a coluna da esquerda, a grade usa a largura toda
-        if side {
-        ui.allocate_ui_with_layout(egui::vec2(left_w, list_h), egui::Layout::top_down(egui::Align::Min), |ui| {
-            ui.set_width(left_w);
-            let r = ui.add(egui::TextEdit::singleline(&mut env.ed.brush_panel.search).hint_text(tr(if tool == ToolId::Brush { "brushes.search" } else { "tool.search" })).desired_width(left_w));
-            env.note("brushes:search", r.rect);
-            let cats_out = egui::ScrollArea::vertical().id_salt(("tool_cats", key)).max_height(list_h - 28.0).auto_shrink([false, true]).show(ui, |ui| {
-                if tool == ToolId::Brush {
-                    let r = ui.selectable_label(cur_cat.is_none(), egui::RichText::new(format!("{} ({})", tr("brushes.all"), items.len())).size(12.0));
-                    env.note("brushes:cat:all", r.rect);
-                    if r.clicked() {
-                        cur_cat = None;
-                    }
-                }
-                for c in &cats {
-                    let n = items.iter().filter(|it| it.cat == *c).count();
-                    let r = ui.selectable_label(cur_cat.as_deref() == Some(c.as_str()), egui::RichText::new(format!("{} ({n})", cat_label_any(c))).size(12.0));
-                    env.note(format!("brushes:cat:{c}"), r.rect);
-                    if r.clicked() {
-                        cur_cat = Some(c.clone());
-                    }
-                }
-            });
-            cats_need = cats_out.content_size.y + 30.0;
-        });
-        let (sep, _) = ui.allocate_exact_size(egui::vec2(9.0, list_h), Sense::hover());
-        ui.painter().vline(sep.center().x, sep.y_range(), Stroke::new(1.0, env.t.border));
+    let t = env.t;
+    // ---- abas de grupo: ícone + nome curto
+    let cur_tab = shelf::current_tab(env, slot);
+    let mut pick_tab = None;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 3.0;
+        let tabs = slot.tabs();
+        let w = ((ui.available_width() - 3.0 * (tabs.len() as f32 - 1.0)) / tabs.len() as f32).min(150.0);
+        for tb in tabs {
+            let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 24.0), Sense::click());
+            env.note(format!("subtool:tab:{}", tb.key), rect);
+            let on = tb.key == cur_tab.key;
+            let p = ui.painter();
+            p.rect(rect, 4.0, if on { t.accent_dim } else if resp.hovered() { t.bg_hover } else { t.bg_widget }, Stroke::new(1.0, if on { t.accent } else { t.border }), StrokeKind::Inside);
+            let ir = Rect::from_min_size(rect.min + egui::vec2(5.0, 4.0), egui::vec2(16.0, 16.0));
+            env.icons.paint(p, tb.icon, ir, if on { t.text } else { t.text_dim });
+            let g = p.layout_no_wrap(tr(tb.title_key).to_owned(), egui::FontId::proportional(12.0), if on { t.text } else { t.text_dim });
+            p.with_clip_rect(rect.shrink(2.0)).galley(egui::pos2(ir.right() + 5.0, rect.center().y - g.size().y / 2.0), g, t.text);
+            if resp.on_hover_text(tr(tb.title_key)).clicked() {
+                pick_tab = Some(tb.key);
+            }
         }
-        ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), list_h), egui::Layout::top_down(egui::Align::Min), |ui| {
-            let items_out = egui::ScrollArea::vertical().id_salt(("tool_items", key)).max_height(list_h).auto_shrink([false, true]).show(ui, |ui| {
-                let needle = env.ed.brush_panel.search.trim().to_lowercase();
-                let shown: Vec<usize> = (0..items.len())
-                    .filter(|&i| cur_cat.as_ref().is_none_or(|c| items[i].cat == *c))
-                    .filter(|&i| needle.is_empty() || items[i].name.to_lowercase().contains(&needle))
-                    .collect();
-                // grade: cartões de tamanho fixo lado a lado; colunas conforme a largura (estreito = uma coluna, a
-                // miniatura é cortada, nunca achatada)
-                let avail_w = ui.available_width();
-                let cols = (((avail_w + CARD_GAP) / (CARD_MIN_W + CARD_GAP)).floor() as usize).max(1);
-                let card_w = ((avail_w - CARD_GAP * (cols - 1) as f32) / cols as f32).floor().max(24.0);
-                for row in shown.chunks(cols) {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = CARD_GAP;
-                        for &i in row {
-                            let it = &items[i];
-                            let (rect, resp) = ui.allocate_exact_size(egui::vec2(card_w, CARD_H), Sense::click());
-                            let note = match it.act {
-                                Act::Brush(b) => format!("brushes:item:{b}"),
-                                _ => format!("tool_item:{i}"),
-                            };
-                            env.note(note, rect);
-                            let sel = is_selected(env, it.act);
-                            let t = env.t;
-                            let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
-                            let fill = if sel { t.accent_dim } else if resp.hovered() { t.bg_hover } else { t.bg_widget };
-                            painter.rect(rect, 3.0, fill, Stroke::new(1.0, if sel { t.accent } else { t.border }), StrokeKind::Inside);
-                            let name = if it.user { format!("{} ·", it.name) } else { it.name.clone() };
-                            let mut g = painter.layout_no_wrap(name.clone(), egui::FontId::proportional(10.5), t.text);
-                            // nome comprido (as borrachas) encolhe a letra até caber no cartão, no mínimo 8 pt
-                            let room = card_w - 8.0;
-                            if g.size().x > room && room > 20.0 {
-                                let size = (10.5 * room / g.size().x).clamp(8.0, 10.5);
-                                g = painter.layout_no_wrap(name, egui::FontId::proportional(size), t.text);
-                            }
-                            painter.with_clip_rect(rect.shrink(2.0).intersect(ui.clip_rect())).galley(egui::pos2(rect.left() + 4.0, rect.top() + 2.0), g, t.text);
-                            let tr_rect = Rect::from_min_max(egui::pos2(rect.left() + 3.0, rect.bottom() - THUMB_H - 3.0), egui::pos2(rect.right() - 3.0, rect.bottom() - 3.0));
-                            paint_thumb(env, &painter, tr_rect, it.thumb);
-                            if resp.clicked() {
-                                pick = Some(it.act);
-                            }
-                            let (user, idx) = (it.user, if let Act::Brush(b) = it.act { Some(b) } else { None });
-                            let r = match idx {
-                                Some(b) => {
-                                    let lib = &env.ed.brushes;
-                                    resp.on_hover_ui(|ui| brush_tooltip(ui, lib, b))
-                                }
-                                None => resp.on_hover_text(it.name.clone()),
-                            };
-                            if let Some(b) = idx {
-                                let cat = it.cat.clone();
-                                let lib = &env.ed.brushes;
-                                r.context_menu(|ui| {
-                                    let cat_user = lib.category_has_user(&cat);
-                                    if ui.button(tr("brushes.make_from")).clicked() {
-                                        make_from = Some(b);
-                                        ui.close();
-                                    }
-                                    if ui.add_enabled(user, egui::Button::new(tr("brushes.export"))).on_hover_text(tr("brushes.export.tip")).clicked() {
-                                        export_req = Some(super::brush_maker::ExportTarget::Brush(b));
-                                        ui.close();
-                                    }
-                                    if ui.add_enabled(cat_user, egui::Button::new(tr("brushes.export_cat"))).on_hover_text(tr("brushes.export_cat.tip")).clicked() {
-                                        export_req = Some(super::brush_maker::ExportTarget::Category(cat));
-                                        ui.close();
-                                    }
-                                    if ui.add_enabled(user, egui::Button::new(tr("brushes.delete"))).clicked() {
-                                        delete = Some(b);
-                                        ui.close();
-                                    }
-                                });
-                            }
-                        }
-                    });
-                    ui.add_space(CARD_GAP);
+    });
+    if let Some(k) = pick_tab {
+        env.ed.draw_ui.shelf.tab.insert(slot, k);
+    }
+    let cur_tab = shelf::current_tab(env, slot);
+    ui.add_space(3.0);
+    // ---- lista: traço + nome
+    let items = shelf::subs(env, slot, cur_tab);
+    let footer_h = 28.0;
+    let list_h = (ui.available_height() - footer_h).max(ROW_H);
+    let mut req: Option<Req> = None;
+    let rename = env.ed.draw_ui.rename.clone();
+    egui::ScrollArea::vertical().id_salt(("subtool_list", slot.key(), cur_tab.key)).max_height(list_h).auto_shrink([false, false]).show(ui, |ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
+        if items.is_empty() {
+            let msg = if slot.available() { tr("subtool.empty") } else { tr("shelf.soon") };
+            ui.label(egui::RichText::new(msg).size(12.0).color(t.text_dim));
+        }
+        for (n, s) in items.iter().enumerate() {
+            let w = ui.available_width();
+            let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, ROW_H), Sense::click());
+            let lib_i = match s {
+                Sub::Preset(k) | Sub::EraserPreset(k) => shelf::preset_index(env, k),
+                _ => None,
+            };
+            env.note(match lib_i {
+                Some(i) => format!("brushes:item:{i}"),
+                None => format!("subtool:item:{n}"),
+            }, rect);
+            let sel = shelf::is_current(env, s);
+            let p = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+            let fill = if sel { t.accent_dim } else if resp.hovered() { t.bg_hover } else { t.bg_widget };
+            p.rect(rect, 3.0, fill, Stroke::new(1.0, if sel { t.accent } else { t.border }), StrokeKind::Inside);
+            let user = lib_i.is_some_and(|i| env.ed.brushes.items.get(i).is_some_and(|b| b.user));
+            // nome à direita (com o selo de vetor e o ponto dos pincéis do usuário); o traço ocupa o resto
+            let name = shelf::sub_label(env, s);
+            let renaming = rename.as_ref().is_some_and(|(ri, _)| Some(*ri) == lib_i);
+            let g = p.layout_no_wrap(name.clone(), egui::FontId::proportional(12.0), t.text);
+            let name_w = g.size().x.min(w * 0.5);
+            let badge = if s.is_vector() { 14.0 } else { 0.0 };
+            let thumb_r = Rect::from_min_max(egui::pos2(rect.left() + 4.0, rect.top() + 4.0), egui::pos2((rect.right() - name_w - badge - 14.0).max(rect.left() + 40.0), rect.bottom() - 4.0));
+            paint_thumb(env, &p, thumb_r, thumb_of(env, s));
+            if !renaming {
+                let x = rect.right() - 6.0 - name_w;
+                p.with_clip_rect(Rect::from_min_max(egui::pos2(x, rect.top()), rect.max)).galley(egui::pos2(x, rect.center().y - g.size().y / 2.0), g, t.text);
+                if s.is_vector() {
+                    env.icons.paint(&p, IconId::LayerVector, Rect::from_center_size(egui::pos2(x - 9.0, rect.center().y), egui::vec2(12.0, 12.0)), t.text_dim);
                 }
-            });
-            items_need = items_out.content_size.y;
+                if user {
+                    p.circle_filled(egui::pos2(rect.right() - 3.5, rect.top() + 4.0), 1.8, t.accent);
+                }
+            }
+            let resp = match lib_i {
+                Some(i) => {
+                    let lib = &env.ed.brushes;
+                    resp.on_hover_ui(|ui| brush_tooltip(ui, lib, i))
+                }
+                None if s.is_vector() => resp.on_hover_text(format!("{name}\n{}", tr("subtool.vector.tip"))),
+                None => resp.on_hover_text(name.clone()),
+            };
+            if resp.clicked() {
+                req = Some(Req::Pick(s.clone()));
+            }
+            if let Some(i) = lib_i {
+                if renaming {
+                    let mut text = rename.as_ref().map(|r| r.1.clone()).unwrap_or_default();
+                    let er = Rect::from_min_max(egui::pos2(rect.right() - w * 0.5, rect.top() + 3.0), egui::pos2(rect.right() - 3.0, rect.bottom() - 3.0));
+                    let te = ui.put(er, egui::TextEdit::singleline(&mut text).font(egui::FontId::proportional(12.0)));
+                    env.note("subtool:rename", te.rect);
+                    te.request_focus();
+                    if te.lost_focus() {
+                        if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            keep_selection(env, |env| env.ed.brushes.rename_user(i, &text).map(|_| ()));
+                        }
+                        env.ed.draw_ui.rename = None;
+                    } else {
+                        env.ed.draw_ui.rename = Some((i, text));
+                    }
+                }
+                let cat_user = user;
+                let cat = env.ed.brushes.get(i).map(cat_of).unwrap_or_default();
+                let cat_has_user = env.ed.brushes.category_has_user(&cat);
+                resp.context_menu(|ui| {
+                    let mut item = |ui: &mut Ui, key: &str, on: bool, r: Req| {
+                        if ui.add_enabled(on, egui::Button::new(tr(key))).on_disabled_hover_text(tr("subtool.factory.tip")).clicked() {
+                            req = Some(r);
+                            ui.close();
+                        }
+                    };
+                    item(ui, "subtool.rename", cat_user, Req::Rename(i));
+                    item(ui, "subtool.duplicate", true, Req::Duplicate(i));
+                    item(ui, "subtool.export", cat_user, Req::Export(i));
+                    item(ui, "subtool.export_cat", cat_has_user, Req::ExportCat(cat.clone()));
+                    item(ui, "subtool.reset", true, Req::Reset(i));
+                    ui.separator();
+                    item(ui, "subtool.delete", cat_user, Req::Delete(i));
+                });
+            }
+        }
+    });
+    // ---- rodapé: só ícones
+    let cur_lib = match shelf::current_sub(env) {
+        Some(Sub::Preset(k)) | Some(Sub::EraserPreset(k)) => shelf::preset_index(env, &k),
+        _ => None,
+    };
+    let cur_user = cur_lib.is_some_and(|i| env.ed.brushes.items.get(i).is_some_and(|b| b.user));
+    let brushy = cur_tab.group.is_some();
+    ui.add_space(2.0);
+    let (fr, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), Sense::hover());
+    ui.scope_builder(egui::UiBuilder::new().max_rect(fr).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        let more = env.icon_button(ui, IconId::ChevronDown, "subtool.more", false, true, "subtool:more");
+        egui::Popup::menu(&more).show(|ui| {
+            for (key, r) in [("subtool.maker", Req::Maker), ("subtool.rescan", Req::Rescan), ("subtool.open_dir", Req::OpenDir)] {
+                let on = !matches!(r, Req::Rescan | Req::OpenDir) || env.ed.brushes.dir().is_some();
+                if ui.add_enabled(on, egui::Button::new(tr(key))).clicked() {
+                    req = Some(r);
+                }
+            }
+        });
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if env.icon_button(ui, IconId::Trash, "subtool.delete", false, cur_user, "subtool:delete").clicked() {
+                req = cur_lib.map(Req::Delete);
+            }
+            if env.icon_button(ui, IconId::Copy, "subtool.duplicate", false, cur_lib.is_some(), "subtool:duplicate").clicked() {
+                req = cur_lib.map(Req::Duplicate);
+            }
+            if env.icon_button(ui, IconId::Import, "subtool.import", false, brushy, "subtool:import").clicked() {
+                req = Some(Req::Import);
+            }
+            if env.icon_button(ui, IconId::Plus, "subtool.add", false, brushy, "subtool:add").clicked() {
+                req = Some(Req::Library);
+            }
         });
     });
-    env.ed.brush_panel.list_need = items_need.max(cats_need);
-    if tool == ToolId::Brush {
-        env.ed.brush_panel.cat = cur_cat;
-    } else if let Some(c) = cur_cat {
-        env.ed.brush_panel.cat_other.insert(key, c);
+    if let Some(r) = req {
+        run(env, ui.ctx(), slot, r);
     }
-    if let Some(a) = pick {
-        apply(env, a);
-    }
-    if let Some(i) = delete {
-        if let Err(e) = env.ed.brushes.remove_user(i) {
-            env.ed.notify(e);
+    super::brush_maker::windows(env, ui.ctx());
+}
+
+fn run(env: &mut Env, ctx: &egui::Context, slot: Slot, r: Req) {
+    match r {
+        Req::Pick(s) => shelf::apply_sub(env, slot, &s),
+        Req::Duplicate(i) => duplicate(env, slot, i),
+        Req::Delete(i) => {
+            keep_selection(env, |env| env.ed.brushes.remove_user(i));
+            // a ferramenta volta para a primeira sub-ferramenta que sobrou
+            env.ed.draw_ui.shelf.last.remove(&slot);
+            shelf::activate(env, slot);
         }
-        if env.ed.opts.brush_preset >= env.ed.brushes.items.len() || env.ed.opts.brush_preset == i {
-            env.ed.opts.brush_preset = 1;
+        Req::Reset(i) => reset_preset(env, i),
+        Req::Export(i) => super::brush_maker::open_export(env, super::brush_maker::ExportTarget::Brush(i)),
+        Req::ExportCat(c) => super::brush_maker::open_export(env, super::brush_maker::ExportTarget::Category(c)),
+        Req::Rename(i) => env.ed.draw_ui.rename = env.ed.brushes.get(i).map(|p| (i, p.name.clone())),
+        Req::Library => {
+            env.ed.library.kind = Some(aiai_assets::kind::Kind::Brush);
+            env.ed.draw_ui.insert_panel = Some(crate::layout::PanelKind::Library);
+        }
+        Req::Import => super::brush_maker::pick_import(env, ctx),
+        Req::Maker => super::brush_maker::open_maker(env, None),
+        Req::Rescan => rescan(env),
+        Req::OpenDir => {
+            if let Some(d) = env.ed.brushes.dir() {
+                let _ = std::fs::create_dir_all(d);
+                let _ = std::process::Command::new("explorer").arg(d).spawn();
+            }
+        }
+    }
+}
+
+/// Duplica o pincel (com o ajuste em uso, se é ele) como pincel do usuário e passa a usar a cópia.
+fn duplicate(env: &mut Env, slot: Slot, i: usize) {
+    let o = &env.ed.opts;
+    let Some(mut p) = env.ed.brushes.get(i).cloned() else { return };
+    if o.brush_preset == i {
+        if let Some(c) = o.brush_custom.clone() {
+            p = c;
+        }
+        p.size = o.brush_size;
+        p.opacity = o.brush_opacity;
+    }
+    let name = format!("{} 2", p.name);
+    let cat = match cat_of(&p).as_str() {
+        "importados" | "" => "meus".to_owned(),
+        c => c.to_owned(),
+    };
+    let cur = env.ed.brushes.get(env.ed.opts.brush_preset).map(shelf::preset_key);
+    match env.ed.brushes.add_user(p, &name, &cat) {
+        Ok(n) => {
+            if let Some(i) = cur.and_then(|k| shelf::preset_index(env, &k)) {
+                env.ed.opts.brush_preset = i;
+            }
+            if let Some(k) = env.ed.brushes.get(n).map(shelf::preset_key) {
+                let sub = if slot == Slot::Eraser { Sub::EraserPreset(k) } else { Sub::Preset(k) };
+                shelf::apply_sub(env, slot, &sub);
+            }
+        }
+        Err(e) => env.ed.notify(e),
+    }
+}
+
+/// Volta o pincel ao inicial: esquece o tamanho, a opacidade e os ajustes finos feitos nele.
+pub(crate) fn reset_preset(env: &mut Env, i: usize) {
+    let Some(p) = env.ed.brushes.get(i).cloned() else { return };
+    env.ed.draw_ui.shelf.tuned.remove(&shelf::preset_key(&p));
+    if env.ed.opts.brush_preset == i {
+        let o = &mut env.ed.opts;
+        (o.brush_size, o.brush_opacity, o.brush_custom) = (p.size, p.opacity, None);
+    }
+}
+
+/// Mexe na biblioteca (apagar, renomear) sem perder o pincel em uso (os índices andam); o pincel que sumiu dá lugar ao
+/// primeiro de fábrica que sobrou.
+fn keep_selection(env: &mut Env, f: impl FnOnce(&mut Env) -> Result<(), String>) {
+    let cur = env.ed.brushes.get(env.ed.opts.brush_preset).map(shelf::preset_key);
+    if let Err(e) = f(env) {
+        env.ed.notify(e);
+    }
+    match cur.and_then(|k| shelf::preset_index(env, &k)) {
+        Some(i) => env.ed.opts.brush_preset = i,
+        None => {
+            env.ed.opts.brush_preset = 1.min(env.ed.brushes.items.len().saturating_sub(1));
             env.ed.opts.brush_custom = None;
         }
     }
-    // divisória: arrastar sobe/desce o limite entre a lista e as propriedades; dois cliques = automático
-    let (div, dr) = ui.allocate_exact_size(egui::vec2(total_w, 9.0), Sense::click_and_drag());
-    env.note("brushes:divider", div);
-    let hot = dr.hovered() || dr.dragged();
-    if hot {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
-    }
-    let lc = if hot { env.t.accent } else { env.t.border };
-    ui.painter().hline(div.x_range(), div.center().y, Stroke::new(1.0, lc));
-    for k in -1..=1 {
-        ui.painter().circle_filled(div.center() + egui::vec2(k as f32 * 6.0, 0.0), 1.6, if hot { env.t.accent } else { env.t.text_dim });
-    }
-    if dr.dragged() {
-        env.ed.brush_panel.list_h = Some((list_h + dr.drag_delta().y).min(max_list).max(80.0));
-    }
-    if dr.double_clicked() {
-        env.ed.brush_panel.list_h = None;
-    }
-    dr.on_hover_text(tr("brushes.divider.tip"));
-    if tool == ToolId::Brush {
-        save_form(env, ui);
-        ui.horizontal_wrapped(|ui| {
-            let b = ui.button(tr("brushes.maker_open"));
-            env.note("brushes:maker", b.rect);
-            if b.on_hover_text(tr("brushes.maker_open.tip")).clicked() {
-                super::brush_maker::open_maker(env, None);
-            }
-            let b = ui.button(tr("brushes.import_open"));
-            env.note("brushes:import", b.rect);
-            if b.on_hover_text(tr("brushes.import_open.tip")).clicked() {
-                super::brush_maker::pick_import(env, ui.ctx());
-            }
-            // a pasta de pincéis é do usuário: reler (arquivos copiados para lá ou tirados) e abrir no Explorador
-            let has_dir = env.ed.brushes.dir().is_some();
-            let b = ui.add_enabled(has_dir, egui::Button::new(tr("brushes.rescan")));
-            env.note("brushes:rescan", b.rect);
-            if b.on_hover_text(tr("brushes.rescan.tip")).clicked() {
-                rescan(env);
-            }
-            let tip = env.ed.brushes.dir().map(|d| d.display().to_string()).unwrap_or_else(|| tr("brushes.folder.none").to_owned());
-            let b = ui.add_enabled(has_dir, egui::Button::new(tr("brushes.open_dir")));
-            env.note("brushes:open_dir", b.rect);
-            if b.on_hover_text(tip).clicked() {
-                if let Some(d) = env.ed.brushes.dir() {
-                    let _ = std::fs::create_dir_all(d);
-                    let _ = std::process::Command::new("explorer").arg(d).spawn();
-                }
-            }
-        });
-    }
-    if let Some(i) = make_from {
-        super::brush_maker::open_maker(env, Some(i));
-    }
-    if let Some(t) = export_req {
-        super::brush_maker::open_export(env, t);
-    }
-    super::brush_maker::windows(env, ui.ctx());
-    // ---- embaixo: as propriedades do item escolhido
-    let out = egui::ScrollArea::vertical().id_salt("brush_props").auto_shrink([false, false]).show(ui, |ui| {
-        section(ui, &env.t, "brushes.props");
-        super::properties::tool_options_panel(env, ui);
-    });
-    env.ed.brush_panel.props_h = out.content_size.y;
 }
 
 /// Relê a pasta de pincéis e mantém o pincel escolhido (os índices mudam).
@@ -375,106 +394,6 @@ fn brush_tooltip(ui: &mut Ui, lib: &crate::app::brushes::BrushLibrary, i: usize)
     row(ui, "brushes.tags", p.tags.join(", "));
 }
 
-fn cat_label_any(c: &str) -> String {
-    if c.starts_with("tc.") { tr(c).to_owned() } else { cat_label(c) }
-}
-
-fn categories(items: &[Item], tool: ToolId) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    if tool == ToolId::Brush {
-        out.extend(CATEGORIES.iter().map(|(k, _)| (*k).to_owned()));
-    }
-    for it in items {
-        if !out.contains(&it.cat) {
-            out.push(it.cat.clone());
-        }
-    }
-    out.retain(|c| items.iter().any(|it| it.cat == *c));
-    out
-}
-
-fn items_for(env: &Env, tool: ToolId) -> Vec<Item> {
-    let it = |name: String, cat: &str, act: Act, thumb: Thumb| Item { name, cat: cat.to_owned(), act, thumb, user: false };
-    match tool {
-        ToolId::Brush => env.ed.brushes.items.iter().enumerate().map(|(i, b)| Item { name: b.preset.name.clone(), cat: cat_of(&b.preset), act: Act::Brush(i), thumb: Thumb::Brush(i), user: b.user }).collect(),
-        ToolId::Pen => {
-            let mut v: Vec<Item> = [(VectorTip::GPen, "tip.g_pen", "pen:g"), (VectorTip::MaruPen, "tip.maru_pen", "pen:maru"), (VectorTip::Marker, "tip.marker", "pen:marker"), (VectorTip::Pencil, "tip.pencil", "pen:pencil")]
-                .into_iter()
-                .map(|(t, k, tex)| it(tr(k).to_owned(), "tc.pens", Act::PenTip(t), Thumb::Tex(tex)))
-                .collect();
-            v.extend([(PenShape::Freehand, "pen.freehand"), (PenShape::Line, "pen.line"), (PenShape::Curve, "pen.curve"), (PenShape::Rect, "pen.rect"), (PenShape::Ellipse, "pen.ellipse")].into_iter().map(|(s, k)| it(tr(k).to_owned(), "tc.shapes", Act::PenShape(s), Thumb::Pen(s))));
-            v
-        }
-        ToolId::Eraser => {
-            let mut v: Vec<Item> = ERASERS.iter().enumerate().map(|(i, (k, _))| it(tr(k).to_owned(), "tc.raster", Act::EraserRaster(i as u8), Thumb::Tex(if i == 0 { "erase:hard" } else { "erase:soft" }))).collect();
-            v.extend([(EraserTip::Pencil, "eraser.item.pencil", "erase:pencil"), (EraserTip::Block, "eraser.item.block", "erase:block")].into_iter().map(|(m, k, tex)| it(tr(k).to_owned(), "tc.raster", Act::EraserTip(m), Thumb::Tex(tex))));
-            // qualquer pincel da biblioteca apaga (forma, textura, dinâmica): o escolhido na ferramenta Pincel
-            let bi = env.ed.opts.brush_preset;
-            v.push(it(tr("eraser.brush_item").to_owned(), "tc.raster", Act::EraserBrush, Thumb::Brush(bi)));
-            v.extend([(EraseMode::Segment, "eraser.item.segment"), (EraseMode::Intersection, "eraser.item.intersection"), (EraseMode::Whole, "eraser.item.whole")].into_iter().map(|(m, k)| it(tr(k).to_owned(), "tc.vector", Act::EraserVector(m), Thumb::Erase(m))));
-            v
-        }
-        ToolId::Fill => FILLS.iter().enumerate().map(|(i, (k, ..))| it(tr(k).to_owned(), "tc.fill", Act::Fill(i as u8), Thumb::Fill(i as u8))).collect(),
-        // Seleção: as áreas (retângulo, elipse, laço, laço poligonal, varinha) e os objetos (Selecionar traços)
-        ToolId::Lasso => SelTool::ALL.into_iter().map(|m| it(tr(m.label_key()).to_owned(), if m == SelTool::Strokes { "tc.select_objects" } else { "tc.select" }, Act::Select(m), Thumb::Select(m))).collect(),
-        ToolId::Points => super::properties::POINTS_MODES.iter().map(|&m| it(tr(super::properties::points_mode_key(m)).to_owned(), "tc.points", Act::Points(m), Thumb::Points(m))).collect(),
-        other => vec![it(tr(other.title_key()).to_owned(), "tc.tool", Act::Only, Thumb::Icon(other))],
-    }
-}
-
-fn is_selected(env: &Env, a: Act) -> bool {
-    let o = &env.ed.opts;
-    match a {
-        Act::Brush(i) => o.brush_preset == i,
-        Act::PenTip(t) => o.pen_tip == t,
-        Act::PenShape(s) => o.pen_shape == s,
-        Act::EraserRaster(i) => o.eraser_tip == EraserTip::Brush && !o.eraser_use_brush && (o.eraser_hardness - ERASERS[i as usize].1).abs() < 1e-3,
-        Act::EraserTip(m) => o.eraser_tip == m && !o.eraser_use_brush,
-        Act::EraserBrush => o.eraser_use_brush,
-        Act::EraserVector(m) => o.eraser_mode == m,
-        Act::Fill(i) => {
-            let (_, gap, expand, left) = FILLS[i as usize];
-            (o.fill_gap - gap).abs() < 1e-3 && o.fill_expand == expand && o.fill_close_leftovers == left
-        }
-        Act::Select(m) => o.select_mode == m,
-        Act::Points(m) => o.points_mode == m,
-        Act::Only => true,
-    }
-}
-
-fn apply(env: &mut Env, a: Act) {
-    match a {
-        Act::Brush(i) => {
-            if let Some(p) = env.ed.brushes.get(i).cloned() {
-                let o = &mut env.ed.opts;
-                o.brush_preset = i;
-                o.brush_size = p.size;
-                o.brush_opacity = p.opacity;
-                o.brush_custom = None;
-            }
-        }
-        Act::PenTip(t) => env.ed.opts.pen_tip = t,
-        Act::PenShape(s) => env.ed.opts.pen_shape = s,
-        Act::EraserRaster(i) => {
-            let o = &mut env.ed.opts;
-            (o.eraser_hardness, o.eraser_tip, o.eraser_use_brush) = (ERASERS[i as usize].1, EraserTip::Brush, false);
-        }
-        Act::EraserTip(m) => (env.ed.opts.eraser_tip, env.ed.opts.eraser_use_brush) = (m, false),
-        Act::EraserBrush => (env.ed.opts.eraser_tip, env.ed.opts.eraser_use_brush) = (EraserTip::Brush, true),
-        Act::EraserVector(m) => env.ed.opts.eraser_mode = m,
-        Act::Fill(i) => {
-            let (_, gap, expand, left) = FILLS[i as usize];
-            let o = &mut env.ed.opts;
-            o.fill_gap = gap;
-            o.fill_expand = expand;
-            o.fill_close_leftovers = left;
-        }
-        Act::Select(m) => env.ed.opts.select_mode = m,
-        Act::Points(m) => env.ed.opts.points_mode = m,
-        Act::Only => {}
-    }
-}
-
 // ------------------------------------------------------------------------------------------------ miniaturas
 
 fn ensure_thumbs(env: &mut Env, ui: &Ui) {
@@ -521,7 +440,7 @@ fn ensure_thumbs(env: &mut Env, ui: &Ui) {
         let o = crate::app::editor::ToolOptions { eraser_size: 26.0, eraser_hardness: hardness, eraser_tip: tip, ..Default::default() };
         crate::app::tools::eraser_preset(&o, None)
     };
-    let kinds = [("erase:hard", eraser(EraserTip::Brush, ERASERS[0].1)), ("erase:soft", eraser(EraserTip::Brush, ERASERS[1].1)), ("erase:pencil", eraser(EraserTip::Pencil, 1.0)), ("erase:block", eraser(EraserTip::Block, 1.0))];
+    let kinds = [("erase:hard", eraser(EraserTip::Brush, shelf::ERASERS[0].1)), ("erase:soft", eraser(EraserTip::Brush, shelf::ERASERS[1].1)), ("erase:pencil", eraser(EraserTip::Pencil, 1.0)), ("erase:block", eraser(EraserTip::Block, 1.0))];
     for (name, p) in kinds.iter() {
         let mut img = aiai_paint::Image::new(w, h);
         for y in 12..44 {
@@ -747,62 +666,3 @@ fn paint_thumb(env: &mut Env, p: &egui::Painter, cell: Rect, th: Thumb) {
     }
 }
 
-/// "Salvar como pincel novo" (fora da rolagem da lista, sempre à vista).
-fn save_form(env: &mut Env, ui: &mut Ui) {
-    match env.ed.brush_panel.saving.clone() {
-        None => {
-            let b = ui.button(tr("brushes.save_new"));
-            env.note("brushes:save_new", b.rect);
-            if b.on_hover_text(tr("brushes.save_new.tip")).clicked() {
-                let base = env.ed.brushes.get(env.ed.opts.brush_preset).map(|p| (p.name.clone(), cat_of(p))).unwrap_or_default();
-                env.ed.brush_panel.saving = Some((format!("{} 2", base.0), base.1));
-            }
-        }
-        Some((mut name, mut cat)) => {
-            egui::Frame::group(ui.style()).show(ui, |ui| {
-                ui.label(egui::RichText::new(tr("brushes.save_new")).strong());
-                egui::Grid::new("brush_save").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
-                    ui.label(tr("brushes.name"));
-                    let r = ui.add(egui::TextEdit::singleline(&mut name).desired_width(160.0));
-                    env.note("brushes:save_name", r.rect);
-                    ui.end_row();
-                    ui.label(tr("brushes.category"));
-                    egui::ComboBox::from_id_salt("brush_save_cat").selected_text(cat_label(&cat)).show_ui(ui, |ui| {
-                        // "Borrachas" não é destino de pincel novo (a ferramenta Borracha cobre); só aparece se já é a escolhida
-                        let erasers_chosen = cat == "borracha";
-                        for &(k, _) in CATEGORIES.iter().filter(|(k, _)| *k != "borracha" || erasers_chosen) {
-                            ui.selectable_value(&mut cat, k.to_owned(), cat_label(k));
-                        }
-                    });
-                    ui.end_row();
-                });
-                ui.horizontal(|ui| {
-                    let ok = ui.add_enabled(!name.trim().is_empty(), egui::Button::new(tr("brushes.save")));
-                    env.note("brushes:save", ok.rect);
-                    let cancel = ui.button(tr("confirm.cancel"));
-                    if ok.clicked() {
-                        let o = &env.ed.opts;
-                        let mut p = o.brush_custom.clone().or_else(|| env.ed.brushes.get(o.brush_preset).cloned()).unwrap_or_else(|| aiai_paint::brush::BrushPreset::round("Pincel", 24.0, 0.9));
-                        p.size = o.brush_size;
-                        p.opacity = o.brush_opacity;
-                        match env.ed.brushes.add_user(p, &name, &cat) {
-                            Ok(i) => {
-                                env.ed.opts.brush_preset = i;
-                                env.ed.opts.brush_custom = None;
-                                env.ed.brush_panel.saving = None;
-                                env.ed.brush_panel.cat = Some(cat.clone());
-                            }
-                            Err(e) => env.ed.notify(e),
-                        }
-                        return;
-                    }
-                    if cancel.clicked() {
-                        env.ed.brush_panel.saving = None;
-                        return;
-                    }
-                    env.ed.brush_panel.saving = Some((name.clone(), cat.clone()));
-                });
-            });
-        }
-    }
-}

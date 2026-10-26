@@ -312,6 +312,26 @@ impl BrushLibrary {
         Ok(())
     }
 
+    /// Renomeia um pincel do usuário (S25, menu do painel Grupo de ferramentas): grava o arquivo com o nome novo (mesmo
+    /// id, mesma categoria) e o antigo vai para `_Lixeira`. Devolve o índice novo (o pincel vai para o fim da lista).
+    pub(crate) fn rename_user(&mut self, i: usize, name: &str) -> Result<usize, String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(crate::i18n::tr("brushes.need_name").to_owned());
+        }
+        if !self.items.get(i).is_some_and(|b| b.user) {
+            return Err(crate::i18n::tr("subtool.factory.tip").to_owned());
+        }
+        if self.items[i].preset.name == name {
+            return Ok(i);
+        }
+        let mut file = self.brush_file(i)?;
+        file.preset.name = name.to_owned();
+        file.manifest.name = name.to_owned();
+        self.remove_user(i)?;
+        self.install_file(file, None)
+    }
+
     /// O pincel como arquivo do formato (manifesto que ele já tinha + imagens da biblioteca).
     fn brush_file(&self, i: usize) -> Result<BrushFile, String> {
         let b = self.items.get(i).ok_or("pincel não encontrado")?;

@@ -48,6 +48,55 @@ pub enum IconId {
     ToolMInset,
     ToolMLoopCut,
     ToolMBevel,
+    // S25 (lado esquerdo das áreas de desenho): ferramentas novas da prateleira, painéis de ferramenta e de cor
+    /// Seleção automática (varinha).
+    ToolWand,
+    /// Lápis.
+    ToolPencil,
+    /// Marcador (grupo da Caneta).
+    ToolMarker,
+    /// Aerógrafo.
+    ToolAirbrush,
+    /// Decoração (carimbos ao longo do traço).
+    ToolDecoration,
+    /// Mistura (borrar).
+    ToolBlend,
+    /// Degradê.
+    ToolGradient,
+    /// Figura (linha, retângulo, elipse).
+    ToolFigure,
+    /// Importar arquivo.
+    Import,
+    /// Configurações avançadas da ferramenta.
+    Wrench,
+    /// Redefinir a ferramenta (valores iniciais).
+    ToolReset,
+    /// Dinâmica de pressão (curva).
+    Pressure,
+    /// Suavização de serrilhado: nenhuma.
+    AaNone,
+    /// Suavização de serrilhado: fraca.
+    AaWeak,
+    /// Suavização de serrilhado: média.
+    AaMid,
+    /// Suavização de serrilhado: forte.
+    AaStrong,
+    /// Cores: roda.
+    ColorWheel,
+    /// Cores: conjunto de cores (paletas).
+    ColorSet,
+    /// Cores: controles RGB/HSV.
+    ColorSliders,
+    /// Cores: histórico.
+    ColorHistory,
+    /// Cores: cor aproximada.
+    ColorApprox,
+    /// Cores: cor intermediária.
+    ColorMix,
+    /// Trocar principal e secundária.
+    Swap,
+    /// Tamanho do pincel.
+    BrushSize,
     ZoomOut,
     Eye,
     EyeOff,
@@ -162,7 +211,7 @@ pub enum IconId {
 }
 
 impl IconId {
-    pub const ALL: [IconId; 109] = [
+    pub const ALL: [IconId; 133] = [
         IconId::WsRoteiro,
         IconId::WsPersonagens,
         IconId::WsStoryboard,
@@ -197,6 +246,30 @@ impl IconId {
         IconId::ToolMInset,
         IconId::ToolMLoopCut,
         IconId::ToolMBevel,
+        IconId::ToolWand,
+        IconId::ToolPencil,
+        IconId::ToolMarker,
+        IconId::ToolAirbrush,
+        IconId::ToolDecoration,
+        IconId::ToolBlend,
+        IconId::ToolGradient,
+        IconId::ToolFigure,
+        IconId::Import,
+        IconId::Wrench,
+        IconId::ToolReset,
+        IconId::Pressure,
+        IconId::AaNone,
+        IconId::AaWeak,
+        IconId::AaMid,
+        IconId::AaStrong,
+        IconId::ColorWheel,
+        IconId::ColorSet,
+        IconId::ColorSliders,
+        IconId::ColorHistory,
+        IconId::ColorApprox,
+        IconId::ColorMix,
+        IconId::Swap,
+        IconId::BrushSize,
         IconId::ZoomOut,
         IconId::Eye,
         IconId::EyeOff,
@@ -315,6 +388,30 @@ impl IconId {
             IconId::ToolMInset => include_str!("../assets/icons/tool-m-inset.svg"),
             IconId::ToolMLoopCut => include_str!("../assets/icons/tool-m-loopcut.svg"),
             IconId::ToolMBevel => include_str!("../assets/icons/tool-m-bevel.svg"),
+            IconId::ToolWand => include_str!("../assets/icons/tool-wand.svg"),
+            IconId::ToolPencil => include_str!("../assets/icons/tool-pencil.svg"),
+            IconId::ToolMarker => include_str!("../assets/icons/tool-marker.svg"),
+            IconId::ToolAirbrush => include_str!("../assets/icons/tool-airbrush.svg"),
+            IconId::ToolDecoration => include_str!("../assets/icons/tool-decoration.svg"),
+            IconId::ToolBlend => include_str!("../assets/icons/tool-blend.svg"),
+            IconId::ToolGradient => include_str!("../assets/icons/tool-gradient.svg"),
+            IconId::ToolFigure => include_str!("../assets/icons/tool-figure.svg"),
+            IconId::Import => include_str!("../assets/icons/import.svg"),
+            IconId::Wrench => include_str!("../assets/icons/wrench.svg"),
+            IconId::ToolReset => include_str!("../assets/icons/tool-reset.svg"),
+            IconId::Pressure => include_str!("../assets/icons/pressure.svg"),
+            IconId::AaNone => include_str!("../assets/icons/aa-none.svg"),
+            IconId::AaWeak => include_str!("../assets/icons/aa-weak.svg"),
+            IconId::AaMid => include_str!("../assets/icons/aa-mid.svg"),
+            IconId::AaStrong => include_str!("../assets/icons/aa-strong.svg"),
+            IconId::ColorWheel => include_str!("../assets/icons/color-wheel.svg"),
+            IconId::ColorSet => include_str!("../assets/icons/color-set.svg"),
+            IconId::ColorSliders => include_str!("../assets/icons/color-sliders.svg"),
+            IconId::ColorHistory => include_str!("../assets/icons/color-history.svg"),
+            IconId::ColorApprox => include_str!("../assets/icons/color-approx.svg"),
+            IconId::ColorMix => include_str!("../assets/icons/color-mix.svg"),
+            IconId::Swap => include_str!("../assets/icons/swap.svg"),
+            IconId::BrushSize => include_str!("../assets/icons/brush-size.svg"),
             IconId::ZoomOut => include_str!("../assets/icons/zoom-out.svg"),
             IconId::Eye => include_str!("../assets/icons/eye.svg"),
             IconId::EyeOff => include_str!("../assets/icons/eye-off.svg"),

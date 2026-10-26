@@ -190,6 +190,9 @@ impl StudioApp {
             "tools": ToolId::ALL.iter().map(|t| t.key()).collect::<Vec<_>>(),
             // a prateleira deste workspace (`WorkspaceProfile`) e o layout em uso
             "shelf_tools": self.ws.profile().tools.iter().map(|t| t.key()).collect::<Vec<_>>(),
+            // S25: a prateleira por grupos das áreas de desenho (ferramenta em uso e as que aparecem)
+            "shelf_slot": self.ed.draw_ui.shelf.slot.map(|s| s.key()),
+            "shelf_slots": super::shelf::slots_for(self.ws).iter().map(|s| s.key()).collect::<Vec<_>>(),
             "layout": self.layout_state(),
             "panels": panels,
             "widgets": widgets,

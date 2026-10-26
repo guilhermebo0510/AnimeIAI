@@ -708,6 +708,8 @@ fn editor_script2(c: &Client) {
     // Cores: paleta nova, cor na paleta, renomear pela interface, trocar a cor na paleta recolore o canvas. Na Animação
     // as Cores ficam numa aba pequena ao lado da mesa de luz; a edição da paleta é feita na Pintura, onde o painel é grande
     c.ok("UI_ACTION", json!({"action": "set_workspace", "workspace": "pintura"}));
+    // S25: as paletas ficam na aba "Conjunto de cores" do painel Cores
+    c.click_widget("colors:tab:set");
     c.click_widget("colors:new_palette");
     assert_eq!(roots("palettes").len(), 1);
     c.ok("UI_ACTION", json!({"action": "set_color", "color": "#336699"}));

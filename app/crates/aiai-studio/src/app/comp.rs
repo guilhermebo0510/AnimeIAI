@@ -768,7 +768,8 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
         };
         let mut take = |m: M, k: Key| exact(i, m) && i.consume_key(m, k);
         let mut h = Hit { tool: None, reveal: None, make_key: None, jump: 0, interp: None, delete: false, copy: false, paste: false };
-        for (k, t) in [(Key::W, ToolId::Rotate), (Key::Y, ToolId::Anchor), (Key::C, ToolId::Camera)] {
+        // V = Seleção (mover camada) como no After Effects: o K do mapa geral (Mover camada, S25) aqui anda nas chaves
+        for (k, t) in [(Key::V, ToolId::Move), (Key::W, ToolId::Rotate), (Key::Y, ToolId::Anchor), (Key::C, ToolId::Camera)] {
             if take(M::NONE, k) {
                 h.tool = Some(t);
             }

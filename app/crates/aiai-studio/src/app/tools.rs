@@ -435,6 +435,10 @@ fn brush_preset(env: &Env) -> BrushPreset {
     p.opacity = o.brush_opacity.clamp(0.0, 1.0);
     // degradê como cor (painel Cores): ao longo do traço
     p.color_ramp = super::panels::gradient_edit::brush_ramp(env);
+    // cor transparente (painel Cores, S25): o pincel tira tinta em vez de pôr
+    if env.ed.draw_ui.colors.transparent {
+        p.mode = aiai_paint::brush::BrushMode::Erase;
+    }
     p
 }
 
