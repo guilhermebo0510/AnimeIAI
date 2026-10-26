@@ -31,6 +31,11 @@ fn groups_have_their_factory_presets_and_all_round_trip() {
         let back: BrushPreset = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
         assert_eq!(back, p, "{}", p.name);
     }
+    // nomes únicos (o PAINT e o set_brush acham o pincel pelo nome)
+    let mut seen = std::collections::HashSet::new();
+    for p in &all {
+        assert!(seen.insert(p.name.clone()), "nome repetido na fábrica: {}", p.name);
+    }
     // a borracha de sempre da ferramenta continua a mesma
     let e = BrushPreset::eraser();
     assert_eq!((e.name.as_str(), e.mode, e.group.as_str()), ("Borracha", BrushMode::Erase, ""));

@@ -655,11 +655,7 @@ impl BrushPreset {
         gouache.texture = Some(BrushTexture { kind: TextureKind::Canvas, scale: 3.0, depth: 0.55, mode: TextureMode::Subtract, seed: 11, invert: false, image: None, image_mask: None });
         gouache.opacity_pressure_min = 0.5;
         v.push(gouache);
-        let mut charcoal = BrushPreset::round("Carvão", 14.0, 0.6);
-        charcoal.texture = Some(BrushTexture { kind: TextureKind::Grain, scale: 2.5, depth: 0.85, mode: TextureMode::Subtract, seed: 5, invert: false, image: None, image_mask: None });
-        charcoal.scatter = 0.1;
-        charcoal.opacity_pressure_min = 0.2;
-        v.push(charcoal);
+        // o "Carvão" antigo (S06) deu lugar ao do grupo lápis (S25, lateral do bastão), com o mesmo nome
         let mut paper = BrushPreset::round("Textura de papel", 80.0, 0.3);
         paper.flow = 0.4;
         paper.texture = Some(BrushTexture { kind: TextureKind::Paper, scale: 10.0, depth: 0.9, mode: TextureMode::Multiply, seed: 13, invert: false, image: None, image_mask: None });
@@ -737,12 +733,12 @@ impl BrushPreset {
                 "Lápis de rascunho" => "lapis",
                 "Redondo duro" | "Redondo macio" | "Aerógrafo" | "Guache seco" => "pintura",
                 "Aquarela" | "Borrador" => "aquarela",
-                "Carvão" | "Textura de papel" => "textura",
+                "Textura de papel" => "textura",
                 _ => "cenario",
             }
             .into();
             p.group = match p.name.as_str() {
-                "Lápis de rascunho" | "Carvão" => "lapis",
+                "Lápis de rascunho" => "lapis",
                 "Aerógrafo" => "aerografo",
                 "Borrador" => "mistura",
                 "Redondo duro" | "Redondo macio" | "Aquarela" | "Guache seco" | "Textura de papel" => "pincel",
@@ -775,24 +771,24 @@ impl BrushPreset {
         };
         let mut v = Vec::new();
         // lápis: ponta macia granulada, cinza que escurece com a pressão, borda irregular
-        let mut l = lap("Lápis", 10.0, 0.3);
+        let mut l = lap("Lápis", 10.0, 0.7);
         l.opacity = 0.9;
-        l.flow = 0.45;
+        l.flow = 0.4;
         l.size_dyn = Some(Dynamics::pressure(0.1));
         l.flow_dyn = Some(Dynamics { pressure: Some(curve(0.5, &[[0.0, 0.0], [0.5214, 0.0571], [0.7857, 0.4357], [0.8714, 0.7857], [1.0, 1.0]])), random: Some(0.6), ..Default::default() });
         l.grain = grain(GrainKind::Paper, 2.0, 0.9, 2.0, false);
-        l.edge = Some(EdgeNoise { amount: 0.35, grain: 3.0, seed: 0 });
+        l.edge = Some(EdgeNoise { amount: 0.5, grain: 3.0, seed: 0 });
         l.stabilization = Some(Stabilization { level: 5, by_speed: true });
         v.push(l);
         // lapiseira: grafite fino, cinza uniforme (a tinta não soma ao repassar), grão largo e suave
-        let mut m = lap("Lapiseira", 5.0, 0.8);
+        let mut m = lap("Lapiseira", 5.0, 0.5);
         m.spacing = 0.08;
         m.flow = 0.85;
         m.max_ink = true;
         m.size_dyn = Some(Dynamics { pressure: Some(curve(0.0, &[[0.0, 0.0], [0.2273, 0.0], [0.6818, 1.0], [1.0, 1.0]])), ..Default::default() });
         m.flow_dyn = Some(Dynamics { pressure: Some(curve(0.6, &[[0.0, 0.0], [0.8455, 0.1182], [1.0, 1.0]])), ..Default::default() });
-        m.grain = grain(GrainKind::Paper, 3.0, 0.5, 1.5, false);
-        m.edge = Some(EdgeNoise { amount: 0.2, grain: 2.0, seed: 0 });
+        m.grain = grain(GrainKind::Paper, 4.0, 0.6, 1.3, false);
+        m.edge = Some(EdgeNoise { amount: 0.3, grain: 3.0, seed: 0 });
         m.stabilization = Some(Stabilization { level: 5, by_speed: true });
         v.push(m);
         // carvão: lateral do bastão, cheio do lado esquerdo do traço e esmaecendo no grão do papel
@@ -926,6 +922,7 @@ impl BrushPreset {
         k.size_dyn = Some(Dynamics { pressure: Some(curve(0.0, &[[0.0, 0.0], [0.4868, 0.8202], [0.8455, 1.0], [1.0, 1.0]])), ..Default::default() });
         k.flow_dyn = Some(Dynamics { pressure: Some(curve(0.0, &[[0.0, 0.0], [0.3364, 0.2273], [0.8545, 1.0], [1.0, 1.0]])), ..Default::default() });
         k.grain = Some(Grain { kind: GrainKind::Paper, scale: 3.0, depth: 0.8, contrast: 1.5, brightness: 0.0, subtract: false, moving: false, seed: 0 });
+        k.edge = Some(crate::brush_dyn::EdgeNoise { amount: 0.25, grain: 3.0, seed: 0 });
         k.snap = true;
         v.push(k);
         // áspera: grande, e na camada vetorial leva o traço inteiro
