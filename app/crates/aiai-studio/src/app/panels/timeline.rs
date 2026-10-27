@@ -154,10 +154,13 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
         let shown_s = shown.map(|n| format!("{} {n}", tr("layers.cel"))).unwrap_or_else(|| tr("timeline.no_cel").to_owned());
         let r = ui.label(egui::RichText::new(format!("{} {shown_s}", tr("timeline.exposed_cel"))).size(12.0).color(t.text)).on_hover_text(tr("timeline.exposed_cel.tip"));
         env.note("timeline:exposed_cel", r.rect);
-        if let Some(n) = env.ed.cel_number.filter(|n| Some(*n) != shown) {
-            let r = ui.label(egui::RichText::new(format!("{} {} {n}", tr("timeline.selected_cel"), tr("layers.cel"))).size(12.0).color(t.accent)).on_hover_text(tr("timeline.selected_cel.tip"));
-            env.note("timeline:selected_cel", r.rect);
-        }
+        // sempre visível (apagado quando não difere): o rótulo aparecendo e sumindo mudava a quebra da barra e a grade
+        // pulava entre dois cliques
+        let chosen = env.ed.cel_number;
+        let differs = chosen.is_some_and(|n| Some(n) != shown);
+        let chosen_s = chosen.map(|n| format!("{} {n}", tr("layers.cel"))).unwrap_or_else(|| "\u{2014}".to_owned());
+        let r = ui.label(egui::RichText::new(format!("{} {chosen_s}", tr("timeline.selected_cel"))).size(12.0).color(if differs { t.accent } else { t.text_dim })).on_hover_text(tr("timeline.selected_cel.tip"));
+        env.note("timeline:selected_cel", r.rect);
         let pb = &env.ed.playback;
         if pb.playing {
             ui.label(egui::RichText::new(format!("{:.1} / {:.2} fps", pb.fps_real, fps)).monospace().size(12.0).color(t.accent));
