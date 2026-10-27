@@ -553,6 +553,10 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
     // arrasto mínimo (Preferências > Ferramentas): de onde o botão foi apertado
     env.ed.beh.drag_origin = Some(pos);
     env.ed.beh.drag_armed = false;
+    // Personagens > Consistência: com uma medida armada, o clique só marca a altura (não desenha)
+    if button == egui::PointerButton::Primary && !space && !r_held && super::panels::characters::cons_pick(env, xf.to_canvas(pos).y) {
+        return;
+    }
     // Ctrl+Alt+arrastar: muda o tamanho da ponta (pincel, caneta, borracha) pelo deslocamento horizontal
     if button == egui::PointerButton::Primary && !space && !r_held && mods.alt && (mods.ctrl || mods.command) && env.ed.beh.prefs.size_drag {
         if let Some((start, _)) = tip_size(env, tool) {
@@ -1334,6 +1338,7 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
     if comp_ws {
         super::comp_viewer::paint_overlay(env, painter, rect, xf, cut, canvas);
     }
+    super::panels::characters::paint_cons_guides(env, painter, xf, canvas);
 
     // cursor das ferramentas de pintura (como o Photoshop e o Clip Studio): o contorno da ponta no tamanho de verdade;
     // a mira fina só quando o contorno fica pequeno demais para ver (ou sempre, no modo preciso: preferência ou Caps

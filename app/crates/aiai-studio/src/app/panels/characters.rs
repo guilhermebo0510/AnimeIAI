@@ -28,12 +28,89 @@ pub(crate) struct ConsForm {
     pub eyes: Option<f32>,
     pub shoulders: Option<f32>,
     pub feet: Option<f32>,
+    /// Medida esperando um clique no canvas (0 topo, 1 queixo, 2 olhos, 3 ombros, 4 pés).
+    pub pick: Option<usize>,
 }
 
 impl Default for ConsForm {
     fn default() -> Self {
-        ConsForm { head_top: 100.0, chin: 220.0, eyes: Some(170.0), shoulders: None, feet: None }
+        ConsForm { head_top: 100.0, chin: 220.0, eyes: Some(170.0), shoulders: None, feet: None, pick: None }
     }
+}
+
+/// Nome e cor de cada linha da conferência no canvas.
+const CONS_LINES: [(&str, Color32); 5] = [
+    ("char.m.head_top", Color32::from_rgb(90, 200, 255)),
+    ("char.m.chin", Color32::from_rgb(255, 170, 60)),
+    ("char.m.eyes", Color32::from_rgb(120, 230, 120)),
+    ("char.m.shoulders", Color32::from_rgb(230, 120, 230)),
+    ("char.m.feet", Color32::from_rgb(255, 230, 90)),
+];
+
+impl ConsForm {
+    fn values(&self) -> [Option<f32>; 5] {
+        [Some(self.head_top), Some(self.chin), self.eyes, self.shoulders, self.feet]
+    }
+
+    fn set(&mut self, i: usize, y: f32) {
+        match i {
+            0 => self.head_top = y,
+            1 => self.chin = y,
+            2 => self.eyes = Some(y),
+            3 => self.shoulders = Some(y),
+            _ => self.feet = Some(y),
+        }
+    }
+}
+
+/// A conferência de consistência está na tela (Personagens, aba Consistência): as linhas aparecem no canvas.
+fn cons_on(env: &Env) -> bool {
+    env.ws == crate::workspace::WorkspaceId::Personagens && env.ed.chars.tab == CharTab::Consistency
+}
+
+/// Clique no canvas com uma medida armada ("Medir" ao lado do campo): o y do clique vira o valor (auditoria 2.22, em vez
+/// de digitar pixels). Devolve se consumiu o clique.
+pub(crate) fn cons_pick(env: &mut Env, y: f32) -> bool {
+    if !cons_on(env) {
+        env.ed.chars.cons.pick = None;
+        return false;
+    }
+    let Some(i) = env.ed.chars.cons.pick.take() else { return false };
+    env.ed.chars.cons.set(i, y.round());
+    true
+}
+
+/// Linhas horizontais das medidas sobre o canvas, com o nome, enquanto a aba Consistência está aberta.
+pub(crate) fn paint_cons_guides(env: &Env, painter: &egui::Painter, xf: &crate::app::editor::Xf, canvas: (u32, u32)) {
+    if !cons_on(env) {
+        return;
+    }
+    let f = &env.ed.chars.cons;
+    for (i, v) in f.values().into_iter().enumerate() {
+        let Some(y) = v else { continue };
+        let (key, c) = CONS_LINES[i];
+        let a = xf.to_screen(egui::Vec2::new(0.0, y));
+        let b = xf.to_screen(egui::Vec2::new(canvas.0 as f32, y));
+        let w = if f.pick == Some(i) { 2.0 } else { 1.0 };
+        painter.line_segment([a, b], Stroke::new(w + 2.0, Color32::from_black_alpha(140)));
+        painter.line_segment([a, b], Stroke::new(w, c));
+        let g = painter.layout_no_wrap(format!("{} {y:.0}", tr(key)), FontId::proportional(11.0), c);
+        let at = a + egui::vec2(4.0, -g.size().y - 2.0);
+        painter.rect_filled(Rect::from_min_size(at, g.size()).expand(2.0), 2.0, Color32::from_black_alpha(160));
+        painter.galley(at, g, c);
+    }
+}
+
+/// Topo e base do que o corte mostra no quadro atual (alfa > 10%): o desenho inteiro, para o topo da cabeça e os pés.
+fn drawing_box(env: &mut Env) -> Option<(f32, f32)> {
+    let cut = env.ed.active_cut(env.core)?;
+    let opts = aiai_render::RenderOptions { camera: false, include_guides: false, include_reference: false, ..Default::default() };
+    let img = aiai_render::render_frame(&env.core.project, &env.core.blobs, &cut, env.ed.frame, &opts).ok()?.image;
+    let (w, h) = (img.width as usize, img.height as usize);
+    let row_has = |y: usize| img.data[y * w..(y + 1) * w].iter().any(|p| p[3] > 0.1);
+    let top = (0..h).find(|&y| row_has(y))?;
+    let bottom = (0..h).rev().find(|&y| row_has(y))?;
+    Some((top as f32, (bottom + 1) as f32))
 }
 
 /// Estado do workspace Personagens que não mora no documento.
@@ -625,15 +702,28 @@ fn consistency(env: &mut Env, ui: &mut Ui, ch: &NodeId, c: &CharacterData) {
         return;
     }
     dim_label(ui, &t, tr("char.cons_hint"));
+    // medir no canvas: "Medir" arma a linha e o próximo clique no desenho dá o y; "Do desenho" pega topo e pés
+    let mut pick_toggle: Option<usize> = None;
+    let mut notes: Vec<(String, Rect)> = Vec::new();
     let f = &mut env.ed.chars.cons;
-    egui::Grid::new(("char_cons", &ch.0)).num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+    let armed = f.pick;
+    let mut pick_btn = |ui: &mut Ui, i: usize| {
+        let r = ui.selectable_label(armed == Some(i), egui::RichText::new(tr(if armed == Some(i) { "char.cons_pick_armed" } else { "char.cons_pick" })).size(11.5)).on_hover_text(tr("char.cons_pick.tip"));
+        notes.push((format!("char:cons_pick:{i}"), r.rect));
+        if r.clicked() {
+            pick_toggle = Some(i);
+        }
+    };
+    egui::Grid::new(("char_cons", &ch.0)).num_columns(3).spacing([8.0, 4.0]).show(ui, |ui| {
         dim_label(ui, &t, tr("char.m.head_top"));
         ui.add(egui::DragValue::new(&mut f.head_top).speed(1.0).max_decimals(1));
+        pick_btn(ui, 0);
         ui.end_row();
         dim_label(ui, &t, tr("char.m.chin"));
         ui.add(egui::DragValue::new(&mut f.chin).speed(1.0).max_decimals(1));
+        pick_btn(ui, 1);
         ui.end_row();
-        for (slot, key, def) in [(&mut f.eyes, "char.m.eyes", 170.0), (&mut f.shoulders, "char.m.shoulders", 260.0), (&mut f.feet, "char.m.feet", 900.0)] {
+        for (i, (slot, key, def)) in [(&mut f.eyes, "char.m.eyes", 170.0), (&mut f.shoulders, "char.m.shoulders", 260.0), (&mut f.feet, "char.m.feet", 900.0)].into_iter().enumerate() {
             let mut on = slot.is_some();
             if ui.checkbox(&mut on, tr(key)).changed() {
                 *slot = on.then_some(slot.unwrap_or(def));
@@ -646,9 +736,28 @@ fn consistency(env: &mut Env, ui: &mut Ui, ch: &NodeId, c: &CharacterData) {
                     ui.label("");
                 }
             }
+            pick_btn(ui, i + 2);
             ui.end_row();
         }
     });
+    if let Some(i) = pick_toggle {
+        f.pick = if f.pick == Some(i) { None } else { Some(i) };
+    }
+    for (n, r) in notes {
+        env.note(n, r);
+    }
+    let b = ui.button(tr("char.cons_from_drawing")).on_hover_text(tr("char.cons_from_drawing.tip"));
+    env.note("char:cons_from_drawing", b.rect);
+    if b.clicked() {
+        match drawing_box(env) {
+            Some((top, bottom)) => {
+                let f = &mut env.ed.chars.cons;
+                f.head_top = top;
+                f.feet = Some(bottom);
+            }
+            None => env.ed.notify(tr("char.cons_no_drawing")),
+        }
+    }
     let b = ui.button(tr("char.cons_measure"));
     env.note("char:cons_measure", b.rect);
     if b.clicked() {
