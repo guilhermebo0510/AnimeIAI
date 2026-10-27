@@ -6,14 +6,14 @@ Legenda: **FEITO**, **PARCIAL**, **NÃO FEITO**, **VERIFICAR** (precisa rodar o 
 
 ## Resumo
 
-Itens contados: 121 (cada afirmação/pedido da auditoria, abrindo os itens do Plano de Ação da Parte 5 e os achados das Partes 1 a 4).
+Itens contados: 126 (contagem refeita em 27/10) (cada afirmação/pedido da auditoria, abrindo os itens do Plano de Ação da Parte 5 e os achados das Partes 1 a 4).
 
 | Status | Qtde |
 |---|---|
-| FEITO | 56 |
-| PARCIAL | 15 |
-| NÃO FEITO | 47 |
-| VERIFICAR | 3 |
+| FEITO | 97 |
+| PARCIAL | 7 |
+| NÃO FEITO | 22 |
+| VERIFICAR | 0 |
 
 Os 5 itens P0 do plano da auditoria estão feitos (um deles com decisão mantida: "fechar ao voltar" continua ligado). Do P1 (6 a 10) falta pouco: WinTab/inclinação/borracha da caneta, botão de BGM, Importar PSD, seleção por faixa de cor, mover com perspectiva/malha. O P2 (11 a 16) está quase todo aberto, exceto onion skin, réguas, 3D, criador/importador de pincéis, mais o que a S24/S25 entregou por outro caminho.
 
