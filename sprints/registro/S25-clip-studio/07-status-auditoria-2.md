@@ -30,7 +30,7 @@ Lidos depois de fechar a auditoria 1 (ver `06-status-auditoria-1.md`). Cada item
 | UX-01 | FEITO | Figura: "Contorno" com a ponta vetorial no painel principal da ferramenta |
 | UX-02 | FEITO | Figura em camada raster: "Contorno com o pincel atual" percorre a geometria (preenchimento antes, um passo de desfazer); a ponta vetorial escolhida agora vale (antes era sempre Marcador) |
 | UX-03 | FEITO | diagramas (formas, modos) numa caixa fixa à esquerda com o nome logo ao lado |
-| UX-04 | ABERTO | lista de pincéis em colunas quando o painel alarga |
+| UX-04 | FEITO | a lista de subferramentas vira colunas (célula mínima de 210 px) quando o painel alarga, sem esticar a prévia; nomes longos em até duas linhas com reticências e o nome inteiro na dica |
 | UX-05 | FEITO | cabeçalho da Modelagem: o que não cabe vai para "Mais ›" (medido pela largura real) |
 | UX-06 | FEITO | parâmetros da operação ativa primeiro; catálogo de operações num bloco recolhível |
 | UX-07 | FEITO | X/Y/Z nomeados e coloridos, com unidade (m, °) |
@@ -51,4 +51,4 @@ Não são falhas; ficam como próximos passos, nesta ordem:
 5. ~~Colar áudio e precisão da seleção~~ FEITO: colar de outra versão seleciona o trecho inserido, como o da mesma versão; o resultado de uma edição abre mantendo a seleção (`open_edited`; recortar/apagar/aparar continuam limpando); campos Início/Fim/Duração editáveis (segundos ou amostras), "Desde 0"/"Ir a 0" e a duração total.
 6. ~~Recursos indisponíveis~~ FEITO: a janela de abertura diz "Recursos indisponíveis" com tipo (desenho, áudio, modelo 3D...), nome, uso e estado (ausente/ilegível); hash e mensagem técnica em "Detalhes técnicos"; "Localizar arquivo…" e "Procurar em pasta…" (backup) só aceitam conteúdo idêntico ao esperado (`persist::restore_blob`), "Abrir pasta do projeto" e "Continuar com aviso". Junto: reabrir no mesmo processo não mostra mais o desenho perdido vindo dos caches (tiles decodificados, camadas do quadro e miniaturas respeitam os blobs danificados; era o F-REC-05 inconclusivo).
 7. ~~Amostra insuficiente~~ FEITO: com menos de 5 aprovações de etapa na janela, Gráficos e Gargalos avisam que vazão, espera, previsão e gargalo são indicativos; etapas empatadas com o gargalo aparecem ("Empatado com o gargalo: BG"); o pacote de análise leva `amostra` e `gargalo_empatado_com`.
-8. UX-04: grade de pincéis em colunas.
+8. ~~UX-04~~ FEITO (ver a tabela UX).

@@ -34,6 +34,10 @@ pub(crate) struct BrushPanelState {
 /// Altura de uma linha da lista e proporção fixa da miniatura do traço (5:1, nunca achatada).
 const ROW_H: f32 = 30.0;
 const THUMB_ASPECT: f32 = 5.0;
+/// Largura mínima de uma célula da lista: com o painel mais largo que duas destas, a lista vira colunas em vez de
+/// esticar a prévia (auditoria V2 UX-04).
+const CELL_MIN_W: f32 = 210.0;
+const CELL_GAP: f32 = 4.0;
 
 /// Como desenhar a miniatura.
 #[derive(Clone, Copy)]
@@ -152,13 +156,21 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
     let rename = env.ed.draw_ui.rename.clone();
     egui::ScrollArea::vertical().id_salt(("subtool_list", slot.key(), cur_tab.key)).max_height(list_h).auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
+        let full_w = ui.available_width();
+        let cols = (((full_w + CELL_GAP) / (CELL_MIN_W + CELL_GAP)).floor() as usize).clamp(1, 6);
+        let cw = (full_w - CELL_GAP * (cols as f32 - 1.0)) / cols as f32;
+        let mut row_rect = Rect::NOTHING;
         if items.is_empty() {
             let msg = if slot.available() { tr("subtool.empty") } else { tr("shelf.soon") };
             ui.label(egui::RichText::new(msg).size(12.0).color(t.text_dim));
         }
         for (n, s) in items.iter().enumerate() {
-            let w = ui.available_width();
-            let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, ROW_H), Sense::click());
+            let w = cw;
+            if n % cols == 0 {
+                row_rect = ui.allocate_exact_size(egui::vec2(full_w, ROW_H), Sense::hover()).0;
+            }
+            let rect = Rect::from_min_size(row_rect.min + egui::vec2((n % cols) as f32 * (cw + CELL_GAP), 0.0), egui::vec2(cw, ROW_H));
+            let resp = ui.interact(rect, ui.id().with(("subtool_item", n)), Sense::click());
             let lib_i = match s {
                 Sub::Preset(k) | Sub::EraserPreset(k) => shelf::preset_index(env, k),
                 _ => None,
@@ -175,8 +187,16 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
             // nome à direita (com o selo de vetor e o ponto dos pincéis do usuário); o traço ocupa o resto
             let name = shelf::sub_label(env, s);
             let renaming = rename.as_ref().is_some_and(|(ri, _)| Some(*ri) == lib_i);
-            let g = p.layout_no_wrap(name.clone(), egui::FontId::proportional(12.0), t.text);
-            let name_w = g.size().x.min(w * 0.5);
+            // nome longo: até duas linhas (com reticências) em vez de cortar na borda da célula; inteiro na dica
+            let max_name = w * 0.5;
+            let mut g = p.layout_no_wrap(name.clone(), egui::FontId::proportional(12.0), t.text);
+            if g.size().x > max_name {
+                let mut job = egui::text::LayoutJob::simple(name.clone(), egui::FontId::proportional(11.0), t.text, max_name);
+                job.wrap.max_rows = 2;
+                job.wrap.overflow_character = Some('\u{2026}');
+                g = ui.fonts_mut(|f| f.layout_job(job));
+            }
+            let name_w = g.size().x.min(max_name);
             let badge = if s.is_vector() { 14.0 } else { 0.0 };
             // diagramas (formas, modos de borracha, seleção...) ficam numa caixa fixa à esquerda com o nome logo ao lado;
             // traços de pincel ocupam a largura livre com o nome à direita (auditoria UX-03)
