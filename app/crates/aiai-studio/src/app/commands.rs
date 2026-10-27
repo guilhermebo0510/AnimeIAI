@@ -130,6 +130,27 @@ pub(crate) fn exposed_number(p: &Project, cut: &NodeId, layer: &NodeId, frame: u
     exposed_cel(p, cut, layer, frame).and_then(|c| cel_data(p, &c).map(|d| d.number))
 }
 
+/// Onde o próximo traço vai (auditoria V2, breadcrumb): os nomes da camada até a raiz (pastas, corte, cena, episódio;
+/// ou o painel do storyboard / a ficha do personagem), o cel exposto no quadro e o tamanho do canvas.
+pub(crate) fn target_breadcrumb(p: &Project, cut: &NodeId, layer: Option<&NodeId>, frame: u32) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut cur = Some(layer.filter(|l| p.node(l).is_some()).unwrap_or(cut).clone());
+    while let Some(id) = cur {
+        let Some(n) = p.node(&id) else { break };
+        parts.push(n.name.clone());
+        cur = n.parent.clone();
+        if parts.len() >= 12 {
+            break;
+        }
+    }
+    parts.reverse();
+    if let Some(k) = layer.and_then(|l| exposed_number(p, cut, l, frame)) {
+        parts.push(format!("{} {k}", tr("status.target.cel")));
+    }
+    let (w, h) = canvas_size(p, cut);
+    format!("{} \u{b7} {w}\u{d7}{h}", parts.join(" \u{203a} "))
+}
+
 /// A cor atual resolvida para RGBA sRGB (paleta ou direta).
 pub(crate) fn resolve_color(p: &Project, c: &ColorRef) -> Rgba {
     match c {
@@ -697,6 +718,21 @@ mod tests {
         assert_eq!(core.log().len(), 1);
         core.undo().unwrap();
         assert!(core.project.nodes.is_empty());
+    }
+
+    #[test]
+    fn breadcrumb_names_the_chain_the_cel_and_the_canvas() {
+        let (mut core, cut) = session();
+        let a = add_layer(&mut core, &cut, LayerType::Vector, None).unwrap();
+        let p = &core.project;
+        let s = target_breadcrumb(p, &cut, Some(&a), 0);
+        let layer_name = &p.node(&a).unwrap().name;
+        let cut_name = &p.node(&cut).unwrap().name;
+        assert!(s.ends_with(" \u{b7} 64\u{d7}36"), "{s}");
+        assert!(s.contains(&format!("{cut_name} \u{203a} {layer_name} \u{203a} ")), "{s}");
+        assert!(s.contains(" 1 \u{b7}"), "cel exposto no quadro 0: {s}");
+        // sem camada: só o caminho do corte
+        assert!(target_breadcrumb(p, &cut, None, 0).contains(cut_name.as_str()));
     }
 
     #[test]

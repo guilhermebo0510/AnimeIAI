@@ -983,6 +983,14 @@ impl StudioApp {
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
         let t = self.tokens();
+        // destino do próximo traço, só onde há canvas de desenho
+        let target = self.ws.profile().canvas.then(|| match self.ed.active_cut(&self.core) {
+            Some(cut) => {
+                let layer = self.ed.active_layer(&self.core);
+                commands::target_breadcrumb(&self.core.project, &cut, layer.as_ref(), self.ed.frame)
+            }
+            None => tr("status.target.none").to_owned(),
+        });
         let bar = egui::Panel::bottom("statusbar")
             .exact_size(24.0)
             .frame(egui::Frame::NONE.fill(t.bg_header).inner_margin(egui::Margin::symmetric(10, 0)))
@@ -1002,6 +1010,18 @@ impl StudioApp {
                     ui.separator();
                     let project = format!("{}{}", self.doc_name(), if self.doc_dirty() { "*" } else { "" });
                     ui.label(RichText::new(format!("{}: {}  ({} {})", tr("status.project"), project, tr("status.revision"), self.core.project.revision)).size(12.0).color(t.text_dim));
+                    let notice_on = self.notice.as_ref().is_some_and(|(_, at)| at.elapsed() < Duration::from_secs(6));
+                    if let Some(target) = &target {
+                        ui.separator();
+                        // com aviso na tela, o destino cede espaço a ele
+                        let w = (ui.available_width() - STATUS_RIGHT_W - if notice_on { 260.0 } else { 0.0 }).max(80.0);
+                        let r = ui.allocate_ui_with_layout(egui::vec2(w, 18.0), egui::Layout::left_to_right(Align::Center), |ui| {
+                            ui.set_max_width(w);
+                            ui.add(egui::Label::new(RichText::new(format!("{}: {target}", tr("status.target"))).size(12.0).color(t.text)).truncate())
+                                .on_hover_text(format!("{target}\n\n{}", tr("status.target.tip")));
+                        });
+                        self.rects.note("status:target", r.response.rect);
+                    }
                     if let Some((msg, at)) = &self.notice {
                         if at.elapsed() < Duration::from_secs(6) {
                             ui.separator();

@@ -44,7 +44,7 @@ Lidos depois de fechar a auditoria 1 (ver `06-status-auditoria-1.md`). Cada item
 
 Não são falhas; ficam como próximos passos, nesta ordem:
 
-1. Breadcrumb persistente (projeto / cena / corte ou material / painel) e destino do próximo traço (massiva).
+1. ~~Breadcrumb e destino do próximo traço~~ FEITO: barra de status "Desenhando em: EP › cena › corte (ou painel / ficha) › camada › cel N · L×A" nos workspaces de canvas, com dica; `commands::target_breadcrumb`; título da janela já usa o nome do projeto.
 2. ~~Nome-base estável nas versões de áudio~~ FEITO: `audio_edit::next_version_name` ("Fala" → "Fala v2" → "Fala v3", tira "(editado)" antigos); vale na edição e no colar entre arquivos; o histórico já mostra o resumo dos passos de cada versão.
 3. Selo "Referência · fora da entrega" na camada 3D e estado no topo das propriedades 3D (jornadas).
 4. "Exposto neste quadro" separado de "Escolhido para expor" na linha do tempo (jornadas).
