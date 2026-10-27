@@ -470,7 +470,19 @@ fn layer_row(env: &mut Env, ui: &mut Ui, i: usize, row: &LayerRow, active: Optio
     let name_rect = Rect::from_min_max(egui::pos2(text_left, rect.center().y), egui::pos2(rect.right() - 4.0, rect.bottom()));
     // linha de cima: opacidade e mistura ("100% Normal"); embaixo o nome
     let sub = format!("{:.0}% {}", l.opacity * 100.0, tr(blend_key(l.blend)));
-    ui.painter().with_clip_rect(Rect::from_min_max(egui::pos2(text_left, rect.top()), egui::pos2(rect.right() - 4.0, rect.center().y))).text(egui::pos2(text_left, rect.top() + 11.0), Align2::LEFT_CENTER, sub, FontId::proportional(10.5), t.text_dim);
+    let sub_r = ui.painter().with_clip_rect(Rect::from_min_max(egui::pos2(text_left, rect.top()), egui::pos2(rect.right() - 4.0, rect.center().y))).text(egui::pos2(text_left, rect.top() + 11.0), Align2::LEFT_CENTER, sub, FontId::proportional(10.5), t.text_dim);
+    // camada 3D só de referência: selo à direita da linha de cima (não sai na entrega; auditoria V2)
+    if l.kind == LayerType::Model3d && aiai_core::model3d::Model3dParams::from_layer_params(&l.params).and_then(|r| r.ok()).is_some_and(|m| m.render.reference) {
+        let font = FontId::proportional(10.0);
+        let room = rect.right() - 6.0 - (sub_r.right() + 8.0);
+        let full = ui.painter().layout_no_wrap(tr("layers.badge.ref3d").to_owned(), font.clone(), t.text);
+        let galley = if full.size().x + 10.0 <= room { full } else { ui.painter().layout_no_wrap(tr("layers.badge.ref3d.short").to_owned(), font, t.text) };
+        let size = galley.size() + egui::vec2(10.0, 2.0);
+        let badge = Rect::from_min_size(egui::pos2(rect.right() - 6.0 - size.x, rect.top() + 11.0 - size.y / 2.0), size);
+        ui.painter().rect(badge, 3.0, t.bg_frame, Stroke::new(1.0, t.st_review), egui::StrokeKind::Inside);
+        ui.painter().galley(badge.min + egui::vec2(5.0, 1.0), galley, t.text);
+        env.note(format!("layers:badge3d:{i}"), badge);
+    }
     let renaming = env.ed.rename.as_ref().is_some_and(|(id, _)| id == &row.id);
     if renaming {
         let mut commit = false;

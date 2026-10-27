@@ -40,6 +40,12 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
             ui.label(egui::RichText::new(&name).strong().size(13.0));
             dim_label(ui, &t, tr(cmds::layer_type_key(l.kind)));
         });
+        // camada 3D: sai ou não na entrega, logo abaixo do nome
+        if l.kind == aiai_core::LayerType::Model3d
+            && let Some(Ok(m)) = aiai_core::model3d::Model3dParams::from_layer_params(&l.params)
+        {
+            crate::app::model3d::output_state(env, ui, &layer, &m, "lprops:m3d");
+        }
         // ---- filtros da camada
         section(ui, &t, "lprops.filters");
         let st = crate::app::comp::stack(&l);

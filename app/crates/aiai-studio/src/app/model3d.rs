@@ -957,6 +957,24 @@ pub(crate) fn reset_camera(env: &mut Env) {
     run_model3d(env, json!({ "op": "camera", "layer": layer, "frame": frame, "frame_model": true }));
 }
 
+/// Estado de saída da camada 3D (selo "Referência · fora da entrega" ou "Participa do render") com a caixa que troca.
+/// Aparece no alto da seção 3D e nas Propriedades da camada, onde a auditoria V2 procurou primeiro.
+pub(crate) fn output_state(env: &mut Env, ui: &mut Ui, layer: &NodeId, p: &Model3dParams, prefix: &str) {
+    let t = env.t;
+    ui.horizontal(|ui| {
+        let (key, fill) = if p.render.reference { ("m3d.state.reference", t.st_review) } else { ("m3d.state.render", t.st_ok) };
+        let pill = egui::Button::new(egui::RichText::new(tr(key)).size(11.5).color(t.text)).fill(fill).sense(egui::Sense::hover()).small();
+        let r = ui.add(pill).on_hover_text(tr("m3d.reference.tip"));
+        env.note(format!("{prefix}:state"), r.rect);
+        let mut reference = p.render.reference;
+        let r = ui.checkbox(&mut reference, tr("m3d.reference.short")).on_hover_text(tr("m3d.reference.tip"));
+        env.note(format!("{prefix}:reference"), r.rect);
+        if reference != p.render.reference {
+            run_model3d(env, json!({ "op": "mode", "layer": layer, "reference": reference }));
+        }
+    });
+}
+
 /// Seção 3D das Propriedades (camada 3D ativa): modelo, licença, aparência, referência, transformação e câmera.
 pub(crate) fn properties(env: &mut Env, ui: &mut Ui) {
     let Some((layer, l, p)) = active(env) else { return };
@@ -964,6 +982,8 @@ pub(crate) fn properties(env: &mut Env, ui: &mut Ui) {
     let frame = env.ed.frame;
     let st = p.eval(&l.keys, frame as f32);
     section(ui, &t, "m3d.section");
+    // participa da entrega ou é só referência: decisão que muda o vídeo final, por isso vem antes de tudo (auditoria V2)
+    output_state(env, ui, &layer, &p, "m3d");
     let info = env.core.project.node(&p.asset).and_then(|n| match &n.data {
         NodeKind::Asset(a) => Some((n.name.clone(), a.params.get("model3d").and_then(|v| serde_json::from_value::<aiai_3d_model::ModelInfo>(v.clone()).ok()), a.source.clone())),
         _ => None,
@@ -1034,12 +1054,6 @@ pub(crate) fn properties(env: &mut Env, ui: &mut Ui) {
             run_model3d(env, json!({ "op": "mode", "layer": layer, "opacity": v }));
         }
     });
-    let mut reference = p.render.reference;
-    let r = ui.checkbox(&mut reference, tr("m3d.reference")).on_hover_text(tr("m3d.reference.tip"));
-    env.note("m3d:reference", r.rect);
-    if reference != p.render.reference {
-        run_model3d(env, json!({ "op": "mode", "layer": layer, "reference": reference }));
-    }
     // transformação e câmera (valores no quadro atual; chave onde já é animado)
     ui.add_space(2.0);
     egui::Grid::new(("m3d_xf", &layer)).num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
