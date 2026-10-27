@@ -594,9 +594,11 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
             let c = xf.to_canvas(pos);
             // Mão > Girar (S25): o arrasto gira a visão, como segurar R
             let rotate_tool = tool == ToolId::Hand && env.ed.opts.area.hand_rotate;
-            if space || (tool == ToolId::Hand && !rotate_tool) {
+            // Shift+Espaço+arrastar gira, como no Clip Studio (auditoria 2.19); Espaço sozinho continua sendo a mão
+            let shift_space = space && mods.shift;
+            if (space && !shift_space) || (tool == ToolId::Hand && !rotate_tool) {
                 env.ed.gesture = Gesture::Pan { last: pos, button };
-            } else if r_held || rotate_tool {
+            } else if r_held || rotate_tool || shift_space {
                 let ctr = rect.center();
                 env.ed.gesture = Gesture::Rotate { last_angle: (pos - ctr).angle() };
             } else if mods.alt && !matches!(tool, ToolId::Zoom | ToolId::Ruler | ToolId::Lasso) {
