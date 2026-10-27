@@ -78,6 +78,7 @@ pub(crate) fn bottleneck(env: &mut Env, ui: &mut Ui, body: Rect) {
             dim_label(ui, &t, tr("prod.charts.no_history"));
         }
     });
+    super::prod_charts::sample_warning(env, ui, &a);
     egui::ScrollArea::vertical().id_salt("prod_bn").auto_shrink([false, false]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 4.0;
         // ---- achados
@@ -87,6 +88,11 @@ pub(crate) fn bottleneck(env: &mut Env, ui: &mut Ui, body: Rect) {
         }
         for (i, f) in a.findings.iter().enumerate() {
             finding_card(env, ui, i, f);
+        }
+        if !a.bottleneck_ties.is_empty() {
+            let names: Vec<&str> = a.bottleneck_ties.iter().map(|s| stage_label(*s)).collect();
+            let r = ui.label(egui::RichText::new(format!("{} {}", tr("prod.bn.tie"), names.join(", "))).size(11.5).color(t.text_dim)).on_hover_text(tr("prod.bn.tie.tip"));
+            env.note("prod:bn:tie", r.rect);
         }
         // ---- fluxo por etapa
         section(ui, &t, "prod.bn.flow");

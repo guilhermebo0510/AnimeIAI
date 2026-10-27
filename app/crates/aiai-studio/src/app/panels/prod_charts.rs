@@ -16,6 +16,18 @@ use aiai_tools::production_stats::{Analysis, STATUS_ORDER, status_idx};
 use egui::{Color32, FontId, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui};
 use serde_json::json;
 
+/// Aviso de amostra pequena (auditoria V2): com poucas aprovações na janela, vazão, espera, previsão e gargalo são
+/// indicativos. Fica acima dos números nos Gráficos e nos Gargalos.
+pub(crate) fn sample_warning(env: &mut Env, ui: &mut Ui, a: &Analysis) {
+    if !a.stats.has_history || !a.stats.low_sample {
+        return;
+    }
+    let t = env.t;
+    let text = tr("prod.low_sample").replace("{n}", &a.stats.sample_approvals.to_string()).replace("{d}", &a.stats.window_days.to_string()).replace("{min}", &aiai_tools::production_stats::MIN_SAMPLE.to_string());
+    let r = ui.label(egui::RichText::new(text).size(11.5).color(t.st_review)).on_hover_text(tr("prod.low_sample.tip"));
+    env.note("prod:low_sample", r.rect);
+}
+
 /// Do mais "pronto" ao menos: a ordem em que as faixas empilham (aprovado embaixo/à esquerda).
 const STACK: [StageStatus; 5] = [StageStatus::Approved, StageStatus::Review, StageStatus::InProgress, StageStatus::Retake, StageStatus::NotStarted];
 
@@ -60,6 +72,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
             dim_label(ui, &t, tr("prod.charts.no_history"));
         }
     });
+    sample_warning(env, ui, &a);
     ui.add_space(2.0);
     let frames = env.ed.prod.charts_frames;
     egui::ScrollArea::vertical().id_salt("prod_charts").auto_shrink([false, false]).show(ui, |ui| {

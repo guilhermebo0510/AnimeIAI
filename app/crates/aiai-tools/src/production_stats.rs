@@ -148,7 +148,18 @@ pub struct Stats {
     pub forecast: Forecast,
     /// Há eventos no histórico (sem eles não há fluxo, vazão nem tempos).
     pub has_history: bool,
+    /// Aprovações de etapa dentro da janela (`window_days`): a amostra de onde saem vazão, espera e gargalo.
+    #[serde(default)]
+    pub sample_approvals: usize,
+    #[serde(default)]
+    pub window_days: u32,
+    /// Amostra abaixo de [`MIN_SAMPLE`]: os números são indicativos, não medidas (auditoria V2).
+    #[serde(default)]
+    pub low_sample: bool,
 }
+
+/// Menos aprovações que isto na janela = amostra pequena para falar em vazão e gargalo com precisão.
+pub const MIN_SAMPLE: usize = 5;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct StageFlow {
@@ -220,6 +231,9 @@ pub struct Analysis {
     pub stats: Stats,
     pub flows: Vec<StageFlow>,
     pub findings: Vec<Finding>,
+    /// Outras etapas empatadas com o gargalo apontado (mesma espera, fila e trabalho em curso): o gargalo é só a primeira.
+    #[serde(default)]
+    pub bottleneck_ties: Vec<Stage>,
 }
 
 // ================================================================ linha do tempo por corte
@@ -412,6 +426,7 @@ pub fn analyze(rows: &[CutRow], events: &[StatusEvent], cfg: &StatsConfig) -> An
     let remaining = rows.len() - done_cuts;
     let forecast = Forecast { remaining_cuts: remaining, per_day, days_left: (remaining == 0).then_some(0.0).or_else(|| (per_day > 0.0).then(|| remaining as f64 / per_day)) };
 
+    let sample_approvals: usize = ALL_STAGES.iter().map(|s| approvals_of(events, *s, since, &tls)).sum();
     let stats = Stats {
         total_cuts: rows.len(),
         done_cuts,
@@ -427,6 +442,9 @@ pub fn analyze(rows: &[CutRow], events: &[StatusEvent], cfg: &StatsConfig) -> An
         retake_rates,
         forecast,
         has_history: events.iter().any(|e| e.stage.is_some()),
+        sample_approvals,
+        window_days: cfg.window_days,
+        low_sample: sample_approvals < MIN_SAMPLE,
     };
 
     // ---- fluxo por etapa e gargalos
@@ -477,8 +495,10 @@ pub fn analyze(rows: &[CutRow], events: &[StatusEvent], cfg: &StatsConfig) -> An
     let mut findings = Vec::new();
     // gargalo: maior espera (sem vazão = espera sem fim); empate: maior fila, depois mais trabalho em curso
     let key = |f: &StageFlow| (f.wait_days.unwrap_or(f64::INFINITY), f.queue, f.in_progress + f.review);
+    let mut bottleneck_ties = Vec::new();
     if let Some((i, f)) = flows.iter().enumerate().filter(|(_, f)| f.queue > 0).max_by(|(_, a), (_, b)| key(a).partial_cmp(&key(b)).unwrap_or(std::cmp::Ordering::Equal)) {
         findings.push(Finding { kind: FindingKind::Bottleneck, stage: Some(f.stage), cuts: queue_cuts[i].clone(), days: f.wait_days, queue: f.queue, per_day: f.throughput_per_day });
+        bottleneck_ties = flows.iter().filter(|g| g.stage != f.stage && g.queue > 0 && key(g) == key(f)).map(|g| g.stage).collect();
     }
     for (i, f) in flows.iter().enumerate() {
         let not_started = stats.stages[i].counts[0];
@@ -530,7 +550,7 @@ pub fn analyze(rows: &[CutRow], events: &[StatusEvent], cfg: &StatsConfig) -> An
         findings.push(Finding { kind: FindingKind::OpenRetake, stage: None, cuts: retake_cuts, days: None, queue: 0, per_day: 0.0 });
     }
 
-    Analysis { stats, flows, findings }
+    Analysis { stats, flows, findings, bottleneck_ties }
 }
 
 fn approvals_of(events: &[StatusEvent], stage: Stage, since_ms: u64, tls: &HashMap<String, CutTl>) -> usize {
@@ -630,6 +650,8 @@ pub fn analysis_package(project: &str, rows: &[CutRow], events: &[StatusEvent], 
         "roteiro": ANALYSIS_PROMPT,
         "cortes": a.stats.total_cuts, "cortes_completos": a.stats.done_cuts, "quadros": a.stats.total_frames,
         "tem_historico": a.stats.has_history,
+        "amostra": { "aprovacoes_na_janela": a.stats.sample_approvals, "janela_dias": a.stats.window_days, "pequena": a.stats.low_sample, "minimo": MIN_SAMPLE },
+        "gargalo_empatado_com": a.bottleneck_ties.iter().map(|s| stage_label(*s)).collect::<Vec<_>>(),
         "previsao": { "cortes_restantes": a.stats.forecast.remaining_cuts, "cortes_por_dia": round2(a.stats.forecast.per_day), "dias_restantes": a.stats.forecast.days_left.map(round2) },
         "prazo_final": a.stats.deadline.map(format_date),
         "etapas": stages,
@@ -718,6 +740,27 @@ mod tests {
         push(93 * DAY, "d", Stage::Layout, NotStarted, InProgress);
         push(97 * DAY, "d", Stage::Layout, InProgress, Retake);
         (rows, events, StatsConfig::new(now))
+    }
+
+    #[test]
+    fn small_samples_and_bottleneck_ties_are_flagged() {
+        let (rows, mut events, cfg) = fixture();
+        let a = analyze(&rows, &events, &cfg);
+        // na janela de 7 dias: Sound de a, Layout e Genga de b, Layout de c
+        assert_eq!((a.stats.sample_approvals, a.stats.window_days), (4, 7));
+        assert!(a.stats.low_sample);
+        events.push(ev(99, 99 * DAY, "d", Stage::Layout, Retake, Approved));
+        let a = analyze(&rows, &events, &cfg);
+        assert_eq!(a.stats.sample_approvals, 5);
+        assert!(!a.stats.low_sample);
+        // sem histórico nenhuma etapa tem vazão: as filas do mesmo tamanho empatam com o gargalo
+        let a = analyze(&rows, &[], &cfg);
+        let bn = a.findings.iter().find(|f| f.kind == FindingKind::Bottleneck).expect("gargalo");
+        assert!(!a.bottleneck_ties.contains(&bn.stage.unwrap()));
+        for s in &a.bottleneck_ties {
+            let f = a.flows.iter().find(|f| f.stage == *s).unwrap();
+            assert_eq!((f.queue, f.wait_days), (bn.queue, None), "{s:?}");
+        }
     }
 
     #[test]
