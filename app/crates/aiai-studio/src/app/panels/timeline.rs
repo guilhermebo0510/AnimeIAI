@@ -147,8 +147,17 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
         if b.changed() {
             env.ed.playback.loop_out = if lout >= dur { 0 } else { lout - 1 };
         }
-        let sel = env.ed.cel_number.map(|n| format!("{} {n}", tr("layers.cel"))).unwrap_or_else(|| "-".into());
-        ui.label(egui::RichText::new(format!("{} {sel}", tr("timeline.selected_cel"))).size(12.0).color(t.text_dim));
+        // o que a imagem mostra neste quadro e o cel escolhido para a próxima exposição são coisas diferentes
+        // (auditoria V2: "Cel escolhido: 2" com o quadro 1 mostrando o Cel 1 confundia)
+        let active = env.ed.active_layer(env.core);
+        let shown = active.as_ref().and_then(|l| cmds::exposed_number(&env.core.project, &cut, l, env.ed.frame));
+        let shown_s = shown.map(|n| format!("{} {n}", tr("layers.cel"))).unwrap_or_else(|| tr("timeline.no_cel").to_owned());
+        let r = ui.label(egui::RichText::new(format!("{} {shown_s}", tr("timeline.exposed_cel"))).size(12.0).color(t.text)).on_hover_text(tr("timeline.exposed_cel.tip"));
+        env.note("timeline:exposed_cel", r.rect);
+        if let Some(n) = env.ed.cel_number.filter(|n| Some(*n) != shown) {
+            let r = ui.label(egui::RichText::new(format!("{} {} {n}", tr("timeline.selected_cel"), tr("layers.cel"))).size(12.0).color(t.accent)).on_hover_text(tr("timeline.selected_cel.tip"));
+            env.note("timeline:selected_cel", r.rect);
+        }
         let pb = &env.ed.playback;
         if pb.playing {
             ui.label(egui::RichText::new(format!("{:.1} / {:.2} fps", pb.fps_real, fps)).monospace().size(12.0).color(t.accent));

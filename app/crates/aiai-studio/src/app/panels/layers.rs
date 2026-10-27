@@ -821,19 +821,22 @@ fn cel_list(env: &mut Env, ui: &mut Ui, layer: &NodeId) {
     let cels = cmds::layer_cels(&env.core.project, layer);
     let exposed = env.ed.cut.as_ref().and_then(|c| cmds::exposed_number(&env.core.project, c, layer, env.ed.frame));
     let selected = env.ed.cel_number.or(exposed);
+    // cel recém-criado: a lista rola até ele (auditoria V2: a linha nova ficava fora da área visível)
+    let scroll_key = egui::Id::new(("cel_scroll_to", layer));
+    let mut created: Option<u32> = None;
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(tr("layers.cels")).size(11.5).color(t.text_dim).strong());
         let add = env.icon_button(ui, IconId::Plus, "layers.add_cel", false, true, "cels:add");
         if add.clicked() {
             match cmds::add_cel(env.core, layer, None) {
-                Ok(n) => env.ed.cel_number = Some(n),
+                Ok(n) => created = Some(n),
                 Err(e) => env.ed.notify(e),
             }
         }
         let dup = env.icon_button(ui, IconId::Copy, "layers.duplicate_cel", false, selected.is_some(), "cels:duplicate");
         if dup.clicked() {
             match cmds::add_cel(env.core, layer, selected) {
-                Ok(n) => env.ed.cel_number = Some(n),
+                Ok(n) => created = Some(n),
                 Err(e) => env.ed.notify(e),
             }
         }
@@ -843,11 +846,20 @@ fn cel_list(env: &mut Env, ui: &mut Ui, layer: &NodeId) {
             ui.label(egui::RichText::new(tr("layers.cel_role")).size(11.0).color(t.text_dim)).on_hover_text(tr("layers.cel_role.tip"));
         });
     });
+    if let Some(n) = created {
+        env.ed.cel_number = Some(n);
+        ui.data_mut(|d| d.insert_temp(scroll_key, n));
+    }
+    let scroll_to: Option<u32> = ui.data(|d| d.get_temp(scroll_key));
     ui.spacing_mut().item_spacing.y = 2.0;
     for (n, id) in cels {
         let role = cmds::cel_data(&env.core.project, &id).map(|c| c.role).unwrap_or_default();
         let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 24.0), Sense::click());
         env.note(format!("cels:row:{n}"), rect);
+        if scroll_to == Some(n) {
+            ui.scroll_to_rect(rect, None);
+            ui.data_mut(|d| d.remove::<u32>(scroll_key));
+        }
         let is_sel = selected == Some(n);
         let p = ui.painter();
         if is_sel {

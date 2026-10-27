@@ -47,7 +47,7 @@ Não são falhas; ficam como próximos passos, nesta ordem:
 1. ~~Breadcrumb e destino do próximo traço~~ FEITO: barra de status "Desenhando em: EP › cena › corte (ou painel / ficha) › camada › cel N · L×A" nos workspaces de canvas, com dica; `commands::target_breadcrumb`; título da janela já usa o nome do projeto.
 2. ~~Nome-base estável nas versões de áudio~~ FEITO: `audio_edit::next_version_name` ("Fala" → "Fala v2" → "Fala v3", tira "(editado)" antigos); vale na edição e no colar entre arquivos; o histórico já mostra o resumo dos passos de cada versão.
 3. ~~Selo de referência 3D~~ FEITO: selo "Referência · fora da entrega" na linha da camada; estado ("Referência · fora da entrega" / "Participa do render") com a caixa "Só referência" logo abaixo do nome nas Propriedades da camada e no alto da seção 3D (`model3d::output_state`).
-4. "Exposto neste quadro" separado de "Escolhido para expor" na linha do tempo (jornadas).
+4. ~~Exposto × escolhido~~ FEITO: a linha do tempo mostra "Exposto neste quadro: Cel N" e, quando difere, "Escolhido para expor: Cel M" (com dica do que cada um faz); a lista de cels rola até o cel criado ou duplicado.
 5. Colar áudio: mesma regra de seleção para as duas origens; campos Início/Fim/Duração (fronteiras).
 6. Aviso de recursos indisponíveis com tipo/nome/uso e ações Localizar / Abrir pasta (fronteiras).
 7. Produção: avisar amostra insuficiente nas métricas (massiva).
