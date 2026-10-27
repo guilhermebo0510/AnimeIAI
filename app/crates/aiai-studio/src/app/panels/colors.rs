@@ -368,19 +368,6 @@ fn set_tab(env: &mut Env, ui: &mut Ui) {
             variants_row(env, ui, &pal);
         }
     }
-    // a cor em uso vira amostra da paleta (fica ligada a ela)
-    let has_pal = env.ed.palette.is_some();
-    let add = ui.add_enabled(has_pal, egui::Button::new(tr("palette.add_to")));
-    env.note("colors:add_to_palette", add.rect);
-    if add.on_disabled_hover_text(tr("palette.need_palette")).clicked() {
-        if let Some(pal) = env.ed.palette.clone() {
-            let rgba = cmds::resolve_color(&env.core.project, &env.ed.color);
-            match cmds::add_palette_color(env.core, &pal, rgba) {
-                Ok(id) => env.ed.color = ColorRef::Palette { palette: pal, color: id },
-                Err(e) => env.ed.notify(e),
-            }
-        }
-    }
     ui.add_space(4.0);
     super::gradient_edit::colors_section(env, ui);
 }
@@ -649,6 +636,19 @@ fn palette_picker(env: &mut Env, ui: &mut Ui) {
             }
         }
     });
+    // a cor em uso vira amostra da paleta (fica ligada a ela); no alto, sempre à vista mesmo com o painel baixo
+    let has_pal = env.ed.palette.is_some();
+    let add = ui.add_enabled(has_pal, egui::Button::new(tr("palette.add_to")).small());
+    env.note("colors:add_to_palette", add.rect);
+    if add.on_disabled_hover_text(tr("palette.need_palette")).clicked() {
+        if let Some(pal) = env.ed.palette.clone() {
+            let rgba = cmds::resolve_color(&env.core.project, &env.ed.color);
+            match cmds::add_palette_color(env.core, &pal, rgba) {
+                Ok(id) => env.ed.color = ColorRef::Palette { palette: pal, color: id },
+                Err(e) => env.ed.notify(e),
+            }
+        }
+    }
     // guardar a paleta (por exemplo a de settei de um personagem) na biblioteca para outros projetos
     if let Some(pal) = env.ed.palette.clone().filter(|p| cmds::palette_data(&env.core.project, p).is_some_and(|d| !d.colors.is_empty())) {
         let b = ui.small_button(tr("lib.save_palette"));

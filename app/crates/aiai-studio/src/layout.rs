@@ -489,7 +489,8 @@ pub fn factory_rev(ws: WorkspaceId) -> u32 {
         // S24: Animação com Cena, Referências do personagem e Mesa de luz no lugar de Projeto e Sub View, linha do tempo
         // mais baixa (compacta) e a variante Douga
         // S25: lado esquerdo como nos programas de pintura (grupo de ferramentas, propriedades, tamanho, cores embaixo)
-        W::Animacao => 4,
+        // S25 (auditoria): propriedades da ferramenta mais altas (as opções novas cabiam só rolando em 1080p)
+        W::Animacao => 5,
         // S24: pasta do personagem (materiais por tipo) e canvas para desenhar neles
         // S25: coluna da ferramenta (grupo, propriedades, cores) ao lado da pasta
         W::Personagens => 3,
@@ -498,8 +499,8 @@ pub fn factory_rev(ws: WorkspaceId) -> u32 {
         // S25: lado esquerdo novo (grupo de ferramentas, propriedades, tamanho do pincel, cores embaixo)
         // S25 (direita, a mesma revisão do lado esquerdo): Navegador no topo, propriedades da camada e Camadas |
         // Histórico em abas, nos workspaces de desenho
-        W::Layout => 4,
-        W::Cenario | W::Pintura => 3,
+        W::Layout => 5,
+        W::Cenario | W::Pintura => 4,
         // S24 3D (fase 12): viewport 3D no centro, Objetos e Biblioteca à esquerda, Propriedades do objeto e
         // Modificadores à direita
         W::Modelagem => 3,
@@ -547,7 +548,7 @@ fn default_node(ws: WorkspaceId) -> Node {
         // S25: à esquerda o grupo de ferramentas (réguas em aba), as propriedades, o tamanho do pincel e as cores embaixo
         // (a cena e as referências em aba com elas)
         W::Layout => Row(vec![
-            (0.19, Col(vec![(0.23, TabsOf(&[P::Brushes, P::Rulers])), (0.30, Pane(P::ToolProps)), (0.16, Pane(P::BrushSize)), (0.31, TabsOf(&[P::Palette, P::Project, P::SubView]))])),
+            (0.19, Col(vec![(0.21, TabsOf(&[P::Brushes, P::Rulers])), (0.37, Pane(P::ToolProps)), (0.12, Pane(P::BrushSize)), (0.30, TabsOf(&[P::Palette, P::Project, P::SubView]))])),
             (0.53, Pane(P::Canvas)),
             (0.28, Col(vec![(0.28, Pane(P::Navigator)), (0.20, TabsOf(&[P::LayerProps, P::Text])), (0.52, TabsOf(&[P::Layers, P::History, P::Properties]))])),
         ]),
@@ -555,7 +556,7 @@ fn default_node(ws: WorkspaceId) -> Node {
         // e propriedades à direita
         // S25: à esquerda o grupo de ferramentas, as propriedades, o tamanho e as cores embaixo (referências em aba)
         W::Cenario => Row(vec![
-            (0.18, Col(vec![(0.23, Pane(P::Brushes)), (0.30, Pane(P::ToolProps)), (0.16, Pane(P::BrushSize)), (0.31, TabsOf(&[P::Palette, P::SubView]))])),
+            (0.18, Col(vec![(0.21, Pane(P::Brushes)), (0.37, Pane(P::ToolProps)), (0.12, Pane(P::BrushSize)), (0.30, TabsOf(&[P::Palette, P::SubView]))])),
             (0.53, Pane(P::Canvas)),
             (0.29, Col(vec![(0.28, Pane(P::Navigator)), (0.20, TabsOf(&[P::LayerProps, P::Text])), (0.52, TabsOf(&[P::Layers, P::History, P::Properties, P::Project]))])),
         ]),
@@ -566,7 +567,7 @@ fn default_node(ws: WorkspaceId) -> Node {
         // personagem e a cena em aba; a mesa de luz fica sozinha à direita. As colunas dos lados vão na altura toda (como
         // nos programas de pintura) e a linha do tempo fica embaixo do canvas
         W::Animacao => Row(vec![
-            (0.18, Col(vec![(0.23, Pane(P::Brushes)), (0.30, Pane(P::ToolProps)), (0.16, Pane(P::BrushSize)), (0.31, TabsOf(&[P::Palette, P::CharRef, P::SceneInfo]))])),
+            (0.18, Col(vec![(0.21, Pane(P::Brushes)), (0.37, Pane(P::ToolProps)), (0.12, Pane(P::BrushSize)), (0.30, TabsOf(&[P::Palette, P::CharRef, P::SceneInfo]))])),
             (0.55, Col(vec![(0.78, Pane(P::Canvas)), (0.22, Pane(P::Timeline))])),
             (0.27, Col(vec![(0.25, Pane(P::Navigator)), (0.15, Pane(P::LayerProps)), (0.22, Pane(P::LightTable)), (0.38, TabsOf(&[P::Layers, P::History, P::Properties]))])),
         ]),
@@ -574,7 +575,7 @@ fn default_node(ws: WorkspaceId) -> Node {
         // S25: à esquerda o grupo de ferramentas, as propriedades, o tamanho e as cores (grandes) embaixo; as colunas dos
         // lados na altura toda e os quadros do corte embaixo do canvas
         W::Pintura => Row(vec![
-            (0.18, Col(vec![(0.23, Pane(P::Brushes)), (0.30, Pane(P::ToolProps)), (0.16, Pane(P::BrushSize)), (0.31, TabsOf(&[P::Palette, P::Project]))])),
+            (0.18, Col(vec![(0.21, Pane(P::Brushes)), (0.37, Pane(P::ToolProps)), (0.12, Pane(P::BrushSize)), (0.30, TabsOf(&[P::Palette, P::Project]))])),
             (0.54, Col(vec![(0.80, Pane(P::Canvas)), (0.20, Pane(P::Timeline))])),
             (0.28, Col(vec![(0.28, Pane(P::Navigator)), (0.18, TabsOf(&[P::LayerProps, P::SubView])), (0.54, TabsOf(&[P::Layers, P::History, P::Properties]))])),
         ]),
@@ -645,7 +646,7 @@ fn default_node_v(ws: WorkspaceId, v: LayoutVariant) -> Node {
         // em aba (consulta) e os pincéis embaixo delas; a linha do tempo compacta embaixo
         // S25: o mesmo lado esquerdo do Genga, com as referências na frente das cores
         (W::Animacao, LayoutVariant::Douga) => Row(vec![
-            (0.17, Col(vec![(0.23, Pane(P::Brushes)), (0.30, Pane(P::ToolProps)), (0.16, Pane(P::BrushSize)), (0.31, TabsOf(&[P::CharRef, P::SceneInfo, P::Palette]))])),
+            (0.17, Col(vec![(0.21, Pane(P::Brushes)), (0.37, Pane(P::ToolProps)), (0.12, Pane(P::BrushSize)), (0.30, TabsOf(&[P::CharRef, P::SceneInfo, P::Palette]))])),
             (0.56, Col(vec![(0.80, Pane(P::Canvas)), (0.20, Pane(P::Timeline))])),
             (0.27, Col(vec![(0.24, Pane(P::Navigator)), (0.27, Pane(P::LightTable)), (0.13, Pane(P::LayerProps)), (0.36, TabsOf(&[P::Layers, P::History, P::Properties]))])),
         ]),
@@ -1251,7 +1252,7 @@ mod tests {
     #[test]
     fn douga_factory_changes_bump_the_animation_revision() {
         let (rev, sig) = (factory_rev(W::Animacao), signature_v(W::Animacao, LayoutVariant::Douga));
-        assert_eq!((rev, sig), (4, 0x75b48826f438e72e), "a fábrica do Douga mudou; suba `factory_rev(Animacao)` e atualize: ({rev}, 0x{sig:016x})");
+        assert_eq!((rev, sig), (5, 0x44ab306d6fb2cb6e), "a fábrica do Douga mudou; suba `factory_rev(Animacao)` e atualize: ({rev}, 0x{sig:016x})");
     }
 
     #[test]
@@ -1260,10 +1261,10 @@ mod tests {
             (W::Roteiro, 1, 0x815a21560ccb6c0e),
             (W::Personagens, 3, 0x17b9ea49d212f47f),
             (W::Storyboard, 1, 0x14d8a62efb1d9b23),
-            (W::Layout, 4, 0xdba3adec15179948),
-            (W::Cenario, 3, 0x1b4e9bfaeb3eb0ca),
-            (W::Animacao, 4, 0x6fb1f9090cb90981),
-            (W::Pintura, 3, 0x1721c814abca1b22),
+            (W::Layout, 5, 0x922099a74aacb19c),
+            (W::Cenario, 4, 0x1e71bf899774b5ca),
+            (W::Animacao, 5, 0xa91e62d884157881),
+            (W::Pintura, 4, 0x92c9dca60add5222),
             (W::Composicao, 4, 0x097fc0aca4a379a6),
             (W::Biblioteca, 3, 0x1a430bf82b451dc2),
             (W::Modelagem, 3, 0x575fe9a79c6ad671),
