@@ -33,6 +33,9 @@ pub struct CurveSpec {
     pub aliased: bool,
     #[serde(default)]
     pub color_trace: bool,
+    /// Grupo de intercalação: o `INBETWEEN` só casa traços do mesmo grupo (ex.: "olho_esq", "cabelo").
+    #[serde(default)]
+    pub group: String,
 }
 
 fn default_width() -> f32 {
@@ -73,6 +76,7 @@ impl CurveSpec {
             closed: self.closed,
             aliased: self.aliased,
             color_trace: self.color_trace,
+            group: self.group.clone(),
         };
         s.validate().map_err(ToolError::Invalid)?;
         Ok(s)

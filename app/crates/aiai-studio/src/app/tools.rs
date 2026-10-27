@@ -375,6 +375,7 @@ fn commit_pen(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant
         closed,
         aliased: o.pen_aliased,
         color_trace: o.pen_color_trace,
+        group: String::new(),
     };
     // Simplificar ao soltar: as amostras viram poucos pontos de controle (pressão inclusa), sem a linha sair mais que a
     // tolerância da de antes
@@ -494,6 +495,7 @@ pub(crate) fn commit_vector_shape(env: &mut Env, pts: Vec<Vec2>, geometry: Strok
         closed,
         aliased: o.pen_aliased,
         color_trace: false,
+        group: String::new(),
     };
     let (cut, layer, frame, pref) = (t.cut.clone(), t.layer.clone(), t.frame, env.ed.cel_number);
     let width = stroke.width;
@@ -536,6 +538,7 @@ pub(crate) fn pen_preview(env: &Env, g: &StrokeGesture) -> Option<Stroke> {
         closed: false,
         aliased: o.pen_aliased,
         color_trace: false,
+        group: String::new(),
     })
 }
 
@@ -1525,6 +1528,7 @@ mod tests {
             closed,
             aliased: false,
             color_trace: false,
+            group: String::new(),
         };
         let cel = cmds::exposed_cel(&core.project, &cut, &line, 0).unwrap();
         cmds::run(&mut core, Command::InsertStrokes { cel, items: vec![IndexedStroke { index: 0, stroke }] }).unwrap();
@@ -1574,6 +1578,7 @@ mod tests {
             closed: false,
             aliased: false,
             color_trace: false,
+            group: String::new(),
         };
         let cel = cmds::exposed_cel(&core.project, &cut, &line, 0).unwrap();
         cmds::run(&mut core, Command::InsertStrokes { cel, items: vec![IndexedStroke { index: 0, stroke: mk(10.0) }, IndexedStroke { index: 1, stroke: mk(25.0) }] }).unwrap();

@@ -512,6 +512,7 @@ mod tests {
             closed: false,
             aliased: false,
             color_trace: false,
+            group: String::new(),
         }
     }
 

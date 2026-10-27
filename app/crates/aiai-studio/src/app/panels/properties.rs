@@ -572,6 +572,9 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
             if n > 0 && !compact {
                 dim_label(ui, &t, &format!("{} {n}", tr("opt.move_picked")));
             }
+            if n > 0 {
+                crate::app::selection::stroke_group_row(env, ui);
+            }
             if !compact {
                 dim_label(ui, &t, tr("opt.move_distort_hint"));
             }

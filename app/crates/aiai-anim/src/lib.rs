@@ -126,6 +126,11 @@ fn align(a: &[P], b: &[P], closed: bool) -> Vec<P> {
 
 const SHAPE_N: usize = 24;
 
+/// Os dois traços podem casar: mesmo grupo de intercalação, ou um deles sem grupo.
+fn same_group(x: &Stroke, y: &Stroke) -> bool {
+    x.group.is_empty() || y.group.is_empty() || x.group == y.group
+}
+
 /// Correspondência automática entre os traços de A e B.
 pub fn correspond(a: &[Stroke], b: &[Stroke], opts: &InbetweenOptions) -> Vec<Pair> {
     let mut used_a = vec![false; a.len()];
@@ -138,7 +143,7 @@ pub fn correspond(a: &[Stroke], b: &[Stroke], opts: &InbetweenOptions) -> Vec<Pa
             pairs.push((Some(i), Some(j)));
         }
     }
-    let same_structure = a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.points.len() == y.points.len() && x.closed == y.closed);
+    let same_structure = a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.points.len() == y.points.len() && x.closed == y.closed && x.group == y.group);
     if same_structure {
         for i in 0..a.len() {
             if !used_a[i] && !used_b[i] {
@@ -153,7 +158,7 @@ pub fn correspond(a: &[Stroke], b: &[Stroke], opts: &InbetweenOptions) -> Vec<Pa
         let mut costs = Vec::new();
         for i in 0..a.len() {
             for j in 0..b.len() {
-                if used_a[i] || used_b[j] || a[i].closed != b[j].closed {
+                if used_a[i] || used_b[j] || a[i].closed != b[j].closed || !same_group(&a[i], &b[j]) {
                     continue;
                 }
                 let aligned = align(&ra[i], &rb[j], a[i].closed);
@@ -369,9 +374,50 @@ pub fn inbetween(a: &[Stroke], b: &[Stroke], t: f32, opts: &InbetweenOptions) ->
     } else {
         None
     };
+    // 1 para N (auditoria 1.5a): traço sem par num grupo que tem um par casado nasce do traço de A desse par (ou, o de A
+    // sem par, vai para o traço de B do par), em vez de aparecer/sumir aos poucos
+    let partner_in = |g: &str| -> Option<(usize, usize)> {
+        if g.is_empty() {
+            return None;
+        }
+        pairs.iter().find_map(|&(i, j)| match (i, j) {
+            (Some(i), Some(j)) if a[i].group == g && b[j].group == g => Some((i, j)),
+            _ => None,
+        })
+    };
+    let morph = |from: &Stroke, to: &Stroke, keep: &Stroke| -> Stroke {
+        let n = from.points.len().max(to.points.len()).max(8) * 2;
+        let pa = resample(from, n);
+        let pb = align(&pa, &resample(to, n), from.closed && to.closed);
+        let rigid = match opts.motion {
+            MotionMode::Global => global,
+            MotionMode::PerStroke => Some(procrustes(&pa, &pb)),
+            MotionMode::Linear => None,
+        };
+        let pts = interpolate_points(&pa, &pb, t, rigid, opts.bend);
+        let mut s = keep.clone();
+        s.id = Id(String::new());
+        s.closed = from.closed && to.closed;
+        s.geometry = StrokeGeometry::Spline;
+        s.points = pts.iter().map(|q| StrokePoint { x: q.x, y: q.y, pressure: q.p.clamp(0.0, 1.0), tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect();
+        s.width = from.width + (to.width - from.width) * t;
+        s
+    };
     let mut out = Vec::new();
     for (k, &(ia, ib)) in pairs.iter().enumerate() {
         match (&preps[k], ia, ib) {
+            (None, Some(i), None) if t > 0.0 && partner_in(&a[i].group).is_some() => {
+                let (_, pj) = partner_in(&a[i].group).expect("par");
+                if t < 1.0 {
+                    out.push(morph(&a[i], &b[pj], &a[i]));
+                }
+            }
+            (None, None, Some(j)) if t < 1.0 && partner_in(&b[j].group).is_some() => {
+                let (pi, _) = partner_in(&b[j].group).expect("par");
+                if t > 0.0 {
+                    out.push(morph(&a[pi], &b[j], &b[j]));
+                }
+            }
             (Some(pr), _, _) => {
                 let rigid = match opts.motion {
                     MotionMode::Global => global,
@@ -468,11 +514,51 @@ mod tests {
             closed,
             aliased: false,
             color_trace: false,
+            group: String::new(),
         }
     }
 
     fn len(s: &Stroke) -> f32 {
         s.points.windows(2).map(|w| ((w[1].x - w[0].x).powi(2) + (w[1].y - w[0].y).powi(2)).sqrt()).sum()
+    }
+
+    fn grouped(pts: &[(f32, f32)], g: &str) -> Stroke {
+        let mut s = st(pts, false);
+        s.group = g.into();
+        s
+    }
+
+    #[test]
+    fn groups_only_match_inside_the_group() {
+        // olho e boca trocam de lugar entre as chaves; sem grupo o casamento iria pelo mais perto
+        let a = vec![grouped(&[(0.0, 0.0), (40.0, 0.0)], "olho"), grouped(&[(0.0, 100.0), (40.0, 100.0)], "boca")];
+        let b = vec![grouped(&[(0.0, 95.0), (20.0, 95.0), (40.0, 95.0)], "olho"), grouped(&[(0.0, 5.0), (20.0, 5.0), (40.0, 5.0)], "boca")];
+        let pairs = correspond(&a, &b, &InbetweenOptions { max_cost: 500.0, ..Default::default() });
+        assert!(pairs.contains(&(Some(0), Some(0))) && pairs.contains(&(Some(1), Some(1))), "{pairs:?}");
+        // sem grupo, o mais perto ganha
+        let mut a2 = a.clone();
+        let mut b2 = b.clone();
+        a2.iter_mut().chain(b2.iter_mut()).for_each(|s| s.group.clear());
+        let pairs = correspond(&a2, &b2, &InbetweenOptions { max_cost: 500.0, ..Default::default() });
+        assert!(pairs.contains(&(Some(0), Some(1))), "{pairs:?}");
+    }
+
+    #[test]
+    fn one_stroke_splits_into_two_inside_a_group() {
+        // 1 para N: a franja vira duas mechas; a mecha a mais nasce da de A, não do nada
+        let a = vec![grouped(&[(0.0, 0.0), (100.0, 0.0)], "franja")];
+        let b = vec![grouped(&[(0.0, 0.0), (50.0, 20.0)], "franja"), grouped(&[(50.0, 20.0), (100.0, 0.0)], "franja")];
+        let mid = inbetween(&a, &b, 0.5, &InbetweenOptions::default());
+        assert_eq!(mid.len(), 2, "as duas mechas no meio");
+        for s in &mid {
+            assert!(len(s) > 40.0, "a mecha a mais já tem corpo no meio: {}", len(s));
+        }
+        assert_eq!(inbetween(&a, &b, 0.0, &InbetweenOptions::default()).len(), 1, "na chave A só a de A");
+        assert_eq!(inbetween(&a, &b, 1.0, &InbetweenOptions::default()).len(), 2);
+        // o contrário: duas viram uma (a de A sem par vai para a de B do grupo)
+        let mid = inbetween(&b, &a, 0.5, &InbetweenOptions::default());
+        assert_eq!(mid.len(), 2);
+        assert_eq!(inbetween(&b, &a, 1.0, &InbetweenOptions::default()).len(), 1);
     }
 
     #[test]

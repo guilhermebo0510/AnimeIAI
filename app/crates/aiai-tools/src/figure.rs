@@ -334,6 +334,7 @@ pub fn outline_stroke(o: &Outline, width: f32, tip: VectorTip, color: &ColorRef,
         closed: o.closed,
         aliased,
         color_trace: false,
+        group: String::new(),
     }
 }
 

@@ -146,6 +146,7 @@ pub fn build_sheet(p: &Project, idgen: &mut IdGen, req: &ModelSheetRequest) -> T
         closed: false,
         aliased: false,
         color_trace: false,
+        group: String::new(),
     };
     let mut grid = Vec::new();
     let n_heads = req.heads_tall.ceil() as u32;

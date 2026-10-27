@@ -1242,6 +1242,48 @@ pub(crate) fn tool_options(env: &mut Env, ui: &mut egui::Ui, compact: bool, pane
         if !compact {
             super::ui_kit::dim_label(ui, &t, &format!("{} {n}", tr("opt.move_picked")));
         }
+        stroke_group_row(env, ui);
+    }
+}
+
+/// Grupo de intercalação dos traços escolhidos (auditoria 1.5a): o Intercalar só casa traços do mesmo grupo, e o traço a
+/// mais de um grupo nasce do par do grupo (1 para N). Vazio = sem grupo.
+pub(crate) fn stroke_group_row(env: &mut Env, ui: &mut egui::Ui) {
+    let t = env.t;
+    let Some(sel) = env.ed.selection.as_ref().filter(|s| !s.strokes.is_empty()) else { return };
+    let ids = sel.strokes.clone();
+    let Some(layer) = sel.strokes_layer.clone().or_else(|| env.ed.layer.clone()) else { return };
+    let Some(cut) = env.ed.active_cut(env.core) else { return };
+    let Some(cel) = super::commands::exposed_cel(&env.core.project, &cut, &layer, env.ed.frame) else { return };
+    let Some(cd) = super::commands::cel_data(&env.core.project, &cel) else { return };
+    let chosen: Vec<Stroke> = cd.strokes.iter().filter(|s| ids.contains(&s.id)).cloned().collect();
+    let Some(first) = chosen.first() else { return };
+    let current = if chosen.iter().all(|s| s.group == first.group) { first.group.clone() } else { String::new() };
+    let key = egui::Id::new(("stroke_group", &cel.0, &ids));
+    let mut text: String = ui.data(|d| d.get_temp(key)).unwrap_or_else(|| current.clone());
+    let mut apply = false;
+    super::ui_kit::dim_label(ui, &t, tr("opt.stroke_group"));
+    ui.horizontal(|ui| {
+        let w = (ui.available_width() - 70.0).clamp(60.0, 180.0);
+        let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(w).hint_text(tr("opt.stroke_group.none"))).on_hover_text(tr("opt.stroke_group.tip"));
+        env.note("opt:stroke_group", r.rect);
+        apply |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let b = ui.add_enabled(text.trim() != current, egui::Button::new(tr("opt.stroke_group.apply")));
+        env.note("opt:stroke_group_apply", b.rect);
+        apply |= b.clicked();
+    });
+    if apply && text.trim() != current {
+        let g = text.trim().to_owned();
+        let strokes: Vec<Stroke> = chosen.into_iter().map(|mut s| {
+            s.group = g.clone();
+            s
+        }).collect();
+        if let Err(e) = super::commands::run(env.core, Command::ReplaceStrokes { cel, strokes }) {
+            env.ed.notify(e);
+        }
+        ui.data_mut(|d| d.remove::<String>(key));
+    } else {
+        ui.data_mut(|d| d.insert_temp(key, text));
     }
 }
 
@@ -1281,6 +1323,7 @@ mod tests {
             closed: false,
             aliased: false,
             color_trace: false,
+            group: String::new(),
         }
     }
 

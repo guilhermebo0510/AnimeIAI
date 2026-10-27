@@ -135,6 +135,10 @@ pub struct Stroke {
     /// Linha de cor (色トレス): delimita sombra/realce; pode sumir no render final conforme ajuste da camada.
     #[serde(default)]
     pub color_trace: bool,
+    /// Grupo de intercalação (auditoria 1.5a): traços com grupo só casam com traços do mesmo grupo entre duas chaves;
+    /// traço a mais num grupo nasce do par do grupo (1 para N). Vazio = casa com qualquer um.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub group: String,
 }
 
 fn is_empty_profile(p: &WidthProfile) -> bool {
@@ -219,7 +223,7 @@ mod point_id_tests {
 
     #[test]
     fn ids_read_before_an_insert_still_point_to_the_same_points() {
-        let mut s = Stroke { id: Id::from("s"), points: vec![pt(0.0), pt(10.0), pt(20.0)], geometry: StrokeGeometry::Spline, tension: 0.0, tip: VectorTip::Marker, width: 2.0, profile: Default::default(), color: ColorRef::default(), opacity: 1.0, closed: false, aliased: false, color_trace: false };
+        let mut s = Stroke { id: Id::from("s"), points: vec![pt(0.0), pt(10.0), pt(20.0)], geometry: StrokeGeometry::Spline, tension: 0.0, tip: VectorTip::Marker, width: 2.0, profile: Default::default(), color: ColorRef::default(), opacity: 1.0, closed: false, aliased: false, color_trace: false, group: String::new() };
         assert_eq!((s.point_id(0), s.point_id(2)), (1, 3), "sem ids gravados: índice+1");
         s.materialize_point_ids();
         let mut q = pt(5.0);

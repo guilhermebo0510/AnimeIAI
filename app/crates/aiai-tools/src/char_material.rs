@@ -212,6 +212,7 @@ fn guide_line(pts: Vec<[f32; 2]>, width: f32, hex: &str) -> Stroke {
         closed: false,
         aliased: false,
         color_trace: false,
+        group: String::new(),
     }
 }
 

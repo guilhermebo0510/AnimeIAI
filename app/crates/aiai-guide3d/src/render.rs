@@ -229,6 +229,7 @@ fn to_stroke(p: &[[f32; 2]], width: f32, color: Rgba) -> Stroke {
         closed: false,
         aliased: false,
         color_trace: false,
+        group: String::new(),
     }
 }
 

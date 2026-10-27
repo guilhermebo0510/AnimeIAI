@@ -126,6 +126,7 @@ pub fn text_command(p: &Project, blobs: &mut BlobStore, req: &TextRequest) -> To
                     closed: true,
                     aliased: false,
                     color_trace: false,
+                    group: String::new(),
                 },
             });
             idx += 1;
@@ -174,6 +175,7 @@ fn tapered(points: Vec<[f32; 2]>, width: f32, color: &ColorRef, profile: Vec<[f3
         closed: false,
         aliased: false,
         color_trace: false,
+        group: String::new(),
     }
 }
 

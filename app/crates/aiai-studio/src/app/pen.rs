@@ -228,6 +228,7 @@ pub(crate) fn paint(env: &mut Env, painter: &egui::Painter, xf: &Xf) {
             closed: closing,
             aliased: false,
             color_trace: false,
+            group: String::new(),
         };
         let (sp, sr) = super::tools::sampled(&st);
         super::canvas::variable_line(painter, &sp, &sr, color, xf);
@@ -496,7 +497,7 @@ mod tests {
         assert_eq!(super::clip_base(&d.core.project, &top), Some(base.clone()));
         // um traço grosso na base, de x = 100 a 300 em y = 200
         let pt = |x: f32| StrokePoint { x, y: 200.0, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None };
-        let stroke = Stroke { id: Id(String::new()), points: vec![pt(100.0), pt(300.0)], geometry: StrokeGeometry::Polyline, tension: 0.0, tip: VectorTip::Marker, width: 20.0, profile: WidthProfile::default(), color: ColorRef::default(), opacity: 1.0, closed: false, aliased: false, color_trace: false };
+        let stroke = Stroke { id: Id(String::new()), points: vec![pt(100.0), pt(300.0)], geometry: StrokeGeometry::Polyline, tension: 0.0, tip: VectorTip::Marker, width: 20.0, profile: WidthProfile::default(), color: ColorRef::default(), opacity: 1.0, closed: false, aliased: false, color_trace: false, group: String::new() };
         let cel = cmds::exposed_cel(&d.core.project, &d.cut, &base, 0).unwrap();
         cmds::run(&mut d.core, Command::InsertStrokes { cel, items: vec![aiai_core::command::IndexedStroke { index: 0, stroke }] }).unwrap();
         let alpha = super::clip_alpha(&d.core.project, &d.core.blobs, &d.cut, &top, 0, false, false).expect("alfa da base");

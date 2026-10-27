@@ -634,6 +634,7 @@ pub fn fill_shape_command(p: &Project, blobs: &mut BlobStore, req: &FillShapeReq
                 closed: true,
                 aliased: false,
                 color_trace: false,
+                group: String::new(),
             };
             aiai_paint::sample_stroke(&stroke).iter().map(|q| [q.x, q.y]).collect()
         };

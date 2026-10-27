@@ -59,6 +59,7 @@ fn gpen(points: &[(f32, f32, f32)], width: f32, color: ColorRef) -> Stroke {
         closed: false,
         aliased: false,
         color_trace: false,
+        group: String::new(),
     }
 }
 

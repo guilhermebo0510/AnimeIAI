@@ -51,6 +51,7 @@ fn stroke(id: &str, x: f32) -> Stroke {
         closed: false,
         aliased: true,
         color_trace: false,
+        group: String::new(),
     }
 }
 
