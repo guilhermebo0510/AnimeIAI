@@ -70,10 +70,10 @@ Os 5 itens P0 do plano da auditoria estão feitos (um deles com decisão mantida
 | 2.22 | `CONSISTENCY` digitando Y em pixels | NÃO FEITO | `panels/characters.rs:620-656` ainda `DragValue` | régua arrastável no canvas ou medição automática pela caixa dos traços |
 | 2.23 | Cor: monitor de áudio sob "Navegador"; coluna central desperdiçada | FEITO | o workspace "Cor" virou Biblioteca (`workspace.rs:19`); monitor só no Áudio (`app.rs:1437`) | nada |
 | 2.24 | Cor: Lift/Gamma/Gain em caixas numéricas, sem rodas/curvas/escopos | FEITO, menos escopos (26/10) | rodas de cor no Lift/Gamma/Gain e no Equilíbrio de cor; editor de Curvas (RGB/R/G/B) e dos outros ajustes na janela de filtros (antes "só pelo MCP") | escopos (forma de onda/vetorscópio) |
-| 2.25 | Áudio: timeline mostrando camadas de desenho | VERIFICAR | `layout.rs:1056` põe `Timeline` no Áudio; só abrindo o app se ela mostra trilhas de áudio | olhar o workspace Áudio |
+| 2.25 | Áudio: timeline mostrando camadas de desenho | FEITO (verificado 27/10) | o Áudio abre na aba Multipista (trilhas de áudio); a aba Linha do tempo do Áudio é a dos desenhos com a faixa de áudio por cima, para sincronia (`calibracao/tmp/vis_verif/audio_timeline.png`) | |
 | 2.26 | Edição sem Play/Pause | FEITO | `panels/edit_panels.rs:44,206` (Play/Pausa com som); commit 085c524, 8c624e9 | nada |
 | 2.27 | Composição: parâmetros compostos "Editável via MCP" | PARCIAL | `satsuei.rs:117` ainda mostra para o que não é número/cor/vetor | editor de curvas/listas |
-| 2.28 | Miniaturas em branco dos cortes C005-C007 na Produção/Edição | VERIFICAR | S24 reescreveu Produção e Edição (d1d34fb, 8c624e9) | abrir o projeto e olhar |
+| 2.28 | Miniaturas em branco dos cortes C005-C007 na Produção/Edição | FEITO (verificado 27/10) | numa cópia do projeto real, Produção (lista) e Edição (Mídia e linha do tempo) mostram as miniaturas dos 7 cortes, C005 a C007 inclusive | |
 
 ### Parte 3 (micro-anime)
 
