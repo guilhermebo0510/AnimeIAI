@@ -117,7 +117,7 @@ Os 5 itens P0 do plano da auditoria estão feitos (um deles com decisão mantida
 | 4.4d | Disputa de `rayon` entre ferramenta e render | FEITO (26/10) | pool próprio do render do canvas (metade dos núcleos) em `render_service.rs` | medir no bench 4K |
 | 4.4e | Máscara de preenchimento do tamanho do quadro | FEITO | não reproduziu: `mask_of` já recorta (backlog) | nada |
 | 4.4f | Tamanho do canvas do corte editável; Começo rápido ignorava o tamanho | FEITO | `canvas.rs:141`; `props.canvas_4k` (commit 9e5626d) | nada |
-| 4.4g | Metas de 4K (render < 8 ms, balde < 15 ms, 60 fps) | VERIFICAR | `evidencias/S23/desempenho/bench4k.json`: re-render 1890→339 ms, 1º clique do balde ~650 ms | rodar o bench de novo; as metas não foram atingidas |
+| 4.4g | Metas de 4K (render < 8 ms, balde < 15 ms, 60 fps) | PARCIAL (medido 27/10) | `evidencias/S25/desempenho/bench4k.json` (3 rodadas, release): render inteiro 616–640 ms (S23: 1437), re-render depois de um retoque 85–118 ms (S23: 375), 1º clique do balde 507–548 ms (S23: 703), 2º clique 5–10 ms; a pincelada de Aquarela foi de 16 para 40–45 ms porque o preset passou a misturar com a camada (`mix` 0,15, S25) | as metas de 8 ms/15 ms não foram atingidas na CPU; dependem do compositor na GPU (4.4a) |
 | 4.5a | `PAINT_SHAPES` / laço de preenchimento na GUI | FEITO (cdc0668, 1d3f2b2) | Figura (desenho direto) | nada |
 | 4.5b | `GRADIENT` na GUI | FEITO (cdc0668, 1d3f2b2) | Degradê por arrasto, camada de degradê, degradê livre | nada |
 | 4.5c | Gerador de céu `SKY` e `PATTERN_FILL` em perspectiva na GUI | FEITO (26/10) | Filtro > Céu (dia/manhã/pôr do sol/crepúsculo/noite) e Filtro > Textura (8 tipos; dentro da seleção; laço poligonal de 4 cantos = plano em perspectiva), cada um numa camada nova | nada |
