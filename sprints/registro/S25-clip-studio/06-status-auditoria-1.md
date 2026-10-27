@@ -72,7 +72,7 @@ Os 5 itens P0 do plano da auditoria estão feitos (um deles com decisão mantida
 | 2.24 | Cor: Lift/Gamma/Gain em caixas numéricas, sem rodas/curvas/escopos | FEITO, menos escopos (26/10) | rodas de cor no Lift/Gamma/Gain e no Equilíbrio de cor; editor de Curvas (RGB/R/G/B) e dos outros ajustes na janela de filtros (antes "só pelo MCP") | escopos (forma de onda/vetorscópio) |
 | 2.25 | Áudio: timeline mostrando camadas de desenho | FEITO (verificado 27/10) | o Áudio abre na aba Multipista (trilhas de áudio); a aba Linha do tempo do Áudio é a dos desenhos com a faixa de áudio por cima, para sincronia (`calibracao/tmp/vis_verif/audio_timeline.png`) | |
 | 2.26 | Edição sem Play/Pause | FEITO | `panels/edit_panels.rs:44,206` (Play/Pausa com som); commit 085c524, 8c624e9 | nada |
-| 2.27 | Composição: parâmetros compostos "Editável via MCP" | PARCIAL | `satsuei.rs:117` ainda mostra para o que não é número/cor/vetor | editor de curvas/listas |
+| 2.27 | Composição: parâmetros compostos "Editável via MCP" | FEITO (27/10) | curvas e listas já tinham editor (2.24); agora os campos opcionais (cor do Brilho e da Vinheta, centro da Aberração) têm "automático" que liga/desliga e, com valor, viram linha animável; o modo de mistura tem lista também no painel do corte; a LUT mostra o nome do arquivo com a dica de como trocar (`satsuei::optional_field`, `effect_controls::other_fields`) | |
 | 2.28 | Miniaturas em branco dos cortes C005-C007 na Produção/Edição | FEITO (verificado 27/10) | numa cópia do projeto real, Produção (lista) e Edição (Mídia e linha do tempo) mostram as miniaturas dos 7 cortes, C005 a C007 inclusive | |
 
 ### Parte 3 (micro-anime)

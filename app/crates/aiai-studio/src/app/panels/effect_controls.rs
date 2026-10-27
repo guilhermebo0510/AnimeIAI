@@ -402,9 +402,29 @@ fn curve_editor(ui: &mut Ui, id: EId, pts: &[[f32; 2]], color: egui::Color32) ->
 fn other_fields(env: &mut Env, ui: &mut Ui, layer: &NodeId, i: usize, inst: &aiai_fx::EffectInstance) {
     let t = env.t;
     let Ok(Value::Object(obj)) = serde_json::to_value(&inst.effect) else { return };
+    let ty = obj.get("type").and_then(Value::as_str).unwrap_or("").to_owned();
+    let canvas = env.ed.cut.as_ref().map(|c| cmds::canvas_size(&env.core.project, c)).map(|(w, h)| (w as f32, h as f32)).unwrap_or((0.0, 0.0));
     for (k, v) in &obj {
+        // campo opcional (cor do brilho, centro da aberração...): "automático" = o efeito escolhe; desligado, a linha
+        // do valor aparece acima, animável como as outras (auditoria 2.27)
+        if let Some(def) = super::satsuei::optional_field(&ty, k, canvas) {
+            let mut auto = v.is_null();
+            let r = ui.checkbox(&mut auto, format!("{}: {}", super::satsuei::field_label(k), tr("fx.auto"))).on_hover_text(tr("fx.auto.tip"));
+            env.note(format!("ec:fx:{i}:{k}:auto"), r.rect);
+            if auto != v.is_null() {
+                let mut e = obj.clone();
+                e.insert(k.clone(), if auto { Value::Null } else { def });
+                effects_op(env, "update", json!({ "layer": layer, "index": i, "effect": e }));
+            }
+            continue;
+        }
         match (k.as_str(), v) {
             ("type", _) => {}
+            ("blob", Value::String(h)) if ty == "lut" => {
+                // a LUT é um arquivo: troca-se pondo outra pelo menu Filtro; aqui o nome do recurso e a dica
+                let name = env.core.project.nodes.values().find(|n| matches!(&n.data, aiai_core::NodeKind::Asset(a) if a.blob.as_ref().is_some_and(|b| &b.0 == h))).map(|n| n.name.clone()).unwrap_or_else(|| format!("{}…", &h[..h.len().min(10)]));
+                ui.label(egui::RichText::new(format!("{}: {name}", super::satsuei::field_label(k))).size(12.0).color(t.text_dim)).on_hover_text(tr("fx.lut_file.tip"));
+            }
             (_, Value::Bool(b)) => {
                 let mut x = *b;
                 let r = ui.checkbox(&mut x, super::satsuei::field_label(k));
@@ -420,7 +440,7 @@ fn other_fields(env: &mut Env, ui: &mut Ui, layer: &NodeId, i: usize, inst: &aia
                     dim_label(ui, &t, &super::satsuei::field_label(k));
                     let mut pick = None;
                     egui::ComboBox::from_id_salt(("ec_mode", &layer.0, i)).selected_text(tr(&format!("blend.{cur}"))).show_ui(ui, |ui| {
-                        for m in ["normal", "multiply", "screen", "overlay", "soft_light", "hard_light", "add", "color", "luminosity"] {
+                        for m in super::satsuei::FX_MODES {
                             if ui.selectable_label(cur == m, tr(&format!("blend.{m}"))).clicked() {
                                 pick = Some(m);
                             }

@@ -57,6 +57,20 @@ pub(crate) fn stack(p: &Project, layer: &NodeId) -> Vec<Value> {
 }
 
 /// Editor genérico dos campos de um efeito (`type` fica de fora). Devolve o efeito mudado, se mudou.
+/// Campos opcionais dos efeitos (vazio = o próprio efeito escolhe: centro da imagem, cor padrão) e o valor que entra ao
+/// desligar "automático" (auditoria 2.27: antes ficavam "editáveis pelo MCP").
+pub(crate) fn optional_field(ty: &str, k: &str, canvas: (f32, f32)) -> Option<Value> {
+    match (ty, k) {
+        ("glow", "color") => Some(json!([1.0, 1.0, 1.0])),
+        ("vignette", "color") => Some(json!([0.0, 0.0, 0.0])),
+        ("chromatic_aberration", "center") => Some(json!([canvas.0 / 2.0, canvas.1 / 2.0])),
+        _ => None,
+    }
+}
+
+/// Modos de mistura oferecidos nos efeitos (o "Para").
+pub(crate) const FX_MODES: [&str; 9] = ["normal", "multiply", "screen", "overlay", "soft_light", "hard_light", "add", "color", "luminosity"];
+
 fn effect_fields(ui: &mut Ui, t: &crate::theme::Tokens, salt: (&str, usize), effect: &Map<String, Value>) -> Option<Value> {
     let mut out = effect.clone();
     let mut changed = false;
@@ -64,6 +78,20 @@ fn effect_fields(ui: &mut Ui, t: &crate::theme::Tokens, salt: (&str, usize), eff
         for (k, v) in ordered(effect) {
             dim_label(ui, t, &field_label(k));
             let id = EId::new(("fx_field", salt.0, salt.1, k.as_str()));
+            // campo opcional: "automático" liga/desliga; com valor, o editor normal aparece na linha de baixo
+            if let Some(def) = optional_field(salt.0, k, (0.0, 0.0)) {
+                let mut auto = v.is_null();
+                if ui.checkbox(&mut auto, tr("fx.auto")).on_hover_text(tr("fx.auto.tip")).changed() {
+                    out.insert(k.clone(), if auto { Value::Null } else { def });
+                    changed = true;
+                }
+                if v.is_null() {
+                    ui.end_row();
+                    continue;
+                }
+                ui.end_row();
+                ui.label("");
+            }
             match v {
                 Value::Number(n) => {
                     let cur = n.as_f64().unwrap_or(0.0) as f32;
@@ -117,6 +145,20 @@ fn effect_fields(ui: &mut Ui, t: &crate::theme::Tokens, salt: (&str, usize), eff
                     });
                     if any {
                         out.insert(k.clone(), json!(f));
+                        changed = true;
+                    }
+                }
+                Value::String(cur) if k == "mode" => {
+                    let mut pick = None;
+                    egui::ComboBox::from_id_salt(id).selected_text(tr(&format!("blend.{cur}"))).show_ui(ui, |ui| {
+                        for m in FX_MODES {
+                            if ui.selectable_label(cur == m, tr(&format!("blend.{m}"))).clicked() {
+                                pick = Some(m);
+                            }
+                        }
+                    });
+                    if let Some(m) = pick {
+                        out.insert(k.clone(), json!(m));
                         changed = true;
                     }
                 }
