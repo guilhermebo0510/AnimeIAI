@@ -655,7 +655,8 @@ fn paint_thumb(env: &mut Env, ui: &Ui, r: Rect, layer: &NodeId, l: &aiai_core::L
         match cel.as_ref().and_then(|c| cmds::cel_data(p_, c).map(|d| (c.clone(), d))) {
             Some((cid, d)) => {
                 let canvas = cmds::canvas_size(p_, cut);
-                let sig = crate::app::layer_thumbs::cel_sig(&cid, d, canvas);
+                // blobs danificados mudam o que a miniatura mostra sem mudar o cel (reabrir, recuperar um arquivo)
+                let sig = crate::app::layer_thumbs::cel_sig(&cid, d, canvas) ^ (env.core.blobs.missing().len() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
                 let idle = snap.is_some();
                 let s = snap.cloned();
                 env.ed.workbar.thumbs.get(ui.ctx(), layer, &cid, sig, canvas, idle, move || s.expect("snapshot"))

@@ -230,7 +230,7 @@ fn open_project(session: &mut CoreSession, params: &Value) -> Result<Value, Brid
         "wal_replayed": report.replayed, "wal_truncated_at": report.wal_truncated_at, "wal_error": report.replay_error,
         "wal_lines_skipped": report.wal_lines_skipped, "wal_tail_only": report.wal_tail_only,
         "wal_backup": report.wal_backup.as_ref().map(|p| p.display().to_string()),
-        "damaged_blobs": report.damaged_blobs.iter().map(|d| json!({ "hash": d.hash.0, "problem": d.problem, "used_by": d.used_by })).collect::<Vec<_>>(),
+        "damaged_blobs": report.damaged_blobs.iter().map(|d| json!({ "hash": d.hash.0, "problem": d.problem, "used_by": d.used_by, "kind": d.kind, "missing": d.missing })).collect::<Vec<_>>(),
         "read_only": report.read_only(),
         "locked_by": report.locked_by.as_ref().map(lock_json),
         "replaced_lock": report.replaced_lock.as_ref().map(lock_json),

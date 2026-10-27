@@ -79,6 +79,9 @@ pub fn to_canonical_json(project: &Project) -> CoreResult<String> {
     Ok(s)
 }
 
+/// Problema de um blob que o disco não tem (os demais são cópias ilegíveis, vazias ou corrompidas).
+pub const BLOB_ABSENT: &str = "arquivo ausente";
+
 pub fn blob_path(dir: &Path, h: &BlobHash) -> PathBuf {
     dir.join(BLOB_DIR).join(&h.0[..2]).join(&h.0)
 }
@@ -471,7 +474,7 @@ pub fn open_with(dir: &Path, take_over: bool) -> CoreResult<(CoreSession, OpenRe
             BlobRead::Absent if !required.contains(&h) => {} // string com cara de hash em JSON livre que não é blob
             BlobRead::Absent => {
                 blobs.mark_missing(h.clone());
-                damaged.push((h, "arquivo ausente".into(), PROJECT_FILE));
+                damaged.push((h, BLOB_ABSENT.into(), PROJECT_FILE));
             }
             BlobRead::Bad(why) => {
                 blobs.mark_missing(h.clone());
@@ -527,7 +530,7 @@ pub fn open_with(dir: &Path, take_over: bool) -> CoreResult<(CoreSession, OpenRe
                         _ if session.blobs.contains(&h) => {}
                         BlobRead::Absent => {
                             session.blobs.mark_missing(h.clone());
-                            damaged.push((h, "arquivo ausente".into(), WAL_FILE));
+                            damaged.push((h, BLOB_ABSENT.into(), WAL_FILE));
                         }
                         BlobRead::Bad(why) => {
                             session.blobs.mark_missing(h.clone());
@@ -627,10 +630,12 @@ fn describe_damage(project: &Project, damaged: Vec<(BlobHash, String, &'static s
         return Vec::new();
     }
     let mut users: BTreeMap<BlobHash, Vec<String>> = BTreeMap::new();
+    let mut kinds: BTreeMap<BlobHash, &'static str> = BTreeMap::new();
     for (id, n) in &project.nodes {
-        let mut add = |h: &BlobHash, what: String| {
+        let mut add = |h: &BlobHash, kind: &'static str, what: String| {
             if seen.contains(h) {
                 users.entry(h.clone()).or_default().push(what);
+                kinds.entry(h.clone()).or_insert(kind);
             }
         };
         match &n.data {
@@ -638,20 +643,27 @@ fn describe_damage(project: &Project, damaged: Vec<(BlobHash, String, &'static s
                 let layer = n.parent.as_ref().and_then(|p| project.node(p)).map(|l| l.name.as_str()).unwrap_or("?");
                 let at = format!("camada \"{layer}\", cel \"{}\" ({id})", n.name);
                 for t in &c.tiles {
-                    add(&t.blob, format!("{at}: tile ({}, {})", t.x, t.y));
+                    add(&t.blob, "tile", format!("{at}: tile ({}, {})", t.x, t.y));
                 }
                 for f in &c.fills {
                     if let Some(m) = &f.mask {
-                        add(m, format!("{at}: máscara de preenchimento"));
+                        add(m, "mask", format!("{at}: máscara de preenchimento"));
                     }
                 }
                 if let Some(i) = &c.image {
-                    add(i, format!("{at}: imagem"));
+                    add(i, "image", format!("{at}: imagem"));
                 }
             }
             NodeKind::Asset(a) => {
                 if let Some(b) = &a.blob {
-                    add(b, format!("recurso \"{}\" ({id})", n.name));
+                    let kind = match a.asset {
+                        crate::model::AssetType::AudioClip => "audio",
+                        crate::model::AssetType::Model3d => "model3d",
+                        crate::model::AssetType::Texture | crate::model::AssetType::Background => "image",
+                        crate::model::AssetType::Font => "font",
+                        _ => "asset",
+                    };
+                    add(b, kind, format!("recurso \"{}\" ({id})", n.name));
                 }
             }
             _ => {}
@@ -663,7 +675,9 @@ fn describe_damage(project: &Project, damaged: Vec<(BlobHash, String, &'static s
             let used_by = users.remove(&hash).unwrap_or_else(|| {
                 vec![if source == WAL_FILE { "só no diário (o documento recuperado não o usa mais)".into() } else { "citado em parâmetros do documento".into() }]
             });
-            DamagedBlob { hash, problem, used_by }
+            let kind = kinds.remove(&hash).unwrap_or(if source == WAL_FILE { "journal" } else { "other" });
+            let missing = problem == BLOB_ABSENT;
+            DamagedBlob { hash, problem, used_by, kind, missing }
         })
         .collect()
 }
@@ -685,6 +699,28 @@ pub struct DamagedBlob {
     pub problem: String,
     /// Onde o documento usa este blob (para dizer ao usuário que tiles estão danificados).
     pub used_by: Vec<String>,
+    /// O que é: tile, mask, image, audio, model3d, font, asset, journal (só no diário) ou other.
+    pub kind: &'static str,
+    /// `true` = o arquivo não existe; `false` = existe mas está ilegível, vazio ou corrompido.
+    pub missing: bool,
+}
+
+/// Devolve ao projeto um blob que abriu danificado ou ausente, a partir de uma cópia que o usuário achou (backup, outra
+/// máquina). O conteúdo precisa conferir com o hash que o documento espera; outro arquivo dá `Ok(None)` e nada muda.
+/// Grava na pasta do projeto (se houver uma) e põe na memória; o documento e o histórico não mudam.
+pub fn restore_blob(session: &mut CoreSession, bytes: Vec<u8>) -> CoreResult<Option<BlobHash>> {
+    let h = BlobHash::of(&bytes);
+    if !session.blobs.is_missing(&h) {
+        return Ok(None);
+    }
+    if let Some(dir) = session.path.clone() {
+        write_blob(&dir, &h, &bytes, true)?;
+        session.blobs.mark_on_disk(h.clone());
+    }
+    session.blobs.insert_clean(h.clone(), bytes)?;
+    // caches de imagem que se guiam pelo contador refazem o que mostrava o buraco
+    session.change_counter += 1;
+    Ok(Some(h))
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]

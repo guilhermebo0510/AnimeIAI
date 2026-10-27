@@ -377,6 +377,7 @@ fn truncated_blob_opens_with_report_keeps_reference_and_is_repaired() {
     assert_eq!(d.hash, b1);
     assert!(d.problem.contains("2000 bytes"), "{}", d.problem);
     assert!(d.used_by.iter().any(|u| u.contains("camada \"A\"") && u.contains("tile (1, 0)")), "{:?}", d.used_by);
+    assert_eq!((d.kind, d.missing), ("tile", false), "existe, mas truncado");
     assert!(s2.blobs.is_missing(&b1) && !s2.blobs.contains(&b1));
     // Salvar não exige o conteúdo danificado, mantém a referência e não toca no arquivo ruim
     persist::save(&mut s2, &dir).unwrap();
@@ -390,6 +391,29 @@ fn truncated_blob_opens_with_report_keeps_reference_and_is_repaired() {
     assert_eq!(s2.blobs.put(bytes1.clone()), b1);
     s2.apply(rename(&layer, "A2")).unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), bytes1, "o diário regravou o blob ruim");
+    drop(s2);
+    let (_s3, rep3) = persist::open(&dir).unwrap();
+    assert!(rep3.damaged_blobs.is_empty(), "{rep3:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_found_copy_restores_a_missing_blob_only_when_the_content_matches() {
+    let dir = fresh_dir("blob-restore");
+    let (s, _cel, _layer, bytes1, b1) = saved_with_tiles(&dir);
+    drop(s);
+    let path = persist::blob_path(&dir, &b1);
+    std::fs::remove_file(&path).unwrap();
+    let (mut s2, rep) = persist::open(&dir).expect("blob ausente não impede abrir");
+    let d = rep.damaged_blobs.iter().find(|d| d.hash == b1).expect("relatado");
+    assert!(d.missing && d.kind == "tile", "{d:?}");
+    // outro arquivo não serve: nada muda
+    assert_eq!(persist::restore_blob(&mut s2, b"outro arquivo".to_vec()).unwrap(), None);
+    assert!(s2.blobs.is_missing(&b1));
+    // a cópia certa volta para a pasta e para a memória
+    assert_eq!(persist::restore_blob(&mut s2, bytes1.clone()).unwrap(), Some(b1.clone()));
+    assert!(!s2.blobs.is_missing(&b1) && s2.blobs.contains(&b1));
+    assert_eq!(std::fs::read(&path).unwrap(), bytes1);
     drop(s2);
     let (_s3, rep3) = persist::open(&dir).unwrap();
     assert!(rep3.damaged_blobs.is_empty(), "{rep3:?}");

@@ -38,6 +38,10 @@ pub(crate) enum DialogKind {
     ExportOtio,
     /// Arquivo > Exportar timesheet XDTS (corte ativo).
     ExportXdts,
+    /// Avisos ao abrir > Localizar arquivo (cópia de um recurso indisponível).
+    LocateBlob,
+    /// Avisos ao abrir > Procurar em pasta (backup do projeto: blobs com o nome do hash).
+    LocateBlobDir,
 }
 
 const IMAGE_EXTS: [&str; 8] = ["png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff", "gif"];
@@ -56,8 +60,7 @@ pub(crate) const AUTHOR: &str = "human";
 #[derive(Debug, Default)]
 pub(crate) struct OpenWarnings {
     pub lines: Vec<String>,
-    /// (hash, problema, onde o documento usa)
-    pub damaged: Vec<(String, String, Vec<String>)>,
+    pub damaged: Vec<Damaged>,
     /// Pasta travada por outro processo vivo e a descrição do dono: aberto só para leitura, com a opção de assumir.
     pub locked: Option<(PathBuf, String)>,
 }
@@ -75,6 +78,41 @@ impl OpenWarnings {
             self.locked = o.locked;
         }
     }
+}
+
+/// Recurso que o projeto cita e que não pôde ser lido ao abrir.
+#[derive(Debug, Clone)]
+pub(crate) struct Damaged {
+    pub hash: String,
+    /// Mensagem técnica (ausente, truncado, ilegível...).
+    pub problem: String,
+    /// Onde o documento usa (camada/cel/tile, recurso...).
+    pub used: Vec<String>,
+    /// tile, mask, image, audio, model3d, font, asset, journal ou other (ver `persist::DamagedBlob`).
+    pub kind: String,
+    /// O arquivo não existe (senão existe e está ilegível).
+    pub missing: bool,
+}
+
+/// Tira os ids internos "(0190…-…)" de uma descrição de uso, para a leitura principal; o texto inteiro fica nos detalhes.
+pub(crate) fn strip_ids(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find(" (") {
+        let after = &rest[i + 2..];
+        match after.find(')') {
+            Some(j) if j >= 20 && after[..j].chars().all(|c| c.is_ascii_hexdigit() || c == '-') => {
+                out.push_str(&rest[..i]);
+                rest = &after[j + 1..];
+            }
+            _ => {
+                out.push_str(&rest[..i + 2]);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Nome padrão da pasta ao salvar: `<nome>.aiai`, sem caracteres inválidos no Windows.
@@ -220,7 +258,13 @@ impl StudioApp {
         let mut w = OpenWarnings::default();
         for d in v["damaged_blobs"].as_array().into_iter().flatten() {
             let used: Vec<String> = d["used_by"].as_array().into_iter().flatten().filter_map(|u| u.as_str().map(str::to_owned)).collect();
-            w.damaged.push((d["hash"].as_str().unwrap_or("?").to_owned(), d["problem"].as_str().unwrap_or("").to_owned(), used));
+            w.damaged.push(Damaged {
+                hash: d["hash"].as_str().unwrap_or("?").to_owned(),
+                problem: d["problem"].as_str().unwrap_or("").to_owned(),
+                used,
+                kind: d["kind"].as_str().unwrap_or("other").to_owned(),
+                missing: d["missing"].as_bool().unwrap_or(false),
+            });
         }
         let read_only = v["read_only"].as_bool() == Some(true);
         if read_only {
@@ -250,8 +294,8 @@ impl StudioApp {
         for t in v["warnings"].as_array().into_iter().flatten().filter_map(|x| x.as_str()) {
             w.lines.push(t.to_owned());
         }
-        for (h, p, _) in &w.damaged {
-            tracing::warn!("blob danificado {h}: {p}");
+        for d in &w.damaged {
+            tracing::warn!("blob danificado {}: {}", d.hash, d.problem);
         }
         self.push_warnings(w);
     }
@@ -270,6 +314,7 @@ impl StudioApp {
     fn open_warnings_window(&mut self, ctx: &egui::Context) {
         let Some(w) = self.start.warn.as_ref() else { return };
         let (mut ok, mut take_over) = (false, false);
+        let mut locate: Option<DialogKind> = None;
         let dirty = self.doc_dirty();
         let mut rects: Vec<(&str, egui::Rect)> = Vec::new();
         let r = egui::Window::new(tr("dialog.warn_title"))
@@ -287,19 +332,60 @@ impl StudioApp {
                         ui.label(l);
                     }
                     if !w.damaged.is_empty() {
+                        // auditoria V2: "Recursos indisponíveis" com tipo, nome e uso; o hash e a mensagem técnica
+                        // ficam nos detalhes (não somem, só saem da leitura principal)
                         ui.add_space(6.0);
-                        ui.label(egui::RichText::new(format!("{} ({})", tr("dialog.warn_damaged"), w.damaged.len())).strong());
-                        for (h, problem, used) in &w.damaged {
-                            ui.label(format!("• {}…: {problem}", &h[..h.len().min(12)])).on_hover_text(h.as_str());
-                            for u in used {
-                                ui.label(format!("    {} {u}", tr("dialog.warn_used_by")));
+                        ui.label(egui::RichText::new(format!("{} ({})", tr("dialog.res_title"), w.damaged.len())).strong());
+                        ui.label(egui::RichText::new(tr("dialog.res_intro")).size(11.5).weak());
+                        ui.add_space(4.0);
+                        for (i, d) in w.damaged.iter().enumerate() {
+                            let kind = tr(&format!("dialog.res_kind.{}", d.kind)).to_owned();
+                            let state = tr(if d.missing { "dialog.res_absent" } else { "dialog.res_unreadable" });
+                            let first = d.used.first().map(|u| strip_ids(u)).unwrap_or_default();
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(egui::RichText::new(kind).strong());
+                                ui.label(&first);
+                                ui.label(egui::RichText::new(format!("\u{b7} {state}")).color(ui.visuals().warn_fg_color));
+                            });
+                            let more = d.used.len().saturating_sub(1);
+                            if more > 0 {
+                                ui.label(egui::RichText::new(format!("    {} {more} {}", tr("dialog.res_more"), tr("dialog.res_more_uses"))).size(11.5).weak());
                             }
+                            egui::CollapsingHeader::new(egui::RichText::new(tr("dialog.res_details")).size(11.5)).id_salt(("res_details", i)).show(ui, |ui| {
+                                ui.label(egui::RichText::new(format!("hash {}", d.hash)).monospace().size(11.0));
+                                ui.label(egui::RichText::new(&d.problem).size(11.5));
+                                for u in &d.used {
+                                    ui.label(egui::RichText::new(format!("{} {u}", tr("dialog.warn_used_by"))).size(11.0));
+                                }
+                            });
                         }
                     }
                 });
                 ui.add_space(10.0);
+                if !w.damaged.is_empty() {
+                    ui.horizontal_wrapped(|ui| {
+                        let b = ui.button(tr("dialog.res_locate")).on_hover_text(tr("dialog.res_locate.tip"));
+                        rects.push(("warn:locate", b.rect));
+                        if b.clicked() {
+                            locate = Some(DialogKind::LocateBlob);
+                        }
+                        let b = ui.button(tr("dialog.res_locate_dir")).on_hover_text(tr("dialog.res_locate_dir.tip"));
+                        rects.push(("warn:locate_dir", b.rect));
+                        if b.clicked() {
+                            locate = Some(DialogKind::LocateBlobDir);
+                        }
+                        let b = ui.add_enabled(self.core.path.is_some(), egui::Button::new(tr("dialog.res_open_folder")));
+                        rects.push(("warn:open_folder", b.rect));
+                        if b.clicked() {
+                            if let Some(dir) = &self.core.path {
+                                super::library::open_folder(dir);
+                            }
+                        }
+                    });
+                    ui.add_space(6.0);
+                }
                 ui.horizontal(|ui| {
-                    let okb = ui.button(tr("dialog.ok"));
+                    let okb = ui.button(tr(if w.damaged.is_empty() { "dialog.ok" } else { "dialog.res_continue" }));
                     rects.push(("warn:ok", okb.rect));
                     ok = okb.clicked();
                     if w.locked.is_some() {
@@ -321,6 +407,84 @@ impl StudioApp {
                 self.doc_open(&d, true);
             }
         } else if ok {
+            self.start.warn = None;
+        } else if let Some(k) = locate {
+            self.spawn_dialog(k, None);
+        }
+    }
+
+    /// Recursos que ainda faltam, por hash (para procurar numa pasta e para tirar da janela os que voltaram).
+    fn damaged_hashes(&self) -> Vec<String> {
+        self.start.warn.as_ref().map(|w| w.damaged.iter().map(|d| d.hash.clone()).collect()).unwrap_or_default()
+    }
+
+    /// Tenta devolver ao projeto um recurso a partir de um arquivo achado pelo usuário: só entra se o conteúdo for
+    /// exatamente o esperado (`persist::restore_blob` confere o hash). Devolve se recuperou.
+    fn restore_from(&mut self, path: &Path) -> bool {
+        let bytes = match std::fs::read(path) {
+            Ok(b) => b,
+            Err(e) => {
+                self.notice(format!("{}: {e}", path.display()));
+                return false;
+            }
+        };
+        match aiai_core::persist::restore_blob(&mut self.core, bytes) {
+            Ok(Some(h)) => {
+                if let Some(w) = self.start.warn.as_mut() {
+                    w.damaged.retain(|d| d.hash != h.0);
+                }
+                true
+            }
+            Ok(None) => false,
+            Err(e) => {
+                self.notice(e.to_string());
+                false
+            }
+        }
+    }
+
+    fn locate_blob(&mut self, path: &Path) {
+        let name = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        if self.restore_from(path) {
+            self.notice(format!("{}: {name}", tr("dialog.res_restored")));
+        } else {
+            self.notice(format!("{}: {name}", tr("dialog.res_not_match")));
+        }
+        self.close_warnings_if_done();
+    }
+
+    /// Pasta de backup: procura (até 5 níveis) arquivos com o nome de um hash que falta, como `blobs/ab/abcd...`.
+    fn locate_blob_dir(&mut self, dir: &Path) {
+        let want: std::collections::BTreeSet<String> = self.damaged_hashes().into_iter().collect();
+        let mut found = Vec::new();
+        let mut stack = vec![(dir.to_path_buf(), 0usize)];
+        let mut visited = 0usize;
+        while let Some((d, depth)) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&d) else { continue };
+            for e in rd.flatten() {
+                visited += 1;
+                if visited > 200_000 {
+                    break;
+                }
+                let p = e.path();
+                if p.is_dir() {
+                    if depth < 5 {
+                        stack.push((p, depth + 1));
+                    }
+                } else if p.file_name().is_some_and(|n| want.contains(n.to_string_lossy().as_ref())) {
+                    found.push(p);
+                }
+            }
+        }
+        let restored = found.iter().filter(|p| self.restore_from(p)).count();
+        let left = self.damaged_hashes().len();
+        self.notice(tr("dialog.res_dir_result").replace("{n}", &restored.to_string()).replace("{left}", &left.to_string()));
+        self.close_warnings_if_done();
+    }
+
+    /// Tudo recuperado e nada mais a ler: a janela fecha sozinha.
+    fn close_warnings_if_done(&mut self) {
+        if self.start.warn.as_ref().is_some_and(|w| w.damaged.is_empty() && w.lines.is_empty() && w.locked.is_none()) {
             self.start.warn = None;
         }
     }
@@ -482,6 +646,8 @@ impl StudioApp {
             DialogKind::ExportSvg => tr("menu.file.export_svg"),
             DialogKind::ExportOtio => tr("menu.file.export_otio"),
             DialogKind::ExportXdts => tr("menu.file.export_xdts"),
+            DialogKind::LocateBlob => tr("dialog.res_locate"),
+            DialogKind::LocateBlobDir => tr("dialog.res_locate_dir"),
         }
         .to_owned();
         let cut_name = self.ed.cut.as_ref().and_then(|c| self.core.project.node(c)).map(|n| n.name.clone()).unwrap_or_else(|| "corte".into());
@@ -511,6 +677,8 @@ impl StudioApp {
                 DialogKind::ExportSvg => d.add_filter("SVG", &["svg"]).set_file_name(svg_name).save_file(),
                 DialogKind::ExportOtio => d.add_filter("OpenTimelineIO", &["otio"]).set_file_name(otio_name).save_file(),
                 DialogKind::ExportXdts => d.add_filter("XDTS", &["xdts"]).set_file_name(xdts_name).save_file(),
+                DialogKind::LocateBlob => d.pick_file(),
+                DialogKind::LocateBlobDir => d.pick_folder(),
             };
             let _ = tx.send(picked);
         });
@@ -548,6 +716,8 @@ impl StudioApp {
                         DialogKind::ExportSvg => self.export_with("EXPORT_SVG", &path),
                         DialogKind::ExportOtio => self.export_otio(&path),
                         DialogKind::ExportXdts => self.export_with("EXPORT_XDTS", &path),
+                        DialogKind::LocateBlob => self.locate_blob(&path),
+                        DialogKind::LocateBlobDir => self.locate_blob_dir(&path),
                     }
                 }
                 ctx.request_repaint();
@@ -872,6 +1042,14 @@ pub(crate) fn is_file_action(action: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn use_lines_lose_internal_ids_but_keep_the_rest() {
+        let u = "camada \"Fundo\", cel \"c1\" (01a17eff-5ae9-7687-94a7-6f3dddc73ce7): tile (0, 0)";
+        assert_eq!(strip_ids(u), "camada \"Fundo\", cel \"c1\": tile (0, 0)");
+        assert_eq!(strip_ids("recurso \"Fala (take 2)\" (01a17eff-5ae9-7687-94a7-6f3cd49c8d88)"), "recurso \"Fala (take 2)\"");
+        assert_eq!(strip_ids("sem id"), "sem id");
+    }
 
     #[test]
     fn folder_names_are_valid_on_windows() {

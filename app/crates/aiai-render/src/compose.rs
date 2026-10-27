@@ -333,6 +333,11 @@ static TILE_CACHE: std::sync::OnceLock<std::sync::Mutex<TileCache>> = std::sync:
 /// Pixels de um tile, decodificados uma vez por blob (o blob é endereçado pelo conteúdo: o hash basta como chave).
 /// `None` = blob ausente.
 fn decoded_tile(blobs: &BlobStore, hash: &BlobHash) -> Option<Result<Arc<Vec<[f32; 4]>>, String>> {
+    // blob que o projeto aberto marcou como danificado: falta, mesmo que o cache ainda guarde os pixels de antes
+    // (reabrir no mesmo processo mostrava o desenho que um processo novo não mostra; auditoria V2 F-REC-05)
+    if blobs.is_missing(hash) {
+        return None;
+    }
     let cache = TILE_CACHE.get_or_init(Default::default);
     if let Ok(mut c) = cache.lock() {
         c.tick += 1;
@@ -452,6 +457,15 @@ fn render_frame_impl(project: &Project, blobs: &BlobStore, cut_id: &Id, frame: u
             );
             // quem desenha as camadas 3D (GPU/CPU) muda o pixel: entra na chave
             let key = format!("{key}|{}", crate::raster3d::layer3d_raster().backend());
+            // blobs danificados também: reabrir o mesmo projeto com um arquivo perdido tem as mesmas revisões, e as
+            // camadas guardadas mostrariam o que um processo novo não mostra (auditoria V2 F-REC-05)
+            let missing = {
+                use std::hash::{Hash, Hasher};
+                let mut hs = std::collections::hash_map::DefaultHasher::new();
+                blobs.missing().hash(&mut hs);
+                hs.finish()
+            };
+            let key = format!("{key}|m{missing:x}");
             let sigs: Vec<(Id, u64)> = cut_node.children.iter().map(|c| (c.clone(), subtree_revision(project, c))).collect();
             let same_key = cache.key.as_deref() == Some(key.as_str());
             if !same_key {
