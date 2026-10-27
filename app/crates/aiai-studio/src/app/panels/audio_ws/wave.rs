@@ -1093,6 +1093,8 @@ fn paste(env: &mut Env, asset: &Id, placement: Option<&(NodeId, aiai_core::Audio
         Some((n, NodeKind::Asset(a))) => (n, a.params.clone(), a.source.clone()),
         _ => return,
     };
+    // mesma regra do `audio_edit`: "Fala" → "Fala v2", sem acumular "(editado)"
+    let name = aiai_tools::audio_edit::next_version_name(p, &name);
     let src_rate = piece.rate;
     let from_id = asset.clone();
     let (tx, rx) = crossbeam_channel::bounded(1);
@@ -1118,7 +1120,7 @@ fn paste(env: &mut Env, asset: &Id, placement: Option<&(NodeId, aiai_core::Audio
                 }
             }
             let id = aiai_core::IdGen::Uuid7.next();
-            let nm: String = format!("{name} (editado)").chars().take(60).collect();
+            let nm = name;
             let cmd = Command::CreateNode { id: Some(id.clone()), parent: None, index: None, name: nm, data: NodeKind::Asset(aiai_core::AssetData { asset: AssetType::AudioClip, blob: Some(h), params, source: if source.is_empty() { "audio_edit".into() } else { source } }) };
             Ok(super::JobOut { commands: vec![cmd], asset: id, blobs: vec![Arc::new(bytes)], duration_s: out.duration_s() })
         })();

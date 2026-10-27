@@ -37,7 +37,7 @@ pub struct AudioEditRequest {
     /// stereo, remix, speed, fx, rack). `fx` aplica um efeito (`type`: amplify, normalize, eq, compressor, limiter,
     /// noise_gate, noise_reduction, reverb, pitch_shift, time_stretch, dc_offset, filter) ao clipe ou a `[start_s, end_s)`.
     pub steps: Vec<EditStep>,
-    /// Nome do novo asset; padrão = nome da fonte + " (editado)".
+    /// Nome do novo asset; padrão = próxima versão da fonte ("Fala" → "Fala v2", "Fala v2" → "Fala v3").
     #[serde(default)]
     pub name: Option<String>,
     /// Trilha do clipe quando `cut` vem; padrão sfx.
@@ -62,6 +62,54 @@ pub struct AudioEditOutput {
 
 fn truncate_name(s: &str) -> String {
     s.chars().take(60).collect()
+}
+
+/// Base estável do nome de uma versão: tira os " (editado)" acumulados e um " vN" final ("Fala v3 (editado)" → "Fala").
+pub fn version_base(name: &str) -> &str {
+    let mut s = name.trim_end();
+    loop {
+        let before = s;
+        if let Some(t) = s.strip_suffix("(editado)") {
+            s = t.trim_end();
+        }
+        if let Some((head, n)) = s.rsplit_once(" v")
+            && !n.is_empty()
+            && n.chars().all(|c| c.is_ascii_digit())
+            && !head.trim_end().is_empty()
+        {
+            s = head.trim_end();
+        }
+        if s == before {
+            return s;
+        }
+    }
+}
+
+/// Nome da próxima versão de `src_name`: "<base> v2", "v3"... o menor número livre entre os assets do projeto com a
+/// mesma base (a fonte conta como v1). Cabe nos 60 caracteres dos nomes de asset.
+pub fn next_version_name(p: &Project, src_name: &str) -> String {
+    let base = version_base(src_name);
+    let base = if base.is_empty() { "áudio" } else { base };
+    let mut used = std::collections::BTreeSet::new();
+    for n in p.nodes.values() {
+        if !matches!(n.data, NodeKind::Asset(_)) {
+            continue;
+        }
+        if let Some(rest) = n.name.strip_prefix(base) {
+            let rest = rest.trim();
+            if let Some(k) = rest.strip_prefix('v').and_then(|k| k.parse::<u32>().ok()) {
+                used.insert(k);
+            }
+        }
+    }
+    let mut k = 2;
+    while used.contains(&k) {
+        k += 1;
+    }
+    let suffix = format!(" v{k}");
+    let room = 60usize.saturating_sub(suffix.chars().count());
+    let b: String = base.chars().take(room).collect();
+    format!("{}{suffix}", b.trim_end())
 }
 
 pub fn audio_edit(p: &Project, idgen: &mut IdGen, blobs: &mut BlobStore, req: &AudioEditRequest) -> ToolResult<AudioEditOutput> {
@@ -95,7 +143,7 @@ pub fn audio_edit(p: &Project, idgen: &mut IdGen, blobs: &mut BlobStore, req: &A
         }
     }
     let source = if src_params.get("credit").is_some() && !src_source.is_empty() { src_source } else { "audio_edit".to_string() };
-    let name = req.name.clone().unwrap_or_else(|| format!("{src_node} (editado)"));
+    let name = req.name.clone().unwrap_or_else(|| next_version_name(p, &src_node));
     let clip = finish_clip(p, idgen, blobs, bytes, out.duration_s(), &truncate_name(&name), params, &source, req.track, &req.place, None)?;
     Ok(AudioEditOutput { clip, source: req.asset.clone(), source_duration_s: src.duration_s(), rate: out.rate, channels: out.channels(), steps_applied: req.steps.len(), source_name: src_node })
 }
@@ -264,4 +312,31 @@ pub fn audio_analyze(buf: &AudioBuf, cache_key: Option<&str>, req: &AudioAnalyze
         });
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod version_name_tests {
+    use super::*;
+
+    fn add(p: &mut Project, name: &str) {
+        let id = IdGen::Uuid7.next();
+        let data = NodeKind::Asset(AssetData { asset: AssetType::AudioClip, blob: None, params: Value::Null, source: String::new() });
+        p.nodes.insert(id.clone(), Node { id, name: name.into(), parent: None, children: Vec::new(), data, provenance: Default::default() });
+    }
+
+    #[test]
+    fn version_names_keep_a_stable_base() {
+        assert_eq!(version_base("Fala (editado) (editado)"), "Fala");
+        assert_eq!(version_base("Fala v3"), "Fala");
+        assert_eq!(version_base("Fala v3 (editado)"), "Fala");
+        assert_eq!(version_base("v2"), "v2");
+        assert_eq!(version_base("Cena 1 vento"), "Cena 1 vento");
+        let mut p = Project::new("t");
+        add(&mut p, "Fala");
+        assert_eq!(next_version_name(&p, "Fala"), "Fala v2");
+        add(&mut p, "Fala v2");
+        assert_eq!(next_version_name(&p, "Fala v2"), "Fala v3");
+        assert_eq!(next_version_name(&p, "Fala (editado) (editado)"), "Fala v3");
+        assert!(next_version_name(&p, &"x".repeat(80)).chars().count() <= 60);
+    }
 }

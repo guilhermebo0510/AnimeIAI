@@ -11,8 +11,8 @@ Lidos depois de fechar a auditoria 1 (ver `06-status-auditoria-1.md`). Cada item
 | V2-02 | P1 | Modelagem pendente fora do Salvar e do aviso de fechar | FEITO | `modeling::pending` entra no `doc_dirty` (asterisco, aviso ao fechar/abrir/novo); `doc_save_to` grava o modelo no projeto antes (`flush_into_project`) |
 | V2-03 | P1 | Cadeados: pasta, timeline e criação automática | FEITO | `commands::locked_effective` (camada ou pasta acima); usado em `tools::target`, `set_exposure` e antes de criar camada sozinha |
 | V2-04 | P2 | Camada criada sozinha + traço = dois desfazeres | FEITO | `CoreSession::merge_last` junta a criação e o traço; gesto vazio desfaz a camada criada |
-| V2-05 | P2 | Reacoplar a timeline muda o layout | VERIFICAR | o teste `detach_and_redock_restores_the_layout` passa na suíte atual (352 testes verdes) |
-| V2-06 | P2 | Revisões de fábrica dos layouts | VERIFICAR | `factory_changes_bump_the_revision` e `douga_...` passam na suíte atual |
+| V2-05 | P2 | Reacoplar a timeline muda o layout | FEITO (antes desta rodada) | o teste `detach_and_redock_restores_the_layout` passa (353 testes verdes) |
+| V2-06 | P2 | Revisões de fábrica dos layouts | FEITO | os dois testes passam; o ajuste de layout desta rodada subiu Layout 5, Cenário 4, Animação 5 (e Douga), Pintura 4 |
 | M-01 | P2 | Desfazer não volta a seleção transformada | FEITO | `Editor::sel_undo`: o Mover grava a seleção antes/depois; desfazer/refazer devolvem a que combina |
 | M-02 | P2 | Janela de detalhes do pincel cresce sozinha | FEITO | corpo com altura fixa e rolagem própria, rodapé sempre visível, no máximo 90% da tela |
 | M-03 | P1 | NLE: navalha em trilha travada corta o vinculado; efeitos de clipe travado mudam | FEITO | `razor` recusa quando o alvo ou um vinculado que atravessa o quadro está travado; o inspector de efeitos não grava em trilha travada |
@@ -31,7 +31,7 @@ Lidos depois de fechar a auditoria 1 (ver `06-status-auditoria-1.md`). Cada item
 | UX-02 | FEITO | Figura em camada raster: "Contorno com o pincel atual" percorre a geometria (preenchimento antes, um passo de desfazer); a ponta vetorial escolhida agora vale (antes era sempre Marcador) |
 | UX-03 | FEITO | diagramas (formas, modos) numa caixa fixa à esquerda com o nome logo ao lado |
 | UX-04 | ABERTO | lista de pincéis em colunas quando o painel alarga |
-| UX-05 | FEITO | cabeçalho da Modelagem: o que não cabe vai para "Mais ▾" (medido pela largura real) |
+| UX-05 | FEITO | cabeçalho da Modelagem: o que não cabe vai para "Mais ›" (medido pela largura real) |
 | UX-06 | FEITO | parâmetros da operação ativa primeiro; catálogo de operações num bloco recolhível |
 | UX-07 | FEITO | X/Y/Z nomeados e coloridos, com unidade (m, °) |
 | UX-08 | FEITO | três linhas: transporte com o alcance (seleção ou arquivo inteiro), Editar (fades com a curva ao lado) e Ver |
@@ -39,3 +39,16 @@ Lidos depois de fechar a auditoria 1 (ver `06-status-auditoria-1.md`). Cada item
 | UX-10 | FEITO | ferramentas do NLE com ícones desenhados (seleção, ripple, roll, navalha, slip, slide) e nome curto; atalho na dica |
 | UX-11 | FEITO | inspector do NLE: bloco "Sequência (a edição inteira)" separado do clipe |
 | UX-12 | FEITO | Composição: o Mover mostra só o que vale ali (a camada inteira) |
+
+## Propostas de produto ainda abertas (das rodadas massiva, jornadas e fronteiras)
+
+Não são falhas; ficam como próximos passos, nesta ordem:
+
+1. Breadcrumb persistente (projeto / cena / corte ou material / painel) e destino do próximo traço (massiva).
+2. ~~Nome-base estável nas versões de áudio~~ FEITO: `audio_edit::next_version_name` ("Fala" → "Fala v2" → "Fala v3", tira "(editado)" antigos); vale na edição e no colar entre arquivos; o histórico já mostra o resumo dos passos de cada versão.
+3. Selo "Referência · fora da entrega" na camada 3D e estado no topo das propriedades 3D (jornadas).
+4. "Exposto neste quadro" separado de "Escolhido para expor" na linha do tempo (jornadas).
+5. Colar áudio: mesma regra de seleção para as duas origens; campos Início/Fim/Duração (fronteiras).
+6. Aviso de recursos indisponíveis com tipo/nome/uso e ações Localizar / Abrir pasta (fronteiras).
+7. Produção: avisar amostra insuficiente nas métricas (massiva).
+8. UX-04: grade de pincéis em colunas.
