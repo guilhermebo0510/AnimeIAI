@@ -588,7 +588,21 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
                     env.ed.opts.liquify = !env.ed.opts.liquify;
                 }
                 if has_area && !env.ed.opts.liquify {
-                    let on = env.ed.selection.as_ref().is_some_and(|s| s.mesh.is_some());
+                    let puppet_on = env.ed.selection.as_ref().and_then(|s| s.mesh.as_ref()).is_some_and(|m| m.puppet.is_some());
+                    let on = env.ed.selection.as_ref().is_some_and(|s| s.mesh.is_some()) && !puppet_on;
+                    // Marionete (Puppet Warp): pinos que puxam o desenho sem esticar
+                    let b = ui.selectable_label(puppet_on, tr("opt.move_puppet"));
+                    env.note("opt:move_puppet", b.rect);
+                    if b.on_hover_text(tr("opt.move_puppet.tip")).clicked() {
+                        if let Some(s) = env.ed.selection.as_mut() {
+                            if puppet_on {
+                                s.mesh = None;
+                            } else {
+                                s.mesh = None;
+                                s.start_puppet();
+                            }
+                        }
+                    }
                     let b = ui.selectable_label(on, tr("opt.move_mesh"));
                     env.note("opt:move_mesh", b.rect);
                     if b.on_hover_text(tr("opt.move_mesh.tip")).clicked() {
@@ -597,16 +611,20 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
                             if on {
                                 s.mesh = None;
                             } else {
+                                s.mesh = None;
                                 s.start_mesh(n);
                             }
                         }
                     }
-                    if !on {
+                    if !on && !puppet_on {
                         let r = ui.add(egui::DragValue::new(&mut env.ed.opts.mesh_cells).range(1..=8).suffix("×"));
                         env.note("opt:move_mesh_cells", r.rect);
                     }
                 }
             });
+            if env.ed.selection.as_ref().and_then(|s| s.mesh.as_ref()).is_some_and(|m| m.puppet.is_some()) {
+                dim_label(ui, &t, tr("opt.move_puppet.hint"));
+            }
             if env.ed.opts.liquify {
                 use aiai_paint::warp::LiquifyKind as K;
                 ui.horizontal_wrapped(|ui| {

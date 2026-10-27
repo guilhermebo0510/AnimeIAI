@@ -436,9 +436,67 @@ pub fn positions_along(path: &[[f32; 2]], spacing: f32, offset: f32) -> Vec<(f32
     out
 }
 
+/// Marionete (Puppet Warp, auditoria 4.7h): deformação rígida por mínimos quadrados móveis (MLS, Schaefer et al. 2006)
+/// a partir dos pinos `(repouso, atual)`. Perto de um pino o desenho segue o pino; entre pinos, gira e anda sem esticar.
+/// Um pino só = translação; nenhum = identidade.
+pub fn mls_rigid(pins: &[([f32; 2], [f32; 2])], v: [f32; 2]) -> [f32; 2] {
+    match pins.len() {
+        0 => return v,
+        1 => return [v[0] + pins[0].1[0] - pins[0].0[0], v[1] + pins[0].1[1] - pins[0].0[1]],
+        _ => {}
+    }
+    let mut ws = Vec::with_capacity(pins.len());
+    for (p, q) in pins {
+        let d2 = (p[0] - v[0]).powi(2) + (p[1] - v[1]).powi(2);
+        if d2 < 1e-8 {
+            return *q;
+        }
+        ws.push(1.0 / d2 as f64);
+    }
+    let sw: f64 = ws.iter().sum();
+    let (mut ps, mut qs) = ([0.0f64; 2], [0.0f64; 2]);
+    for ((p, q), w) in pins.iter().zip(&ws) {
+        ps[0] += w * p[0] as f64;
+        ps[1] += w * p[1] as f64;
+        qs[0] += w * q[0] as f64;
+        qs[1] += w * q[1] as f64;
+    }
+    ps = [ps[0] / sw, ps[1] / sw];
+    qs = [qs[0] / sw, qs[1] / sw];
+    // rotação que melhor leva p̂ a q̂ (soma ponderada de conj(p̂)·q̂, em complexo)
+    let (mut re, mut im) = (0.0f64, 0.0f64);
+    for ((p, q), w) in pins.iter().zip(&ws) {
+        let (px, py) = (p[0] as f64 - ps[0], p[1] as f64 - ps[1]);
+        let (qx, qy) = (q[0] as f64 - qs[0], q[1] as f64 - qs[1]);
+        re += w * (px * qx + py * qy);
+        im += w * (px * qy - py * qx);
+    }
+    let m = (re * re + im * im).sqrt();
+    let (c, s) = if m > 1e-12 { (re / m, im / m) } else { (1.0, 0.0) };
+    let (dx, dy) = (v[0] as f64 - ps[0], v[1] as f64 - ps[1]);
+    [(dx * c - dy * s + qs[0]) as f32, (dx * s + dy * c + qs[1]) as f32]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn puppet_pins_pull_and_rotate_rigidly() {
+        assert_eq!(mls_rigid(&[], [3.0, 4.0]), [3.0, 4.0]);
+        assert_eq!(mls_rigid(&[([0.0, 0.0], [10.0, 5.0])], [3.0, 4.0]), [13.0, 9.0]);
+        // dois pinos parados = nada muda
+        let still = [([0.0, 0.0], [0.0, 0.0]), ([100.0, 0.0], [100.0, 0.0])];
+        let v = mls_rigid(&still, [50.0, 20.0]);
+        assert!((v[0] - 50.0).abs() < 1e-3 && (v[1] - 20.0).abs() < 1e-3);
+        // no pino, o ponto vai com ele
+        let moved = [([0.0, 0.0], [0.0, 0.0]), ([100.0, 0.0], [100.0, 40.0])];
+        assert_eq!(mls_rigid(&moved, [100.0, 0.0]), [100.0, 40.0]);
+        // girar 90° os dois pinos em volta do meio gira o ponto do meio para cima/baixo sem esticar
+        let rot = [([-50.0, 0.0], [0.0, -50.0]), ([50.0, 0.0], [0.0, 50.0])];
+        let v = mls_rigid(&rot, [0.0, 10.0]);
+        assert!((v[0] + 10.0).abs() < 1e-3 && v[1].abs() < 1e-3, "{v:?}");
+    }
 
     #[test]
     fn homography_maps_corners() {

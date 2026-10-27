@@ -62,7 +62,7 @@ Os 5 itens P0 do plano da auditoria estão feitos (um deles com decisão mantida
 | 2.14 | Seleção limita pincel e borracha raster | FEITO | commit 8316477 | caneta vetorial não respeita; balde não respeita (`FillRequest` não tem máscara) |
 | 2.15 | Seleção limita balde e caneta | FEITO (82cc089) | a caneta vetorial sai em pedaços dentro da seleção; o balde já respeitava | nada |
 | 2.16 | Mover: alças de escala/rotação, preview raster | FEITO | commits 3a3d923, 72f10e2, 3a6c235 (Ctrl+T 8 alças, prévia ao vivo `move_live.rs`) | nada |
-| 2.17 | Mover: inclinar, perspectiva, malha, liquify, puppet warp | FEITO, menos Puppet Warp | Ctrl+canto = distorção (a659cbd); Malha (bc36073, gravação por triângulos); Liquefazer empurrar/expandir/contrair/girar (`Deform::LiquifyPath`) | Puppet Warp (4.7h) |
+| 2.17 | Mover: inclinar, perspectiva, malha, liquify, puppet warp | FEITO (27/10) | Ctrl+canto = distorção (a659cbd); Malha (bc36073, gravação por triângulos); Liquefazer empurrar/expandir/contrair/girar (`Deform::LiquifyPath`); Marionete (Puppet Warp): pinos no clique, arrastar deforma por MLS rígido (`warp::mls_rigid`), Ctrl+clique tira, Enter grava pelo mesmo caminho da malha | |
 | 2.18 | Conta-gotas: cor da camada/composta, lupa, preservar paleta | FEITO (bc36073 + 26/10) | "Cor da camada"/"Cor exibida", lupa 11×11 que vira perto da borda, cor da paleta mantida, pixel vazio não troca a cor | nada |
 | 2.19 | Rotação livre do canvas (não só saltos de 15°) | FEITO (27/10) | girar livre com R + arrastar, Mão > Girar e agora Shift+Espaço+arrastar (como no Clip Studio; `canvas.rs` `on_press`), além do deslizante do Navegador e do passo configurável; conferido pela bridge: arco de 90° = visão a 90°, sem traço | |
 | 2.20 | `Layout`, `Pintura`, `Cenário` com painéis idênticos | FEITO | teste `layout.rs:1066` (`drawing_workspaces_no_longer_look_the_same`); réguas e Sub View nesses workspaces | Céu e Texturas em perspectiva ainda sem painel (ver 4.5A) |
@@ -122,7 +122,7 @@ Os 5 itens P0 do plano da auditoria estão feitos (um deles com decisão mantida
 | 4.5b | `GRADIENT` na GUI | FEITO (cdc0668, 1d3f2b2) | Degradê por arrasto, camada de degradê, degradê livre | nada |
 | 4.5c | Gerador de céu `SKY` e `PATTERN_FILL` em perspectiva na GUI | FEITO (26/10) | Filtro > Céu (dia/manhã/pôr do sol/crepúsculo/noite) e Filtro > Textura (8 tipos; dentro da seleção; laço poligonal de 4 cantos = plano em perspectiva), cada um numa camada nova | nada |
 | 4.5d | `LINES` (velocidade/foco) na GUI | FEITO | `workbar.rs:339-356` (menu Filtro); `figure.rs` com as abas (em andamento) | nada |
-| 4.5e | MeshWarp / Liquify / Puppet Warp na GUI | FEITO, menos Puppet Warp | ver 2.17 | Puppet Warp |
+| 4.5e | MeshWarp / Liquify / Puppet Warp na GUI | FEITO (27/10) | ver 2.17 | |
 | 4.5f | Camadas Ajuste e Texto no menu `+` | FEITO (26/10) | "+" > Camada de ajuste > Níveis/Curvas/Matiz/... (camada de efeito com a correção, abre os parâmetros) | nada |
 | 4.5g | Editor de partículas na GUI | FEITO (26/10) | Propriedades da camada de partículas: presets (pétalas, brilhos, neve, chuva, poeira) e 16 parâmetros + cores (`panels/particles_ed.rs`) | faísca como preset |
 | 4.5h | Efeitos `Para`, `RadialBlur`, `ColorAwareBlur`, `Adjust`, `Lut` no menu | FEITO | `panels/effects_browser.rs:22-29` | nada |
@@ -149,7 +149,7 @@ Os 5 itens P0 do plano da auditoria estão feitos (um deles com decisão mantida
 | 4.7e | Variantes de iluminação na paleta (Dia/Entardecer/Noite) | FEITO (26/10) | painel Cores > Conjunto: Iluminação (Normal/variantes, gerar Entardecer/Noite/Sombra, editar cor por variante) e "Neste corte" (`CutData::palette_variant`, render e pincel por corte) | nada |
 | 4.7f | `.XDTS` e `.OTIO` | FEITO | commit 9273374 | importar `.xdts` não |
 | 4.7g | Botão Folha de e-conte | FEITO | `panels/board.rs:148` | nada |
-| 4.7h | Puppet Warp; modificadores de traço (vento, line boil, profundidade, espelho); colorização por dicas | NÃO FEITO | nenhum | |
+| 4.7h | Puppet Warp; modificadores de traço (vento, line boil, profundidade, espelho); colorização por dicas | PARCIAL (27/10) | Puppet Warp feito (ver 2.17) | modificadores de traço; colorização por dicas |
 | 4.8a | Ajuste automático de curva (RDP + Schneider) ao soltar a caneta | FEITO (26/10) | "Simplificar ao soltar" (0..100, padrão 10 = 1 px) usa o Simplificar do Editar pontos (RDP com largura + desvio medido na curva); 121 amostras viram ~28 pontos | nada |
 | 4.8b | Editar nós de controle | FEITO | ferramenta Editar pontos, atalhos U26 | nada |
 | 4.8c | Corrigir linha (Beliscar, Simplificar, Conectar, Largura, Redesenhar, poeira) | FEITO (7e54e65, 1104dd7) | `app/line_fix.rs` + `aiai-tools/src/line_fix.rs` + bridge/MCP | nada |

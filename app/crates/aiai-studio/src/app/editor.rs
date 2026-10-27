@@ -390,6 +390,27 @@ pub(crate) struct SelMesh {
     pub cols: u32,
     pub rows: u32,
     pub pts: Vec<Vec2>,
+    /// Marionete (Puppet Warp, auditoria 4.7h): a malha não se arrasta vértice a vértice, segue os pinos.
+    pub puppet: Option<Puppet>,
+}
+
+/// Pinos da marionete: a grade em repouso e cada pino (onde foi posto, onde está agora).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) struct Puppet {
+    pub rest: Vec<Vec2>,
+    pub pins: Vec<[Vec2; 2]>,
+}
+
+impl SelMesh {
+    /// Refaz os vértices a partir dos pinos (MLS rígido; sem pino = a grade em repouso).
+    pub(crate) fn follow_pins(&mut self) {
+        let Some(pp) = &self.puppet else { return };
+        let pins: Vec<([f32; 2], [f32; 2])> = pp.pins.iter().map(|[a, b]| ([a.x, a.y], [b.x, b.y])).collect();
+        self.pts = pp.rest.iter().map(|r| {
+            let q = aiai_paint::warp::mls_rigid(&pins, [r.x, r.y]);
+            Vec2::new(q[0], q[1])
+        }).collect();
+    }
 }
 
 /// Transformação pendente da seleção para a prévia ao vivo: afim (mover, escalar, girar), perspectiva (distorção) ou
@@ -471,7 +492,15 @@ impl Selection {
         self.scale = Vec2::splat(1.0);
         self.rotate = 0.0;
         self.corners = None;
-        self.mesh = Some(SelMesh { cols: n, rows: n, pts });
+        self.mesh = Some(SelMesh { cols: n, rows: n, pts, puppet: None });
+    }
+
+    /// Liga a marionete: malha fina (12×12) que segue os pinos postos com o clique.
+    pub(crate) fn start_puppet(&mut self) {
+        self.start_mesh(12);
+        if let Some(m) = self.mesh.as_mut() {
+            m.puppet = Some(Puppet { rest: m.pts.clone(), pins: Vec::new() });
+        }
     }
 
     /// A transformação pendente: malha, perspectiva quando há distorção, senão a afim.
@@ -862,6 +891,8 @@ pub(crate) enum Gesture {
     DistortSel { corner: usize },
     /// Vértice da malha do Mover.
     MeshSel { vertex: usize },
+    /// Pino da marionete sendo arrastado.
+    PuppetPin { pin: usize },
     /// Pincelada do Liquefazer (Mover): o último ponto que gerou um passo.
     LiquifySel { last: Vec2 },
     /// Alça de rotação do Mover.

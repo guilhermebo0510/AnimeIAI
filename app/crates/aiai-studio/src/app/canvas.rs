@@ -639,6 +639,27 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
                         }
                     }
                     ToolId::Move if env.ed.opts.area.pick_layer => super::area_tools::pick_layer(env, c),
+                    // Marionete: clique põe um pino (e já arrasta), clique num pino arrasta, Ctrl+clique num pino tira
+                    ToolId::Move if env.ed.selection.as_ref().and_then(|s| s.mesh.as_ref()).is_some_and(|m| m.puppet.is_some()) => {
+                        let ctrl = mods.ctrl || mods.command;
+                        if let Some(m) = env.ed.selection.as_mut().and_then(|s| s.mesh.as_mut()) {
+                            if let Some(pp) = m.puppet.as_mut() {
+                                let near = pp.pins.iter().position(|q| (xf.to_screen(q[1]) - pos).length() <= 9.0);
+                                match (near, ctrl) {
+                                    (Some(k), true) => {
+                                        pp.pins.remove(k);
+                                        m.follow_pins();
+                                    }
+                                    (Some(k), false) => env.ed.gesture = Gesture::PuppetPin { pin: k },
+                                    (None, false) => {
+                                        pp.pins.push([c, c]);
+                                        env.ed.gesture = Gesture::PuppetPin { pin: pp.pins.len() - 1 };
+                                    }
+                                    (None, true) => {}
+                                }
+                            }
+                        }
+                    }
                     ToolId::Move => {
                         // alças da seleção: cantos escalam, a de cima gira; fora delas, mover
                         let ctrl = mods.ctrl || mods.command;
@@ -792,6 +813,15 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
                 *p = c;
             }
         }
+        Gesture::PuppetPin { pin } => {
+            let k = *pin;
+            if let Some(m) = env.ed.selection.as_mut().and_then(|s| s.mesh.as_mut()) {
+                if let Some(q) = m.puppet.as_mut().and_then(|pp| pp.pins.get_mut(k)) {
+                    q[1] = c;
+                }
+                m.follow_pins();
+            }
+        }
         Gesture::DistortSel { corner } => {
             let k = *corner;
             if let Some(s) = env.ed.selection.as_mut() {
@@ -897,7 +927,7 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
             }
         }
         // malha: o arrasto de um vértice não grava; a malha fica pendente até o Enter (como no Clip Studio)
-        Gesture::MeshSel { .. } => {}
+        Gesture::MeshSel { .. } | Gesture::PuppetPin { .. } => {}
         g @ (Gesture::DragNode { .. } | Gesture::DragHandle { .. }) => {
             super::nodes::release(env, g);
             let counter = env.core.change_counter;
@@ -1266,7 +1296,7 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
         painter.add(quad(chk.id(), sp, uv));
     }
     // Mover ao vivo: o que fica abaixo, a parte que fica, a que anda (transformada) e o que fica acima
-    let moving = matches!(env.ed.gesture, Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } | Gesture::DistortSel { .. } | Gesture::MeshSel { .. } | Gesture::LiquifySel { .. })
+    let moving = matches!(env.ed.gesture, Gesture::MoveSel { .. } | Gesture::ScaleSel { .. } | Gesture::RotateSel { .. } | Gesture::DistortSel { .. } | Gesture::MeshSel { .. } | Gesture::PuppetPin { .. } | Gesture::LiquifySel { .. })
         || env.ed.selection.as_ref().is_some_and(|s| s.mesh.is_some());
     let live_aff = if moving {
         tools::move_key(env).filter(|k| env.ed.move_live.ready_for(k)).and_then(|_| env.ed.selection.as_ref().map(|s| s.live_xf()))
@@ -1543,9 +1573,22 @@ fn paint_selection(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId
         for i in 0..w {
             painter.add(Shape::line((0..=m.rows as usize).map(|j| sp[j * w + i]).collect(), line));
         }
-        for (k, p) in sp.iter().enumerate() {
-            painter.circle(*p, 4.5, Color32::WHITE, Stroke::new(1.5, env.t.accent));
-            env.note(format!("transform:mesh:{k}"), Rect::from_center_size(*p, egui::vec2(9.0, 9.0)));
+        match &m.puppet {
+            // marionete: a grade só como referência, os pinos em destaque
+            Some(pp) => {
+                for (k, q) in pp.pins.iter().enumerate() {
+                    let p = xf.to_screen(q[1]);
+                    painter.circle(p, 6.0, Color32::from_rgb(255, 214, 80), Stroke::new(2.0, Color32::BLACK));
+                    painter.circle_filled(p, 2.0, Color32::BLACK);
+                    env.note(format!("transform:pin:{k}"), Rect::from_center_size(p, egui::vec2(12.0, 12.0)));
+                }
+            }
+            None => {
+                for (k, p) in sp.iter().enumerate() {
+                    painter.circle(*p, 4.5, Color32::WHITE, Stroke::new(1.5, env.t.accent));
+                    env.note(format!("transform:mesh:{k}"), Rect::from_center_size(*p, egui::vec2(9.0, 9.0)));
+                }
+            }
         }
     } else if *env.tool == ToolId::Move && !sel.whole {
         let (corners, knob, _) = handles(&sel);
