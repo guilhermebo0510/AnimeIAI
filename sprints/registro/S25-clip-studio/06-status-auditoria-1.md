@@ -128,7 +128,7 @@ Os 5 itens P0 do plano da auditoria estão feitos (um deles com decisão mantida
 | 4.5h | Efeitos `Para`, `RadialBlur`, `ColorAwareBlur`, `Adjust`, `Lut` no menu | FEITO | `panels/effects_browser.rs:22-29` | nada |
 | 4.5i | 3D cel-shading, importação, câmera | FEITO | S24: spike 4,8 ms (6ea984e), `aiai-3d-render` (outline, toon) | extração de linhas do modelo (S24 "ficou para depois") |
 | 4.5j | Fumaça/fogo/raios procedurais 2D | NÃO FEITO | nenhum | gerador estilo anime |
-| 4.5k | Camera shake paramétrico | PARCIAL | bridge `CameraRequest::Shake` (`satsuei_tools.rs:150`) | botão/painel na GUI (não confirmado) |
+| 4.5k | Camera shake paramétrico | FEITO (27/10) | Composição > Propriedades > Câmera do corte: Tremer com força (px), duração (quadros) e Amortecer, a partir do quadro atual (vira chaves `shake` da câmera); bridge `CameraRequest::Shake` | |
 | 4.5l | `lock_alpha` na camada raster | FEITO (26/10) | botão "Bloquear transparência" na barra das Camadas (`params.lock_alpha`); commit e prévia (`paint::lock_alpha_region`) | nada |
 | 4.5m | Anti-overflow (não atravessar linhas da referência) no pincel | FEITO (26/10) | "Não passar da linha" no pincel: a região das linhas do balde onde o traço começou limita o pincel (`tools::stroke_clip`) | nada |
 | 4.6a | `INBETWEEN` e `PROPAGATE_FILLS` na Linha do tempo | FEITO (26/10) | menu da célula: "Intercalar até o próximo desenho" (2s quando cabe), timesheet e pintura propagada das chaves (`anim::run_inbetween`) | nada |

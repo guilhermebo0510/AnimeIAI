@@ -283,18 +283,30 @@ pub(crate) fn camera(env: &mut Env, ui: &mut Ui) {
         if b.on_hover_text(tr("fx.pan.tip")).clicked() {
             run(env, json!({ "op": "move", "from": from, "to": { "center": [center[0] + w as f32 * 0.08, center[1]], "zoom": cam.zoom } }));
         }
-        let b = ui.button(tr("fx.shake"));
-        env.note("fx:camera:shake", b.rect);
-        if b.on_hover_text(tr("fx.shake.tip")).clicked() {
-            let end = (env.ed.frame + 12).min(cd.duration.saturating_sub(1)).max(env.ed.frame + 1);
-            run(env, json!({ "op": "shake", "amplitude": 12.0, "start": env.ed.frame, "end": end }));
-        }
         let b = ui.add_enabled(n_keys > 0, egui::Button::new(tr("fx.clear_keys")));
         env.note("fx:camera:clear", b.rect);
         if b.clicked() {
             run(env, json!({ "op": "clear_keys" }));
         }
     });
+    // tremor paramétrico (auditoria 4.5k): força, duração e se ele amortece, a partir do quadro atual
+    let key = egui::Id::new("fx_shake_params");
+    let (mut amp, mut len, mut decay): (f32, u32, bool) = ui.data(|d| d.get_temp(key)).unwrap_or((12.0, 12, true));
+    ui.horizontal_wrapped(|ui| {
+        let b = ui.button(tr("fx.shake"));
+        env.note("fx:camera:shake", b.rect);
+        let r = ui.add(egui::DragValue::new(&mut amp).range(0.5..=200.0).speed(0.2).max_decimals(1).suffix(" px")).on_hover_text(tr("fx.shake.amp"));
+        env.note("fx:camera:shake_amp", r.rect);
+        let r = ui.add(egui::DragValue::new(&mut len).range(1..=600).speed(0.2).suffix(format!(" {}", tr("unit.frames_short")))).on_hover_text(tr("fx.shake.len"));
+        env.note("fx:camera:shake_len", r.rect);
+        let r = ui.checkbox(&mut decay, tr("fx.shake.decay")).on_hover_text(tr("fx.shake.decay.tip"));
+        env.note("fx:camera:shake_decay", r.rect);
+        if b.on_hover_text(tr("fx.shake.tip")).clicked() {
+            let end = (env.ed.frame + len).min(cd.duration.saturating_sub(1)).max(env.ed.frame + 1);
+            run(env, json!({ "op": "shake", "amplitude": amp, "start": env.ed.frame, "end": end, "decay": decay }));
+        }
+    });
+    ui.data_mut(|d| d.insert_temp(key, (amp, len, decay)));
 }
 
 // ------------------------------------------------------------------------------------------------ Cor
