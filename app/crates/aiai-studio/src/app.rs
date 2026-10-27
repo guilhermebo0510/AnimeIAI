@@ -678,6 +678,10 @@ impl StudioApp {
                 self.request_export(doc::DialogKind::ExportPsd);
                 ui.close();
             }
+            if self.menu_item(ui, "file.export_ora", "menu.file.export_ora", "", self.ed.cut.is_some()) {
+                self.request_export(doc::DialogKind::ExportOra);
+                ui.close();
+            }
             if self.menu_item(ui, "file.export_xdts", "menu.file.export_xdts", "", self.ed.cut.is_some()) {
                 self.request_export(doc::DialogKind::ExportXdts);
                 ui.close();

@@ -835,6 +835,7 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("menu.file.import_image", "Importar imagem…", "Import image…"),
     ("menu.file.export_frame", "Exportar quadro (PNG)…", "Export frame (PNG)…"),
     ("menu.file.export_psd", "Exportar PSD em camadas…", "Export layered PSD…"),
+    ("menu.file.export_ora", "Exportar ORA em camadas (Krita, GIMP)…", "Export layered ORA (Krita, GIMP)…"),
     ("menu.file.export_svg", "Exportar SVG do quadro…", "Export frame as SVG…"),
     ("menu.file.export_otio", "Exportar edição (OpenTimelineIO)…", "Export edit (OpenTimelineIO)…"),
     ("menu.file.export_xdts", "Exportar timesheet (XDTS)…", "Export timesheet (XDTS)…"),

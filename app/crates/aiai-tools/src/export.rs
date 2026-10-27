@@ -18,7 +18,7 @@ pub struct ExportPsdRequest {
     pub cut: Id,
     #[serde(default)]
     pub frame: u32,
-    /// Caminho absoluto do .psd.
+    /// Caminho absoluto do .psd (terminado em .ora grava OpenRaster, com as mesmas camadas).
     pub out: String,
     /// true = quadro da câmera (tamanho do projeto); false (padrão) = canvas inteiro do corte.
     #[serde(default)]
@@ -177,7 +177,18 @@ fn psd_bytes(w: u32, h: u32, layers: &[PsdLayer], merged_rgba: &[u8]) -> Vec<u8>
     f
 }
 
-pub fn export_psd(p: &Project, blobs: &BlobStore, req: &ExportPsdRequest) -> ToolResult<Value> {
+/// Uma camada recortada na caixa do conteúdo (RGBA 8 bits não pré-multiplicado, linha a linha), para PSD e ORA.
+struct LayerCrop {
+    name: String,
+    /// x0, y0, x1, y1 (vazio = tudo 0)
+    rect: [u32; 4],
+    rgba: Vec<u8>,
+    visible: bool,
+    blend: BlendMode,
+}
+
+/// O quadro composto e cada camada folha (de baixo para cima) renderizada sozinha e recortada no conteúdo.
+fn layer_crops(p: &Project, blobs: &BlobStore, req: &ExportPsdRequest) -> ToolResult<(u32, u32, Vec<u8>, Vec<LayerCrop>)> {
     let cd = cut_data(p, &req.cut)?;
     if req.frame >= cd.duration {
         return Err(ToolError::Invalid(format!("quadro {} fora do corte (duração {})", req.frame, cd.duration)));
@@ -209,23 +220,177 @@ pub fn export_psd(p: &Project, blobs: &BlobStore, req: &ExportPsdRequest) -> Too
                 }
             }
         }
-        let mut planes: [Vec<u8>; 4] = Default::default();
+        let mut crop = Vec::new();
         if x0 < x1 {
-            for (k, ch) in [0usize, 1, 2, 3].iter().enumerate() {
-                for y in y0..y1 {
-                    for x in x0..x1 {
-                        planes[k].push(rgba[((y * w + x) * 4) as usize + ch]);
-                    }
-                }
+            for y in y0..y1 {
+                crop.extend_from_slice(&rgba[((y * w + x0) * 4) as usize..((y * w + x1) * 4) as usize]);
             }
         } else {
             (x0, y0, x1, y1) = (0, 0, 0, 0);
         }
-        layers.push(PsdLayer { name: node.name.clone(), rect: [y0 as i32, x0 as i32, y1 as i32, x1 as i32], planes, visible: l.visible, blend: l.blend });
+        layers.push(LayerCrop { name: node.name.clone(), rect: [x0, y0, x1, y1], rgba: crop, visible: l.visible, blend: l.blend });
     }
-    let bytes = psd_bytes(w, h, &layers, &merged.to_rgba8());
+    Ok((w, h, merged.to_rgba8(), layers))
+}
+
+pub fn export_psd(p: &Project, blobs: &BlobStore, req: &ExportPsdRequest) -> ToolResult<Value> {
+    if req.out.to_lowercase().ends_with(".ora") {
+        return export_ora(p, blobs, req);
+    }
+    let (w, h, merged, crops) = layer_crops(p, blobs, req)?;
+    let layers: Vec<PsdLayer> = crops
+        .into_iter()
+        .map(|c| {
+            let [x0, y0, x1, y1] = c.rect;
+            let mut planes: [Vec<u8>; 4] = Default::default();
+            for (k, plane) in planes.iter_mut().enumerate() {
+                plane.extend(c.rgba.chunks_exact(4).map(|px| px[k]));
+            }
+            PsdLayer { name: c.name, rect: [y0 as i32, x0 as i32, y1 as i32, x1 as i32], planes, visible: c.visible, blend: c.blend }
+        })
+        .collect();
+    let bytes = psd_bytes(w, h, &layers, &merged);
     std::fs::write(&req.out, &bytes).map_err(|e| ToolError::Invalid(format!("não consegui gravar {}: {e}", req.out)))?;
     Ok(json!({ "path": req.out, "width": w, "height": h, "layers": layers.len(), "bytes": bytes.len() }))
+}
+
+// ------------------------------------------------------------------------------------------------------------ ORA
+
+/// CRC-32 (ZIP/PNG, polinômio 0xEDB88320).
+fn crc32(data: &[u8]) -> u32 {
+    static TABLE: std::sync::OnceLock<[u32; 256]> = std::sync::OnceLock::new();
+    let t = TABLE.get_or_init(|| {
+        let mut t = [0u32; 256];
+        for (i, slot) in t.iter_mut().enumerate() {
+            let mut c = i as u32;
+            for _ in 0..8 {
+                c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+            }
+            *slot = c;
+        }
+        t
+    });
+    !data.iter().fold(!0u32, |c, &b| t[((c ^ b as u32) & 0xff) as usize] ^ (c >> 8))
+}
+
+/// ZIP com os arquivos guardados sem compressão (os PNG já vêm comprimidos), na ordem dada: o ORA pede `mimetype`
+/// primeiro e guardado, para ser reconhecido pelos primeiros bytes.
+fn zip_stored(files: &[(&str, Vec<u8>)]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut central = Vec::new();
+    let le16 = |v: &mut Vec<u8>, x: u16| v.extend_from_slice(&x.to_le_bytes());
+    let le32 = |v: &mut Vec<u8>, x: u32| v.extend_from_slice(&x.to_le_bytes());
+    for (name, data) in files {
+        let crc = crc32(data);
+        let offset = out.len() as u32;
+        // cabeçalho local
+        le32(&mut out, 0x0403_4b50);
+        le16(&mut out, 20); // versão
+        le16(&mut out, 0x0800); // nomes em UTF-8
+        le16(&mut out, 0); // guardado
+        le16(&mut out, 0);
+        le16(&mut out, 0x21); // data 1980-01-01
+        le32(&mut out, crc);
+        le32(&mut out, data.len() as u32);
+        le32(&mut out, data.len() as u32);
+        le16(&mut out, name.len() as u16);
+        le16(&mut out, 0);
+        out.extend_from_slice(name.as_bytes());
+        out.extend_from_slice(data);
+        // entrada do diretório central
+        le32(&mut central, 0x0201_4b50);
+        le16(&mut central, 20);
+        le16(&mut central, 20);
+        le16(&mut central, 0x0800);
+        le16(&mut central, 0);
+        le16(&mut central, 0);
+        le16(&mut central, 0x21);
+        le32(&mut central, crc);
+        le32(&mut central, data.len() as u32);
+        le32(&mut central, data.len() as u32);
+        le16(&mut central, name.len() as u16);
+        le16(&mut central, 0);
+        le16(&mut central, 0);
+        le16(&mut central, 0);
+        le16(&mut central, 0);
+        le32(&mut central, 0);
+        le32(&mut central, offset);
+        central.extend_from_slice(name.as_bytes());
+    }
+    let cd_offset = out.len() as u32;
+    let cd_len = central.len() as u32;
+    out.extend_from_slice(&central);
+    le32(&mut out, 0x0605_4b50);
+    le16(&mut out, 0);
+    le16(&mut out, 0);
+    le16(&mut out, files.len() as u16);
+    le16(&mut out, files.len() as u16);
+    le32(&mut out, cd_len);
+    le32(&mut out, cd_offset);
+    le16(&mut out, 0);
+    out
+}
+
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&apos;")
+}
+
+/// Modo de mistura no vocabulário do OpenRaster (o mesmo que a importação lê de volta).
+fn ora_op(b: BlendMode) -> &'static str {
+    match b {
+        BlendMode::Multiply => "svg:multiply",
+        BlendMode::Screen => "svg:screen",
+        BlendMode::Overlay => "svg:overlay",
+        BlendMode::SoftLight => "svg:soft-light",
+        BlendMode::HardLight => "svg:hard-light",
+        BlendMode::Add => "svg:plus",
+        BlendMode::Darken => "svg:darken",
+        BlendMode::Lighten => "svg:lighten",
+        BlendMode::Difference => "svg:difference",
+        BlendMode::Color => "svg:color",
+        BlendMode::Hue => "svg:hue",
+        BlendMode::Saturation => "svg:saturation",
+        BlendMode::Luminosity => "svg:luminosity",
+        _ => "svg:src-over",
+    }
+}
+
+/// Exporta o quadro como OpenRaster (.ora, auditoria 4.2d): uma camada PNG por camada folha (recortada no conteúdo,
+/// com nome, visibilidade e mistura), a imagem composta e a miniatura. Krita, GIMP e MyPaint abrem.
+pub fn export_ora(p: &Project, blobs: &BlobStore, req: &ExportPsdRequest) -> ToolResult<Value> {
+    let (w, h, merged, crops) = layer_crops(p, blobs, req)?;
+    let mut files: Vec<(&str, Vec<u8>)> = vec![("mimetype", b"image/openraster".to_vec())];
+    let mut stack = format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<image version=\"0.0.3\" w=\"{w}\" h=\"{h}\">\n<stack>\n");
+    let names: Vec<String> = (0..crops.len()).map(|i| format!("data/layer{i:03}.png")).collect();
+    // no stack.xml a primeira camada é a de cima
+    for (i, c) in crops.iter().enumerate().rev() {
+        let [x0, y0, x1, y1] = c.rect;
+        stack.push_str(&format!(
+            "<layer name=\"{}\" src=\"{}\" x=\"{x0}\" y=\"{y0}\" opacity=\"1.0\" visibility=\"{}\" composite-op=\"{}\"/>\n",
+            xml_escape(&c.name),
+            names[i],
+            if c.visible { "visible" } else { "hidden" },
+            ora_op(c.blend)
+        ));
+        let _ = (x1, y1);
+    }
+    stack.push_str("</stack>\n</image>\n");
+    files.push(("stack.xml", stack.into_bytes()));
+    for (i, c) in crops.into_iter().enumerate() {
+        let [x0, y0, x1, y1] = c.rect;
+        // camada vazia: PNG de 1×1 transparente (o formato pede uma imagem por camada)
+        let png = if x1 > x0 { png_bytes(&c.rgba, x1 - x0, y1 - y0)? } else { png_bytes(&[0; 4], 1, 1)? };
+        files.push((names[i].as_str(), png));
+    }
+    let merged_img = image::RgbaImage::from_raw(w, h, merged.clone()).ok_or_else(|| ToolError::Invalid("composto com tamanho errado".into()))?;
+    let thumb = image::imageops::thumbnail(&merged_img, (w * 256 / w.max(h)).max(1), (h * 256 / w.max(h)).max(1));
+    files.push(("mergedimage.png", png_bytes(&merged, w, h)?));
+    let (tw, th) = thumb.dimensions();
+    files.push(("Thumbnails/thumbnail.png", png_bytes(thumb.as_raw(), tw, th)?));
+    let n_layers = files.len() - 4;
+    let bytes = zip_stored(&files);
+    std::fs::write(&req.out, &bytes).map_err(|e| ToolError::Invalid(format!("não consegui gravar {}: {e}", req.out)))?;
+    Ok(json!({ "path": req.out, "format": "ora", "width": w, "height": h, "layers": n_layers, "bytes": bytes.len() }))
 }
 
 pub fn export_xdts(p: &Project, req: &ExportXdtsRequest) -> ToolResult<Value> {

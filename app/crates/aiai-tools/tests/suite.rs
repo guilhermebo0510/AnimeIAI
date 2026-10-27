@@ -839,6 +839,19 @@ fn psd_written_by_us_imports_back_into_layers() {
     s.apply(draw_command(&s.project, &DrawRequest { cut: cut.clone(), frame: 0, layer: a.clone(), curves: vec![curve(&[[20.0, 40.0, 1.0], [70.0, 40.0, 1.0]], 8.0, &red, false)], mirror_x: None }).unwrap()).unwrap();
     s.apply(draw_command(&s.project, &DrawRequest { cut: cut.clone(), frame: 0, layer: b.clone(), curves: vec![curve(&[[90.0, 50.0, 1.0], [140.0, 50.0, 1.0]], 8.0, &blue, false)], mirror_x: None }).unwrap()).unwrap();
     s.apply(Command::SetProps { id: b.clone(), name: None, data: json!({"visible": false}) }).unwrap();
+    // ORA (auditoria 4.2d): o mesmo pedido com .ora grava OpenRaster, que volta pela importação
+    let ora = dir.join("ida.ora");
+    let r = export_psd(&s.project, &s.blobs, &ExportPsdRequest { cut: cut.clone(), frame: 0, out: ora.display().to_string(), camera: false }).unwrap();
+    assert_eq!((r["format"].as_str(), r["layers"].as_u64()), (Some("ora"), Some(2)));
+    let bytes = std::fs::read(&ora).unwrap();
+    assert_eq!(&bytes[30..38], b"mimetype", "mimetype primeiro");
+    assert_eq!(&bytes[38..54], b"image/openraster", "e guardado sem compressão");
+    let doc = aiai_tools::import_layers::read_ora(&bytes).unwrap();
+    assert_eq!((doc.width, doc.height, doc.layers.len()), (160, 90, 2));
+    assert_eq!(doc.layers[0].name, "線画");
+    assert!(doc.layers[0].visible && !doc.layers[1].visible);
+    let px = doc.layers[0].image.get(45, 40);
+    assert!(px[3] > 0.99 && px[0] > 0.7 && px[2] < 0.3, "o vermelho no lugar (ORA): {px:?}");
     let psd = dir.join("ida.psd");
     export_psd(&s.project, &s.blobs, &ExportPsdRequest { cut: cut.clone(), frame: 0, out: psd.display().to_string(), camera: false }).unwrap();
     let doc = read_psd(&std::fs::read(&psd).unwrap()).unwrap();

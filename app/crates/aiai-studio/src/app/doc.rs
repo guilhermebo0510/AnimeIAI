@@ -34,6 +34,8 @@ pub(crate) enum DialogKind {
     ExportFrame,
     /// Arquivo > Exportar PSD em camadas (quadro atual).
     ExportPsd,
+    /// Arquivo > Exportar ORA em camadas (OpenRaster: Krita, GIMP, MyPaint).
+    ExportOra,
     ExportSvg,
     ExportOtio,
     /// Arquivo > Exportar timesheet XDTS (corte ativo).
@@ -643,6 +645,7 @@ impl StudioApp {
             DialogKind::ImportImage => tr("menu.file.import_image"),
             DialogKind::ExportFrame => tr("menu.file.export_frame"),
             DialogKind::ExportPsd => tr("menu.file.export_psd"),
+            DialogKind::ExportOra => tr("menu.file.export_ora"),
             DialogKind::ExportSvg => tr("menu.file.export_svg"),
             DialogKind::ExportOtio => tr("menu.file.export_otio"),
             DialogKind::ExportXdts => tr("menu.file.export_xdts"),
@@ -652,6 +655,7 @@ impl StudioApp {
         .to_owned();
         let cut_name = self.ed.cut.as_ref().and_then(|c| self.core.project.node(c)).map(|n| n.name.clone()).unwrap_or_else(|| "corte".into());
         let (psd_name, xdts_name) = (format!("{cut_name}_q{:03}.psd", self.ed.frame + 1), format!("{cut_name}.xdts"));
+        let ora_name = format!("{cut_name}_q{:03}.ora", self.ed.frame + 1);
         let svg_name = format!("{cut_name}_q{:03}.svg", self.ed.frame + 1);
         let otio_name = format!("{}.otio", self.active_edit().and_then(|e| self.core.project.node(&e)).map(|n| n.name.clone()).unwrap_or_else(|| "edicao".into()));
         let frame_name = format!("{}_q{:03}.png", self.ed.cut.as_ref().and_then(|c| self.core.project.node(c)).map(|n| n.name.clone()).unwrap_or_else(|| "quadro".into()), self.ed.frame + 1);
@@ -674,6 +678,7 @@ impl StudioApp {
                 DialogKind::ImportImage => d.add_filter("Imagem", &IMAGE_EXTS).add_filter("PSD / ORA (camadas)", &["psd", "ora"]).pick_file(),
                 DialogKind::ExportFrame => d.add_filter("PNG", &["png"]).set_file_name(frame_name).save_file(),
                 DialogKind::ExportPsd => d.add_filter("PSD", &["psd"]).set_file_name(psd_name).save_file(),
+                DialogKind::ExportOra => d.add_filter("OpenRaster", &["ora"]).set_file_name(ora_name).save_file(),
                 DialogKind::ExportSvg => d.add_filter("SVG", &["svg"]).set_file_name(svg_name).save_file(),
                 DialogKind::ExportOtio => d.add_filter("OpenTimelineIO", &["otio"]).set_file_name(otio_name).save_file(),
                 DialogKind::ExportXdts => d.add_filter("XDTS", &["xdts"]).set_file_name(xdts_name).save_file(),
@@ -713,6 +718,8 @@ impl StudioApp {
                         DialogKind::ImportImage => self.import_file(&path),
                         DialogKind::ExportFrame => self.export_frame(&path),
                         DialogKind::ExportPsd => self.export_with("EXPORT_PSD", &path),
+                        // o mesmo EXPORT_PSD: o nome terminado em .ora grava OpenRaster
+                        DialogKind::ExportOra => self.export_with("EXPORT_PSD", &path.with_extension("ora")),
                         DialogKind::ExportSvg => self.export_with("EXPORT_SVG", &path),
                         DialogKind::ExportOtio => self.export_otio(&path),
                         DialogKind::ExportXdts => self.export_with("EXPORT_XDTS", &path),

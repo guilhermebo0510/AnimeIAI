@@ -104,7 +104,7 @@ Os 5 itens P0 do plano da auditoria estão feitos (um deles com decisão mantida
 | 4.2a | Importar imagem (PNG, JPEG, WebP, TIFF, BMP) + arrastar e soltar | FEITO | `app/Cargo.toml:24`; `menu.file.import_image` (`app.rs:630`); commit 9d3e5b2 | nada |
 | 4.2b | Painel Sub View | FEITO | `panels/subview.rs`; commit b557a6a | nada |
 | 4.2c | Exportar PSD, SVG, XDTS, OTIO, quadro | FEITO | `app.rs:634-651`; commits 9273374 e seguintes | nada |
-| 4.2d | Importar PSD/ORA, exportar ORA | FEITO, menos exportar ORA (26/10) | Arquivo > Importar aceita .psd (RGB 8 bits, cru ou RLE) e .ora (ZIP guardado/deflate): uma camada raster por camada, com nome, visibilidade, opacidade e mistura; bridge `IMPORT_LAYERS` e MCP `aiai_import_layers` | exportar ORA |
+| 4.2d | Importar PSD/ORA, exportar ORA | FEITO (27/10) | Arquivo > Importar aceita .psd (RGB 8 bits, cru ou RLE) e .ora (ZIP guardado/deflate): uma camada raster por camada, com nome, visibilidade, opacidade e mistura; bridge `IMPORT_LAYERS` e MCP `aiai_import_layers`. Arquivo > Exportar ORA em camadas (e `EXPORT_PSD`/`aiai_export_psd` com `out` .ora): `export::export_ora`, mimetype guardado primeiro, `stack.xml`, um PNG por camada recortado, composto e miniatura; o teste lê de volta pela importação | |
 | 4.2e | Importar 3D (.obj, .gltf, .glb) | FEITO | `aiai-3d-model/src/import.rs:37` | `.fbx` não; `.vrm` responde "em breve" (`import.rs:79`) |
 | 4.3a | Autosave antes do primeiro Salvar | FEITO | `app/autosave.rs` (recovery a cada 2 min, intervalo nas Preferências) | nada |
 | 4.3b | `sync_all` por tile travando 10 s | FEITO | `persist.rs:278` (blobs em paralelo, WAL sem sync por tile); commit fc17a74, eeadec5 | nada |
