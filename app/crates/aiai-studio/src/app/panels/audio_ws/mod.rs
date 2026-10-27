@@ -301,7 +301,7 @@ fn poll_job(core: &mut CoreSession, ed: &mut Editor, ctx: &egui::Context) {
             let r = r.and_then(|out| apply_job(core, &out, &job.after, &job.label).map(|_| out));
             if let Some(out) = actions::notify_err(ed, r) {
                 match &job.after {
-                    After::Open => ed.audio_ws.wave.open_asset(out.asset.clone()),
+                    After::Open => ed.audio_ws.wave.open_edited(out.asset.clone()),
                     After::Retarget { .. } => {}
                     After::Take { line, label } => ed.audio_ws.tts.add_take(*line, label.clone(), out.asset.clone(), out.duration_s),
                 }

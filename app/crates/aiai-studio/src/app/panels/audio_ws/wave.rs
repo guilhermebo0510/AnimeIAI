@@ -107,11 +107,13 @@ pub(crate) struct WaveState {
     pub rect: Option<Rect>,
     loaded_key: Option<String>,
     lane_w: f32,
+    /// Campos Início/Fim/Duração em amostras (senão em segundos).
+    pub units_samples: bool,
 }
 
 impl Default for WaveState {
     fn default() -> Self {
-        WaveState { target: None, seen_sel: None, view_start: 0.0, fpp: 0.0, amp: 1.0, sel: None, cursor: 0, drag: None, view: View::Wave, gain_db: 3.0, curve: FadeCurve::Linear, snap_zero: false, looping: false, clip: None, spec: Spec::default(), keys: Vec::new(), rect: None, loaded_key: None, lane_w: 600.0 }
+        WaveState { target: None, seen_sel: None, view_start: 0.0, fpp: 0.0, amp: 1.0, sel: None, cursor: 0, drag: None, view: View::Wave, gain_db: 3.0, curve: FadeCurve::Linear, snap_zero: false, looping: false, clip: None, spec: Spec::default(), keys: Vec::new(), rect: None, loaded_key: None, lane_w: 600.0, units_samples: false }
     }
 }
 
@@ -125,6 +127,12 @@ impl WaveState {
     pub(crate) fn open_asset(&mut self, id: Id) {
         self.target = Some(Target::Asset(id));
         self.sel = None;
+    }
+
+    /// Abre o resultado de uma edição deste arquivo mantendo a seleção (ela é conferida contra a nova duração ao
+    /// carregar): ganho, silêncio ou colar em sequência atingem o mesmo trecho, como no clipe de um corte.
+    pub(crate) fn open_edited(&mut self, id: Id) {
+        self.target = Some(Target::Asset(id));
     }
 
     /// Seleção em segundos (para o rack e a redução de ruído).
@@ -243,7 +251,7 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
     let main = Rect::from_min_max(avail.min, egui::pos2(avail.right() - hist_w - if wide { 8.0 } else { 0.0 }, avail.bottom() - if wide { 22.0 } else { 120.0 }));
     editor_area(env, ui, main, &loaded, placement.as_ref());
     let info = Rect::from_min_max(egui::pos2(main.left(), main.bottom() + 2.0), egui::pos2(main.right(), main.bottom() + 20.0));
-    selection_info(env, ui, info, rate);
+    selection_info(env, ui, info, rate, frames);
     let hist = if wide { Rect::from_min_max(egui::pos2(main.right() + 8.0, avail.top()), avail.max) } else { Rect::from_min_max(egui::pos2(avail.left(), info.bottom() + 4.0), avail.max) };
     history(env, ui, hist, &asset, placement.as_ref());
     process_keys(env, &asset, placement.as_ref(), &loaded);
@@ -868,15 +876,79 @@ fn fmt_tick(s: f64, step: f64) -> String {
     }
 }
 
-fn selection_info(env: &mut Env, ui: &mut Ui, r: Rect, rate: u32) {
+/// Campo de posição em quadros de áudio, mostrado em segundos (3 casas) ou em amostras.
+fn pos_field(ui: &mut Ui, v: usize, lo: usize, hi: usize, rate: u32, samples: bool) -> (egui::Response, Option<usize>) {
+    if samples {
+        let mut x = v as u64;
+        let r = ui.add(egui::DragValue::new(&mut x).range(lo as u64..=hi as u64).speed((rate as f64 / 200.0).max(1.0)));
+        let ch = r.changed().then_some(x as usize);
+        (r, ch)
+    } else {
+        let mut s = v as f64 / rate as f64;
+        let r = ui.add(egui::DragValue::new(&mut s).range(lo as f64 / rate as f64..=hi as f64 / rate as f64).speed(0.001).min_decimals(3).max_decimals(3).suffix(" s"));
+        let ch = r.changed().then(|| ((s * rate as f64).round().max(0.0) as usize).clamp(lo, hi));
+        (r, ch)
+    }
+}
+
+/// Início / Fim / Duração da seleção (ou o cursor) em campos editáveis, com a unidade alternável e "a partir do 0"
+/// (auditoria V2: a precisão não pode depender de conseguir arrastar a onda até a amostra certa).
+fn selection_info(env: &mut Env, ui: &mut Ui, r: Rect, rate: u32, frames: usize) {
     let t = env.t;
-    let st = &env.ed.audio_ws.wave;
-    let s = |f: usize| fmt_time(f as f64 / rate as f64);
-    let text = match st.sel {
-        Some((a, b)) => format!("{}  {} – {}  ({:.3} s)", tr("audio.wave.selection"), s(a), s(b), (b - a) as f64 / rate as f64),
-        None => format!("{}  {}", tr("audio.wave.cursor"), s(st.cursor)),
-    };
-    ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, text, FontId::monospace(11.0), t.text_dim);
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r).layout(egui::Layout::left_to_right(egui::Align::Center)));
+    child.set_clip_rect(r.intersect(ui.clip_rect()));
+    let ui = &mut child;
+    ui.spacing_mut().item_spacing.x = 4.0;
+    ui.spacing_mut().interact_size.y = 16.0;
+    let samples = env.ed.audio_ws.wave.units_samples;
+    let (sel, cursor) = (env.ed.audio_ws.wave.sel, env.ed.audio_ws.wave.cursor);
+    let small = |s: &str| egui::RichText::new(s).size(11.0).color(t.text_dim);
+    match sel {
+        Some((a, b)) => {
+            ui.label(small(tr("audio.wave.sel_start")));
+            let (ra, na) = pos_field(ui, a, 0, b.saturating_sub(1), rate, samples);
+            env.note("audio:wave:sel_start", ra.rect);
+            ui.label(small(tr("audio.wave.sel_end")));
+            let (rb, nb) = pos_field(ui, b, (a + 1).min(frames), frames, rate, samples);
+            env.note("audio:wave:sel_end", rb.rect);
+            ui.label(small(tr("audio.wave.sel_len")));
+            let (rl, nl) = pos_field(ui, b - a, 1.min(frames - a), frames - a, rate, samples);
+            env.note("audio:wave:sel_len", rl.rect);
+            let zero = ui.add_enabled(a > 0, egui::Button::new(egui::RichText::new(tr("audio.wave.from_zero")).size(11.0)).small()).on_hover_text(tr("audio.wave.from_zero.tip"));
+            env.note("audio:wave:from_zero", zero.rect);
+            let st = &mut env.ed.audio_ws.wave;
+            if let Some(x) = na {
+                st.sel = Some((x, b));
+            } else if let Some(x) = nb {
+                st.sel = Some((a, x));
+            } else if let Some(d) = nl {
+                st.sel = Some((a, (a + d).min(frames)));
+            } else if zero.clicked() {
+                st.sel = Some((0, b));
+                st.cursor = 0;
+            }
+        }
+        None => {
+            ui.label(small(tr("audio.wave.cursor")));
+            let (rc, nc) = pos_field(ui, cursor, 0, frames, rate, samples);
+            env.note("audio:wave:cursor_pos", rc.rect);
+            let zero = ui.add_enabled(cursor > 0, egui::Button::new(egui::RichText::new(tr("audio.wave.to_zero")).size(11.0)).small()).on_hover_text(tr("audio.wave.to_zero.tip"));
+            env.note("audio:wave:from_zero", zero.rect);
+            if let Some(x) = nc {
+                env.ed.audio_ws.wave.cursor = x;
+            } else if zero.clicked() {
+                env.ed.audio_ws.wave.cursor = 0;
+            }
+        }
+    }
+    let u = ui.selectable_label(samples, egui::RichText::new(tr("audio.wave.units_samples")).size(11.0)).on_hover_text(tr("audio.wave.units_samples.tip"));
+    env.note("audio:wave:units", u.rect);
+    if u.clicked() {
+        env.ed.audio_ws.wave.units_samples = !samples;
+    }
+    if sel.is_none() {
+        ui.label(egui::RichText::new(fmt_time(frames as f64 / rate as f64)).size(11.0).monospace().color(t.text_dim)).on_hover_text(tr("audio.wave.total.tip"));
+    }
     if let Some(e) = &env.ed.audio_ws.player.last_error {
         ui.painter().text(r.right_center(), egui::Align2::RIGHT_CENTER, e, FontId::proportional(11.0), t.danger);
     }
@@ -1096,6 +1168,14 @@ fn paste(env: &mut Env, asset: &Id, placement: Option<&(NodeId, aiai_core::Audio
     // mesma regra do `audio_edit`: "Fala" → "Fala v2", sem acumular "(editado)"
     let name = aiai_tools::audio_edit::next_version_name(p, &name);
     let src_rate = piece.rate;
+    // o trecho inserido fica selecionado, igual ao colar da mesma versão (auditoria V2: o próximo ganho/silêncio
+    // atinge o mesmo tipo de alvo nas duas rotas); o comprimento é o do `resample` (piso de n × destino / origem)
+    let ins = if src_rate == target.rate { ce - cs } else { ((ce - cs) as u128 * target.rate as u128 / src_rate.max(1) as u128) as usize };
+    let at_after = match sel {
+        Some((a, b)) => a.min(target.frames() - (b - a)),
+        None => at.min(target.frames()),
+    };
+    st.wave.sel = (ins > 0).then_some((at_after, at_after + ins));
     let from_id = asset.clone();
     let (tx, rx) = crossbeam_channel::bounded(1);
     let after = after_for(placement, false);
@@ -1167,6 +1247,16 @@ mod tests {
         let t = 1.0 - (best as f64 + 0.5) / 64.0;
         let f = 20.0 * (24_000.0f64 / 20.0).powf(t);
         assert!((600.0..1700.0).contains(&f), "pico em {f:.0} Hz");
+    }
+
+    #[test]
+    fn edit_results_keep_the_selection_and_other_files_clear_it() {
+        let mut st = WaveState::default();
+        st.sel = Some((10, 20));
+        st.open_edited(aiai_core::IdGen::Uuid7.next());
+        assert_eq!(st.sel, Some((10, 20)), "ganho/silêncio/colar seguem no mesmo trecho");
+        st.open_asset(aiai_core::IdGen::Uuid7.next());
+        assert_eq!(st.sel, None, "abrir outro arquivo começa sem seleção");
     }
 
     #[test]
