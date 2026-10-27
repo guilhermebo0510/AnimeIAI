@@ -396,6 +396,12 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
             row(ui, &t, compact, "opt.pen_simplify", |ui| {
                 ui.add(egui::Slider::new(&mut o.pen_simplify, 0.0..=100.0).max_decimals(0)).on_hover_text(tr("opt.pen_simplify.tip"));
             });
+            row(ui, &t, compact, "opt.pen_taper_in", |ui| {
+                ui.add(egui::Slider::new(&mut o.pen_taper_in, 0.0..=400.0).max_decimals(0).suffix(" px")).on_hover_text(tr("opt.pen_taper.tip"));
+            });
+            row(ui, &t, compact, "opt.pen_taper_out", |ui| {
+                ui.add(egui::Slider::new(&mut o.pen_taper_out, 0.0..=400.0).max_decimals(0).suffix(" px")).on_hover_text(tr("opt.pen_taper.tip"));
+            });
             ui.checkbox(&mut o.pen_color_trace, tr("opt.pen_color_trace")).on_hover_text(tr("opt.pen_color_trace.tip"));
             ui.checkbox(&mut o.pen_weld, tr("opt.pen_weld")).on_hover_text(tr("opt.pen_weld.tip"));
             ui.checkbox(&mut o.pen_quickshape, tr("opt.pen_quickshape")).on_hover_text(tr("opt.pen_quickshape.tip"));

@@ -40,7 +40,7 @@ Os 5 itens P0 do plano da auditoria estão feitos (um deles com decisão mantida
 | 1.8b | Borrador sem pegada 2D e sem ver o traço atual | FEITO | `brush.rs:1769` (`smudge_carry`); commit 5e55710 | nada |
 | 1.8c | Guache seco sem suavização do ângulo | FEITO | commit 5e55710 (passa-baixa na direção) | nada |
 | 1.8d | Rosas (1 cor), Nuvem (escamas), Folhagem/Grama sem duas cores | FEITO | `TwoTone`, `brush.rs:184,683-725`; commit 92dc6bb | nada |
-| 1.8e | Pressão fixa 1,0 no mouse, sem simulação por velocidade | PARCIAL | `brush_dyn.rs` tem dinâmica por velocidade/pressão/inclinação e as canetas S25 usam (2472df3, 63210d9, mudanças ainda não commitadas em `brush_dyn.rs`/`brush.rs`) | `Marker`/`Pencil` vetoriais seguem tubo uniforme com mouse; curva de entrada/saída para mouse no vetor |
+| 1.8e | Pressão fixa 1,0 no mouse, sem simulação por velocidade | FEITO (27/10) | pincéis: dinâmica por velocidade/pressão/inclinação (`brush_dyn.rs`); caneta vetorial: "Início (afinar)" e "Fim (afinar)" em px, como o Início e fim do Clip Studio, valem para qualquer ponta e sem pressão (`tools::taper_profile` grava o perfil de largura do traço); conferido pela bridge com a G-pen de 16 px e no teste do perfil | |
 
 ### Parte 2 (UI/UX e ferramentas)
 

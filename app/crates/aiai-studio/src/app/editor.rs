@@ -662,6 +662,10 @@ pub(crate) struct ToolOptions {
     pub pen_weld: bool,
     /// Forma rápida: parar a caneta no fim do traço encaixa numa reta, arco ou elipse.
     pub pen_quickshape: bool,
+    /// Início e fim (como no Clip Studio, auditoria 1.8e): afina o começo e o fim do traço por este comprimento (px do
+    /// desenho), com qualquer ponta e sem pressão (mouse). 0 = desligado.
+    pub pen_taper_in: f32,
+    pub pen_taper_out: f32,
     pub pen_shape: PenShape,
     /// Mover em camada vetorial edita os pontos dos traços em vez de mover a seleção.
     pub stab_mode: StabMode,
@@ -738,6 +742,8 @@ impl Default for ToolOptions {
             pen_aliased: false,
             pen_autoclose: true,
             pen_simplify: 10.0,
+            pen_taper_in: 0.0,
+            pen_taper_out: 0.0,
             pen_color_trace: false,
             pen_weld: true,
             pen_quickshape: true,

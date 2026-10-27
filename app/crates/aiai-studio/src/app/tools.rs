@@ -69,6 +69,43 @@ pub(crate) fn eraser_preset(o: &ToolOptions, brush: Option<BrushPreset>) -> Brus
     p
 }
 
+/// Perfil de largura do "Início e fim" da caneta: rampa suave de 10% a 100% nos primeiros `tin` px e nos últimos `tout`
+/// px do traço (no máximo metade do comprimento cada). Sem afinar = perfil vazio (só a pressão e a regra da ponta).
+pub(crate) fn taper_profile(points: &[StrokePoint], tin: f32, tout: f32) -> WidthProfile {
+    if tin <= 0.0 && tout <= 0.0 || points.len() < 2 {
+        return WidthProfile::default();
+    }
+    let total: f32 = points.windows(2).map(|w| (w[1].x - w[0].x).hypot(w[1].y - w[0].y)).sum();
+    if total < 1.0 {
+        return WidthProfile::default();
+    }
+    let a = (tin.max(0.0) / total).min(0.5);
+    let b = (tout.max(0.0) / total).min(0.5);
+    let mut v: Vec<[f32; 2]> = Vec::new();
+    // rampa com 4 degraus (suaviza a junção como o smoothstep do afinamento automático)
+    let ease = |u: f32| 0.1 + 0.9 * (u * u * (3.0 - 2.0 * u));
+    if a > 0.0 {
+        for k in 0..=4 {
+            let u = k as f32 / 4.0;
+            v.push([a * u, ease(u)]);
+        }
+    } else {
+        v.push([0.0, 1.0]);
+    }
+    if b > 0.0 {
+        for k in (0..=4).rev() {
+            let u = k as f32 / 4.0;
+            let t = 1.0 - b * u;
+            if v.last().is_none_or(|l| t > l[0]) {
+                v.push([t, ease(u)]);
+            }
+        }
+    } else {
+        v.push([1.0, 1.0]);
+    }
+    WidthProfile(v)
+}
+
 /// Camada onde o gesto vai agir, já validada (tipo, visível, destravada).
 pub(crate) struct Target {
     pub cut: NodeId,
@@ -327,12 +364,12 @@ fn commit_pen(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant
     }
     let stroke = Stroke {
         id: Id(String::new()),
+        profile: if closed { WidthProfile::default() } else { taper_profile(&points, o.pen_taper_in, o.pen_taper_out) },
         points,
         geometry,
         tension: 0.0,
         tip: o.pen_tip,
         width: o.pen_width.max(0.1),
-        profile: WidthProfile::default(),
         color: env.ed.color.clone(),
         opacity: 1.0,
         closed,
@@ -1343,6 +1380,22 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
 mod tests {
     use super::*;
     use crate::app::commands::{add_layer, quick_start};
+
+    #[test]
+    fn start_and_end_taper_profile_ramps_by_length() {
+        let pts: Vec<StrokePoint> = (0..=10).map(|i| StrokePoint { x: i as f32 * 30.0, y: 0.0, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect();
+        assert!(taper_profile(&pts, 0.0, 0.0).0.is_empty(), "desligado = sem perfil");
+        let p = taper_profile(&pts, 60.0, 30.0).0;
+        // 300 px: começo afina em 20% do traço, fim em 10%
+        assert_eq!(p.first().copied(), Some([0.0, 0.1]));
+        assert!(p.iter().any(|q| (q[0] - 0.2).abs() < 1e-4 && (q[1] - 1.0).abs() < 1e-4));
+        assert!(p.iter().any(|q| (q[0] - 0.9).abs() < 1e-4 && (q[1] - 1.0).abs() < 1e-4));
+        assert_eq!(p.last().copied(), Some([1.0, 0.1]));
+        assert!(p.windows(2).all(|w| w[1][0] > w[0][0]), "t crescente");
+        // traço curto: cada lado no máximo metade
+        let p = taper_profile(&pts[..2], 500.0, 500.0).0;
+        assert!(p.iter().all(|q| q[0] <= 1.0) && p.iter().any(|q| (q[0] - 0.5).abs() < 1e-4));
+    }
 
     /// Quanto um carimbo da borracha (raio 20) tira de uma camada opaca, do centro para a borda (px 0..32).
     fn erased_profile(o: &ToolOptions, brush: Option<BrushPreset>) -> Vec<f32> {

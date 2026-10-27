@@ -265,6 +265,15 @@ fn pen_rows(env: &mut Env, ui: &mut Ui) {
     if plain_bar(env, ui, "opt.pen_simplify", &mut v, 0.0, 100.0, false, 0, "") {
         env.ed.opts.pen_simplify = v;
     }
+    // Início e fim: afinar por comprimento, sem depender de pressão (mouse)
+    let mut v = env.ed.opts.pen_taper_in;
+    if plain_bar(env, ui, "opt.pen_taper_in", &mut v, 0.0, 400.0, false, 0, " px") {
+        env.ed.opts.pen_taper_in = v;
+    }
+    let mut v = env.ed.opts.pen_taper_out;
+    if plain_bar(env, ui, "opt.pen_taper_out", &mut v, 0.0, 400.0, false, 0, " px") {
+        env.ed.opts.pen_taper_out = v;
+    }
     let o = &mut env.ed.opts;
     let r = ui.checkbox(&mut o.pen_weld, tr("opt.pen_weld")).on_hover_text(tr("opt.pen_weld.tip"));
     env.notes.push(("tprop:pen_weld".into(), r.rect));
