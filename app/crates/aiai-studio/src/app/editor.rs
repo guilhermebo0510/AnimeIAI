@@ -704,6 +704,9 @@ pub(crate) struct ToolOptions {
     pub stab_window: u32,
     /// Raio da corda do lazy brush em PONTOS da tela (vira pixels do desenho dividindo pela escala da visão).
     pub stab_radius: f32,
+    /// Ao soltar, o traço estabilizado completa até onde a caneta está (padrão, o traço chega aonde a mão parou) ou
+    /// termina onde o estabilizador estava (sem o pulo final; auditoria 1.7B, escolha do artista).
+    pub stab_tail: bool,
     pub brush_preset: usize,
     pub brush_size: f32,
     pub brush_opacity: f32,
@@ -783,6 +786,7 @@ impl Default for ToolOptions {
             pen_shape: PenShape::Freehand,
             stab_mode: StabMode::Average,
             stab_window: 4,
+            stab_tail: true,
             stab_radius: 10.0,
             brush_preset: 1,
             brush_size: 24.0,

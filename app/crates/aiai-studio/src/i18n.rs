@@ -1183,6 +1183,8 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("opt.width", "Largura", "Width"),
     ("opt.tip", "Ponta", "Tip"),
     ("opt.stabilizer", "Estabilizador", "Stabilizer"),
+    ("opt.stab_tail", "Completar até a caneta ao soltar", "Finish at the pen on release"),
+    ("opt.stab_tail.tip", "Ligado: ao soltar, o traço estabilizado vai até onde a caneta parou (pode dar um pulo no fim). Desligado: termina onde o estabilizador estava, sem o pulo.", "On: on release the stabilized stroke goes to where the pen stopped (may jump at the end). Off: it ends where the stabilizer was, without the jump."),
     ("opt.aliased", "Sem antisserrilhado", "Aliased (no anti-aliasing)"),
     ("opt.autoclose", "Fechar ao voltar", "Close on return"),
     ("opt.pen_simplify", "Simplificar ao soltar", "Simplify on release"),

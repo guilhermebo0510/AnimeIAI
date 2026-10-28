@@ -18,7 +18,7 @@ Status em `06-status-auditoria-1.md` e `07-status-auditoria-2.md`. Em aberto na 
 - [x] 4.8f casamento de inclusão (BasicPBC) no `propagate_fills`
 - [x] 4.4c alocações (imagem f32 de quadro inteiro no composto) — cel de tiles/preenchimento/traço montado na caixa
 - [x] 4.4a compositor na GPU (e as metas de 4K de 4.4g) — medido: retângulo sujo + quadro reciclado (78→21–28 ms); GPU nos plugins
-- [ ] 4.6g Kokoro sem `uv` (ONNX embutido) — só se a instalação não oferecer risco
+- [x] 4.6g Kokoro sem `uv` (ONNX embutido) — decisão registrada: ort baixa binários de fora + G2P em Python; fica o uv com verificação
 - [x] 4.6h cor linear / HDR (mistura em luz linear no projeto, tiles AIT2 sem corte)
 - [x] 4.6k projeto em arquivos por corte com trava por corte
 - [x] 4.6d rigging 2D nativo (ossos, IK, pai-filho)
@@ -26,7 +26,7 @@ Status em `06-status-auditoria-1.md` e `07-status-auditoria-2.md`. Em aberto na 
 - [x] 4.9g plugins `.aiaiplugin` (filtros WGSL na GPU)
 - [x] 4.8e IA pontual de traço (só assistência determinística; sem IA generativa de imagem) — linha fantasma + embelezar
 - [x] 4.1c–f mesa digitalizadora (WM_POINTER nativo, inclinação, borracha traseira, coalescência; WinTab fica de fora)
-- [ ] 1.7B / 1.7C2 decisões do usuário (deixar registrado o motivo)
+- [x] 1.7B / 1.7C2 decisões do usuário (1.7B virou opção; 1.7C2 registrada)
 - [ ] 3.1–3.11 roteiro do curta (rig e cenas) — scripts de produção
 
 Auditoria 2: as 8 propostas estão feitas; reler os arquivos `AUDITORIA_V2*.md` e `auditoria-v2/` para confirmar que

@@ -431,10 +431,11 @@ impl StudioApp {
                     "pen_quickshape" => o.pen_quickshape = flag(&v)?,
                     "pen_color_trace" => o.pen_color_trace = flag(&v)?,
                     "pen_autoclose" => o.pen_autoclose = flag(&v)?,
+                    "stab_tail" => o.stab_tail = flag(&v)?,
                     "brush_no_overflow" => o.brush_no_overflow = flag(&v)?,
                     "pen_width" => o.pen_width = num(&v)?.clamp(0.1, 500.0),
                     "pen_simplify" => o.pen_simplify = num(&v)?.clamp(0.0, 100.0),
-                    _ => return Err(BridgeError::invalid_params(format!("opção desconhecida: {key} (pen_ghost, pen_weld, pen_quickshape, pen_color_trace, pen_autoclose, brush_no_overflow, pen_width, pen_simplify)"))),
+                    _ => return Err(BridgeError::invalid_params(format!("opção desconhecida: {key} (pen_ghost, pen_weld, pen_quickshape, pen_color_trace, pen_autoclose, stab_tail, brush_no_overflow, pen_width, pen_simplify)"))),
                 }
                 json!({ "key": key, "value": v })
             }

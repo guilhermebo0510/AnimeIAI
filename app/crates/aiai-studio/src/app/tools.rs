@@ -261,7 +261,8 @@ pub(crate) fn update_eraser_hits(env: &mut Env, g: &mut StrokeGesture) {
 
 pub(crate) fn finish_stroke(env: &mut Env, mut g: Box<StrokeGesture>, released_at: Instant) {
     // linha fantasma aceita: a cauda do estabilizador (que corre atrás da caneta parada) não volta o traço da ponta dela
-    let tail = if g.ghost_tip.is_some() { Vec::new() } else { g.stab.finish() };
+    // sem completar (opção do estabilizador): o traço termina onde o estabilizador estava, sem o pulo final
+    let tail = if g.ghost_tip.is_some() || !env.ed.opts.stab_tail { Vec::new() } else { g.stab.finish() };
     let pressure = g.samples.last().map(|s| s.pressure).unwrap_or(1.0);
     let tilt = g.samples.last().and_then(|s| s.tilt);
     for q in tail {

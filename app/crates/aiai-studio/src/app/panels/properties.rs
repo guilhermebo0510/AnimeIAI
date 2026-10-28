@@ -442,6 +442,9 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
                     StabMode::Off => {}
                 }
             });
+            if o.stab_mode != StabMode::Off {
+                ui.checkbox(&mut o.stab_tail, tr("opt.stab_tail")).on_hover_text(tr("opt.stab_tail.tip"));
+            }
             ui.checkbox(&mut o.pen_aliased, tr("opt.aliased"));
             ui.checkbox(&mut o.pen_autoclose, tr("opt.autoclose")).on_hover_text(tr("opt.autoclose.tip"));
             row(ui, &t, compact, "opt.pen_simplify", |ui| {
@@ -927,6 +930,9 @@ fn stabilizer_row(ui: &mut Ui, t: &crate::theme::Tokens, compact: bool, o: &mut 
                 ui.add(egui::DragValue::new(&mut o.stab_radius).range(1.0..=80.0).speed(0.3).suffix(" pt").max_decimals(0)).on_hover_text(tr("stab.radius.tip"));
             }
             StabMode::Off => {}
+        }
+        if o.stab_mode != StabMode::Off {
+            ui.checkbox(&mut o.stab_tail, tr("opt.stab_tail")).on_hover_text(tr("opt.stab_tail.tip"));
         }
     });
 }
