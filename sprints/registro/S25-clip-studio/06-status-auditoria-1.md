@@ -113,7 +113,7 @@ Os 5 itens P0 do plano da auditoria estão feitos (um deles com decisão mantida
 | 4.3e | `collect_garbage` nunca chamada | FEITO | `session.rs:174` (automática) e `persist.rs:372` (ao salvar) | nada |
 | 4.4a | GPU ociosa, tudo na CPU | NÃO FEITO | nenhum crate do motor usa wgpu para compor | decisão: compositor na GPU |
 | 4.4b | Sem cache por camada | FEITO | `FrameCache` em `aiai-render` (2e492d2, 0de0ec5) | nada |
-| 4.4c | Tempestade de alocações 132 MB por camada | PARCIAL | caixa do alfa, tiles tocados, LRU de tiles (2e492d2) | ainda `Image` f32 de quadro inteiro no composto |
+| 4.4c | Tempestade de alocações 132 MB por camada | FEITO (28/10) | caixa do alfa, tiles tocados, LRU de tiles (2e492d2); e agora o cel sem imagem de quadro inteiro (tiles, preenchimentos e traços vetoriais) é montado só na caixa do que desenha (`compose.rs`, `tiles_only_placed` generalizado: máscaras e coberturas rasterizadas contra o canvas e escritas deslocadas), sem a `Image` f32 do canvas. Mesmos pixels (`golden.rs::boxed_cel_matches_the_full_canvas_image`: 0 diferenças); bench 4K (24 camadas): render 579–590 ms contra 617–635 ms do compositor anterior na mesma máquina | sobram quadro inteiro: pasta isolada, camada de efeito/ajuste e cel com imagem importada ou com movimento (precisam do quadro de baixo ou da reamostragem) |
 | 4.4d | Disputa de `rayon` entre ferramenta e render | FEITO (26/10) | pool próprio do render do canvas (metade dos núcleos) em `render_service.rs` | medir no bench 4K |
 | 4.4e | Máscara de preenchimento do tamanho do quadro | FEITO | não reproduziu: `mask_of` já recorta (backlog) | nada |
 | 4.4f | Tamanho do canvas do corte editável; Começo rápido ignorava o tamanho | FEITO | `canvas.rs:141`; `props.canvas_4k` (commit 9e5626d) | nada |

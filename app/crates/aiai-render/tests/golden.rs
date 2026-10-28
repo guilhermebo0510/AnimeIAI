@@ -441,3 +441,45 @@ fn the_anchor_is_the_pivot_of_rotation_and_a_static_project_is_unchanged() {
     assert!(j.get("scale").is_none() && j.get("rotation").is_none() && j.get("anchor").is_none(), "{j}");
     assert_eq!(comp_render(&s, &cut, 0).content_hash(), plain.content_hash());
 }
+
+/// Auditoria 4.4c: o cel montado só na caixa do conteúdo (tiles + preenchimento + traços, sem a imagem f32 do quadro
+/// inteiro) dá exatamente os pixels da imagem do canvas inteiro.
+#[test]
+fn boxed_cel_matches_the_full_canvas_image() {
+    let mut s = CoreSession::for_tests("caixa");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 640, "height": 360}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = create(&mut s, Some(&sc), "C", NodeKind::Cut(CutData::new(4)));
+    let (l, cel) = layer(&mut s, &cut, "mista", LayerType::Raster, serde_json::Value::Null);
+    // tile num canto, preenchimento no meio e traço atravessando
+    let mut img = Image::new(640, 360);
+    for y in 270..330 {
+        for x in 520..600 {
+            img.data[y * 640 + x] = [0.2, 0.4, 0.1, 0.5];
+        }
+    }
+    let mut edits = Vec::new();
+    for (tx, ty, px) in tile::image_to_tiles(&img, [0, 0]) {
+        if let Some(px) = px {
+            edits.push(TileEdit { x: tx, y: ty, blob: Some(s.blobs.put(tile::encode_tile(&px))) });
+        }
+    }
+    s.apply(Command::SetTiles { cel: cel.clone(), tiles: edits }).unwrap();
+    let circle: Vec<[f32; 2]> = (0..40).map(|i| { let a = i as f32 / 40.0 * std::f32::consts::TAU; [300.0 + 70.0 * a.cos(), 160.0 + 50.0 * a.sin()] }).collect();
+    let cov = poly::fill_polygons(&[circle], true, 640, 360).unwrap();
+    let mask = Mask::from_coverage(cov.width, cov.height, &cov.cov);
+    let mh = s.blobs.put(mask.encode());
+    let red = ColorRef::Direct { rgba: Rgba::from_hex("#d04030").unwrap() };
+    s.apply(Command::ReplaceFills { cel: cel.clone(), fills: vec![FillRegion { id: Id::from(""), seed: [300.0, 160.0], color: red, mask: Some(mh), bounds: [cov.x0, cov.y0, cov.width as i32, cov.height as i32], gradient: None }] }).unwrap();
+    let st = gpen(&[(120.0, 80.0, 0.3), (300.0, 200.0, 1.0), (470.0, 120.0, 0.6)], 6.0, ColorRef::Direct { rgba: Rgba::BLACK });
+    s.apply(Command::InsertStrokes { cel: cel.clone(), items: vec![IndexedStroke { index: 0, stroke: st }] }).unwrap();
+    let out = render_frame(&s.project, &s.blobs, &cut, 0, &RenderOptions { only_layers: Some(vec![l.clone()]), background: None, ..Default::default() }).unwrap().image;
+    let NodeKind::Cel(cd) = &s.project.node(&cel).unwrap().data else { unreachable!() };
+    let (full, warnings) = aiai_render::compose::render_cel_image(&s.project, &s.blobs, cd, false, (640, 360), "mista");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(out.data.len(), full.data.len());
+    let diff = out.data.iter().zip(&full.data).filter(|(a, b)| a != b).count();
+    assert_eq!(diff, 0, "{diff} pixels diferentes");
+    assert!(full.data.iter().filter(|p| p[3] > 0.0).count() > 10_000, "a cena desenhou");
+}

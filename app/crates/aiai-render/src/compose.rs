@@ -754,9 +754,11 @@ impl<'a> Renderer<'a> {
         }
     }
 
-    /// Atalho do cel só de tiles (raster sem imagem, preenchimento nem traço), sem efeitos e sem movimento: monta só a
-    /// caixa dos tiles, sem a imagem do canvas inteiro. `None` = não se aplica (vai pelo caminho geral); senão
-    /// (a camada desenhou?, conteúdo), exatamente o que o caminho geral daria depois do recorte.
+    /// Atalho do cel sem imagem de quadro inteiro (tiles, preenchimentos e traços vetoriais), sem efeitos e sem
+    /// movimento (auditoria 4.4c): monta só a caixa do que o cel desenha, sem a imagem f32 do canvas inteiro (132 MB
+    /// por camada em 4K). `None` = não se aplica (vai pelo caminho geral); senão (a camada desenhou?, conteúdo),
+    /// exatamente o que o caminho geral daria depois do recorte: a mesma ordem (tiles, preenchimentos, traços) e as
+    /// mesmas contas, só que deslocadas para a caixa.
     fn tiles_only_placed(&mut self, id: &Id, node: &Node, layer: &LayerData, cut: &CutData, frame: u32) -> Option<(bool, Option<Placed>)> {
         if matches!(layer.kind, LayerType::Group | LayerType::Effect | LayerType::Adjustment | LayerType::Particles | LayerType::Text | LayerType::Model3d)
             || !layer.kind.holds_cels()
@@ -766,37 +768,124 @@ impl<'a> Renderer<'a> {
         }
         let Some(cel_node) = self.exposed_cel(id, node, cut, frame) else { return Some((false, None)) };
         let NodeKind::Cel(cel) = &cel_node.data else { return Some((false, None)) };
-        if cel.image.is_some() || !cel.fills.is_empty() || !cel.strokes.is_empty() {
+        if cel.image.is_some() {
             return None;
         }
         let xf = self.placement_affine(layer, frame, cel.transform);
         if !(xf.is_identity() && self.out_w == self.width && self.out_h == self.height) {
             return None;
         }
+        // modificadores de traço (boil, vento, espelho): os mesmos do caminho geral
+        let modded;
+        let cel = match crate::stroke_mods::StrokeMods::from_params(&layer.params).filter(|_| !cel.strokes.is_empty()) {
+            Some(m) => {
+                let mut c = cel.clone();
+                c.strokes = crate::stroke_mods::apply(&cel.strokes, &m, frame, self.project.settings.fps());
+                modded = c;
+                &modded
+            }
+            None => cel,
+        };
+        let hide_trace = layer.params.get("hide_color_trace").and_then(|v| v.as_bool()).unwrap_or(false);
         let ts = TILE_SIZE as i64;
         let (w, h) = (self.width as i64, self.height as i64);
         let (mut x0, mut y0, mut x1, mut y1) = (i64::MAX, i64::MAX, i64::MIN, i64::MIN);
+        let mut grow = |a: i64, b: i64, c: i64, d: i64| {
+            let (a, b, c, d) = (a.max(0), b.max(0), c.min(w), d.min(h));
+            if a < c && b < d {
+                (x0, y0, x1, y1) = (x0.min(a), y0.min(b), x1.max(c), y1.max(d));
+            }
+        };
         for t in &cel.tiles {
-            let (tx0, ty0) = ((t.x as i64 * ts).max(0), (t.y as i64 * ts).max(0));
-            let (tx1, ty1) = ((t.x as i64 * ts + ts).min(w), (t.y as i64 * ts + ts).min(h));
-            if tx0 < tx1 && ty0 < ty1 {
-                (x0, y0, x1, y1) = (x0.min(tx0), y0.min(ty0), x1.max(tx1), y1.max(ty1));
+            grow(t.x as i64 * ts, t.y as i64 * ts, t.x as i64 * ts + ts, t.y as i64 * ts + ts);
+        }
+        // máscaras dos preenchimentos decodificadas uma vez (caixa e desenho)
+        let mut fills = Vec::with_capacity(cel.fills.len());
+        for f in &cel.fills {
+            let Some(hash) = &f.mask else { continue };
+            match self.blobs.get(hash).map(|b| Mask::decode(&b)) {
+                Some(Ok(m)) => {
+                    let [bx, by, _, _] = f.bounds;
+                    grow(bx as i64, by as i64, bx as i64 + m.width as i64, by as i64 + m.height as i64);
+                    fills.push((f, m));
+                }
+                Some(Err(e)) => self.warnings.push(format!("{}: máscara ilegível: {e}", node.name)),
+                None => self.warnings.push(format!("{}: máscara sem blob {hash}", node.name)),
             }
         }
+        // traços rasterizados contra o canvas (as mesmas coberturas do caminho geral)
+        let mut strokes = Vec::with_capacity(cel.strokes.len());
+        for s in &cel.strokes {
+            if hide_trace && s.color_trace {
+                continue;
+            }
+            let color = self.resolve_color(&s.color);
+            let samples = sample_stroke(s);
+            let Some(cov) = aiai_paint::stroke_raster::rasterize_with_tip(s, &samples, self.width, self.height) else { continue };
+            grow(cov.x0 as i64, cov.y0 as i64, cov.x0 as i64 + cov.width as i64, cov.y0 as i64 + cov.height as i64);
+            let a = color[3] * s.opacity;
+            strokes.push((cov, [color[0] * a, color[1] * a, color[2] * a, a]));
+        }
+        if x0 >= x1 {
+            return Some((true, None));
+        }
+        let (bw, bh) = ((x1 - x0) as u32, (y1 - y0) as u32);
+        let mut img = Image::new(bw, bh);
         let decoded: Vec<Option<Result<Arc<Vec<[f32; 4]>>, String>>> = cel.tiles.par_iter().map(|t| decoded_tile(self.blobs, &t.blob)).collect();
-        let mut img = (x0 < x1).then(|| Image::new((x1 - x0) as u32, (y1 - y0) as u32));
         for (t, d) in cel.tiles.iter().zip(decoded) {
             match d {
-                Some(Ok(px)) => {
-                    if let Some(img) = img.as_mut() {
-                        tile::blit_tile(img, &px, t.x, t.y, [x0 as i32, y0 as i32]);
-                    }
-                }
+                Some(Ok(px)) => tile::blit_tile(&mut img, &px, t.x, t.y, [x0 as i32, y0 as i32]),
                 Some(Err(e)) => self.warnings.push(format!("{}: tile ({}, {}) ilegível: {e}", node.name, t.x, t.y)),
                 None => self.warnings.push(format!("{}: tile ({}, {}) sem blob", node.name, t.x, t.y)),
             }
         }
-        Some((true, img.map(|img| Placed { x0: x0 as u32, y0: y0 as u32, img })))
+        for (f, m) in &fills {
+            let color = self.resolve_color(&f.color);
+            let grad = f.gradient.as_ref().map(|g| {
+                let r = g.resolve(|c| self.resolve_color(c));
+                let [bx, by, bw, bh] = f.bounds;
+                let mp = r.mapper([bx as f32, by as f32, (bx + bw) as f32, (by + bh) as f32]);
+                (r, mp)
+            });
+            let [bx, by, _, _] = f.bounds;
+            let premul = [color[0] * color[3], color[1] * color[3], color[2] * color[3], color[3]];
+            for my in 0..m.height {
+                let y = by + my as i32;
+                if y < 0 || y >= h as i32 {
+                    continue;
+                }
+                for mx in 0..m.width {
+                    let x = bx + mx as i32;
+                    if x < 0 || x >= w as i32 {
+                        continue;
+                    }
+                    let cov = m.get(mx, my);
+                    if cov > 0.0 {
+                        let i = img.idx((x as i64 - x0) as u32, (y as i64 - y0) as u32);
+                        let src = match &grad {
+                            Some((g, gm)) => g.sample_premul(gm, [x as f32 + 0.5, y as f32 + 0.5]),
+                            None => premul,
+                        };
+                        Image::over(&mut img.data[i], src, cov);
+                    }
+                }
+            }
+        }
+        for (cov, premul) in &strokes {
+            for yy in 0..cov.height {
+                let row = img.idx((cov.x0 as i64 - x0) as u32, (cov.y0 as i64 + yy as i64 - y0) as u32);
+                let crow = (yy * cov.width) as usize;
+                for xx in 0..cov.width as usize {
+                    let c = cov.cov[crow + xx];
+                    if c > 0.0 {
+                        Image::over(&mut img.data[row + xx], *premul, c);
+                    }
+                }
+            }
+        }
+        // sem recortar de novo aos pixels não transparentes: a caixa já é justa (tiles, máscaras e coberturas), e as
+        // bordas transparentes que sobram não mudam a mistura nem o recorte das camadas de cima
+        Some((true, Some(Placed { x0: x0 as u32, y0: y0 as u32, img })))
     }
 
     fn layer_image(&mut self, id: &Id, node: &Node, layer: &LayerData, cut: &CutData, frame: u32) -> Option<Image> {
