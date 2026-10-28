@@ -97,6 +97,10 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
                 env.ed.notify(e);
             }
         }
+        // ---- modificadores de traço (camada vetorial): line boil, vento, espelho
+        if l.kind == aiai_core::LayerType::Vector {
+            stroke_mods(env, ui, &layer, &l);
+        }
         // ---- partículas (o sistema da camada)
         if l.kind == aiai_core::LayerType::Particles {
             super::particles_ed::editor(env, ui, &layer, &l);
@@ -104,6 +108,104 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
         // ---- papel, profundidade, deslocamento (e 3D)
         super::properties::layer_properties(env, ui);
     });
+}
+
+/// Modificadores de traço (auditoria 4.7h): aplicados no render, quadro a quadro; o desenho guardado não muda.
+fn stroke_mods(env: &mut Env, ui: &mut Ui, layer: &cmds::NodeId, l: &aiai_core::LayerData) {
+    use aiai_render::stroke_mods::{Boil, Mirror, StrokeMods, Wind};
+    let t = env.t;
+    section(ui, &t, "lprops.stroke_mods");
+    let cur: StrokeMods = l.params.get("stroke_mods").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
+    let mut m = cur.clone();
+    let canvas_w = env.ed.cut.as_ref().map(|c| cmds::canvas_size(&env.core.project, c).0 as f32).unwrap_or(1920.0);
+    let lid = layer.0.clone();
+    let slider = |ui: &mut Ui, key: &str, v: f32, lo: f32, hi: f32, suffix: &str| -> Option<f32> {
+        super::commit_on_release(ui, egui::Id::new(("smod", &lid, key)), v, |ui, x| ui.add(egui::Slider::new(x, lo..=hi).max_decimals(1).suffix(suffix)))
+    };
+    // tremer a linha
+    let mut on = m.boil.is_some();
+    let r = ui.checkbox(&mut on, tr("lprops.boil")).on_hover_text(tr("lprops.boil.tip"));
+    env.note("lprops:boil", r.rect);
+    if on != m.boil.is_some() {
+        m.boil = on.then_some(Boil { amount: 1.5, every: 2, scale: 40.0 });
+    }
+    if let Some(b) = m.boil.as_mut() {
+        ui.horizontal(|ui| {
+            dim_label(ui, &t, tr("lprops.amount"));
+            if let Some(v) = slider(ui, "boil_amount", b.amount, 0.2, 10.0, " px") {
+                b.amount = v;
+            }
+        });
+        ui.horizontal(|ui| {
+            dim_label(ui, &t, tr("lprops.boil_every"));
+            let mut e = b.every;
+            if ui.add(egui::DragValue::new(&mut e).range(1..=12).suffix(format!(" {}", tr("unit.frames_short")))).changed() {
+                b.every = e;
+            }
+        });
+    }
+    // vento
+    let mut on = m.wind.is_some();
+    let r = ui.checkbox(&mut on, tr("lprops.wind")).on_hover_text(tr("lprops.wind.tip"));
+    env.note("lprops:wind", r.rect);
+    if on != m.wind.is_some() {
+        m.wind = on.then_some(Wind { amount: 12.0, speed: 0.8, angle_deg: 0.0 });
+    }
+    if let Some(w) = m.wind.as_mut() {
+        ui.horizontal(|ui| {
+            dim_label(ui, &t, tr("lprops.amount"));
+            if let Some(v) = slider(ui, "wind_amount", w.amount, 1.0, 150.0, " px") {
+                w.amount = v;
+            }
+        });
+        ui.horizontal(|ui| {
+            dim_label(ui, &t, tr("lprops.wind_speed"));
+            if let Some(v) = slider(ui, "wind_speed", w.speed, 0.1, 4.0, "/s") {
+                w.speed = v;
+            }
+        });
+        ui.horizontal(|ui| {
+            dim_label(ui, &t, tr("lprops.wind_angle"));
+            if let Some(v) = slider(ui, "wind_angle", w.angle_deg, 0.0, 359.0, "°") {
+                w.angle_deg = v;
+            }
+        });
+    }
+    // espelho
+    let mut on = m.mirror.is_some();
+    let r = ui.checkbox(&mut on, tr("lprops.mirror")).on_hover_text(tr("lprops.mirror.tip"));
+    env.note("lprops:mirror", r.rect);
+    if on != m.mirror.is_some() {
+        m.mirror = on.then_some(Mirror { vertical: false, center: canvas_w / 2.0 });
+    }
+    if let Some(mi) = m.mirror.as_mut() {
+        ui.horizontal(|ui| {
+            dim_label(ui, &t, tr("lprops.mirror_axis"));
+            if let Some(v) = super::commit_on_release(ui, egui::Id::new(("smod", &lid, "mirror_c")), mi.center, |ui, x| ui.add(egui::DragValue::new(x).speed(1.0).suffix(" px"))) {
+                mi.center = v;
+            }
+            let mut vert = mi.vertical;
+            if ui.checkbox(&mut vert, tr("lprops.mirror_vertical")).changed() {
+                mi.vertical = vert;
+            }
+        });
+    }
+    if m != cur {
+        let mut params = l.params.clone();
+        if !params.is_object() {
+            params = json!({});
+        }
+        if m.boil.is_none() && m.wind.is_none() && m.mirror.is_none() {
+            if let Some(o) = params.as_object_mut() {
+                o.remove("stroke_mods");
+            }
+        } else {
+            params["stroke_mods"] = serde_json::to_value(&m).unwrap_or_default();
+        }
+        if let Err(e) = cmds::set_layer_props(env.core, layer, json!({ "params": params })) {
+            env.ed.notify(e);
+        }
+    }
 }
 
 #[cfg(test)]

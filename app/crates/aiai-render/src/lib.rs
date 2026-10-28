@@ -3,6 +3,7 @@
 
 pub mod compose;
 pub mod raster3d;
+pub mod stroke_mods;
 pub mod text;
 pub mod text_fx;
 pub use aiai_paint::blend;

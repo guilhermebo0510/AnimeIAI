@@ -802,6 +802,17 @@ impl<'a> Renderer<'a> {
     fn layer_image(&mut self, id: &Id, node: &Node, layer: &LayerData, cut: &CutData, frame: u32) -> Option<Image> {
         let cel_node = self.exposed_cel(id, node, cut, frame)?;
         let NodeKind::Cel(cel) = &cel_node.data else { return None };
+        // modificadores de traço (boil, vento, espelho): uma cópia dos traços do quadro, o cel guardado não muda
+        let modded;
+        let cel = match crate::stroke_mods::StrokeMods::from_params(&layer.params).filter(|_| !cel.strokes.is_empty()) {
+            Some(m) => {
+                let mut c = cel.clone();
+                c.strokes = crate::stroke_mods::apply(&cel.strokes, &m, frame, self.project.settings.fps());
+                modded = c;
+                &modded
+            }
+            None => cel,
+        };
         let hide_trace = layer.params.get("hide_color_trace").and_then(|v| v.as_bool()).unwrap_or(false);
         // cel só de vetor com câmera/movimento/escala: rasteriza os traços já transformados, na saída (a linha continua
         // nítida num zoom; reamostrar o bitmap do canvas borrava a linha como uma imagem)
