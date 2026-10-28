@@ -4,15 +4,15 @@
     2160
   ],
   "fill_ms": [
-    506.8,
-    9.9
+    568.3,
+    5.4
   ],
   "layers": 24,
-  "paint_ms": 40.1,
+  "paint_ms": 43.9,
   "render_cached_after_edit_ms": [
-    569.1,
-    85.1
+    666.9,
+    31.0
   ],
-  "render_ms": 632.5,
+  "render_ms": 583.9,
   "skipped_layers": 21
 }

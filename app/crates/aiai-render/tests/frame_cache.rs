@@ -155,3 +155,73 @@ fn cached_canvas_render_matches_the_full_render_through_edits_on_every_kind_of_l
     let without = render_frame_cached(&s.project, &s.blobs, &cut, 0, &opts, &mut cache).unwrap().image.content_hash();
     assert_eq!(with, without, "recortada por camada vazia = invisível");
 }
+
+/// Retângulo sujo (auditoria 4.4g): com o quadro anterior devolvido (`recycle`), uma pincelada de tiles numa camada
+/// sem efeito que leia o de baixo acima dela refaz só os tiles mudados — e o quadro é o do render completo, pixel a
+/// pixel, com recorte, máscara, multiplicar e pasta isolada por cima. Mudança que não é só de tiles volta ao caminho
+/// de sempre.
+#[test]
+fn dirty_rectangle_rerender_after_a_tile_edit_matches_the_full_render() {
+    let (w, h) = (700u32, 500u32); // 3×2 tiles
+    let mut s = CoreSession::for_tests("sujo");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": w, "height": h}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = create(&mut s, Some(&sc), "C", NodeKind::Cut(CutData::new(4)));
+    let (_bg, bg_cel) = layer(&mut s, &cut, "bg", LayerType::Raster, json!(null));
+    paint_rect(&mut s, &bg_cel, (w, h), (0, 0, w, h), [0.2, 0.3, 0.5, 1.0]);
+    let (paint, paint_cel) = layer(&mut s, &cut, "pintura", LayerType::Raster, json!(null));
+    paint_rect(&mut s, &paint_cel, (w, h), (60, 40, 140, 100), [0.8, 0.2, 0.2, 1.0]);
+    let (_clip, clip_cel) = layer(&mut s, &cut, "recorte", LayerType::Vector, json!({"clip_to_below": true}));
+    stroke(&mut s, &clip_cel, gpen(&[(20.0, 70.0), (680.0, 300.0)], 14.0, "#ffffff"));
+    let (mask_l, mask_cel) = layer(&mut s, &cut, "mascara", LayerType::Raster, json!({"visible": false}));
+    paint_rect(&mut s, &mask_cel, (w, h), (300, 0, 700, 500), [1.0, 1.0, 1.0, 1.0]);
+    let (_mul, mul_cel) = layer(&mut s, &cut, "sombra", LayerType::Vector, json!({"blend": "multiply", "opacity": 0.6, "mask": mask_l.0}));
+    stroke(&mut s, &mul_cel, gpen(&[(100.0, 20.0), (620.0, 480.0)], 30.0, "#4040a0"));
+    let (grp, _) = layer(&mut s, &cut, "pasta", LayerType::Group, json!({"blend": "screen", "opacity": 0.8}));
+    let (_gc, gc_cel) = layer(&mut s, &grp, "dentro", LayerType::Vector, json!(null));
+    stroke(&mut s, &gc_cel, gpen(&[(10.0, 10.0), (690.0, 490.0)], 6.0, "#30c0c0"));
+    let (_top, top_cel) = layer(&mut s, &cut, "topo", LayerType::Vector, json!(null));
+    stroke(&mut s, &top_cel, gpen(&[(200.0, 20.0), (680.0, 60.0)], 12.0, "#e0e0e0"));
+
+    let opts = RenderOptions { camera: false, include_guides: true, include_reference: true, ..Default::default() };
+    let mut cache = FrameCache::default();
+    let check = |s: &CoreSession, cache: &mut FrameCache, what: &str| {
+        let a = render_frame_cached(&s.project, &s.blobs, &cut, 0, &opts, cache).unwrap();
+        let b = render_frame(&s.project, &s.blobs, &cut, 0, &opts).unwrap();
+        assert_eq!(a.image.content_hash(), b.image.content_hash(), "cache = render completo ({what})");
+        assert_eq!(a.warnings, b.warnings, "mesmos avisos ({what})");
+        let dirty = cache.last_dirty;
+        // como o app: o quadro mostrado volta para o cache
+        cache.recycle(a.image);
+        dirty
+    };
+    check(&s, &mut cache, "primeiro");
+    // a primeira pincelada tira a foto antes da pintura; as seguintes refazem só o retângulo
+    paint_rect(&mut s, &paint_cel, (w, h), (150, 50, 170, 90), [0.9, 0.6, 0.1, 1.0]);
+    assert_eq!(check(&s, &mut cache, "pincelada 0"), None);
+    for k in 1..4u32 {
+        paint_rect(&mut s, &paint_cel, (w, h), (260 + 60 * k, 260, 290 + 60 * k, 300), [0.9, 0.6, 0.1, 1.0]);
+        let d = check(&s, &mut cache, &format!("pincelada {k}")).expect("retângulo sujo");
+        assert!((d[2] - d[0]) <= 256 && (d[3] - d[1]) <= 256, "só o tile mexido: {d:?}");
+    }
+    // pincelada que pega dois tiles
+    paint_rect(&mut s, &paint_cel, (w, h), (240, 240, 280, 280), [0.2, 0.9, 0.3, 1.0]);
+    assert!(check(&s, &mut cache, "dois tiles").is_some());
+    // sem devolver o quadro: caminho de sempre (este render, sem mudança, usa o quadro devolvido e não devolve o seu)
+    let _ = render_frame_cached(&s.project, &s.blobs, &cut, 0, &opts, &mut cache).unwrap();
+    paint_rect(&mut s, &paint_cel, (w, h), (10, 400, 40, 450), [0.2, 0.9, 0.3, 1.0]);
+    let a = render_frame_cached(&s.project, &s.blobs, &cut, 0, &opts, &mut cache).unwrap();
+    assert_eq!(cache.last_dirty, None);
+    assert_eq!(a.image.content_hash(), render_frame(&s.project, &s.blobs, &cut, 0, &opts).unwrap().image.content_hash());
+    cache.recycle(a.image);
+    // devolver um quadro que não é o último: recusado pela amostra
+    cache.recycle(Image::new(w, h));
+    paint_rect(&mut s, &paint_cel, (w, h), (500, 400, 520, 420), [0.2, 0.2, 0.9, 1.0]);
+    assert_eq!(check(&s, &mut cache, "quadro errado devolvido"), None);
+    // opacidade da camada (não é só tiles): caminho de sempre
+    s.apply(Command::SetProps { id: paint.clone(), name: None, data: json!({"opacity": 0.5}) }).unwrap();
+    assert_eq!(check(&s, &mut cache, "opacidade"), None);
+    paint_rect(&mut s, &paint_cel, (w, h), (520, 100, 560, 140), [0.9, 0.9, 0.1, 1.0]);
+    assert!(check(&s, &mut cache, "depois da opacidade").is_some());
+}

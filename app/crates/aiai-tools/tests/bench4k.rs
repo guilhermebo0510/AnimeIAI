@@ -80,7 +80,9 @@ fn bench_4k_24_layers() {
     // canvas do editor: render com a foto do composto abaixo; depois de um retoque na camada 22, re-render
     let opts = RenderOptions { camera: false, ..Default::default() };
     let mut cache = FrameCache::default();
-    render_frame_cached(&s.project, &s.blobs, &cut, 0, &opts, &mut cache).unwrap();
+    let first = render_frame_cached(&s.project, &s.blobs, &cut, 0, &opts, &mut cache).unwrap();
+    // como o app: o quadro que já foi para a tela volta para o cache (a memória é reaproveitada)
+    cache.recycle(first.image);
     let mut cached_ms = Vec::new();
     for k in 0..2 {
         let req = PaintRequest { cut: cut.clone(), frame: 0, layer: rasters[21].clone(), preset: BrushPreset::round("r", 30.0, 0.8), color: blue.clone(),
@@ -88,8 +90,9 @@ fn bench_4k_24_layers() {
         let c = paint_command(&s.project, &mut s.blobs, &req).unwrap();
         s.apply(c).unwrap();
         let t = Instant::now();
-        render_frame_cached(&s.project, &s.blobs, &cut, 0, &opts, &mut cache).unwrap();
+        let out = render_frame_cached(&s.project, &s.blobs, &cut, 0, &opts, &mut cache).unwrap();
         cached_ms.push(ms(t));
+        cache.recycle(out.image);
     }
     let out = json!({"canvas": [w, h], "layers": 24, "paint_ms": paint_ms, "fill_ms": fill_ms, "render_ms": render_ms, "render_cached_after_edit_ms": cached_ms, "skipped_layers": cache.last_skipped});
     println!("{out}");

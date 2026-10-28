@@ -17,7 +17,7 @@ Status em `06-status-auditoria-1.md` e `07-status-auditoria-2.md`. Em aberto na 
 - [x] 4.7h colorização por dicas
 - [x] 4.8f casamento de inclusão (BasicPBC) no `propagate_fills`
 - [x] 4.4c alocações (imagem f32 de quadro inteiro no composto) — cel de tiles/preenchimento/traço montado na caixa
-- [ ] 4.4a compositor na GPU (e as metas de 4K de 4.4g)
+- [x] 4.4a compositor na GPU (e as metas de 4K de 4.4g) — medido: retângulo sujo + quadro reciclado (78→21–28 ms); GPU nos plugins
 - [ ] 4.6g Kokoro sem `uv` (ONNX embutido) — só se a instalação não oferecer risco
 - [x] 4.6h cor linear / HDR (mistura em luz linear no projeto, tiles AIT2 sem corte)
 - [x] 4.6k projeto em arquivos por corte com trava por corte

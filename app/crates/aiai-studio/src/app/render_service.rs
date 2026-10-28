@@ -310,13 +310,17 @@ fn render_job(job: &Job, t0: Instant, cache: &mut FrameCache) -> Result<Rendered
         });
     }
     let uv_max = [w as f32 / r as f32 / nw as f32, h as f32 / r as f32 / nh as f32];
+    // o quadro já virou pixels da tela: volta para o cache, que monta o próximo em cima dele (e, depois de uma
+    // pincelada, refaz só o retângulo dos tiles mudados)
+    let warnings = out.warnings;
+    cache.recycle(out.image);
     Ok(Rendered {
         key: k.clone(),
         image: Arc::new(ColorImage { size: [nw, nh], source_size: egui::vec2(nw as f32, nh as f32), pixels }),
         canvas: [w as u32, h as u32],
         uv_max,
         render_ms: t0.elapsed().as_secs_f32() * 1000.0,
-        warnings: out.warnings,
+        warnings,
     })
 }
 

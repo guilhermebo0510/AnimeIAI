@@ -65,6 +65,8 @@ pub struct Renderer<'a> {
     /// Mistura em luz linear (`Settings::linear_light`): o quadro em composição fica em linear; as imagens das camadas
     /// (e o que os efeitos e ajustes leem e escrevem) continuam em sRGB.
     linear: bool,
+    /// Só mistura dentro deste retângulo [x0, y0, x1, y1) (retângulo sujo do cache); `None` = o quadro inteiro.
+    region: Option<[u32; 4]>,
 }
 
 /// sRGB -> linear (a curva exata, sem cortar acima de 1: HDR passa).
@@ -259,13 +261,65 @@ pub struct FrameCache {
     pub last_skipped: usize,
     /// Quantas camadas de topo o último render misturou direto da imagem guardada (para medir/testar).
     pub last_reused: usize,
+    /// Quadro devolvido por quem usou o último render (`recycle`): o próximo é montado em cima desta memória já mapeada,
+    /// sem alocar 132 MB do zero em 4K (a cópia da foto caía de 44 ms para poucos ms).
+    spare: Option<Image>,
+    /// Amostra do último quadro entregue: o `spare` só serve de base para o retângulo sujo se for ele mesmo.
+    out_check: Option<u64>,
+    /// Retângulo refeito no último render (`None` = o quadro inteiro), para medir/testar.
+    pub last_dirty: Option<[u32; 4]>,
+}
+
+/// Amostra barata de um quadro (tamanho e 256 pixels espalhados) para reconhecer o mesmo quadro de volta.
+fn frame_check(img: &Image) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (img.width, img.height).hash(&mut h);
+    let n = img.data.len();
+    if n > 0 {
+        for k in 0..256usize {
+            let i = (k.wrapping_mul(2_654_435_761) ^ (k * 7919)) % n;
+            for c in img.data[i] {
+                c.to_bits().hash(&mut h);
+            }
+        }
+    }
+    h.finish()
+}
+
+impl FrameCache {
+    /// Devolve um quadro que não vai mais ser usado (já foi para a tela): o próximo render reaproveita a memória.
+    pub fn recycle(&mut self, img: Image) {
+        self.spare = Some(img);
+    }
+}
+
+/// Cópia do quadro em paralelo para dentro de `spare` (se tiver o mesmo tamanho) ou para uma imagem nova.
+fn copy_frame(src: &Image, spare: Option<Image>) -> Image {
+    let mut out = match spare {
+        Some(s) if s.width == src.width && s.height == src.height => s,
+        _ => Image::new(src.width, src.height),
+    };
+    let w = src.width.max(1) as usize;
+    out.data.par_chunks_mut(w * 16).zip(src.data.par_chunks(w * 16)).for_each(|(d, s)| d.copy_from_slice(s));
+    out
 }
 
 /// Teto da memória das imagens guardadas por camada (f32 RGBA recortado).
 const LAYER_CACHE_CAP_BYTES: usize = 256 << 20;
 
+/// O que a camada era quando a imagem guardada foi feita: as propriedades (tudo menos o conteúdo dos cels), o cel
+/// exposto e, se o cel é só de tiles, os tiles. Com isso, uma mudança só de tiles vira um retângulo sujo.
+#[derive(Clone, PartialEq)]
+struct ContentSig {
+    props: u64,
+    cel: Id,
+    tiles: Option<Vec<(i32, i32, String)>>,
+}
+
 struct LayerEntry {
     sig: u64,
+    content: Option<ContentSig>,
     /// `None` = a camada não desenhou nada neste quadro.
     placed: Option<Arc<Placed>>,
     /// Máscara (luminância × alfa) da camada de máscara, no tamanho da saída.
@@ -370,15 +424,23 @@ struct LayerCtx<'c> {
 
 /// Mistura a camada recortada no quadro, só dentro da caixa dela (fora é transparente: misturar não mudaria nada).
 /// Mesma conta, na mesma ordem, que a mistura do quadro inteiro.
-fn blend_placed(buf: &mut Image, p: &Placed, mode: BlendMode, opacity: f32, mask: Option<&[f32]>, clip: Option<&ClipBase>, linear: bool) {
+#[allow(clippy::too_many_arguments)]
+fn blend_placed(buf: &mut Image, p: &Placed, mode: BlendMode, opacity: f32, mask: Option<&[f32]>, clip: Option<&ClipBase>, linear: bool, region: Option<[u32; 4]>) {
     let w = buf.width as usize;
     let pw = p.img.width as usize;
     let (x0, y0) = (p.x0 as usize, p.y0 as usize);
+    let [rx0, ry0, rx1, ry1] = region.map(|r| r.map(|v| v as usize)).unwrap_or([0, 0, usize::MAX, usize::MAX]);
     buf.data.par_chunks_mut(w).skip(y0).take(p.img.height as usize).enumerate().for_each(|(ly, row)| {
         let y = y0 + ly;
+        if y < ry0 || y >= ry1 {
+            return;
+        }
         let src = &p.img.data[ly * pw..(ly + 1) * pw];
         for (lx, s) in src.iter().enumerate() {
             let x = x0 + lx;
+            if x < rx0 || x >= rx1 {
+                continue;
+            }
             let mut a = opacity;
             if let Some(m) = mask {
                 a *= m[y * w + x];
@@ -512,7 +574,7 @@ pub fn render_frame_cached(project: &Project, blobs: &BlobStore, cut_id: &Id, fr
 /// nem o movimento da camada e sem a opacidade/modo dela: o "conteúdo cru" que a mesclagem de camadas compõe.
 /// Devolve também os avisos do render (cor de paleta ausente, blob ilegível...).
 pub fn render_cel_image(project: &Project, blobs: &BlobStore, cel: &CelData, hide_color_trace: bool, canvas: (u32, u32), layer_name: &str) -> (Image, Vec<String>) {
-    let mut r = Renderer { project, blobs, width: canvas.0, height: canvas.1, out_w: canvas.0, out_h: canvas.1, camera: None, layer_motion: false, warnings: Vec::new(), variant: None, linear: false };
+    let mut r = Renderer { project, blobs, width: canvas.0, height: canvas.1, out_w: canvas.0, out_h: canvas.1, camera: None, layer_motion: false, warnings: Vec::new(), variant: None, linear: false, region: None };
     let img = r.render_cel(cel, hide_color_trace, layer_name);
     (img, r.warnings)
 }
@@ -532,7 +594,7 @@ fn render_frame_impl(project: &Project, blobs: &BlobStore, cut_id: &Id, frame: u
     } else {
         (w, h, None)
     };
-    let mut r = Renderer { project, blobs, width: w, height: h, out_w, out_h, camera, layer_motion: opts.layer_motion, warnings: Vec::new(), variant: cut.palette_variant.clone(), linear: project.settings.linear_light };
+    let mut r = Renderer { project, blobs, width: w, height: h, out_w, out_h, camera, layer_motion: opts.layer_motion, warnings: Vec::new(), variant: cut.palette_variant.clone(), linear: project.settings.linear_light, region: None };
     let allowed = opts.only_layers.as_ref().map(|ids| {
         let mut set = std::collections::BTreeSet::new();
         for id in ids {
@@ -570,11 +632,78 @@ fn render_frame_impl(project: &Project, blobs: &BlobStore, cut_id: &Id, frame: u
             }
             let first_changed = if same_key { sigs.iter().zip(&cache.sigs).position(|(a, b)| a != b).unwrap_or(sigs.len().min(cache.sigs.len())) } else { 0 };
             let first_changed = if same_key && sigs.len() == cache.sigs.len() { first_changed } else if same_key { first_changed.min(sigs.len().min(cache.sigs.len())) } else { 0 };
+            // retângulo sujo: só uma camada de tiles mudou (os tiles, nada mais), acima da foto e sem camada que leia o de
+            // baixo: o quadro anterior (devolvido pelo `recycle`) é refeito só onde os tiles mudaram
+            cache.last_dirty = None;
+            let dirty = (|| {
+                if !same_key || opts.background.is_some() || r.linear || sigs.len() != cache.sigs.len() {
+                    return None;
+                }
+                let sn = cache.snap.as_ref().filter(|sn| sn.index <= first_changed && sn.index <= sigs.len())?;
+                let spare = cache.spare.as_ref().filter(|i| (i.width, i.height) == (out_w, out_h))?;
+                if cache.out_check != Some(frame_check(spare)) {
+                    return None;
+                }
+                if cut_node.children[sn.index..].iter().any(|c| is_barrier(project, c)) {
+                    return None;
+                }
+                let changed: Vec<usize> = sigs.iter().zip(&cache.sigs).enumerate().filter(|(_, (a, b))| a != b).map(|(i, _)| i).collect();
+                let [i] = changed.as_slice() else { return None };
+                let id = &sigs[*i].0;
+                let node = project.node(id)?;
+                let NodeKind::Layer(layer) = &node.data else { return None };
+                let old = cache.layers.get(id)?.content.clone()?;
+                let new = r.content_sig(id, node, layer, cut, frame)?;
+                if old.props != new.props || old.cel != new.cel {
+                    return None;
+                }
+                let (ot, nt) = (old.tiles?, new.tiles?);
+                // a camada precisa estar no lugar (sem movimento) para tile = pixel do quadro
+                if !(r.placement_affine(layer, frame, [0.0, 0.0, 1.0, 0.0]).is_identity() && out_w == w && out_h == h) {
+                    return None;
+                }
+                let a: std::collections::BTreeMap<(i32, i32), &String> = ot.iter().map(|t| ((t.0, t.1), &t.2)).collect();
+                let b: std::collections::BTreeMap<(i32, i32), &String> = nt.iter().map(|t| ((t.0, t.1), &t.2)).collect();
+                let ts = TILE_SIZE as i64;
+                let (mut x0, mut y0, mut x1, mut y1) = (i64::MAX, i64::MAX, i64::MIN, i64::MIN);
+                for k in a.keys().chain(b.keys()) {
+                    if a.get(k) != b.get(k) {
+                        let (tx0, ty0) = ((k.0 as i64 * ts).max(0), (k.1 as i64 * ts).max(0));
+                        let (tx1, ty1) = ((k.0 as i64 * ts + ts).min(out_w as i64), (k.1 as i64 * ts + ts).min(out_h as i64));
+                        if tx0 < tx1 && ty0 < ty1 {
+                            (x0, y0, x1, y1) = (x0.min(tx0), y0.min(ty0), x1.max(tx1), y1.max(ty1));
+                        }
+                    }
+                }
+                (x0 < x1).then_some([x0 as u32, y0 as u32, x1 as u32, y1 as u32])
+            })();
+            if let Some(rect) = dirty {
+                let sn = cache.snap.as_ref().expect("checado");
+                let mut out = cache.spare.take().expect("checado");
+                // o retângulo volta à foto e as camadas de cima são misturadas só ali
+                let w0 = out_w as usize;
+                let [rx0, ry0, rx1, ry1] = rect.map(|v| v as usize);
+                out.data.par_chunks_mut(w0).zip(sn.buf.data.par_chunks(w0)).skip(ry0).take(ry1 - ry0).for_each(|(d, s)| d[rx0..rx1].copy_from_slice(&s[rx0..rx1]));
+                r.warnings = sn.warnings.clone();
+                r.region = Some(rect);
+                let start = sn.index;
+                let clip_base = sn.clip_base.clone();
+                let mut taken = None;
+                let mut lc = LayerCtx { sigs: &sigs, layers: &mut cache.layers, reused: 0 };
+                r.composite_range(&mut out, &cut_node.children, cut, frame, opts, start, clip_base, None, &mut taken, &mut lc);
+                cache.last_skipped = start;
+                cache.last_reused = lc.reused;
+                cache.last_dirty = Some(rect);
+                cache.key = Some(key);
+                cache.sigs = sigs;
+                cache.out_check = Some(frame_check(&out));
+                return Ok(RenderOutput { image: out, warnings: r.warnings });
+            }
             // começa da foto se ela foi tirada antes de qualquer mudança
             let mut start = 0;
             let mut clip_base = None;
             if let Some(sn) = cache.snap.as_ref().filter(|sn| same_key && sn.index <= first_changed && sn.index <= sigs.len()) {
-                buf = sn.buf.clone();
+                buf = copy_frame(&sn.buf, cache.spare.take());
                 clip_base = sn.clip_base.clone();
                 r.warnings = sn.warnings.clone();
                 start = sn.index;
@@ -613,6 +742,7 @@ fn render_frame_impl(project: &Project, blobs: &BlobStore, cut_id: &Id, frame: u
             }
             cache.key = Some(key);
             cache.sigs = sigs;
+            cache.out_check = (opts.background.is_none() && !r.linear).then(|| frame_check(&buf));
         }
     }
     // luz linear: o quadro volta para sRGB antes do fundo
@@ -724,7 +854,8 @@ impl<'a> Renderer<'a> {
                     let placed = placed.map(Arc::new);
                     if let (Some(lc), Some(sig)) = (lc.as_deref_mut(), sig) {
                         let warnings = self.warnings[first_warning..].to_vec();
-                        lc.layers.insert(id.clone(), LayerEntry { sig, placed: placed.clone(), mask: mask.clone(), warnings });
+                        let content = self.content_sig(id, node, layer, cut, frame);
+                        lc.layers.insert(id.clone(), LayerEntry { sig, content, placed: placed.clone(), mask: mask.clone(), warnings });
                     }
                     (placed, mask)
                 } else {
@@ -835,7 +966,8 @@ impl<'a> Renderer<'a> {
                     let placed = content.and_then(Placed::crop).map(Arc::new);
                     if let (Some(lc), Some(sig), false) = (lc.as_deref_mut(), sig, reads_below) {
                         let warnings = self.warnings[first_warning..].to_vec();
-                        lc.layers.insert(id.clone(), LayerEntry { sig, placed: placed.clone(), mask: mask.clone(), warnings });
+                        let content = self.content_sig(id, node, layer, cut, frame);
+                        lc.layers.insert(id.clone(), LayerEntry { sig, content, placed: placed.clone(), mask: mask.clone(), warnings });
                     }
                     (placed, mask)
                 }
@@ -849,7 +981,7 @@ impl<'a> Renderer<'a> {
             let mode = if layer.blend == BlendMode::PassThrough { BlendMode::Normal } else { layer.blend };
             let clip = if layer.clip_to_below { clip_base.as_ref() } else { None };
             let opacity = layer_prop(layer, "opacity", frame, layer.opacity).clamp(0.0, 1.0);
-            blend_placed(buf, &p, mode, opacity, mask.as_deref().map(|m| m.as_slice()), clip, self.linear);
+            blend_placed(buf, &p, mode, opacity, mask.as_deref().map(|m| m.as_slice()), clip, self.linear, self.region);
             if !layer.clip_to_below {
                 clip_base = Some(ClipBase::Layer(p));
             }
@@ -1008,6 +1140,34 @@ impl<'a> Renderer<'a> {
         // sem recortar de novo aos pixels não transparentes: a caixa já é justa (tiles, máscaras e coberturas), e as
         // bordas transparentes que sobram não mudam a mistura nem o recorte das camadas de cima
         Some((true, Some(Placed { x0: x0 as u32, y0: y0 as u32, img })))
+    }
+
+    /// Assinatura do conteúdo da camada no quadro (ver `ContentSig`); `None` para pastas e camadas sem cels.
+    fn content_sig(&self, id: &Id, node: &Node, layer: &LayerData, cut: &CutData, frame: u32) -> Option<ContentSig> {
+        use std::hash::{Hash, Hasher};
+        if !layer.kind.holds_cels() || layer.kind == LayerType::Group {
+            return None;
+        }
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        serde_json::to_string(layer).unwrap_or_default().hash(&mut h);
+        // o pai (rigging) também move a camada
+        let mut cur = layer_parent(layer);
+        let mut depth = 0;
+        while let (Some(pid), true) = (cur, depth < 16) {
+            let Some(NodeKind::Layer(pl)) = self.project.node(&pid).map(|n| &n.data) else { break };
+            serde_json::to_string(pl).unwrap_or_default().hash(&mut h);
+            cur = layer_parent(pl);
+            depth += 1;
+        }
+        let cel_node = self.exposed_cel(id, node, cut, frame)?;
+        let NodeKind::Cel(cel) = &cel_node.data else { return None };
+        cel.transform.map(|v| v.to_bits()).hash(&mut h);
+        let tiles = (cel.image.is_none() && cel.fills.is_empty() && cel.strokes.is_empty()).then(|| {
+            let mut t: Vec<(i32, i32, String)> = cel.tiles.iter().map(|t| (t.x, t.y, t.blob.0.clone())).collect();
+            t.sort();
+            t
+        });
+        Some(ContentSig { props: h.finish(), cel: cel_node.id.clone(), tiles })
     }
 
     fn layer_image(&mut self, id: &Id, node: &Node, layer: &LayerData, cut: &CutData, frame: u32) -> Option<Image> {
