@@ -61,6 +61,49 @@ pub fn guide3d_command(p: &Project, blobs: &mut BlobStore, req: &Guide3dRequest)
     Ok(Command::Batch { commands: cmds, label: Some("Guia 3D".into()) })
 }
 
+/// Juntas e linhas do corpo de cada manequim projetadas no canvas (auditoria 1.5b): para desenhar por cima da guia
+/// sabendo onde fica cada articulação. Cada ponto = [x, y, profundidade em m] (ausente = atrás da câmera).
+/// `lines`: eixo do corpo (pelve → topo da cabeça), linha dos ombros, linha do quadril e `front` (a frente do tronco,
+/// do centro do peito 0,3 m para a frente: diz para onde o corpo está virado no desenho).
+pub fn guide3d_projection(p: &Project, req: &Guide3dRequest) -> ToolResult<serde_json::Value> {
+    let c = cut_data(p, &req.cut)?;
+    let (w, h) = canvas_size(p, c);
+    let pr = req.camera.projector(w, h);
+    let r1 = |v: f32| (v * 10.0).round() / 10.0;
+    let pt = |v: glam::Vec3| pr.project(v).map(|(x, y, d)| json!([r1(x), r1(y), (d * 1000.0).round() / 1000.0]));
+    let mut mans = Vec::new();
+    for (i, m) in req.scene.mannequins.iter().enumerate() {
+        let j = m.joints();
+        let mut joints = serde_json::Map::new();
+        for (name, (_, p0, p1)) in &j {
+            joints.insert((*name).to_owned(), json!({ "start": pt(*p0), "end": pt(*p1) }));
+        }
+        let start = |n: &str| j.get(n).map(|(_, a, _)| *a);
+        let end = |n: &str| j.get(n).map(|(_, _, b)| *b);
+        let seg = |a: Option<glam::Vec3>, b: Option<glam::Vec3>| match (a, b) {
+            (Some(a), Some(b)) => json!([pt(a), pt(b)]),
+            _ => serde_json::Value::Null,
+        };
+        // frente do tronco: a direção para onde o peito aponta (eixo Z local do osso do peito)
+        let front = j.get("chest").map(|(mtx, a, b)| {
+            let mid = (*a + *b) * 0.5;
+            let fwd = mtx.transform_vector3(glam::Vec3::Z).normalize_or_zero() * 0.3;
+            json!([pt(mid), pt(mid + fwd)])
+        });
+        mans.push(json!({
+            "index": i,
+            "joints": joints,
+            "lines": {
+                "midline": seg(start("pelvis"), end("head")),
+                "shoulders": seg(start("upper_arm_l"), start("upper_arm_r")),
+                "hips": seg(start("thigh_l"), start("thigh_r")),
+                "front": front,
+            },
+        }));
+    }
+    Ok(json!({ "canvas": [w, h], "mannequins": mans }))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PerspectiveRequest {
     pub cut: Id,

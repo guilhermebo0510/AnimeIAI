@@ -139,7 +139,9 @@ pub fn handle(session: &mut CoreSession, action: &str, params: &Value) -> Result
         "GUIDE3D" => {
             let r: Guide3dRequest = request(params, action)?;
             let cmd = guide3d_command(&session.project, &mut session.blobs, &r).map_err(tool_error)?;
-            apply(session, params, cmd)
+            // as juntas projetadas voltam junto (auditoria 1.5b): onde fica cada articulação no desenho
+            let proj = aiai_tools::guide::guide3d_projection(&session.project, &r).map_err(tool_error)?;
+            apply_with(session, params, cmd, json!({ "projection": proj }))
         }
         "PERSPECTIVE" => {
             let r: PerspectiveRequest = request(params, action)?;

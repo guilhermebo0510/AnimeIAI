@@ -897,6 +897,14 @@ fn production_guides_character_and_animation() {
         "camera": {"position": [2.5, 1.5, 4.0], "target": [0.0, 0.9, 0.0], "focal_mm": 35.0}}));
     assert_eq!(o["can_undo"], true);
     assert_eq!(opaque(&shot(&mut d.s, &cut, 0, &[&guide], json!({}))), 0, "guia não aparece sem include_guides");
+    // juntas projetadas (auditoria 1.5b): a cabeça fica acima dos pés no desenho e dentro do canvas
+    let m = &o["projection"]["mannequins"][0];
+    let head = m["joints"]["head"]["end"].as_array().expect("cabeça projetada");
+    let foot = m["joints"]["foot_l"]["end"].as_array().expect("pé projetado");
+    assert!(head[1].as_f64().unwrap() < foot[1].as_f64().unwrap(), "{m}");
+    let cw = o["projection"]["canvas"][0].as_f64().unwrap();
+    assert!((0.0..cw).contains(&head[0].as_f64().unwrap()));
+    assert!(m["lines"]["midline"].is_array() && m["lines"]["shoulders"].is_array() && m["lines"]["front"].is_array());
     let lines = opaque(&shot(&mut d.s, &cut, 0, &[&guide], json!({"include_guides": true})));
     assert!(lines > 200, "linhas da cena 3D: {lines}");
     let layer_json = act(&mut d.s, "QUERY", json!({"query": {"kind": "node", "id": guide}}));
