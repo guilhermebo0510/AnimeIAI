@@ -125,8 +125,15 @@ impl StudioApp {
             _ => {
                 // chamada direta da bridge/MCP: as ações gravadas por ela são `DirectToolCall`, e a fonte do quadro volta depois
                 let prev = std::mem::replace(&mut self.core.source, aiai_core::InputSource::DirectToolCall);
+                let t0 = std::time::Instant::now();
                 let res = self.bridge_exec(ctx, &r.action.clone(), &r.params.clone());
                 self.core.source = prev;
+                // E1: pedido de prévia atendido → marca o início da medida até a primeira imagem dela (CX12 C12-04)
+                if r.action == "INBETWEEN_PREVIEW" {
+                    if let Some(id) = res.as_ref().ok().and_then(|v| v.get("proposal_id")).and_then(Value::as_u64) {
+                        self.ed.ibp.present = Some((id, t0, false));
+                    }
+                }
                 r.respond(res);
             }
         }

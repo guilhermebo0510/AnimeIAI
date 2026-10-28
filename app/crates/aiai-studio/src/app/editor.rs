@@ -1170,7 +1170,8 @@ pub(crate) struct Editor {
     pub anim: super::anim::AnimState,
     /// Prévia de intercalação de um quadro (R16): o estado da tela (a proposta mora na sessão).
     pub ibp: super::ibp_ui::IbpUi,
-    /// Fonte da entrada deste quadro por tipo: (ponteiro, teclado). Uma ação de clique grava a do ponteiro (R16 REQ-P03).
+    /// Fonte da entrada deste quadro por tipo: (ponteiro, Enter/Espaço que aciona botão em foco). Uma ação de clique
+    /// grava a do ponteiro; um botão acionado pelo teclado, a do Enter/Espaço (R16 REQ-P03).
     pub input_src: (aiai_core::InputSource, aiai_core::InputSource),
     /// Réguas: mostrar, encaixe geral, tipo da próxima, camada de guia das réguas e a prévia do arrasto.
     pub rulers: super::rulers::RulerState,

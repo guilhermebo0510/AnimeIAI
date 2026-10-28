@@ -262,9 +262,12 @@ impl CoreSession {
         }
         command.resolve_ids(&mut self.ids);
         let revision = self.project.revision + 1;
-        let (applied, prior) = {
+        // com diário, a proveniência de todos os nós antes do comando: o desfazer de emergência a devolve exata, inclusive
+        // de nós apagados e recriados e de nós tocados duas vezes num lote (CX12 C12-02). Sem diário não há como falhar.
+        let prior = self.provenance_snapshot();
+        let applied = {
             let ctx = ApplyCtx { blobs: &self.blobs, author, revision };
-            command.apply_keeping_provenance(&mut self.project, &ctx)?
+            command.apply(&mut self.project, &ctx)?
         };
         if self.full_validate {
             if let Err(e) = self.project.validate() {
@@ -310,12 +313,17 @@ impl CoreSession {
         Ok(outcome)
     }
 
-    /// Devolve a proveniência guardada antes de um comando (desfazer de emergência). Nós que o comando apagou e o
-    /// desfazer recriou não estão na lista (ganham a do desfazer).
-    fn restore_provenance(&mut self, prior: Vec<(crate::Id, crate::model::Provenance)>) {
-        for (id, p) in prior {
-            if let Some(n) = self.project.nodes.get_mut(&id) {
-                n.provenance = p;
+    /// Proveniência de todos os nós, só quando há diário (é o único caso em que um comando aplicado pode ter de voltar).
+    fn provenance_snapshot(&self) -> Option<std::collections::HashMap<crate::Id, crate::model::Provenance>> {
+        self.wal.as_ref().map(|_| self.project.nodes.iter().map(|(id, n)| (id.clone(), n.provenance.clone())).collect())
+    }
+
+    /// Devolve a proveniência de antes do comando a todos os nós que existiam (desfazer de emergência).
+    fn restore_provenance(&mut self, prior: Option<std::collections::HashMap<crate::Id, crate::model::Provenance>>) {
+        let Some(prior) = prior else { return };
+        for (id, n) in self.project.nodes.iter_mut() {
+            if let Some(p) = prior.get(id) {
+                n.provenance = p.clone();
             }
         }
     }
@@ -324,9 +332,10 @@ impl CoreSession {
         let a = self.undo.pop().ok_or(CoreError::NothingToUndo)?;
         let author = self.author.clone();
         let revision = self.project.revision + 1;
-        let (r, prior) = {
+        let prior = self.provenance_snapshot();
+        let r = {
             let ctx = ApplyCtx { blobs: &self.blobs, author: &author, revision };
-            match a.inverse.apply_keeping_provenance(&mut self.project, &ctx) {
+            match a.inverse.apply(&mut self.project, &ctx) {
                 Ok(r) => r,
                 Err(e) => {
                     self.undo.push(a);
@@ -357,9 +366,10 @@ impl CoreSession {
         let a = self.redo.pop().ok_or(CoreError::NothingToRedo)?;
         let author = self.author.clone();
         let revision = self.project.revision + 1;
-        let (r, prior) = {
+        let prior = self.provenance_snapshot();
+        let r = {
             let ctx = ApplyCtx { blobs: &self.blobs, author: &author, revision };
-            match a.command.apply_keeping_provenance(&mut self.project, &ctx) {
+            match a.command.apply(&mut self.project, &ctx) {
                 Ok(r) => r,
                 Err(e) => {
                     self.redo.push(a);

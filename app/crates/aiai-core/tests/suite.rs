@@ -654,6 +654,38 @@ fn wal_that_cannot_recover_is_closed_until_saved() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// CX12 C12-02: o desfazer de emergência devolve a proveniência exata também de nó apagado e recriado (desfazer de uma
+/// criação depois de a revisão avançar) e de nó tocado duas vezes no mesmo lote.
+#[test]
+fn wal_rollback_restores_exact_provenance_for_recreated_and_repeated_nodes() {
+    let dir = std::env::temp_dir().join(format!("aiai-walprov-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut s = CoreSession::for_tests("walprov");
+    let (_ep, _cut, layer, cel) = build_basic(&mut s);
+    persist::save(&mut s, &dir).unwrap();
+    // "aceite": um cel novo; depois outro comando, desfeito (a revisão avança)
+    let novo = s.apply(Command::CreateNode { id: None, parent: Some(layer.clone()), index: None, name: "A2".into(), data: NodeKind::Cel(CelData::new(2)) }).unwrap().created[0].clone();
+    s.apply(Command::SetProps { id: cel.clone(), name: Some("x".into()), data: json!({}) }).unwrap();
+    s.undo().unwrap();
+    let snap = serde_json::to_string(&s.project).unwrap();
+    s.wal_mut().unwrap().fail_next_append_for_tests();
+    assert!(s.undo().is_err(), "desfazer a criação com o diário falhando");
+    assert!(s.project.nodes.contains_key(&novo));
+    assert_eq!(serde_json::to_string(&s.project).unwrap(), snap, "o cel recriado volta com a proveniência de antes");
+    // lote que toca o mesmo nó duas vezes
+    let lote = Command::Batch {
+        commands: vec![
+            Command::SetProps { id: cel.clone(), name: Some("p".into()), data: json!({}) },
+            Command::SetProps { id: cel.clone(), name: Some("q".into()), data: json!({}) },
+        ],
+        label: None,
+    };
+    s.wal_mut().unwrap().fail_next_append_for_tests();
+    assert!(s.apply(lote).is_err());
+    assert_eq!(serde_json::to_string(&s.project).unwrap(), snap, "lote com o mesmo nó duas vezes volta exato");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// R16 REQ-P01/P03: cada entrada do log leva a fonte da sessão naquele momento; juntar passos de fontes diferentes dá
 /// `Mixed`; entrada antiga sem o campo lê como `UnknownLegacy`.
 #[test]

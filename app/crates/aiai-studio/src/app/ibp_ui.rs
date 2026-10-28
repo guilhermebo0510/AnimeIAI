@@ -51,19 +51,30 @@ pub(crate) struct IbpUi {
     pub perf: Perf,
     /// Geometria da proposta viva, amostrada uma vez.
     pub geom: Option<Geom>,
+    /// E1 (CX12 C12-04): (proposta, quando o pedido foi atendido, já desenhada neste quadro). Fechado no fim do quadro
+    /// em que a sobreposição dela foi desenhada pela primeira vez.
+    pub present: Option<(u64, std::time::Instant, bool)>,
 }
 
 impl Default for IbpUi {
     fn default() -> Self {
-        IbpUi { pairs_mode: false, pick_a: None, selected: None, show_notes: false, show_options: false, veil: true, highlight: None, seen: None, perf: Perf::default(), geom: None }
+        IbpUi { pairs_mode: false, pick_a: None, selected: None, show_notes: false, show_options: false, veil: true, highlight: None, seen: None, perf: Perf::default(), geom: None, present: None }
     }
 }
 
 impl IbpUi {
     /// Volta ao estado sem prévia, guardando o que é preferência ou medida.
     fn reset(&mut self) {
-        let (perf, veil, seen) = (std::mem::take(&mut self.perf), self.veil, self.seen);
-        *self = IbpUi { perf, veil, seen, ..Default::default() };
+        let (perf, veil, seen, show_notes) = (std::mem::take(&mut self.perf), self.veil, self.seen, self.show_notes);
+        *self = IbpUi { perf, veil, seen, show_notes, ..Default::default() };
+    }
+
+    /// Fim do quadro: se a sobreposição da proposta medida foi desenhada nele, registra pedido → imagem (ms).
+    pub(crate) fn end_frame(&mut self) {
+        if let Some((_, t0, true)) = self.present {
+            self.perf.push_present(t0.elapsed().as_secs_f32() * 1000.0);
+            self.present = None;
+        }
     }
 }
 
@@ -73,6 +84,8 @@ pub(crate) struct Perf {
     pub on: bool,
     pub ui_ms: Vec<f32>,
     pub paint_ms: Vec<f32>,
+    /// Pedido atendido → fim do quadro (CPU) que desenhou a sobreposição da proposta pela primeira vez.
+    pub present_ms: Vec<f32>,
 }
 
 impl Perf {
@@ -81,6 +94,12 @@ impl Perf {
     pub(crate) fn push_ui(&mut self, ms: f32) {
         if self.on && self.ui_ms.len() < Self::CAP {
             self.ui_ms.push(ms);
+        }
+    }
+
+    pub(crate) fn push_present(&mut self, ms: f32) {
+        if self.on && self.present_ms.len() < Self::CAP {
+            self.present_ms.push(ms);
         }
     }
 
@@ -334,6 +353,11 @@ pub(crate) fn paint(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &Id) {
         return;
     }
     let (cw, ch) = cmds::canvas_size(&env.core.project, cut);
+    if let Some((id, _, drawn)) = env.ed.ibp.present.as_mut() {
+        if env.ed.ibp.geom.as_ref().is_some_and(|g| g.id == *id) {
+            *drawn = true;
+        }
+    }
     let ui = &env.ed.ibp;
     let Some(g) = ui.geom.as_ref() else { return };
     // o quadro de hoje esmaecido: o desenho exposto não compete com a proposta
@@ -487,6 +511,20 @@ fn remove_selected(env: &mut Env, p: &InbetweenProposal) {
     }
 }
 
+/// Esc com uma escolha de par em andamento: cancela a escolha (nunca descarta a prévia). Chamado antes dos atalhos
+/// gerais do editor, que também usam Esc. `true` = a tecla era da prévia.
+pub(crate) fn escape_pick(env: &mut Env, ctx: &egui::Context) -> bool {
+    if !(env.ed.ibp.pairs_mode && (env.ed.ibp.pick_a.is_some() || env.ed.ibp.selected.is_some())) || ctx.egui_wants_keyboard_input() {
+        return false;
+    }
+    if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        env.ed.ibp.pick_a = None;
+        env.ed.ibp.selected = None;
+        return true;
+    }
+    false
+}
+
 /// Folga da barra até o pé do canvas (a leitura de coordenadas fica à mostra).
 const BAR_GAP: f32 = 34.0;
 
@@ -618,6 +656,7 @@ pub(crate) fn bar(env: &mut Env, ctx: &egui::Context, rect: Rect, cut: &Id) {
                         accept_src = if r.clicked_by(egui::PointerButton::Primary) {
                             ptr_src
                         } else if ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Space)) {
+                            // só os eventos Enter/Espaço deste quadro decidem; os dois lados juntos = desconhecida
                             key_src
                         } else {
                             aiai_core::InputSource::UnknownLegacy
@@ -697,10 +736,6 @@ pub(crate) fn bar(env: &mut Env, ctx: &egui::Context, rect: Rect, cut: &Id) {
         if let Err(e) = ibp::set_options(env.core, p.id, motion, bend, max_cost) {
             env.ed.notify(e.to_string());
         }
-    }
-    if env.ed.ibp.pairs_mode && (env.ed.ibp.pick_a.is_some() || env.ed.ibp.selected.is_some()) && !ctx.egui_wants_keyboard_input() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
-        env.ed.ibp.pick_a = None;
-        env.ed.ibp.selected = None;
     }
     // consome a tecla: senão o Delete da seleção do canvas (que roda depois) apagaria o conteúdo selecionado
     if env.ed.ibp.pairs_mode

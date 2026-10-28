@@ -1383,7 +1383,7 @@ impl eframe::App for StudioApp {
         self.input.next_events(raw_input);
         // as ações da interface deste quadro levam a fonte dos eventos que as dispararam (R16 REQ-P03)
         self.core.source = self.input.frame_source();
-        self.ed.input_src = (self.input.pointer_source(), self.input.key_source());
+        self.ed.input_src = (self.input.pointer_source(), self.input.activation_source());
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
@@ -1407,6 +1407,7 @@ impl eframe::App for StudioApp {
         self.frame(ui);
         // E1 da prévia de intercalação: CPU de montar o quadro, amostra bruta (só gravando)
         self.ed.ibp.perf.push_ui(t0.elapsed().as_secs_f32() * 1000.0);
+        self.ed.ibp.end_frame();
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {

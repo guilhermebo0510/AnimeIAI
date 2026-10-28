@@ -244,7 +244,8 @@ impl StudioApp {
         // prévia de intercalação viva (R16): o que a barra mostra
         let ibp_state = aiai_tools::inbetween_preview::current(&self.core).map(|p| {
             json!({ "proposal_id": p.id, "frame": p.frame, "frame_a": p.frame_a, "frame_b": p.frame_b, "stale": p.stale, "acceptable": aiai_tools::inbetween_preview::blocked_reason(&self.core.project, p).is_none(), "blocked_reason": aiai_tools::inbetween_preview::blocked_reason(&self.core.project, p),
-                    "refusals": p.refusals.len(), "approximations": p.approximations.len(), "manual_pairs": p.request.manual_pairs, "pairs_mode": ed.ibp.pairs_mode, "pick_a": ed.ibp.pick_a })
+                    "refusals": p.refusals.len(), "approximations": p.approximations.len(), "manual_pairs": p.request.manual_pairs, "pairs_mode": ed.ibp.pairs_mode, "pick_a": ed.ibp.pick_a,
+                    "show_notes": ed.ibp.show_notes, "veil": ed.ibp.veil })
         });
         let canvas = ed.canvas_rect.map(|r| {
             let xf = ed.view.xf(r, ppp);
@@ -338,6 +339,8 @@ impl StudioApp {
     /// borracha vira também a ponta da ferramenta Borracha).
     /// dock {op: list|maximize|restore|detach|redock|redock_all, panel?, group?} (painel maximizado e janelas soltas).
     /// perf_samples {op: start|stop|read}: amostras brutas por quadro (CPU da interface e desenho da prévia de intercalação)
+    /// e pedido → primeira imagem de cada prévia (`present_ms`)
+    /// ibp_view {show_notes?, veil?}: vista da barra da prévia de intercalação
     /// modeling_view {layout?: single|split_v|split_h|quad, slot?, view?: perspective|ortho|front|back|right|left|top|bottom}
     /// (multivista da Modelagem).
     /// uv {edit?: bool, select_mode?: vertex|edge|face, select?: all|none|tree_seams, op?: mark_seam|unwrap|pack|…}
@@ -376,6 +379,7 @@ impl StudioApp {
             "uv" => Some(&["edit", "select", "op", "select_mode"]),
             "normals" => Some(&["op", "factor", "source"]),
             "perf_samples" => Some(&["op"]),
+            "ibp_view" => Some(&["show_notes", "veil"]),
             _ => None,
         };
         if let Some(keys) = keys {
@@ -690,7 +694,17 @@ impl StudioApp {
                     "read" => {}
                     other => return Err(BridgeError::invalid_params(format!("perf_samples: op '{other}' (start|stop|read)"))),
                 }
-                json!({ "recording": perf.on, "ui_ms": perf.ui_ms, "ibp_paint_ms": perf.paint_ms })
+                json!({ "recording": perf.on, "ui_ms": perf.ui_ms, "ibp_paint_ms": perf.paint_ms, "present_ms": perf.present_ms })
+            }
+            "ibp_view" => {
+                // estado de vista da barra da prévia (lista de avisos aberta, véu), para os ensaios
+                if let Some(v) = m.get("show_notes").and_then(Value::as_bool) {
+                    self.ed.ibp.show_notes = v;
+                }
+                if let Some(v) = m.get("veil").and_then(Value::as_bool) {
+                    self.ed.ibp.veil = v;
+                }
+                json!({ "show_notes": self.ed.ibp.show_notes, "veil": self.ed.ibp.veil })
             }
             "modeling_view" => {
                 // multivista da Modelagem: arranjo (single | split_v | split_h | quad) e o tipo de uma vista

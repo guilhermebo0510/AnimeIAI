@@ -125,15 +125,17 @@ def run_case(name, exe, build_fn, frame, frames, reps, out):
         case["compute_ms"] = computes
         case["counts"] = p["counts"]
         aiai.call("INBETWEEN_DISCARD", {"proposal_id": p["proposal_id"]})
-        # pedido → primeira imagem completa (CX11): o quadro que atende o pedido calcula a prévia e o seguinte monta a
-        # geometria; o pior dos 4 primeiros quadros (CPU) de 20 pedidos frios, com a lista de avisos aberta
+        # pedido → primeira imagem (CX11/CX12): o app marca o instante em que atende o pedido e fecha a medida no fim do
+        # quadro (CPU) em que desenhou a sobreposição daquela proposta. Lista de avisos aberta e conferida.
+        aiai.call("UI_ACTION", {"action": "ibp_view", "show_notes": True})
         first = []
         for _ in range(20):
             aiai.call("UI_ACTION", {"action": "perf_samples", "op": "start"})
             q = aiai.call("INBETWEEN_PREVIEW", {"cut": cut, "layer": layer, "frame": frame})
             aiai.call("INPUT", {"events": [{"kind": "wait", "frames": 4}], "wait": True})
             smp = aiai.call("UI_ACTION", {"action": "perf_samples", "op": "stop"})
-            first.append({"compute_ms": q["compute_ms"], "frames_ms": smp["ui_ms"][:4]})
+            ibp_state = aiai.call("GET_UI_STATE")["editor"].get("ibp") or {}
+            first.append({"compute_ms": q["compute_ms"], "present_ms": smp.get("present_ms", []), "cpu4_ms": smp["ui_ms"][:4], "notes_open": ibp_state.get("show_notes")})
             aiai.call("INBETWEEN_DISCARD", {"proposal_id": q["proposal_id"]})
         case["first_presentation"] = first
         for rep in range(reps):
@@ -183,8 +185,10 @@ def main():
         c = out[name]
         res[name] = {"counts": c["counts"], "compute_ms": summary(c["compute_ms"])}
         fp = c.get("first_presentation", [])
-        worst = [max(x["frames_ms"]) if x["frames_ms"] else None for x in fp]
-        res[name]["first_presentation_ms"] = summary([w for w in worst if w is not None])
+        res[name]["pedido_imagem_ms"] = summary([x["present_ms"][0] for x in fp if x["present_ms"]])
+        res[name]["pedidos_sem_medida"] = sum(1 for x in fp if not x["present_ms"])
+        res[name]["lista_de_avisos_aberta"] = all(x["notes_open"] for x in fp) if fp else None
+        res[name]["maior_quadro_cpu_nos_4_primeiros_ms"] = summary([max(x["cpu4_ms"]) for x in fp if x["cpu4_ms"]])
         for cond, runs in c["conditions"].items():
             ui = [x for r in runs for x in r["ui_ms"]]
             paint = [x for r in runs for x in r["ibp_paint_ms"]]

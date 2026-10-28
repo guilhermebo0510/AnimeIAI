@@ -71,6 +71,9 @@ pub(crate) struct Attribution {
     pointer: (bool, bool),
     /// Teclado neste quadro (tecla, texto, colar/copiar/recortar): (injetado, plataforma).
     keys: (bool, bool),
+    /// Enter/Espaço APERTADOS neste quadro (o que aciona um botão em foco no egui): (injetado, plataforma). Uma tecla
+    /// alheia no mesmo quadro não entra (CX12 C12-01).
+    activate: (bool, bool),
     /// Gesto do ponteiro em andamento (ou que terminou neste quadro): (injetado, plataforma) dos BOTÕES dele. Só eventos
     /// de ponteiro entram: uma tecla no meio do gesto não muda a origem do clique (CX10 C10-01).
     gesture: Option<(bool, bool)>,
@@ -85,9 +88,19 @@ fn is_key_trigger(e: &Event) -> bool {
     matches!(e, Event::Key { .. } | Event::Text(_) | Event::Paste(_) | Event::Copy | Event::Cut)
 }
 
+fn is_activation(e: &Event) -> bool {
+    matches!(e, Event::Key { key: egui::Key::Enter | egui::Key::Space, pressed: true, .. })
+}
+
+/// Fonte de um tipo de evento: só injetado = bridge; só plataforma = plataforma; os dois no mesmo quadro = não dá para
+/// saber qual acionou (desconhecida, nunca chute).
 fn one(flags: (bool, bool)) -> aiai_core::InputSource {
     use aiai_core::InputSource as S;
-    if flags.0 && !flags.1 { S::BridgeInjected } else { S::UiPlatformUnattributed }
+    match flags {
+        (true, false) => S::BridgeInjected,
+        (true, true) => S::UnknownLegacy,
+        _ => S::UiPlatformUnattributed,
+    }
 }
 
 impl Attribution {
@@ -95,6 +108,7 @@ impl Attribution {
     fn frame(&mut self, platform: &[Event], injected: &[Event]) {
         self.pointer = (injected.iter().any(is_pointer_trigger), platform.iter().any(is_pointer_trigger));
         self.keys = (injected.iter().any(is_key_trigger), platform.iter().any(is_key_trigger));
+        self.activate = (injected.iter().any(is_activation), platform.iter().any(is_activation));
         if !self.gesture_open {
             self.gesture = None;
         }
@@ -122,6 +136,11 @@ impl Attribution {
     /// Fonte de uma ação disparada pelo teclado.
     pub(crate) fn key_source(&self) -> aiai_core::InputSource {
         one(self.keys)
+    }
+
+    /// Fonte de um botão acionado por Enter/Espaço (só esses eventos contam; sem nenhum, desconhecida).
+    pub(crate) fn activation_source(&self) -> aiai_core::InputSource {
+        if self.activate == (false, false) { aiai_core::InputSource::UnknownLegacy } else { one(self.activate) }
     }
 
     /// Fonte das ações deste quadro quando não se sabe se vieram do ponteiro ou do teclado: a do único tipo de entrada
@@ -154,9 +173,9 @@ impl InputQueue {
         self.attr.pointer_source()
     }
 
-    /// Fonte de uma ação disparada pelo teclado neste quadro.
-    pub(crate) fn key_source(&self) -> aiai_core::InputSource {
-        self.attr.key_source()
+    /// Fonte de um botão acionado por Enter/Espaço neste quadro.
+    pub(crate) fn activation_source(&self) -> aiai_core::InputSource {
+        self.attr.activation_source()
     }
 
     /// Enfileira passos; recusa se a fila ficaria grande demais.
@@ -442,9 +461,25 @@ mod tests {
                 raw.events.push(key2.clone());
             }
             q.next_events(&mut raw);
-            last = Some((q.pointer_source(), q.key_source(), q.frame_source()));
+            last = Some((q.pointer_source(), q.attr.key_source(), q.frame_source()));
         }
         assert_eq!(last, Some((S::BridgeInjected, S::UiPlatformUnattributed, S::UnknownLegacy)), "clique da bridge; tecla da plataforma; o quadro sozinho não diz");
+        // CX12 C12-01: Enter injetado (aciona o botão em foco) com a soltura de outra tecla da plataforma no mesmo quadro
+        let release_a = Event::Key { key: egui::Key::A, physical_key: None, pressed: false, repeat: false, modifiers: Modifiers::NONE };
+        let mut q = InputQueue::default();
+        q.push(parse(json!([{"kind":"key","key":"Enter","pressed":true}]).as_array().unwrap()).unwrap()).unwrap();
+        let mut raw = egui::RawInput::default();
+        raw.events.push(release_a);
+        q.next_events(&mut raw);
+        assert_eq!(q.activation_source(), S::BridgeInjected, "só o Enter acionou");
+        // Enter da plataforma e Enter injetado no mesmo quadro: não dá para saber qual acionou
+        let enter = Event::Key { key: egui::Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE };
+        let mut q = InputQueue::default();
+        q.push(parse(json!([{"kind":"key","key":"Enter","pressed":true}]).as_array().unwrap()).unwrap()).unwrap();
+        let mut raw = egui::RawInput::default();
+        raw.events.push(enter);
+        q.next_events(&mut raw);
+        assert_eq!(q.activation_source(), S::UnknownLegacy);
         // gesto que começa injetado e termina na plataforma: misto
         let s = sources(json!([{"kind":"mouse_move","x":10,"y":20},{"kind":"mouse_down","x":10,"y":20}]), &[(3, press(false))]);
         assert_eq!(s[1], S::BridgeInjected, "{s:?}");
