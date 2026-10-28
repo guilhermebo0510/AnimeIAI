@@ -54,7 +54,7 @@ Auditoria 2: as 8 propostas estão feitas; relidos os `AUDITORIA_V2*.md` (28/10)
 
 ## 4. Workspace de Modelagem
 
-- [ ] Ver o que o ANIGO tem (código nosso) e o Blender oferece; trazer ferramentas e melhorias de interface
+- [x] Ver o que o ANIGO tem (código nosso) e o Blender oferece; trazer ferramentas e melhorias de interface — `11-modelagem.md` (cabelo fica de fora: personagem 3D)
   - [x] multivista (1/2/4 vistas, Ctrl+Alt+Q, Ctrl+Espaço, nome da vista no canto, grade no plano da vista alinhada) — `11-modelagem.md`
   - [x] escultura (20 pincéis do ANIGO, simetria, dyntopo, máscara, alisar tudo, remalhar, simetrizar)
   - [x] editor de UV (costuras, desdobrar, empacotar, projeções, métricas, editor 2D com G/R/S)
