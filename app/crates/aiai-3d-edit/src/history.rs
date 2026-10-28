@@ -91,6 +91,41 @@ impl<T: Clone> History<T> {
     }
 }
 
+/// Delta esparso de posições (índice, antes, depois) para traços de escultura, onde um snapshot por pincelada seria
+/// desperdício. Copiado do `anigo-modeling/src/history.rs` do ANIGO (commit bc5e83af).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PositionDelta {
+    pub entries: Vec<(u32, glam::Vec3, glam::Vec3)>,
+}
+
+impl PositionDelta {
+    /// Constrói o delta comparando duas listas de posições.
+    pub fn between(before: &[glam::Vec3], after: &[glam::Vec3]) -> Self {
+        let entries = before.iter().zip(after).enumerate().filter(|(_, (a, b))| a != b).map(|(i, (a, b))| (i as u32, *a, *b)).collect();
+        Self { entries }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn apply(&self, mesh: &mut crate::mesh::EditMesh) {
+        for &(i, _, after) in &self.entries {
+            if let Some(v) = mesh.verts.get_mut(i as usize) {
+                v.co = after;
+            }
+        }
+    }
+
+    pub fn revert(&self, mesh: &mut crate::mesh::EditMesh) {
+        for &(i, before, _) in &self.entries {
+            if let Some(v) = mesh.verts.get_mut(i as usize) {
+                v.co = before;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

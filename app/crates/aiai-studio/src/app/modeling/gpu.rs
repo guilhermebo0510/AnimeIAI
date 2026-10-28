@@ -66,6 +66,8 @@ pub(crate) struct FrameIn<'a> {
     pub doc: &'a ModelDoc,
     pub active: Option<usize>,
     pub edit: bool,
+    /// Escultura: sem o destaque laranja do objeto ativo (o relevo fica à vista).
+    pub sculpt: bool,
     pub sel_mode: SelectMode,
     pub sel: &'a Selection,
     pub cam: &'a OrbitCamera,
@@ -167,7 +169,9 @@ pub(crate) fn core_camera(cam: &OrbitCamera, aspect: f32) -> aiai_3d_core::math:
 /// Chave do conteúdo de um objeto (malha, modificadores, sombreamento, cor).
 fn object_key(o: &doc::Object3d) -> u64 {
     let mods = serde_json::to_string(&o.modifiers).unwrap_or_default();
-    let mut parts = vec![o.mesh.content_hash(), hash_str(&mods), o.shading as u64];
+    // a máscara da escultura não entra no `content_hash` da malha, mas muda a cor do sólido
+    let mask = o.mesh.verts.iter().enumerate().filter(|(_, v)| v.mask != 0.0).fold(0u64, |h, (i, v)| h.rotate_left(5) ^ (i as u64).wrapping_mul(0x9E37_79B9) ^ v.mask.to_bits() as u64);
+    let mut parts = vec![o.mesh.content_hash(), hash_str(&mods), o.shading as u64, mask];
     parts.extend(f32s(&o.color));
     fnv(&parts)
 }
@@ -226,7 +230,7 @@ impl ModelingGpu {
                 continue;
             }
             let is_edit = f.edit && f.active == Some(i);
-            let is_active = f.active == Some(i);
+            let is_active = f.active == Some(i) && !f.sculpt;
             let sel_hash = if is_edit { hash_str(&format!("{:?}{:?}{:?}", f.sel.verts, f.sel.edges, f.sel.faces)) } else { 0 };
             let key = fnv(&[self.keys.objects[i], is_edit as u64, (is_active && !is_edit) as u64, f.sel_mode as u64, sel_hash, f.shade as u64]);
             let model = o.matrix();
@@ -567,7 +571,7 @@ mod tests {
         for k in 0..n {
             cam.zoom(if k % 2 == 0 { 0.97 } else { 1.03 });
             let t = Instant::now();
-            let f = FrameIn { doc: &d, active: Some(0), edit: false, sel_mode: SelectMode::Face, sel: &sel, cam: &cam, size_px: (w, h), slot: 0, ppp: 1.0, shade: ViewShade::Toon, xray: false, grid: true, bg: [0.1, 0.1, 0.12, 1.0], revision: 1 };
+            let f = FrameIn { doc: &d, active: Some(0), edit: false, sculpt: false, sel_mode: SelectMode::Face, sel: &sel, cam: &cam, size_px: (w, h), slot: 0, ppp: 1.0, shade: ViewShade::Toon, xray: false, grid: true, bg: [0.1, 0.1, 0.12, 1.0], revision: 1 };
             ModelingGpu::sync_cel(&mut cel, &f, &keys, w as f32 / h as f32, h);
             cel.renderer.render_to_texture(&cel.scene, &tex).unwrap();
             let items: Vec<DrawItem> = items_data.iter().map(|m| DrawItem { mesh: m }).collect();

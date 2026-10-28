@@ -166,6 +166,133 @@ pub(crate) fn outliner(env: &mut Env, ui: &mut Ui, body: Rect) {
     });
 }
 
+/// Escultura: os 20 pincéis, raio, força, somar/tirar, simetria, dyntopo e as ferramentas de malha inteira.
+fn sculpt_panel(env: &mut Env, ui: &mut Ui) {
+    use crate::app::modeling::sculpt::{self as sc, SCULPT_BRUSHES};
+    let t = env.t;
+    section(ui, &t, "sculpt.title");
+    let active = env.ed.modeling.sculpt.active;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
+        for k in SCULPT_BRUSHES {
+            let r = ui.selectable_label(active == k, sc::brush_label(k));
+            env.note(format!("sculpt:brush.{}", sc::brush_key(k)), r.rect);
+            if r.clicked() {
+                // pincéis de ação única (inverter/limpar máscara) agem na hora, sem traço
+                match k {
+                    aiai_3d_edit::sculpt::brush::BrushKind::MaskInvert => {
+                        let r = sc::mask_all(&mut env.ed.modeling, true).map(|_| ());
+                        report(env, r);
+                    }
+                    aiai_3d_edit::sculpt::brush::BrushKind::MaskClear => {
+                        let r = sc::mask_all(&mut env.ed.modeling, false).map(|_| ());
+                        report(env, r);
+                    }
+                    _ => env.ed.modeling.sculpt.active = k,
+                }
+            }
+        }
+    });
+    let ss = &mut env.ed.modeling.sculpt;
+    egui::Grid::new("sculpt_brush").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+        let slot = ss.active_slot_mut();
+        dim_label(ui, &t, tr("sculpt.radius"));
+        ui.add(egui::Slider::new(&mut slot.radius_px, sc::RADIUS_MIN_PX..=sc::RADIUS_MAX_PX).logarithmic(true).suffix(" px")).on_hover_text(tr("sculpt.radius.tip"));
+        ui.end_row();
+        dim_label(ui, &t, tr("sculpt.strength"));
+        ui.add(egui::Slider::new(&mut slot.brush.strength, 0.0..=sc::STRENGTH_MAX).max_decimals(2));
+        ui.end_row();
+        dim_label(ui, &t, tr("sculpt.subtract"));
+        ui.checkbox(&mut slot.brush.direction_invert, "").on_hover_text(tr("sculpt.subtract.tip"));
+        ui.end_row();
+        dim_label(ui, &t, tr("sculpt.symmetry"));
+        ui.horizontal(|ui| {
+            for (i, a) in ["X", "Y", "Z"].iter().enumerate() {
+                ui.toggle_value(&mut ss.symmetry.mirror[i], *a);
+            }
+        });
+        ui.end_row();
+        dim_label(ui, &t, tr("sculpt.dyntopo"));
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut ss.dyntopo, "").on_hover_text(tr("sculpt.dyntopo.tip"));
+            ui.add_enabled(ss.dyntopo, egui::DragValue::new(&mut ss.dyntopo_detail_px).range(2.0..=80.0).suffix(" px")).on_hover_text(tr("sculpt.dyntopo.detail"));
+        });
+        ui.end_row();
+    });
+    dim_label(ui, &t, tr("sculpt.keys"));
+    ui.separator();
+    section(ui, &t, "sculpt.whole");
+    let mut run: Option<u8> = None;
+    ui.horizontal_wrapped(|ui| {
+        let r = ui.button(tr("sculpt.smooth_all"));
+        env.notes.push(("sculpt:smooth_all".into(), r.rect));
+        if r.clicked() {
+            run = Some(0);
+        }
+        let ss = &mut env.ed.modeling.sculpt;
+        ui.add(egui::DragValue::new(&mut ss.smooth_all_iters).range(1..=32).suffix("×"));
+    });
+    ui.horizontal_wrapped(|ui| {
+        let r = ui.button(tr("sculpt.voxel"));
+        env.notes.push(("sculpt:voxel".into(), r.rect));
+        if r.clicked() {
+            run = Some(1);
+        }
+        let ss = &mut env.ed.modeling.sculpt;
+        let auto = env.ed.modeling.active.and_then(|a| env.ed.modeling.doc.objects.get(a)).map(|o| sc::suggest_voxel_size(&o.mesh)).unwrap_or(0.05);
+        let mut v = if ss.voxel_size > 0.0 { ss.voxel_size } else { auto };
+        if ui.add(egui::DragValue::new(&mut v).range(0.0005..=1.0).speed(0.0005).max_decimals(4)).on_hover_text(tr("sculpt.voxel.size")).changed() {
+            ss.voxel_size = v;
+        }
+        ui.checkbox(&mut ss.voxel_shade_smooth, tr("sculpt.voxel.smooth"));
+    });
+    ui.horizontal_wrapped(|ui| {
+        let r = ui.button(tr("sculpt.symmetrize"));
+        env.notes.push(("sculpt:symmetrize".into(), r.rect));
+        if r.clicked() {
+            run = Some(2);
+        }
+        let ss = &mut env.ed.modeling.sculpt;
+        for (i, a) in ["+X → −X", "+Y → −Y", "+Z → −Z"].iter().enumerate() {
+            ui.selectable_value(&mut ss.symmetrize_axis, i, *a);
+        }
+    });
+    match run {
+        Some(0) => {
+            let n = env.ed.modeling.sculpt.smooth_all_iters;
+            let r = sc::smooth_all(&mut env.ed.modeling, n, 0.5);
+            report(env, r);
+        }
+        Some(1) => {
+            let r = sc::voxel_remesh(&mut env.ed.modeling).map(|_| ());
+            report(env, r);
+        }
+        Some(2) => {
+            let ax = env.ed.modeling.sculpt.symmetrize_axis;
+            let r = sc::symmetrize(&mut env.ed.modeling, ax, true).map(|_| ());
+            report(env, r);
+        }
+        _ => {}
+    }
+    let ss = &env.ed.modeling.sculpt;
+    if let Some(e) = &ss.error {
+        ui.colored_label(t.danger, e);
+    } else if let Some(s) = &ss.status {
+        dim_label(ui, &t, s);
+    }
+    ui.separator();
+}
+
+fn report(env: &mut Env, r: Result<(), String>) {
+    match r {
+        Ok(()) => env.ed.modeling.sculpt.error = None,
+        Err(e) => {
+            env.ed.notify(&e);
+            env.ed.modeling.sculpt.error = Some(e);
+        }
+    }
+}
+
 /// Painel Propriedades do objeto.
 pub(crate) fn properties(env: &mut Env, ui: &mut Ui, body: Rect) {
     let t = env.t;
@@ -178,6 +305,9 @@ pub(crate) fn properties(env: &mut Env, ui: &mut Ui, body: Rect) {
     egui::ScrollArea::vertical().id_salt("mdl_props").show(ui, |ui| {
         // auditoria UX-06: os parâmetros da operação que acabou de rodar (ex.: distância da extrusão) vêm primeiro; o
         // catálogo de operações é um bloco que dá para recolher (o estado fica guardado)
+        if env.ed.modeling.mode == EditMode::Sculpt {
+            sculpt_panel(env, ui);
+        }
         if env.ed.modeling.mode == EditMode::Edit {
             adjust_last(env, ui);
             egui::CollapsingHeader::new(egui::RichText::new(tr("mdl.ops_catalog")).strong()).id_salt("mdl_ops_catalog").default_open(true).show(ui, |ui| operators(env, ui));

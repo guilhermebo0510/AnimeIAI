@@ -11,6 +11,8 @@ ANIGO", é do mesmo commit). Código do mesmo autor (regra 4). Em todos: `anigo_
 | `error.rs`, `mesh.rs`, `topology.rs`, `select.rs`, `primitives.rs`, `normals.rs`, `subdiv.rs`, `convert.rs` | nenhuma |
 | `ops/bevel.rs`, `bisect.rs`, `bridge.rs`, `delete.rs`, `dissolve.rs`, `extrude.rs`, `fill.rs`, `flip.rs`, `inset.rs`, `loops.rs`, `merge.rs`, `misc.rs`, `smooth.rs`, `spin.rs`, `transform.rs`, `triangulate.rs` | nenhuma (o `bevel.rs` e o `smooth.rs` agora são os inteiros; no primeiro lote eram parciais) |
 | `modifiers/mirror.rs`, `array.rs`, `solidify.rs`, `weld.rs`, `edge_split.rs`, `decimate.rs`, `displace.rs` | nenhuma |
+| `bvh.rs`, `sculpt/automask.rs`, `brush.rs`, `dyntopo.rs`, `falloff.rs`, `stroke.rs`, `symmetry.rs`, `voxel_remesh.rs`, `sculpt/mod.rs` | nenhuma (28/10, escultura) |
+| `history.rs` (só `PositionDelta`) | acrescentado ao nosso `history.rs` (que é o `History<T>` do estúdio) |
 | `ops/mod.rs`, `modifiers/mod.rs` | só a lista de módulos (mais `catalog` e `slide`, do AnimeIAI) |
 
 ## Copiados de `crates/anigo-studio/src`

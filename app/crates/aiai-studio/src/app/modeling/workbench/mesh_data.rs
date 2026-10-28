@@ -118,10 +118,16 @@ pub fn build_draw_data(mesh: &EditMesh, opts: &BuildOptions) -> MeshDrawData {
         }
         let pts = mesh.face_positions(fi as u32);
         let selected_face = opts.edit_mode && sel.faces.contains(&(fi as u32));
+        // máscara da escultura: o vértice mascarado escurece (como no Blender)
+        let masks: Vec<f32> = face.verts().map(|v| mesh.verts.get(v as usize).map_or(0.0, |x| x.mask)).collect();
         for [a, b, c] in triangulate_polygon(&pts) {
             for i in [a, b, c] {
                 let base = opts.base_color;
-                let color = if selected_face { mix(base, select_rgba, 0.42) } else { base };
+                let mut color = if selected_face { mix(base, select_rgba, 0.42) } else { base };
+                let m = masks.get(i).copied().unwrap_or(0.0).clamp(0.0, 1.0);
+                if m > 0.0 {
+                    color = mix(color, [0.08, 0.08, 0.10, 1.0], m * 0.7);
+                }
                 out.solid.push(SolidVertex {
                     pos: pts[i].to_array(),
                     normal: cn[fi][i].to_array(),

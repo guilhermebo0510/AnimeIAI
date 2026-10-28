@@ -3,6 +3,7 @@
 //! modificadores, material toon, histórico e a conversão para o modelo normalizado (GLB) da camada 3D e da biblioteca.
 //! Rust puro, sem GPU: tudo testável.
 
+pub mod bvh;
 pub mod convert;
 pub mod doc;
 pub mod error;
@@ -12,6 +13,7 @@ pub mod modifiers;
 pub mod normals;
 pub mod ops;
 pub mod primitives;
+pub mod sculpt;
 pub mod select;
 pub mod subdiv;
 pub mod topology;

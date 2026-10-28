@@ -333,6 +333,8 @@ impl StudioApp {
     /// dock {op: list|maximize|restore|detach|redock|redock_all, panel?, group?} (painel maximizado e janelas soltas).
     /// modeling_view {layout?: single|split_v|split_h|quad, slot?, view?: perspective|ortho|front|back|right|left|top|bottom}
     /// (multivista da Modelagem).
+    /// sculpt {mode?: bool, brush?, radius? (px), strength?, symmetry? [x,y,z], invert?, paths? [[[x,y]..]..] (0..1 da vista
+    /// ativa), op?: mask_invert|mask_clear|smooth_all|voxel_remesh|symmetrize} (escultura da Modelagem).
     /// Apelidos aceitos: set_tool = select_tool; open_panel = toggle_panel com visible=true.
     pub(crate) fn bridge_ui_action(&mut self, ctx: &egui::Context, params: &Value) -> BridgeResult {
         let m = as_obj(params)?;
@@ -359,6 +361,7 @@ impl StudioApp {
             "gpu" => Some(&["op", "mb"]),
             "dock" => Some(&["op", "panel", "group"]),
             "modeling_view" => Some(&["layout", "slot", "view"]),
+            "sculpt" => Some(&["mode", "brush", "radius", "strength", "invert", "paths", "op", "symmetry"]),
             _ => None,
         };
         if let Some(keys) = keys {
@@ -519,6 +522,78 @@ impl StudioApp {
                 json!({ "panel": key, "visible": target, "workspace": ws.key(), "inserted": found.is_none() && target })
             }
             "dock" => self.bridge_dock(params)?,
+            "sculpt" => {
+                // escultura da Modelagem: entrar/sair, pincel e ajustes, traços roteirizados (coordenadas 0..1 da vista
+                // ativa) e as ferramentas de malha inteira
+                use super::modeling::sculpt as sc;
+                use super::modeling::EditMode;
+                if let Some(on) = m.get("mode").and_then(Value::as_bool) {
+                    let t = self.tokens();
+                    let ws = self.ws;
+                    let mut notes = Vec::new();
+                    let mut env = super::ui_kit::Env { t, core: &mut self.core, ed: &mut self.ed, icons: &mut self.icons, notes: &mut notes, tool: &mut self.tool, ws };
+                    super::modeling::set_mode(&mut env, if on { EditMode::Sculpt } else { EditMode::Object });
+                }
+                let ms = &mut self.ed.modeling;
+                if let Some(b) = text(&m, &["brush"]) {
+                    ms.sculpt.active = sc::brush_from_key(b).ok_or_else(|| BridgeError::invalid_params(format!("pincel desconhecido: {b} ({})", sc::SCULPT_BRUSHES.iter().map(|k| sc::brush_key(*k)).collect::<Vec<_>>().join(", "))))?;
+                }
+                if let Some(r) = m.get("radius").and_then(Value::as_f64) {
+                    ms.sculpt.active_slot_mut().radius_px = (r as f32).clamp(sc::RADIUS_MIN_PX, sc::RADIUS_MAX_PX);
+                }
+                if let Some(v) = m.get("strength").and_then(Value::as_f64) {
+                    ms.sculpt.active_slot_mut().brush.strength = (v as f32).clamp(0.0, sc::STRENGTH_MAX);
+                }
+                if let Some(sym) = m.get("symmetry").and_then(Value::as_array) {
+                    for (i, v) in sym.iter().take(3).enumerate() {
+                        ms.sculpt.symmetry.mirror[i] = v.as_bool().unwrap_or(false);
+                    }
+                }
+                let mut dabs = None;
+                if let Some(paths) = m.get("paths").and_then(Value::as_array) {
+                    if ms.mode != EditMode::Sculpt {
+                        return Err(BridgeError::invalid_params("sculpt: entre no modo Escultura (mode: true) antes dos traços"));
+                    }
+                    let r = ms.views.rects[ms.views.active];
+                    if !r.is_positive() {
+                        return Err(BridgeError::invalid_params("sculpt: o viewport da Modelagem ainda não foi desenhado"));
+                    }
+                    let paths: Vec<Vec<glam::Vec2>> = paths.iter().map(|p| p.as_array().map(|pts| pts.iter().filter_map(|q| Some(glam::Vec2::new(q.get(0)?.as_f64()? as f32, q.get(1)?.as_f64()? as f32))).collect()).unwrap_or_default()).collect();
+                    let view = sc::ViewInfo { camera: ms.cam, size: glam::Vec2::new(r.width(), r.height()) };
+                    let invert = m.get("invert").and_then(Value::as_bool).unwrap_or(false);
+                    let brush = ms.sculpt.active;
+                    dabs = Some(sc::run_script(ms, &view, brush, invert, &paths));
+                }
+                if let Some(op) = text(&m, &["op"]) {
+                    let r = match op {
+                        "mask_invert" => sc::mask_all(ms, true).map(|_| ()),
+                        "mask_clear" => sc::mask_all(ms, false).map(|_| ()),
+                        "smooth_all" => {
+                            let n = ms.sculpt.smooth_all_iters;
+                            sc::smooth_all(ms, n, 0.5)
+                        }
+                        "voxel_remesh" => sc::voxel_remesh(ms).map(|_| ()),
+                        "symmetrize" => {
+                            let a = ms.sculpt.symmetrize_axis;
+                            sc::symmetrize(ms, a, true).map(|_| ())
+                        }
+                        _ => return Err(BridgeError::invalid_params(format!("op desconhecida: {op} (mask_invert, mask_clear, smooth_all, voxel_remesh, symmetrize)"))),
+                    };
+                    r.map_err(BridgeError::failed)?;
+                }
+                let o = ms.active.and_then(|a| ms.doc.objects.get(a));
+                json!({
+                    "mode": format!("{:?}", ms.mode).to_lowercase(),
+                    "brush": sc::brush_key(ms.sculpt.active),
+                    "radius": ms.sculpt.slot(ms.sculpt.active).radius_px,
+                    "dabs": dabs,
+                    "verts": o.map(|o| o.mesh.verts.len()),
+                    "faces": o.map(|o| o.mesh.faces.len()),
+                    "history": ms.history.labels(),
+                    "status": ms.sculpt.status,
+                    "error": ms.sculpt.error,
+                })
+            }
             "modeling_view" => {
                 // multivista da Modelagem: arranjo (single | split_v | split_h | quad) e o tipo de uma vista
                 use super::modeling::multiview::{ViewKind, ViewLayout};

@@ -20,6 +20,7 @@ mod modal;
 pub(crate) mod multiview;
 mod nav_gizmo;
 mod picking;
+pub(crate) mod sculpt;
 mod workbench;
 
 use super::commands::NodeId;
@@ -48,6 +49,8 @@ pub(crate) enum EditMode {
     #[default]
     Object,
     Edit,
+    /// Escultura (pincéis do ANIGO no objeto ativo).
+    Sculpt,
 }
 
 /// Forma do arrasto de seleção.
@@ -127,6 +130,8 @@ pub(crate) struct ModelingState {
     pub cam: OrbitCamera,
     /// Multivista: as câmeras das outras vistas (a da ativa é `cam`).
     pub views: multiview::MultiView,
+    /// Modo Escultura: pincéis, simetria, dyntopo e o vínculo com o objeto ativo.
+    pub sculpt: sculpt::SculptState,
     pub shade: ViewShade,
     pub snap: bool,
     pub xray: bool,
@@ -178,6 +183,7 @@ impl Default for ModelingState {
             sel: Selection::default(),
             cam: default_cam(),
             views: multiview::MultiView::default(),
+            sculpt: sculpt::SculptState::default(),
             shade: ViewShade::Toon,
             snap: false,
             xray: false,
@@ -625,6 +631,7 @@ fn draw_frame(env: &mut Env, ctx: &egui::Context, painter: &egui::Painter, rect:
         doc: &ms.doc,
         active: ms.active,
         edit: ms.mode == EditMode::Edit,
+        sculpt: ms.mode == EditMode::Sculpt,
         sel_mode: ms.sel_mode,
         sel: &ms.sel,
         cam: &ms.cam,
@@ -668,9 +675,20 @@ fn header(env: &mut Env, ui: &mut Ui, bar: Rect) {
     let ui = &mut child;
     let ms_mode = env.ed.modeling.mode;
     let tab = env.ed.modeling.keys.label(MAction::ToggleEdit);
-    for (m, key) in [(EditMode::Object, "mdl.mode.object"), (EditMode::Edit, "mdl.mode.edit")] {
-        let r = ui.selectable_label(ms_mode == m, tr(key)).on_hover_text(format!("{} ({tab})", tr("mdl.mode.tip")));
-        env.note(format!("mdl:mode.{}", if m == EditMode::Object { "object" } else { "edit" }), r.rect);
+    for (m, key) in [(EditMode::Object, "mdl.mode.object"), (EditMode::Edit, "mdl.mode.edit"), (EditMode::Sculpt, "mdl.mode.sculpt")] {
+        let tip = if m == EditMode::Sculpt { tr("mdl.mode.sculpt.tip").to_owned() } else { format!("{} ({tab})", tr("mdl.mode.tip")) };
+        let r = ui.selectable_label(ms_mode == m, tr(key)).on_hover_text(tip);
+        env.note(
+            format!(
+                "mdl:mode.{}",
+                match m {
+                    EditMode::Object => "object",
+                    EditMode::Edit => "edit",
+                    EditMode::Sculpt => "sculpt",
+                }
+            ),
+            r.rect,
+        );
         if r.clicked() {
             set_mode(env, m);
         }
@@ -832,12 +850,27 @@ fn falloff_key(f: ProportionalFalloff) -> &'static str {
     }
 }
 
-fn set_mode(env: &mut Env, m: EditMode) {
+pub(crate) fn set_mode(env: &mut Env, m: EditMode) {
     let ms = &mut env.ed.modeling;
     ms.cancel_modal();
-    if m == EditMode::Edit && ms.active.is_none() {
+    if m != EditMode::Object && ms.active.is_none() {
         env.ed.notify(tr("mdl.need_object"));
         return;
+    }
+    let was = ms.mode;
+    if was == EditMode::Sculpt && m != EditMode::Sculpt {
+        sculpt::cancel_stroke(ms);
+        ms.sculpt.clear();
+        if let Some(s) = ms.sculpt.shade_before.take() {
+            ms.shade = s;
+        }
+    }
+    if m == EditMode::Sculpt && was != EditMode::Sculpt {
+        // a escultura usa o sólido (relevo e máscara à vista); o sombreamento de antes volta ao sair
+        if ms.shade.is_cel() {
+            ms.sculpt.shade_before = Some(ms.shade);
+            ms.shade = ViewShade::Solid;
+        }
     }
     ms.mode = m;
     ms.sel.clear();
@@ -851,6 +884,9 @@ const AXIS_COLORS: [Color32; 3] = [Color32::from_rgb(0xe8, 0x45, 0x4b), Color32:
 
 fn overlay(env: &mut Env, ui: &mut Ui, painter: &egui::Painter, rect: Rect) {
     let t = env.t;
+    if env.ed.modeling.mode == EditMode::Sculpt {
+        sculpt_ring(env, painter, rect);
+    }
     let size = size_of(rect);
     let pointer = ui.ctx().input(|i| i.pointer.hover_pos());
     if env.ed.modeling.doc.objects.is_empty() {
@@ -956,7 +992,76 @@ fn overlay(env: &mut Env, ui: &mut Ui, painter: &egui::Painter, rect: Rect) {
 }
 
 /// Dica do rodapé com as teclas do perfil em uso.
+/// Entrada do modo Escultura: arrastar = traço (Ctrl inverte, Shift alisa), Esc cancela, [ e ] mudam o raio, Tab volta
+/// ao modo Objeto; sem botão, o círculo do pincel segue a superfície.
+fn sculpt_input(env: &mut Env, ctx: &egui::Context, resp: &egui::Response, mouse: Vec2, size: Vec2, mods: (bool, bool, bool, bool)) {
+    let (alt, shift, ctrl, space) = mods;
+    let pressure = ctx.input(|i| i.events.iter().rev().find_map(|e| match e {
+        egui::Event::Touch { force: Some(f), phase, .. } if *phase != egui::TouchPhase::End => Some(*f),
+        _ => None,
+    }));
+    let time = ctx.input(|i| i.time);
+    let keys_here = env.ed.modeling.hovered && env.ed.modeling.kb;
+    if keys_here {
+        let (esc, smaller, bigger, tab) = ctx.input(|i| (i.key_pressed(egui::Key::Escape), i.key_pressed(egui::Key::OpenBracket), i.key_pressed(egui::Key::CloseBracket), i.key_pressed(egui::Key::Tab)));
+        if esc {
+            sculpt::cancel_stroke(&mut env.ed.modeling);
+        }
+        if smaller || bigger {
+            let s = env.ed.modeling.sculpt.active_slot_mut();
+            s.radius_px = (s.radius_px * if bigger { 1.15 } else { 1.0 / 1.15 }).clamp(sculpt::RADIUS_MIN_PX, sculpt::RADIUS_MAX_PX);
+        }
+        if tab && !env.ed.modeling.sculpt.is_stroking() {
+            set_mode(env, EditMode::Object);
+            return;
+        }
+    }
+    let ms = &mut env.ed.modeling;
+    let view = sculpt::ViewInfo { camera: ms.cam, size };
+    let stroking = ms.sculpt.is_stroking();
+    if resp.drag_started_by(egui::PointerButton::Primary) && !alt && !space && !stroking {
+        let press = ctx.input(|i| i.pointer.press_origin()).map(|p| local(resp.rect, p)).unwrap_or(mouse);
+        let r = sculpt::begin_stroke(ms, &view, view.ray(press), pressure.unwrap_or(1.0), time, sculpt::StrokeMods { invert: ctrl, smooth: shift });
+        if let Err(e) = r {
+            ms.sculpt.error = Some(e);
+        }
+        if ms.sculpt.is_stroking() && press != mouse {
+            sculpt::continue_stroke(ms, view.ray(mouse), pressure.unwrap_or(1.0), time);
+        }
+    } else if stroking && ctx.input(|i| i.pointer.primary_down()) {
+        sculpt::continue_stroke(ms, view.ray(mouse), pressure.unwrap_or(1.0), time);
+        ctx.request_repaint();
+    } else if stroking {
+        sculpt::end_stroke(ms);
+    }
+    if resp.hovered() && !ms.sculpt.is_stroking() {
+        sculpt::update_hover(ms, view.ray(mouse));
+    } else if !resp.hovered() {
+        ms.sculpt.hover = None;
+    }
+}
+
+/// Círculo do pincel de escultura na superfície (raio em px de tela levado ao ponto sob o cursor).
+fn sculpt_ring(env: &Env, painter: &egui::Painter, rect: Rect) {
+    let ms = &env.ed.modeling;
+    let Some(h) = ms.sculpt.hover.or(None) else { return };
+    let Some(obj) = ms.active.and_then(|a| ms.doc.objects.get(a)) else { return };
+    let size = size_of(rect);
+    let model = obj.matrix();
+    let slot = ms.sculpt.slot(ms.sculpt.active);
+    let r_local = sculpt::px_to_local_radius(&ms.cam, size.y, h.world_point, slot.radius_px, model);
+    let pts: Vec<Pos2> = sculpt::ring_points_world(model, h.local_point, h.local_normal, r_local, 48).into_iter().filter_map(|w| ms.cam.project(w, size)).map(|(p, _)| to_screen(rect, p)).collect();
+    let ink = if ms.sculpt.active.is_mask() { Color32::from_rgb(120, 170, 255) } else { Color32::WHITE };
+    if pts.len() > 2 {
+        painter.add(egui::Shape::line(pts, Stroke::new(1.4, ink)));
+    }
+    let _ = sculpt::normal_to_world;
+}
+
 fn hint_text(ms: &ModelingState) -> String {
+    if ms.mode == EditMode::Sculpt {
+        return tr("mdl.hint.sculpt").to_owned();
+    }
     let k = &ms.keys;
     let acts: &[MAction] = if ms.mode == EditMode::Edit {
         &[MAction::ToggleEdit, MAction::Select, MAction::Move, MAction::Rotate, MAction::Scale, MAction::Extrude, MAction::Inset, MAction::Bevel, MAction::LoopCut, MAction::Slide, MAction::Delete]
@@ -1036,7 +1141,7 @@ fn gizmo_pivot(ms: &ModelingState) -> Option<Vec3> {
     let a = ms.active?;
     let o = ms.doc.objects.get(a)?;
     match ms.mode {
-        EditMode::Object => Some(Vec3::from(o.transform.pos)),
+        EditMode::Object | EditMode::Sculpt => Some(Vec3::from(o.transform.pos)),
         EditMode::Edit => {
             if ms.sel.verts.is_empty() {
                 return None;
@@ -1098,6 +1203,11 @@ fn input(env: &mut Env, ui: &mut Ui, rect: Rect, resp: &egui::Response) {
             return;
         }
     }
+    // ---- escultura: o arrasto esculpe (a câmera acima continua valendo)
+    if env.ed.modeling.mode == EditMode::Sculpt {
+        sculpt_input(env, &ctx, resp, mouse, size, (alt, shift, ctrl, space));
+        return;
+    }
     // ---- teclas (com o ponteiro no viewport ou com uma operação em curso)
     let keys_here = (env.ed.modeling.hovered || modal_on) && env.ed.modeling.kb;
     if keys_here {
@@ -1156,7 +1266,7 @@ fn input(env: &mut Env, ui: &mut Ui, rect: Rect, resp: &egui::Response) {
                 let k = tk.expect("ferramenta de transformação");
                 let axis = pivot.and_then(|p| gizmo::hit_test(k, &env.ed.modeling.cam, size, p, press));
                 let has_target = match env.ed.modeling.mode {
-                    EditMode::Object => env.ed.modeling.active.is_some(),
+                    EditMode::Object | EditMode::Sculpt => env.ed.modeling.active.is_some(),
                     EditMode::Edit => !env.ed.modeling.sel.verts.is_empty(),
                 };
                 if has_target || axis.is_some() {
@@ -1436,7 +1546,7 @@ fn click_select(env: &mut Env, size: Vec2, mouse: Vec2, extend: bool) {
     let ms = &mut env.ed.modeling;
     let cam = ms.cam;
     match ms.mode {
-        EditMode::Object => {
+        EditMode::Object | EditMode::Sculpt => {
             let (o, d) = cam.ray_from_pixel(mouse, size);
             let mut best: Option<(usize, f32)> = None;
             for (i, obj) in ms.doc.objects.iter().enumerate().filter(|(_, o)| o.visible) {
@@ -1561,7 +1671,7 @@ fn start_transform(env: &mut Env, kind: TransformKind, mouse: Vec2, from_tool: b
             }
             (pivot, originals)
         }
-        EditMode::Object => {
+        EditMode::Object | EditMode::Sculpt => {
             let p = Vec3::from(o.transform.pos);
             (p, vec![(0u32, p)])
         }
@@ -1772,7 +1882,7 @@ fn update_modal(env: &mut Env, mouse: Vec2, size: Vec2, ctrl_down: bool) {
                         }
                     }
                 }
-                EditMode::Object => {
+                EditMode::Object | EditMode::Sculpt => {
                     if let (Some(o), Some(b)) = (doc.objects.get_mut(idx), md.before.objects.get(idx)) {
                         match t.kind {
                             TransformKind::Grab => {
@@ -1939,7 +2049,7 @@ fn delete_selection(env: &mut Env, dissolve: bool) {
     let ms = &mut env.ed.modeling;
     let Some(a) = ms.active else { return };
     match ms.mode {
-        EditMode::Object => {
+        EditMode::Object | EditMode::Sculpt => {
             let r = ms.edit_labeled(tr("mdl.delete_object"), |d| {
                 d.objects.remove(a);
                 Ok(())
@@ -2050,12 +2160,24 @@ pub(crate) fn state_json(ms: &ModelingState) -> serde_json::Value {
     json!({
         "objects": ms.doc.objects.len(),
         "active": ms.active,
-        "mode": if ms.mode == EditMode::Edit { "edit" } else { "object" },
+        "mode": match ms.mode {
+            EditMode::Object => "object",
+            EditMode::Edit => "edit",
+            EditMode::Sculpt => "sculpt",
+        },
         "select_mode": format!("{:?}", ms.sel_mode).to_lowercase(),
         "selection": { "verts": ms.sel.verts.len(), "edges": ms.sel.edges.len(), "faces": ms.sel.faces.len() },
         "mesh": ms.active.and_then(|a| ms.doc.objects.get(a)).map(|o| json!({ "verts": o.mesh.vert_count(), "faces": o.mesh.face_count(), "modifiers": o.modifiers.iter().map(|m| m.key()).collect::<Vec<_>>() })),
         "camera": { "target": [r3(ms.cam.target.x), r3(ms.cam.target.y), r3(ms.cam.target.z)], "yaw_deg": r3(ms.cam.yaw.to_degrees()), "pitch_deg": r3(ms.cam.pitch.to_degrees()), "distance": r3(ms.cam.distance), "ortho": ms.cam.orthographic },
         "shade": ms.shade.key(),
+        "sculpt": {
+            "brush": sculpt::brush_key(ms.sculpt.active),
+            "radius_px": ms.sculpt.slot(ms.sculpt.active).radius_px,
+            "symmetry": ms.sculpt.symmetry.mirror,
+            "dyntopo": ms.sculpt.dyntopo,
+            "hover": ms.sculpt.hover.is_some(),
+            "last_stroke": ms.sculpt.last_stroke.map(|l| json!({ "dabs": l.dabs, "topology_changed": l.topology_changed, "ms": r3(l.millis) })),
+        },
         "views": {
             "layout": ms.views.layout.key(),
             "active": ms.views.active,
