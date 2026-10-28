@@ -583,3 +583,98 @@ fn merge_last_makes_one_undo_step() {
     assert!(s.project.node(&a).is_some_and(|n| n.children.len() == 1), "um refazer põe os dois");
     assert!(!s.merge_last(5, "x"), "não junta mais do que existe");
 }
+
+/// Projeto dividido por corte (auditoria 4.6k): manifesto + um arquivo por corte, regravado só quando muda; abre igual;
+/// desligar a divisão volta ao arquivo único; corte travado por outro processo não aceita edição nem é sobrescrito.
+#[test]
+fn split_cuts_storage_round_trips_and_cut_locks_guard_edits() {
+    let dir = std::env::temp_dir().join(format!("aiai-split-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut s = CoreSession::for_tests("t");
+    let (_ep, cut_a, _layer, cel_a) = build_basic(&mut s);
+    let sc = s.project.nodes.get(&cut_a).unwrap().parent.clone().unwrap();
+    let cut_b = s.apply(Command::CreateNode { id: None, parent: Some(sc), index: None, name: "C002".into(), data: NodeKind::Cut(CutData::new(24)) }).unwrap().created[0].clone();
+    let lb = s.apply(Command::CreateNode { id: None, parent: Some(cut_b.clone()), index: None, name: "B".into(), data: NodeKind::Layer(LayerData::new(LayerType::Vector)) }).unwrap().created[0].clone();
+    let cel_b = s.apply(Command::CreateNode { id: None, parent: Some(lb), index: None, name: "B1".into(), data: NodeKind::Cel(CelData::new(1)) }).unwrap().created[0].clone();
+    s.apply(Command::InsertStrokes { cel: cel_a.clone(), items: vec![IndexedStroke { index: 0, stroke: stroke("sa", 5.0) }] }).unwrap();
+    s.apply(Command::InsertStrokes { cel: cel_b.clone(), items: vec![IndexedStroke { index: 0, stroke: stroke("sb", 9.0) }] }).unwrap();
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"split_cuts": true}}) }).unwrap();
+    persist::save(&mut s, &dir).unwrap();
+    let manifest = std::fs::read_to_string(dir.join(persist::PROJECT_FILE)).unwrap();
+    let fa = dir.join("cuts").join(format!("{}.json", aiai_core::lock::cut_file_stem(&cut_a)));
+    let fb = dir.join("cuts").join(format!("{}.json", aiai_core::lock::cut_file_stem(&cut_b)));
+    assert!(fa.is_file() && fb.is_file(), "um arquivo por corte");
+    assert!(manifest.contains("cut_files") && !manifest.contains(&format!("\"{}\"", cel_a.0)), "o manifesto não guarda os nós dos cortes");
+    // abre igual (mesmo conteúdo, com as camadas e os traços dos dois cortes)
+    let before = snapshot(&s);
+    drop(s);
+    let (mut s2, rep) = persist::open(&dir).unwrap();
+    assert!(!rep.read_only());
+    assert_eq!(snapshot(&s2), before);
+    // mexer só no corte A não regrava o arquivo do B
+    let b_bytes = std::fs::read(&fb).unwrap();
+    let b_time = std::fs::metadata(&fb).unwrap().modified().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    s2.apply(Command::InsertStrokes { cel: cel_a.clone(), items: vec![IndexedStroke { index: 1, stroke: stroke("sa2", 30.0) }] }).unwrap();
+    assert!(s2.claimed_cuts().any(|c| *c == cut_a), "o corte editado ficou travado para esta sessão");
+    assert!(dir.join("cuts").join(format!("{}.lock", aiai_core::lock::cut_file_stem(&cut_a))).is_file());
+    persist::save(&mut s2, &dir).unwrap();
+    assert_eq!(std::fs::read(&fb).unwrap(), b_bytes);
+    assert_eq!(std::fs::metadata(&fb).unwrap().modified().unwrap(), b_time, "o corte B não foi regravado");
+    // outro processo vivo (o pid 4, "System") com a trava do corte B: editar o B volta com erro; o arquivo dele fica
+    let other = json!({"pid": 4, "host": aiai_core::lock::host_name(), "started_ms": 0, "exe": "outro.exe", "token": "x"});
+    std::fs::write(aiai_core::lock::cut_lock_path(&dir, &cut_b), other.to_string()).unwrap();
+    let rev = s2.project.revision;
+    let r = s2.apply(Command::InsertStrokes { cel: cel_b.clone(), items: vec![IndexedStroke { index: 1, stroke: stroke("sb2", 40.0) }] });
+    assert!(matches!(r, Err(CoreError::Locked(_))), "{r:?}");
+    assert_eq!(s2.project.revision, rev, "o comando foi desfeito");
+    std::fs::write(&fb, b"{\"format\":2,\"cut\":\"mexido por outro\",\"nodes\":{}}\n").unwrap_or(());
+    let theirs = std::fs::read(&fb).unwrap();
+    s2.apply(Command::InsertStrokes { cel: cel_a.clone(), items: vec![IndexedStroke { index: 2, stroke: stroke("sa3", 50.0) }] }).unwrap();
+    persist::save(&mut s2, &dir).unwrap();
+    assert_eq!(std::fs::read(&fb).unwrap(), theirs, "o corte travado por outro não é sobrescrito");
+    std::fs::remove_file(aiai_core::lock::cut_lock_path(&dir, &cut_b)).unwrap();
+    // desligar a divisão: volta ao arquivo único e os arquivos de corte saem
+    s2.apply(Command::SetProjectProps { patch: json!({"settings": {"split_cuts": false}}) }).unwrap();
+    persist::save(&mut s2, &dir).unwrap();
+    assert!(!fa.exists() && !fb.exists());
+    let whole = std::fs::read_to_string(dir.join(persist::PROJECT_FILE)).unwrap();
+    assert!(!whole.contains("cut_files") && whole.contains(&cel_a.0));
+    drop(s2);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Projeto dividido aberto enquanto outro processo tem a pasta: só dá para editar dentro de cortes, e salvar grava só
+/// os cortes travados por esta sessão (o manifesto e o diário ficam com o dono).
+#[test]
+fn read_only_split_session_saves_only_its_cuts() {
+    let dir = std::env::temp_dir().join(format!("aiai-split-ro-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut s = CoreSession::for_tests("t");
+    let (_ep, cut_a, _layer, cel_a) = build_basic(&mut s);
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"split_cuts": true}}) }).unwrap();
+    persist::save(&mut s, &dir).unwrap();
+    drop(s);
+    // o dono da pasta é outro processo vivo
+    let other = json!({"pid": 4, "host": aiai_core::lock::host_name(), "started_ms": 0, "exe": "outro.exe", "token": "x"});
+    std::fs::write(dir.join(aiai_core::lock::LOCK_FILE), other.to_string()).unwrap();
+    let manifest = std::fs::read(dir.join(persist::PROJECT_FILE)).unwrap();
+    let (mut s, rep) = persist::open(&dir).unwrap();
+    assert!(rep.read_only());
+    // fora dos cortes (um personagem novo): recusado
+    let r = s.apply(Command::CreateNode { id: None, parent: None, index: None, name: "Pal".into(), data: NodeKind::Palette(PaletteData::default()) });
+    assert!(matches!(r, Err(CoreError::Locked(_))), "{r:?}");
+    // dentro do corte: vale, e salvar grava o corte
+    s.apply(Command::InsertStrokes { cel: cel_a.clone(), items: vec![IndexedStroke { index: 0, stroke: stroke("ro", 7.0) }] }).unwrap();
+    persist::save(&mut s, &dir).unwrap();
+    assert_eq!(std::fs::read(dir.join(persist::PROJECT_FILE)).unwrap(), manifest, "o manifesto é do dono");
+    let fa = dir.join("cuts").join(format!("{}.json", aiai_core::lock::cut_file_stem(&cut_a)));
+    assert!(std::fs::read_to_string(&fa).unwrap().contains("\"ro\""), "o corte foi gravado");
+    drop(s);
+    std::fs::remove_file(dir.join(aiai_core::lock::LOCK_FILE)).unwrap();
+    let (s, _) = persist::open(&dir).unwrap();
+    let NodeKind::Cel(c) = &s.project.nodes[&cel_a].data else { panic!() };
+    assert!(c.strokes.iter().any(|t| t.id.0 == "ro"), "o dono abre com o traço do outro");
+    drop(s);
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -331,5 +331,15 @@ fn project_settings(env: &mut Env, ui: &mut Ui) {
             let _ = cmds::set_project_props(env.core, json!({ "settings": { "linear_light": lin } }));
         }
         ui.end_row();
+        // projeto em arquivos por corte, com trava por corte (auditoria 4.6k)
+        dim_label(ui, &t, tr("project.split_cuts"));
+        next(ui);
+        let mut split = s.split_cuts;
+        let r = ui.checkbox(&mut split, tr("project.split_cuts.on")).on_hover_text(tr("project.split_cuts.tip"));
+        env.note("project:split_cuts", r.rect);
+        if r.changed() {
+            let _ = cmds::set_project_props(env.core, json!({ "settings": { "split_cuts": split } }));
+        }
+        ui.end_row();
     });
 }

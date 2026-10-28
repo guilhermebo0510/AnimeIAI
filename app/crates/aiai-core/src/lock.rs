@@ -56,15 +56,24 @@ pub enum LockState {
 /// Lê a trava da pasta. Ausente = `None`; ilegível (gravação interrompida, edição à mão) = trava sem dono (pid 0), que
 /// [`inspect`] trata como velha.
 pub fn read(dir: &Path) -> CoreResult<Option<LockInfo>> {
-    match crate::persist::retry_io(|| std::fs::read(dir.join(LOCK_FILE))) {
+    read_file(&dir.join(LOCK_FILE))
+}
+
+/// Como [`read`], com o caminho do arquivo da trava (trava de corte: `cuts/<corte>.lock`).
+pub fn read_file(path: &Path) -> CoreResult<Option<LockInfo>> {
+    match crate::persist::retry_io(|| std::fs::read(path)) {
         Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes).unwrap_or_default())),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(CoreError::Io(format!("{}: {e}", dir.join(LOCK_FILE).display()))),
+        Err(e) => Err(CoreError::Io(format!("{}: {e}", path.display()))),
     }
 }
 
 pub fn inspect(dir: &Path) -> CoreResult<LockState> {
-    let Some(info) = read(dir)? else { return Ok(LockState::Free) };
+    inspect_file(&dir.join(LOCK_FILE))
+}
+
+pub fn inspect_file(path: &Path) -> CoreResult<LockState> {
+    let Some(info) = read_file(path)? else { return Ok(LockState::Free) };
     if info.pid == 0 {
         return Ok(LockState::Stale(info));
     }
@@ -82,6 +91,8 @@ pub fn inspect(dir: &Path) -> CoreResult<LockState> {
 #[derive(Debug)]
 pub struct ProjectLock {
     dir: PathBuf,
+    /// O arquivo da trava (`project.lock` da pasta, ou `cuts/<corte>.lock`).
+    file: PathBuf,
     info: LockInfo,
 }
 
@@ -97,9 +108,9 @@ impl ProjectLock {
     /// Antes de gravar: a trava ainda é desta sessão (ou deste processo)? Outro processo assumiu = erro (a gravação não
     /// acontece). Arquivo sumido (apagado por fora) = grava a nossa de novo.
     pub fn verify(&self) -> CoreResult<()> {
-        match read(&self.dir)? {
+        match read_file(&self.file)? {
             Some(i) if i.token == self.info.token || (i.pid == std::process::id() && i.host == host_name()) => Ok(()),
-            None => write_lock(&self.dir, &self.info),
+            None => write_lock(&self.file, &self.info),
             Some(i) => Err(CoreError::Locked(format!("outro processo assumiu o projeto ({})", i.describe()))),
         }
     }
@@ -108,8 +119,8 @@ impl ProjectLock {
 impl Drop for ProjectLock {
     fn drop(&mut self) {
         // sem como devolver erro aqui: se não der para apagar, a próxima abertura vê o pid morto e trata como velha
-        if read(&self.dir).ok().flatten().is_some_and(|i| i.token == self.info.token) {
-            let _ = std::fs::remove_file(self.dir.join(LOCK_FILE));
+        if read_file(&self.file).ok().flatten().is_some_and(|i| i.token == self.info.token) {
+            let _ = std::fs::remove_file(&self.file);
         }
     }
 }
@@ -123,20 +134,49 @@ pub struct Acquired {
 /// Trava a pasta para esta sessão. Livre, deste processo ou velha: grava a nossa. De outro processo vivo: devolve
 /// `Err(dono)` sem tocar em nada, a menos que `take_over` (o usuário escolheu assumir).
 pub fn acquire(dir: &Path, take_over: bool) -> CoreResult<Result<Acquired, LockInfo>> {
-    let replaced = match inspect(dir)? {
+    acquire_file(dir, &dir.join(LOCK_FILE), take_over)
+}
+
+fn acquire_file(dir: &Path, file: &Path, take_over: bool) -> CoreResult<Result<Acquired, LockInfo>> {
+    let replaced = match inspect_file(file)? {
         LockState::Free | LockState::Mine(_) => None,
         LockState::Stale(i) => Some(i),
         LockState::Held(i) if take_over => Some(i),
         LockState::Held(i) => return Ok(Err(i)),
     };
     let info = LockInfo::mine();
-    write_lock(dir, &info)?;
-    Ok(Ok(Acquired { lock: ProjectLock { dir: dir.to_path_buf(), info }, replaced }))
+    write_lock(file, &info)?;
+    Ok(Ok(Acquired { lock: ProjectLock { dir: dir.to_path_buf(), file: file.to_path_buf(), info }, replaced }))
 }
 
-fn write_lock(dir: &Path, info: &LockInfo) -> CoreResult<()> {
+/// Pasta das travas e dos arquivos de corte (`cuts/`).
+pub const CUTS_DIR: &str = "cuts";
+
+/// Nome de arquivo seguro para o id do corte (o id é texto; só letras, números, `-` e `_` passam).
+pub fn cut_file_stem(cut: &crate::Id) -> String {
+    cut.0.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect()
+}
+
+/// Arquivo da trava de um corte (auditoria 4.6k): `cuts/<corte>.lock`.
+pub fn cut_lock_path(dir: &Path, cut: &crate::Id) -> PathBuf {
+    dir.join(CUTS_DIR).join(format!("{}.lock", cut_file_stem(cut)))
+}
+
+/// Trava um corte para esta sessão (quem edita aquele corte agora). Mesmas regras da trava da pasta: de outro
+/// processo vivo = `Err(dono)`.
+pub fn acquire_cut(dir: &Path, cut: &crate::Id) -> CoreResult<Result<Acquired, LockInfo>> {
+    std::fs::create_dir_all(dir.join(CUTS_DIR))?;
+    acquire_file(dir, &cut_lock_path(dir, cut), false)
+}
+
+/// Estado da trava de um corte.
+pub fn inspect_cut(dir: &Path, cut: &crate::Id) -> CoreResult<LockState> {
+    inspect_file(&cut_lock_path(dir, cut))
+}
+
+fn write_lock(file: &Path, info: &LockInfo) -> CoreResult<()> {
     let body = serde_json::to_string_pretty(info)?;
-    crate::persist::write_file_atomic(&dir.join(LOCK_FILE), body.as_bytes())
+    crate::persist::write_file_atomic(file, body.as_bytes())
 }
 
 /// O processo `pid` existe e é o mesmo que gravou a trava em `started_ms`?

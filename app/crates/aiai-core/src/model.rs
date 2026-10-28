@@ -49,6 +49,11 @@ pub struct Settings {
     /// como luz de verdade). Desligado = mistura em sRGB, como o Clip Studio e o Photoshop fazem por padrão.
     #[serde(default)]
     pub linear_light: bool,
+    /// Projeto em arquivos por corte (auditoria 4.6k): `project.json` vira o manifesto e cada corte (com camadas e cels)
+    /// vai para `cuts/<corte>.json`, regravado só quando muda (merges limpos no git, um artista por corte). Cada corte
+    /// editado ganha a trava `cuts/<corte>.lock`; o corte travado por outro processo não aceita edição aqui.
+    #[serde(default)]
+    pub split_cuts: bool,
 }
 
 fn default_dialogue_lang() -> String {
@@ -72,6 +77,7 @@ impl Default for Settings {
             subtitle_language: default_subtitle_lang(),
             audio_sample_rate: default_sample_rate(),
             linear_light: false,
+            split_cuts: false,
         }
     }
 }

@@ -20,7 +20,7 @@ Status em `06-status-auditoria-1.md` e `07-status-auditoria-2.md`. Em aberto na 
 - [ ] 4.4a compositor na GPU (e as metas de 4K de 4.4g)
 - [ ] 4.6g Kokoro sem `uv` (ONNX embutido) — só se a instalação não oferecer risco
 - [x] 4.6h cor linear / HDR (mistura em luz linear no projeto, tiles AIT2 sem corte)
-- [ ] 4.6k projeto em arquivos por corte com trava por corte
+- [x] 4.6k projeto em arquivos por corte com trava por corte
 - [x] 4.6d rigging 2D nativo (ossos, IK, pai-filho)
 - [x] 4.9h bancada de calibração (Steger, w(s), junções; tolerância de borda) — w(s) aponta 6 canetas para recalibrar (seção 2)
 - [ ] 4.9g plugins `.aiaiplugin`

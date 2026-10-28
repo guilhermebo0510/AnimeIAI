@@ -79,6 +79,159 @@ pub fn to_canonical_json(project: &Project) -> CoreResult<String> {
     Ok(s)
 }
 
+/// Formato do manifesto quando o projeto está dividido por corte (`Settings::split_cuts`): versões que só conhecem o
+/// formato 1 recusam abrir com uma mensagem clara (em vez de abrir um projeto sem os cortes).
+pub const SPLIT_FORMAT: u32 = 2;
+
+/// O documento como vai para o disco: o `project.json` (inteiro, ou o manifesto) e os arquivos dos cortes
+/// (`cuts/<corte>.json`, caminho relativo e conteúdo), quando dividido.
+pub fn document_files(project: &Project) -> CoreResult<(String, Vec<(crate::Id, String, String)>)> {
+    if !project.settings.split_cuts {
+        return Ok((to_canonical_json(project)?, Vec::new()));
+    }
+    let mut v = serde_json::to_value(project)?;
+    let mut files = Vec::new();
+    let mut names = Vec::new();
+    {
+        let nodes = v.get_mut("nodes").and_then(|n| n.as_object_mut()).ok_or_else(|| CoreError::invalid("nodes", "documento sem nós"))?;
+        for (id, n) in &project.nodes {
+            if !matches!(n.data, crate::NodeKind::Cut(_)) {
+                continue;
+            }
+            let mut part = serde_json::Map::new();
+            for d in std::iter::once(id.clone()).chain(project.subtree(id)) {
+                if let Some(x) = nodes.remove(&d.0) {
+                    part.insert(d.0.clone(), x);
+                }
+            }
+            let rel = format!("{}/{}.json", crate::lock::CUTS_DIR, crate::lock::cut_file_stem(id));
+            let body = serde_json::json!({ "format": SPLIT_FORMAT, "cut": id.0, "nodes": serde_json::Value::Object(part) });
+            let mut text = serde_json::to_string_pretty(&body)?;
+            text.push('\n');
+            names.push(rel.clone());
+            files.push((id.clone(), rel, text));
+        }
+    }
+    names.sort();
+    v["format"] = serde_json::json!(SPLIT_FORMAT);
+    v["cut_files"] = serde_json::json!(names);
+    let mut manifest = serde_json::to_string_pretty(&v)?;
+    manifest.push('\n');
+    Ok((manifest, files))
+}
+
+/// Lê o documento da pasta (inteiro ou dividido por corte) e devolve o projeto e os bytes do documento inteiro (a
+/// cópia de segurança guarda sempre o documento inteiro, que abre sozinho).
+pub fn read_document(dir: &Path) -> CoreResult<(Project, Vec<u8>)> {
+    let bytes = retry_io(|| std::fs::read(dir.join(PROJECT_FILE)))?;
+    let mut v: serde_json::Value = serde_json::from_slice(&bytes)?;
+    let split = v.get("cut_files").and_then(|c| c.as_array()).cloned();
+    let fmt = v.get("format").and_then(|f| f.as_u64()).unwrap_or(0) as u32;
+    let max = if split.is_some() { SPLIT_FORMAT } else { crate::FORMAT_VERSION };
+    if fmt > max {
+        return Err(CoreError::invalid("format", format!("formato {fmt} mais novo que o suportado {max}")));
+    }
+    let Some(files) = split else {
+        return Ok((serde_json::from_value(v)?, bytes));
+    };
+    {
+        let nodes = v.get_mut("nodes").and_then(|n| n.as_object_mut()).ok_or_else(|| CoreError::invalid("nodes", "manifesto sem nós"))?;
+        for f in &files {
+            let rel = f.as_str().ok_or_else(|| CoreError::invalid("cut_files", "caminho não é texto"))?;
+            if rel.contains("..") || Path::new(rel).is_absolute() {
+                return Err(CoreError::invalid("cut_files", format!("caminho fora da pasta: {rel}")));
+            }
+            let p = dir.join(rel);
+            let part: serde_json::Value = match retry_io(|| std::fs::read(&p)) {
+                Ok(b) => serde_json::from_slice(&b).map_err(|e| CoreError::invalid("cut_files", format!("{rel}: {e}")))?,
+                Err(e) => return Err(CoreError::Io(format!("arquivo do corte ausente ou ilegível: {rel} ({e})"))),
+            };
+            let pn = part.get("nodes").and_then(|n| n.as_object()).ok_or_else(|| CoreError::invalid("cut_files", format!("{rel}: sem nós")))?;
+            for (k, x) in pn {
+                nodes.insert(k.clone(), x.clone());
+            }
+        }
+    }
+    if let Some(o) = v.as_object_mut() {
+        o.remove("cut_files");
+        o.insert("format".into(), serde_json::json!(crate::FORMAT_VERSION));
+    }
+    let project: Project = serde_json::from_value(v)?;
+    let full = to_canonical_json(&project)?.into_bytes();
+    Ok((project, full))
+}
+
+/// Grava o documento na pasta: os arquivos de corte que esta sessão editou (os outros podem ter sido salvos por quem
+/// os editou em outro lugar: a cópia daqui pode ser velha) ou que ainda não existem, nunca os travados por outro
+/// processo vivo; apaga os de cortes que não existem mais (ou todos, se o projeto deixou de ser dividido) e por fim o
+/// `project.json`. Devolve os cortes pulados.
+fn write_document(dir: &Path, project: &Project, manifest: &str, files: &[(crate::Id, String, String)], edited: &[crate::Id]) -> CoreResult<Vec<crate::Id>> {
+    let mut skipped = Vec::new();
+    let cuts_dir = dir.join(crate::lock::CUTS_DIR);
+    // a pasta ainda não estava dividida (primeira gravação dividida): todos os arquivos saem daqui
+    let was_split = retry_io(|| std::fs::read(dir.join(PROJECT_FILE))).is_ok_and(|b| b.windows(11).any(|w| w == b"\"cut_files\""));
+    if !files.is_empty() {
+        std::fs::create_dir_all(&cuts_dir)?;
+    }
+    for (cut, rel, text) in files {
+        if matches!(crate::lock::inspect_cut(dir, cut)?, crate::lock::LockState::Held(_)) {
+            skipped.push(cut.clone());
+            continue;
+        }
+        let p = dir.join(rel);
+        if was_split && p.is_file() && !edited.contains(cut) {
+            continue;
+        }
+        if retry_io(|| std::fs::read(&p)).is_ok_and(|b| b == text.as_bytes()) {
+            continue;
+        }
+        write_atomic(&p, text.as_bytes())?;
+    }
+    // arquivos de corte que sobraram (corte apagado, ou o projeto não é mais dividido)
+    if let Ok(rd) = std::fs::read_dir(&cuts_dir) {
+        let keep: std::collections::BTreeSet<String> = files.iter().map(|(_, r, _)| r.rsplit('/').next().unwrap_or(r).to_string()).collect();
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.ends_with(".json") && !keep.contains(&name) {
+                let stem = name.trim_end_matches(".json");
+                let held = project.nodes.keys().any(|k| crate::lock::cut_file_stem(k) == stem && matches!(crate::lock::inspect_cut(dir, k), Ok(crate::lock::LockState::Held(_))));
+                if !held {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
+    }
+    write_atomic(&dir.join(PROJECT_FILE), manifest.as_bytes())?;
+    Ok(skipped)
+}
+
+/// Sessão só de leitura (outro processo tem a pasta) num projeto dividido por corte: grava só os cortes que esta
+/// sessão travou (e os blobs deles). O manifesto e o diário ficam com o dono da pasta.
+pub fn save_cuts(session: &mut CoreSession, dir: &Path) -> CoreResult<Vec<crate::Id>> {
+    if !session.project.settings.split_cuts {
+        return Err(CoreError::invalid("split_cuts", "o projeto não está dividido por corte"));
+    }
+    let mine: Vec<crate::Id> = session.claimed_cuts().cloned().collect();
+    let (_, files) = document_files(&session.project)?;
+    let mut written = Vec::new();
+    for (cut, rel, text) in files.iter().filter(|(c, _, _)| mine.contains(c)) {
+        // os blobs deste corte: os do documento que aparecem no arquivo dele
+        let pending: Vec<_> = session.project.referenced_blobs().into_iter().filter(|h| text.contains(&h.0)).filter_map(|h| session.blobs.get(&h).map(|b| (h, b))).collect();
+        let blobs = &session.blobs;
+        write_blobs_parallel(dir, &pending, &|h| !blobs.is_on_disk(h))?;
+        for (h, _) in &pending {
+            session.blobs.mark_on_disk(h.clone());
+        }
+        let p = dir.join(rel);
+        if !retry_io(|| std::fs::read(&p)).is_ok_and(|b| b == text.as_bytes()) {
+            std::fs::create_dir_all(dir.join(crate::lock::CUTS_DIR))?;
+            write_atomic(&p, text.as_bytes())?;
+        }
+        written.push(cut.clone());
+    }
+    Ok(written)
+}
+
 /// Problema de um blob que o disco não tem (os demais são cópias ilegíveis, vazias ou corrompidas).
 pub const BLOB_ABSENT: &str = "arquivo ausente";
 
@@ -336,11 +489,19 @@ fn claim_lock(session: &CoreSession, dir: &Path) -> CoreResult<Option<crate::loc
 /// tem a trava da pasta.
 pub fn save(session: &mut CoreSession, dir: &Path) -> CoreResult<()> {
     std::fs::create_dir_all(dir)?;
+    // projeto dividido aberto só para leitura (outro processo tem a pasta): grava só os cortes travados aqui
+    if session.project.settings.split_cuts && session.lock().is_none() && session.path.as_deref() == Some(dir) {
+        if let crate::lock::LockState::Held(_) = crate::lock::inspect(dir)? {
+            save_cuts(session, dir)?;
+            return Ok(());
+        }
+    }
     let new_lock = claim_lock(session, dir)?;
-    let json = to_canonical_json(&session.project)?;
+    let (json, cut_files) = document_files(&session.project)?;
     let referenced = session.project.referenced_blobs();
     let blob_bytes: u64 = referenced.iter().filter_map(|h| session.blobs.get(h)).map(|b| b.len() as u64).sum();
-    ensure_space(dir, json.len() as u64 + blob_bytes)?;
+    let doc_bytes: u64 = json.len() as u64 + cut_files.iter().map(|f| f.2.len() as u64).sum::<u64>();
+    ensure_space(dir, doc_bytes + blob_bytes)?;
     let required = session.project.required_blobs();
     let mut pending = Vec::new();
     for h in &referenced {
@@ -361,7 +522,8 @@ pub fn save(session: &mut CoreSession, dir: &Path) -> CoreResult<()> {
     for (h, _) in &pending {
         session.blobs.mark_on_disk(h.clone());
     }
-    write_atomic(&dir.join(PROJECT_FILE), json.as_bytes())?;
+    let edited: Vec<crate::Id> = session.claimed_cuts().cloned().collect();
+    write_document(dir, &session.project, &json, &cut_files, &edited)?;
     write_opener(dir, &session.project)?;
     // WAL recomeça a partir desta revisão.
     let wal = Wal::create(dir, session.project.revision)?;
@@ -437,11 +599,7 @@ pub fn open(dir: &Path) -> CoreResult<(CoreSession, OpenReport)> {
 
 /// Como [`open`]; `take_over` assume a trava mesmo de outro processo vivo (o usuário escolheu "Assumir").
 pub fn open_with(dir: &Path, take_over: bool) -> CoreResult<(CoreSession, OpenReport)> {
-    let doc_bytes = std::fs::read(dir.join(PROJECT_FILE))?;
-    let project: Project = serde_json::from_slice(&doc_bytes)?;
-    if project.format > crate::FORMAT_VERSION {
-        return Err(CoreError::invalid("format", format!("formato {} mais novo que o suportado {}", project.format, crate::FORMAT_VERSION)));
-    }
+    let (project, doc_bytes) = read_document(dir)?;
     project.validate().map_err(|e| CoreError::invalid("project", e))?;
     let mut report = OpenReport::default();
     let lock = match crate::lock::acquire(dir, take_over)? {

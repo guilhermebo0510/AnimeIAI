@@ -64,6 +64,8 @@ pub struct CoreSession {
     /// Trava "aberto em outro lugar" da pasta (`None` = sem pasta, ou aberta só para leitura porque outro processo vivo
     /// tem a trava: o Salvar nessa pasta recusa).
     lock: Option<crate::lock::ProjectLock>,
+    /// Travas dos cortes que esta sessão editou (projeto dividido por corte, auditoria 4.6k).
+    cut_locks: std::collections::BTreeMap<crate::Id, crate::lock::ProjectLock>,
 }
 
 /// Coleta os blobs órfãos depois de tantas ações saírem do histórico (sem isso a memória só crescia).
@@ -89,6 +91,7 @@ impl CoreSession {
             path: None,
             dropped_since_gc: 0,
             lock: None,
+            cut_locks: Default::default(),
         }
     }
 
@@ -125,6 +128,53 @@ impl CoreSession {
         self.lock.take()
     }
 
+    /// Cortes travados por esta sessão.
+    pub fn claimed_cuts(&self) -> impl Iterator<Item = &crate::Id> {
+        self.cut_locks.keys()
+    }
+
+    /// Solta as travas de corte (fechar o projeto, trocar de pasta).
+    pub fn release_cut_locks(&mut self) {
+        self.cut_locks.clear();
+    }
+
+    /// Projeto dividido com pasta: trava os cortes que o comando mexeu (a primeira edição de cada um). Corte travado
+    /// por outro processo = erro; sessão só de leitura (outro processo tem a pasta) só edita dentro de cortes.
+    fn claim_cuts_for(&mut self, affected: &[crate::Id]) -> CoreResult<()> {
+        if !self.project.settings.split_cuts {
+            return Ok(());
+        }
+        let Some(dir) = self.path.clone() else { return Ok(()) };
+        let read_only = self.lock.is_none() && matches!(crate::lock::inspect(&dir), Ok(crate::lock::LockState::Held(_)));
+        let mut cuts = std::collections::BTreeSet::new();
+        for id in affected {
+            match self.project.cut_of(id) {
+                Some(c) => {
+                    cuts.insert(c);
+                }
+                None if read_only && self.project.nodes.contains_key(id) => {
+                    return Err(CoreError::Locked("outro processo tem o projeto aberto: aqui só dá para editar dentro de um corte (o resto fica com ele)".into()));
+                }
+                None => {}
+            }
+        }
+        for c in cuts {
+            if self.cut_locks.contains_key(&c) {
+                continue;
+            }
+            match crate::lock::acquire_cut(&dir, &c)? {
+                Ok(a) => {
+                    self.cut_locks.insert(c, a.lock);
+                }
+                Err(owner) => {
+                    let name = self.project.nodes.get(&c).map(|n| n.name.clone()).unwrap_or_else(|| c.0.clone());
+                    return Err(CoreError::Locked(format!("o corte {name} está sendo editado em outro lugar ({})", owner.describe())));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Fechamento limpo: solta a trava da pasta (o `project.lock` desta abertura sai do disco).
     pub fn release_lock(&mut self) {
         self.lock = None;
@@ -155,6 +205,13 @@ impl CoreSession {
                 applied.inverse.apply(&mut self.project, &ctx).expect("inverso deve restaurar");
                 return Err(CoreError::Hierarchy(format!("o comando deixou o projeto inválido ({e}); revertido")));
             }
+        }
+        // projeto dividido por corte: o corte mexido fica travado para esta sessão (ou o comando volta, se outro processo
+        // está com ele)
+        if let Err(e) = self.claim_cuts_for(&applied.affected) {
+            let ctx = ApplyCtx { blobs: &self.blobs, author, revision };
+            applied.inverse.apply(&mut self.project, &ctx).expect("inverso deve restaurar");
+            return Err(e);
         }
         self.project.revision = revision;
         self.change_counter += 1;
@@ -196,6 +253,8 @@ impl CoreSession {
         let outcome = Outcome { revision, description: description.clone(), created: r.created.clone(), affected: r.affected.clone() };
         self.record("undo", &description, &author, Some(a.inverse.clone()))?;
         self.redo.push(Applied { command: r.inverse, inverse: a.inverse, created: a.created, affected: r.affected });
+        // desfazer num corte também é editar o corte (projeto dividido): a gravação seguinte regrava o arquivo dele
+        let _ = self.claim_cuts_for(&outcome.affected);
         Ok(outcome)
     }
 
@@ -219,6 +278,7 @@ impl CoreSession {
         let outcome = Outcome { revision, description: description.clone(), created: r.created.clone(), affected: r.affected.clone() };
         self.record("redo", &description, &author, Some(a.command.clone()))?;
         self.undo.push(r);
+        let _ = self.claim_cuts_for(&outcome.affected);
         Ok(outcome)
     }
 
