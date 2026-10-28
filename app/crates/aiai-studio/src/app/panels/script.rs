@@ -10,7 +10,7 @@ use crate::i18n::tr;
 use crate::icons::IconId;
 use aiai_core::Id;
 use aiai_tools::preprod::{ElementKind, ElementPatch, ElementSpec, ScriptDoc, ScriptElement, ScriptOp, ScriptScene};
-use egui::{Align, Layout, Stroke, Ui};
+use egui::{Align, Key, Layout, Modifiers, Stroke, Ui};
 
 const KINDS: [(ElementKind, &str); 5] = [
     (ElementKind::Action, "script.kind.action"),
@@ -22,6 +22,24 @@ const KINDS: [(ElementKind, &str); 5] = [
 
 pub(crate) fn kind_key(k: ElementKind) -> &'static str {
     KINDS.iter().find(|(x, _)| *x == k).map(|(_, key)| *key).unwrap_or("script.kind.action")
+}
+
+/// O elemento que vem depois de `e` com Ctrl+Enter (como o Enter do Final Draft): ação puxa ação; fala puxa fala do
+/// outro personagem da conversa (o último que falou antes e não é este, como o WriterDuet); parentético puxa a fala do
+/// mesmo personagem; transição e nota puxam ação.
+pub(crate) fn next_element(scene: &ScriptScene, i: usize) -> (ElementKind, Option<Id>) {
+    let e = &scene.elements[i];
+    match e.kind {
+        ElementKind::Dialogue => {
+            let other = scene.elements[..i].iter().rev().filter(|x| x.kind == ElementKind::Dialogue).filter_map(|x| x.character.clone()).find(|c| Some(c) != e.character.as_ref());
+            (ElementKind::Dialogue, other.or_else(|| e.character.clone()))
+        }
+        ElementKind::Parenthetical => {
+            let who = e.character.clone().or_else(|| scene.elements[..i].iter().rev().find(|x| x.kind == ElementKind::Dialogue).and_then(|x| x.character.clone()));
+            (ElementKind::Dialogue, who)
+        }
+        _ => (ElementKind::Action, None),
+    }
 }
 
 /// O que fazer com o id criado pela edição do quadro.
@@ -219,6 +237,8 @@ fn element_card(env: &mut Env, ui: &mut Ui, doc: &ScriptDoc, si: usize, scene: &
             if env.ed.script_focus.as_ref() == Some(&e.id) {
                 env.ed.script_focus = None;
                 r.request_focus();
+                // o elemento novo pode nascer abaixo da área visível
+                r.scroll_to_me(Some(Align::Center));
             }
             if r.gained_focus() {
                 touched = true;
@@ -226,6 +246,7 @@ fn element_card(env: &mut Env, ui: &mut Ui, doc: &ScriptDoc, si: usize, scene: &
             if let Some(x) = c {
                 pend.ops.push(ScriptOp::UpdateElement { element: e.id.clone(), patch: ElementPatch { text: Some(x), ..Default::default() } });
             }
+            ctrl_enter_new(ui, &r, scene, i, pend);
         });
         ui.horizontal_top(|ui| {
             ui.add_sized([label_w, 18.0], egui::Label::new(egui::RichText::new(lang_tr).size(11.5).color(t.text_dim)));
@@ -237,6 +258,7 @@ fn element_card(env: &mut Env, ui: &mut Ui, doc: &ScriptDoc, si: usize, scene: &
             if let Some(x) = c {
                 pend.ops.push(ScriptOp::UpdateElement { element: e.id.clone(), patch: ElementPatch { translation: Some(x), ..Default::default() } });
             }
+            ctrl_enter_new(ui, &r, scene, i, pend);
         });
         // ---- emoção e direção (falas)
         if e.kind == ElementKind::Dialogue {
@@ -271,6 +293,17 @@ fn element_card(env: &mut Env, ui: &mut Ui, doc: &ScriptDoc, si: usize, scene: &
 }
 
 /// Barra no fim da cena: nova ação, nova fala (com o personagem escolhido), transição e nota.
+/// Ctrl+Enter num campo do elemento: cria o próximo logo abaixo e põe o cursor nele (o texto digitado é gravado quando o
+/// campo perde o foco, no quadro seguinte).
+fn ctrl_enter_new(ui: &mut Ui, r: &egui::Response, scene: &ScriptScene, i: usize, pend: &mut Pending) {
+    if !r.has_focus() || !ui.input_mut(|inp| inp.consume_key(Modifiers::COMMAND, Key::Enter)) {
+        return;
+    }
+    let (kind, character) = next_element(scene, i);
+    pend.ops.push(ScriptOp::InsertElement { scene: scene.id.clone(), index: Some(i + 1), element: ElementSpec { kind, character, ..Default::default() } });
+    pend.select = Select::NewElement;
+}
+
 fn add_bar(env: &mut Env, ui: &mut Ui, si: usize, scene: &ScriptScene, chars: &[(Id, String)], pend: &mut Pending) {
     // entra logo depois do elemento selecionado desta cena; sem seleção, no fim
     let after = env.ed.sel_element.as_ref().and_then(|s| scene.elements.iter().position(|e| &e.id == s)).map(|p| p + 1);
@@ -280,7 +313,7 @@ fn add_bar(env: &mut Env, ui: &mut Ui, si: usize, scene: &ScriptScene, chars: &[
         pend.select = Select::NewElement;
     };
     ui.horizontal_wrapped(|ui| {
-        let b = ui.button(tr("script.add_action"));
+        let b = ui.button(tr("script.add_action")).on_hover_text(tr("script.ctrl_enter.tip"));
         env.note(format!("script:add_action:{si}"), b.rect);
         if b.clicked() {
             add(ElementKind::Action, None, pend);
@@ -359,5 +392,124 @@ pub(crate) fn properties(env: &mut Env, ui: &mut Ui) {
     if b.on_hover_text(tr("script.apply_timing.tip")).clicked() {
         let r = actions::run(env.core, "SCRIPT", serde_json::json!({ "op": "apply_timing", "doc": doc_id }));
         actions::notify_err(env.ed, r);
+    }
+    // ---- personagens: falas e tempo de cada um (elenco, orçamento de voz)
+    let chars = actions::characters(&env.core.project);
+    let mut rows: Vec<(String, usize, f32)> = Vec::new();
+    for s in &doc.scenes {
+        for e in s.elements.iter().filter(|e| e.kind == ElementKind::Dialogue) {
+            let name = e.character.as_ref().and_then(|c| chars.iter().find(|(id, _)| id == c)).map(|(_, n)| n.clone()).or_else(|| e.speaker.clone()).unwrap_or_else(|| tr("script.no_character").to_owned());
+            let secs = actions::element_secs(&doc, e);
+            match rows.iter_mut().find(|r| r.0 == name) {
+                Some(r) => {
+                    r.1 += 1;
+                    r.2 += secs;
+                }
+                None => rows.push((name, 1, secs)),
+            }
+        }
+    }
+    if !rows.is_empty() {
+        ui.add_space(8.0);
+        section(ui, &t, "script.cast");
+        rows.sort_by(|a, b| b.2.total_cmp(&a.2));
+        egui::Grid::new("script_cast_grid").num_columns(3).spacing([12.0, 4.0]).striped(true).show(ui, |ui| {
+            dim_label(ui, &t, tr("script.cast.name"));
+            dim_label(ui, &t, tr("script.cast.lines"));
+            dim_label(ui, &t, tr("script.cast.seconds"));
+            ui.end_row();
+            for (name, n, secs) in &rows {
+                ui.label(name);
+                ui.label(n.to_string());
+                ui.label(format!("{secs:.1} s"));
+                ui.end_row();
+            }
+        });
+    }
+    // ---- Fountain (o formato aberto de roteiro do Final Draft, Highland, WriterDuet…)
+    ui.add_space(8.0);
+    section(ui, &t, "script.fountain");
+    ui.horizontal_wrapped(|ui| {
+        let busy = env.ed.script_file.is_some();
+        let e = ui.add_enabled(!busy, egui::Button::new(tr("script.fountain.export"))).on_hover_text(tr("script.fountain.tip"));
+        env.note("script:fountain_export", e.rect);
+        let i = ui.add_enabled(!busy, egui::Button::new(tr("script.fountain.import"))).on_hover_text(tr("script.fountain.tip"));
+        env.note("script:fountain_import", i.rect);
+        if e.clicked() || i.clicked() {
+            let export = e.clicked();
+            let (tx, rx) = crossbeam_channel::bounded(1);
+            let start = env.core.path.clone();
+            let title = if doc.title.trim().is_empty() { "roteiro".to_owned() } else { doc.title.clone() };
+            let _ = std::thread::Builder::new().name("aiai-fountain-file".into()).spawn(move || {
+                let mut d = rfd::FileDialog::new().add_filter("Fountain", &["fountain", "txt"]);
+                if let Some(p) = start {
+                    d = d.set_directory(p);
+                }
+                let r = if export { d.set_file_name(format!("{}.fountain", sanitize(&title))).save_file() } else { d.pick_file() };
+                let _ = tx.send(r);
+            });
+            env.ed.script_file = Some((export, rx));
+        }
+    });
+    poll_fountain(env, &doc_id);
+}
+
+/// Nome de arquivo sem os caracteres que o Windows recusa.
+fn sanitize(s: &str) -> String {
+    s.chars().map(|c| if r#"<>:"/\|?*"#.contains(c) { '_' } else { c }).collect::<String>().trim().to_owned()
+}
+
+/// Resposta do diálogo do Fountain: exporta o roteiro aberto ou importa como roteiro novo (e abre).
+fn poll_fountain(env: &mut Env, doc_id: &crate::app::commands::NodeId) {
+    let Some((export, rx)) = env.ed.script_file.as_ref() else { return };
+    let export = *export;
+    let Ok(res) = rx.try_recv() else { return };
+    env.ed.script_file = None;
+    let Some(path) = res else { return };
+    if export {
+        let r = actions::run(env.core, "SCRIPT", serde_json::json!({ "op": "to_fountain", "doc": doc_id, "out": path.display().to_string() }));
+        if actions::notify_err(env.ed, r).is_some() {
+            env.ed.toast = Some(format!("{} {}", tr("script.fountain.exported"), path.display()));
+        }
+        return;
+    }
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) => {
+            env.ed.notify(format!("{}: {e}", path.display()));
+            return;
+        }
+    };
+    let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Roteiro".into());
+    let r = actions::run(env.core, "SCRIPT", serde_json::json!({ "op": "from_fountain", "name": name, "fountain": text }));
+    if let Some(v) = actions::notify_err(env.ed, r) {
+        if let Some(id) = v.get("doc").and_then(|d| d.as_str()) {
+            env.ed.sel_script = Some(Id(id.to_owned()));
+            env.ed.sel_scene = None;
+            env.ed.sel_element = None;
+        }
+        env.ed.toast = Some(format!("{} {}", tr("script.fountain.imported"), path.display()));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn el(kind: ElementKind, who: Option<&str>) -> ScriptElement {
+        let mut e = ElementSpec { kind, character: who.map(|w| Id(w.into())), ..Default::default() }.into_element(Id(format!("e{}", who.unwrap_or("-"))));
+        e.kind = kind;
+        e
+    }
+
+    #[test]
+    fn ctrl_enter_alternates_the_speakers_and_follows_the_screenplay_order() {
+        let scene = ScriptScene { id: Id("s".into()), heading: "S".into(), elements: vec![el(ElementKind::Action, None), el(ElementKind::Dialogue, Some("hana")), el(ElementKind::Dialogue, Some("ren")), el(ElementKind::Parenthetical, None), el(ElementKind::Transition, None)] };
+        assert_eq!(next_element(&scene, 0), (ElementKind::Action, None));
+        assert_eq!(next_element(&scene, 1), (ElementKind::Dialogue, Some(Id("hana".into()))), "sem conversa antes: o mesmo");
+        assert_eq!(next_element(&scene, 2), (ElementKind::Dialogue, Some(Id("hana".into()))), "a conversa alterna");
+        assert_eq!(next_element(&scene, 3), (ElementKind::Dialogue, Some(Id("ren".into()))), "parentético: a fala de quem falava");
+        assert_eq!(next_element(&scene, 4), (ElementKind::Action, None));
+        assert_eq!(sanitize("A: rosa?"), "A_ rosa_");
     }
 }

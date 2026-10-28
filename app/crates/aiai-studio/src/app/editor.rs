@@ -1146,6 +1146,8 @@ pub(crate) struct Editor {
     pub script_speaker: Option<NodeId>,
     /// Elemento recém-criado que deve receber o cursor no próximo quadro.
     pub script_focus: Option<Id>,
+    /// Diálogo de arquivo do Fountain em curso: (exportar?, resposta).
+    pub script_file: Option<(bool, crossbeam_channel::Receiver<Option<std::path::PathBuf>>)>,
     pub docs: super::actions::DocCache,
     pub thumbs: super::panels::board::ThumbCache,
     /// Workspace Produção: filtro, caches da tabela de cortes, lint, comparação de retake e formulários.
@@ -1277,6 +1279,7 @@ impl Default for Editor {
             script_all: false,
             script_speaker: None,
             script_focus: None,
+            script_file: None,
             docs: Default::default(),
             thumbs: Default::default(),
             prod: Default::default(),
