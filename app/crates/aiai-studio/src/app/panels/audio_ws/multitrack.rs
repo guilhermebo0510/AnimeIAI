@@ -127,7 +127,9 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
     if area.height() < 60.0 {
         return;
     }
-    let lane_h = [44.0, 72.0, 110.0][env.ed.audio_ws.mt.height.min(2)];
+    // as faixas cabem no painel: a altura escolhida encolhe até caber (a de baixo ficava fora, sem rolagem)
+    let fit = ((area.height() - RULER_H - 2.0 - LABEL_H) / TRACKS.len() as f32 - 3.0).max(30.0);
+    let lane_h = [44.0f32, 72.0, 110.0][env.ed.audio_ws.mt.height.min(2)].min(fit);
     let x0 = area.left() + HEADER_W;
     let span_w = (area.right() - x0 - 4.0).max(40.0);
     let pps = if env.ed.audio_ws.mt.pps <= 0.0 { span_w / cut_s as f32 } else { env.ed.audio_ws.mt.pps };
@@ -306,7 +308,8 @@ fn header(env: &mut Env, ui: &mut Ui, r: Rect, k: usize, key: &str) {
     let t = env.t;
     ui.painter().rect_filled(r, 3.0, t.bg_header);
     let mut c = ui.new_child(egui::UiBuilder::new().max_rect(r.shrink(4.0)));
-    c.set_clip_rect(r);
+    // preso ao painel: a faixa de baixo não desenha por cima da barra de status
+    c.set_clip_rect(r.intersect(ui.clip_rect()));
     let ui = &mut c;
     ui.spacing_mut().item_spacing = egui::vec2(4.0, 2.0);
     ui.horizontal(|ui| {
@@ -380,7 +383,9 @@ fn toolbar(env: &mut Env, ui: &mut Ui, cut: &NodeId, list: &[AudioPlacement], cu
         env.ed.audio_ws.mt.height = h;
         ui.separator();
         let mut z = if env.ed.audio_ws.mt.pps <= 0.0 { 0.0 } else { env.ed.audio_ws.mt.pps };
-        let r = ui.add(egui::DragValue::new(&mut z).range(0.0..=2000.0).speed(2.0).max_decimals(0).prefix(format!("{} ", tr("audio.mt.zoom"))).suffix(" px/s"));
+        // 0 = o corte inteiro na largura do painel
+        let fit_label = tr("audio.mt.zoom.fit");
+        let r = ui.add(egui::DragValue::new(&mut z).range(0.0..=2000.0).speed(2.0).max_decimals(0).prefix(format!("{} ", tr("audio.mt.zoom"))).custom_formatter(move |v, _| if v <= 0.0 { fit_label.to_owned() } else { format!("{v:.0} px/s") }));
         env.note("audio:mt:zoom", r.rect);
         r.on_hover_text(tr("audio.mt.zoom.tip"));
         env.ed.audio_ws.mt.pps = z;

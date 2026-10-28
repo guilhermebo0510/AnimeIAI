@@ -289,10 +289,33 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
             if r.height() >= 30.0 && !badges.is_empty() {
                 ip.text(egui::pos2(tx, r.bottom() - 3.0), egui::Align2::LEFT_BOTTOM, badges.join(" "), FontId::proportional(10.0), Color32::from_white_alpha(210));
             }
-            // forma de onda simples do som (picos do trecho)
-            if matches!(it.source, ItemSource::Audio { .. } | ItemSource::CutAudio { .. }) && r.height() >= 24.0 {
+            // forma de onda do trecho usado (picos por quadro, feitos fora da UI), espelhada no meio do clipe
+            if matches!(it.source, ItemSource::Audio { .. } | ItemSource::CutAudio { .. }) && r.height() >= 20.0 {
                 let mid = r.center().y + 4.0;
-                ip.hline(r.x_range(), mid, Stroke::new(1.0, Color32::from_black_alpha(60)));
+                let half = (r.height() * 0.5 - 6.0).max(4.0);
+                match env.ed.edit.waves.get(ui.ctx(), &env.core.project, &env.core.blobs, &it.source) {
+                    Some(peaks) if !peaks.is_empty() => {
+                        let per = edit::WAVE_PER_FRAME as f32;
+                        let vol = it.volume.clamp(0.0, 2.0);
+                        let col = Color32::from_white_alpha(150);
+                        let (xs, xe) = (r.left().max(content.left()).floor() as i32, r.right().min(content.right()).ceil() as i32);
+                        for x in xs..xe {
+                            // trecho da fonte sob esta coluna de pixel (com a velocidade do clipe)
+                            let fa = (view.frame_at(x as f32) - it.start as f32).max(0.0);
+                            let fb = (view.frame_at(x as f32 + 1.0) - it.start as f32).max(fa);
+                            let (sa, sb) = (it.src_in as f32 + fa * it.speed, it.src_in as f32 + fb * it.speed);
+                            let (ia, ib) = ((sa * per) as usize, ((sb * per).ceil() as usize).max((sa * per) as usize + 1));
+                            let v = peaks.get(ia..ib.min(peaks.len())).map(|w| w.iter().fold(0.0f32, |m, v| m.max(*v))).unwrap_or(0.0);
+                            let h = (v * vol).min(1.0) * half;
+                            if h >= 0.5 {
+                                ip.vline(x as f32 + 0.5, (mid - h)..=(mid + h), Stroke::new(1.0, col));
+                            }
+                        }
+                    }
+                    _ => {
+                        ip.hline(r.x_range(), mid, Stroke::new(1.0, Color32::from_black_alpha(60)));
+                    }
+                }
             }
             // transições (faixa clara com diagonal sobre o trecho)
             for (edge, tr_) in [(Edge::In, &it.transition_in), (Edge::Out, &it.transition_out)] {

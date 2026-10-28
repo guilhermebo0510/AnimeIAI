@@ -227,6 +227,95 @@ pub(crate) enum Focus {
     Program,
 }
 
+/// Picos por quadro da edição (fração de um quadro do projeto por pico).
+pub(crate) const WAVE_PER_FRAME: usize = 4;
+
+enum WaveSlot {
+    Pending(crossbeam_channel::Receiver<Vec<f32>>),
+    Ready(Arc<Vec<f32>>),
+}
+
+/// Formas de onda das fontes de som na linha do tempo da Edição: `WAVE_PER_FRAME` picos por quadro do projeto, feitas
+/// numa thread (a mixagem de um corte pode levar alguns décimos de segundo) e guardadas pela chave da fonte (o som do
+/// corte muda a chave quando os clipes dele mudam).
+#[derive(Default)]
+pub(crate) struct TlWaves {
+    map: std::collections::HashMap<String, WaveSlot>,
+}
+
+impl TlWaves {
+    /// Os picos da fonte, se prontos; senão começa (uma vez) a calcular e devolve `None` (o próximo quadro tenta de novo).
+    pub(crate) fn get(&mut self, ctx: &egui::Context, p: &Project, blobs: &aiai_core::BlobStore, src: &ItemSource) -> Option<Arc<Vec<f32>>> {
+        let key = wave_key(p, src)?;
+        if let Some(WaveSlot::Pending(rx)) = self.map.get(&key) {
+            match rx.try_recv() {
+                Ok(v) => {
+                    self.map.insert(key.clone(), WaveSlot::Ready(Arc::new(v)));
+                }
+                Err(crossbeam_channel::TryRecvError::Empty) => {
+                    ctx.request_repaint_after(Duration::from_millis(120));
+                    return None;
+                }
+                Err(_) => {
+                    self.map.insert(key.clone(), WaveSlot::Ready(Arc::new(Vec::new())));
+                }
+            }
+        }
+        match self.map.get(&key) {
+            Some(WaveSlot::Ready(v)) => Some(v.clone()),
+            Some(WaveSlot::Pending(_)) => None,
+            None => {
+                // poucas fontes vivas: esquece as antigas (cortes editados geram chaves novas)
+                if self.map.len() > 256 {
+                    self.map.clear();
+                }
+                let (tx, rx) = crossbeam_channel::bounded(1);
+                let (p, b, s) = (p.clone(), blobs.clone(), src.clone());
+                std::thread::spawn(move || {
+                    let _ = tx.send(frame_peaks(&p, &b, &s));
+                });
+                self.map.insert(key, WaveSlot::Pending(rx));
+                ctx.request_repaint_after(Duration::from_millis(120));
+                None
+            }
+        }
+    }
+}
+
+/// Chave da forma de onda: o asset (imutável) ou o corte com os clipes de som dele naquele momento.
+fn wave_key(p: &Project, src: &ItemSource) -> Option<String> {
+    match src {
+        ItemSource::Audio { asset } => Some(format!("a:{}", asset.0)),
+        ItemSource::CutAudio { cut, track } => {
+            let (dur, list) = super::audio_ws::cut_audio(p, cut);
+            let sig = aiai_3d_render::fnv1a64(serde_json::to_string(&list).unwrap_or_default().as_bytes());
+            Some(format!("c:{}:{track:?}:{dur}:{sig:x}", cut.0))
+        }
+        _ => None,
+    }
+}
+
+/// Picos (0..1) da fonte: `WAVE_PER_FRAME` por quadro do projeto.
+fn frame_peaks(p: &Project, b: &aiai_core::BlobStore, src: &ItemSource) -> Vec<f32> {
+    let sr = p.settings.audio_sample_rate.max(8000) as f64;
+    let fps = p.settings.fps().max(1.0);
+    let buf = match src {
+        ItemSource::CutAudio { cut, .. } => aiai_tools::audio::mix_cut(p, b, cut, None),
+        ItemSource::Audio { asset } => aiai_tools::audio::asset_audio(p, b, asset).map(|a| aiai_audio::resample::resample(&a, sr as u32)),
+        _ => return Vec::new(),
+    };
+    let Ok(buf) = buf else { return Vec::new() };
+    let n = buf.ch.first().map(|c| c.len()).unwrap_or(0);
+    let step = (sr / (fps * WAVE_PER_FRAME as f64)).max(1.0);
+    let count = (n as f64 / step).ceil() as usize;
+    (0..count)
+        .map(|k| {
+            let (a, z) = ((k as f64 * step) as usize, (((k + 1) as f64 * step) as usize).min(n));
+            buf.ch.iter().flat_map(|c| c[a.min(c.len())..z.min(c.len())].iter()).fold(0.0f32, |m, v| m.max(v.abs())).min(1.0)
+        })
+        .collect()
+}
+
 /// Monitor de origem: a fonte aberta, o cabeçote nela e as marcas de entrada/saída.
 #[derive(Default)]
 pub(crate) struct SourceState {
@@ -275,6 +364,8 @@ pub(crate) struct EditState {
     cache: Option<(u64, NodeId, Arc<EditDoc>, Result<Timeline, String>)>,
     pub preview: EditPreview,
     pub thumbs: CutThumbs,
+    /// Formas de onda dos clipes de som na linha do tempo.
+    pub waves: TlWaves,
     /// Pixels por quadro na linha do tempo (`None` = ajustar à largura).
     pub zoom: Option<f32>,
     /// Primeiro quadro visível (rolagem horizontal) e rolagem vertical das trilhas (px).
@@ -319,6 +410,7 @@ impl Default for EditState {
             cache: None,
             preview: EditPreview::default(),
             thumbs: CutThumbs::default(),
+            waves: TlWaves::default(),
             zoom: None,
             scroll: 0.0,
             scroll_y: 0.0,

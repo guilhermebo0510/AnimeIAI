@@ -1823,6 +1823,7 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("audio.mt.h_mid", "M", "M"),
     ("audio.mt.h_big", "G", "L"),
     ("audio.mt.zoom", "zoom", "zoom"),
+    ("audio.mt.zoom.fit", "ajustar ao corte", "fit to cut"),
     ("audio.mt.zoom.tip", "Pixels por segundo (no zero, o corte inteiro cabe na largura)", "Pixels per second (at zero the whole cut fits the width)"),
     ("audio.mt.bake", "Gravar ganho/pan no corte", "Write gain/pan to the cut"),
     ("audio.mt.bake.tip", "Leva o ganho e o pan das faixas para os clipes (a mixagem final e a entrega ouvem igual); um passo de desfazer", "Moves track gain and pan into the clips (final mix and delivery sound the same); one undo step"),
