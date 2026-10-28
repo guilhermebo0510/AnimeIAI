@@ -90,10 +90,68 @@ DEC-05 (b: aceitar só pelo botão, sem atalho).
 - `aiai-core/tests/suite.rs::log_entries_carry_input_source_and_merge_mixes` (REQ-P01/P03).
 - `aiai-studio` `input_queue::frame_source_links_actions_to_the_events_that_fired_them` (AT-15: injetado, plataforma,
   tecla real com movimento injetado, gesto misto).
-- `tools/ibp/ibp_e2e.py` (AT-13, 14, 15 e a tela): resultados abaixo.
+- `tools/ibp/ibp_e2e.py` (AT-13, 14, 15 e a tela), evidências em `sprints/registro/evidencias/S26/`:
+  - **MCP headless de vida longa** (servidor stdio): prévia (A1 em 0, B em 12, t = 0,5), render com prévia
+    (`h_with_preview.png`), descartar, aceitar após descartar falha, aceitar, segundo aceite "proposta … já usada", log
+    com `direct_tool_call`, `inbetween_origin` completo no cel; prévia num servidor e aceite noutro: "não encontrada nesta
+    sessão" (sem cair em outra sessão).
+  - **App**: a prévia pedida pela bridge aparece na tela no quadro dela (`a_preview_bar.png`); Corrigir pares por cliques
+    injetados (olho esquerdo de A com o direito de B) deixa a proposta desatualizada e o aceite pela bridge falha com "os
+    pares mudaram: Atualizar antes de aceitar" (`a_pairs_stale.png`); Atualizar gera id novo; Delete tira o par;
+    **Aceitar por clique injetado grava `bridge_injected`** no log e no registro do cel; o quadro 7 ganha a entrada que
+    mantém A3; **a prévia cai exatamente onde o cel aceito cai** (camada com movimento em ease, quadro alvo exposto com
+    transformação de cel +40 px e chaves sem transformação): caixa da prévia = caixa do aceito, `[492, 213, 717, 476]`;
+    mudar a chave com a prévia aberta derruba a prévia e a barra mostra o motivo com "Gerar de novo"
+    (`a_invalidated.png`), que refaz a prévia.
+
+### E3 — fidelidade (`aiai-tools/tests/inbetween_e3.rs`)
+
+Em todo caso aceito o cel gravado é exatamente o candidato, o render do cel aceito é igual pixel a pixel ao desenho da
+prévia e nenhum atributo muda sem aviso. Os casos que o motor não preserva são recusados antes de gravar.
+
+| caso | classe do par | avisos/recusas | resultado |
+|---|---|---|---|
+| aberto, direto, cores diretas diferentes | preserva | — | aceito; 0 pixel diferente; nenhuma perda |
+| fechado, direto, mesmo sentido | preserva | — | aceito; 0 pixel; nenhuma perda |
+| contagens diferentes (reamostrado) | aproxima | Resampled | aceito; 0 pixel; nenhuma perda |
+| perfil igual, direto | preserva | — | aceito; 0 pixel; nenhuma perda |
+| perfil igual, reamostrado e invertido | recusa | Resampled, ProfileReparametrized | recusado antes de gravar |
+| largura variável por ponto | recusa | PointWidth | recusado antes de gravar |
+| alça (handle) | recusa | PointHandle | recusado antes de gravar |
+| Bézier, direto | aproxima | BezierDirect | aceito; 0 pixel; nenhuma perda |
+| Bézier, reamostrado | recusa | BezierResampled | recusado antes de gravar |
+| cores de paleta diferentes | aproxima | ColorSwitch | aceito; 0 pixel; nenhuma perda |
+| ponta quadrada igual | preserva | TipPreviewSimplified (observação) | aceito; 0 pixel; nenhuma perda |
+| pontas diferentes | aproxima | TipDiffers | aceito; 0 pixel; nenhuma perda |
+| traço sem par (some) | aproxima | Unmatched | aceito; 0 pixel; nenhuma perda |
+| quadro da chave A (t = 0) / da chave B (t = 1) | — | — | não oferecido: a prévia só existe entre as chaves |
+
+Leitura: a tabela de suporte do §5 se confirma no protótipo; nenhum caso pede mudar de classe. O limiar de "sentido
+diferente" (§3) não foi exercitado por desenhos de pessoas — fica para o teste com pessoa.
+
+### E1 — custo na interface e do cálculo (`tools/ibp/ibp_e1.py`, release)
+
+Máquina: Intel Core i7-10750H, NVIDIA GTX 1650 (+ Intel UHD), Windows 11, build release, janela 1500×980.
+Repetição: cursor em círculos sobre o canvas e zoom pela roda (nada que mude o projeto: mudar o projeto derruba a
+prévia), 3 000 quadros por condição, 2 repetições, prévia desligada × ligada. Amostras brutas em
+`evidencias/S26/e1.json`, resumo em `e1_resumo.json`. `ui_ms` = CPU de montar o quadro inteiro (não inclui a
+tesselação do egui nem a apresentação na GPU); `paint` = montar a sobreposição.
+
+| desenho | cálculo da prévia (10×) | quadro, desligada p50 / p95 / p99 / máx | quadro, ligada p50 / p95 / p99 / máx | sobreposição p50 / p95 |
+|---|---|---|---|---|
+| normal (4 traços, 43 pontos na saída) | 0,08 ms (máx 0,35) | 3,25 / 3,92 / 4,51 / 7,58 ms | 3,46 / 4,13 / 4,69 / 7,49 ms | 0,18 / 0,27 ms |
+| no limite (190 traços por chave, 19 000 pontos; 9 500 na saída) | 2,00 ms (máx 4,47) | 3,73 / 4,54 / 5,41 / 10,78 ms | 4,97 / 6,37 / 8,31 / 13,34 ms | 1,71 / 2,46 ms |
+
+O primeiro ensaio (build de teste, antes de guardar a geometria) mostrou a sobreposição custando ~11 ms por quadro no
+caso no limite, porque reamostrava todas as curvas a cada quadro; agora a geometria é feita uma vez por proposta e o
+candidato vai numa malha só (1,7 ms). A prévia continuou viva até o fim de todas as repetições.
+
+Leitura para a decisão do dono (P-3 / E1): o cálculo é síncrono e só roda no pedido (botão ou MCP), nunca por quadro; no
+limite meta ele leva até 4,5 ms, abaixo de um quadro de 60 Hz. Com estes números o **síncrono basta** e o worker (REQ-C03)
+não é necessário; os limites e o orçamento ainda precisam ser fixados pelo dono.
 
 ## 8. O que fica aberto
 
 - P-3 (dono): fixar os limites e o orçamento de tempo da prévia síncrona.
-- E1 e E3 sobre este protótipo (§11) — decidem síncrono × worker e fecham a tabela de suporte.
+- E1 e E3 rodados (acima); a decisão síncrono × worker e o fechamento da tabela ficam com o dono, com estes números.
 - Teste com pessoa (§11) — precisa do dono.

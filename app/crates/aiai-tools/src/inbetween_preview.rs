@@ -192,6 +192,38 @@ pub struct InbetweenProposal {
 }
 
 impl InbetweenProposal {
+    /// Cópia leve para a interface (sem o candidato, os pares e as listas de traços, que podem ter milhares de pontos).
+    /// `acceptable` deve ser lido na proposta inteira.
+    pub fn light(&self) -> InbetweenProposal {
+        InbetweenProposal {
+            id: self.id,
+            document_epoch: self.document_epoch,
+            revision: self.revision,
+            generation: self.generation,
+            stale: self.stale,
+            cut: self.cut.clone(),
+            layer: self.layer.clone(),
+            frame: self.frame,
+            frame_a: self.frame_a,
+            frame_b: self.frame_b,
+            key_a: self.key_a,
+            key_b: self.key_b,
+            cel_a: self.cel_a.clone(),
+            cel_b: self.cel_b.clone(),
+            strokes_a: Vec::new(),
+            strokes_b: Vec::new(),
+            t: self.t,
+            options: self.options.clone(),
+            manual_pairs: self.manual_pairs.clone(),
+            pairs: Vec::new(),
+            candidate: Vec::new(),
+            approximations: self.approximations.clone(),
+            refusals: self.refusals.clone(),
+            notes: self.notes.clone(),
+            request: self.request.clone(),
+        }
+    }
+
     /// Dá para aceitar? (`Err` = motivo, para a interface mostrar com o botão desligado.)
     pub fn acceptable(&self) -> Result<(), String> {
         if let Some(r) = self.refusals.first() {

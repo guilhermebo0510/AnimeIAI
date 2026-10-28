@@ -38,6 +38,8 @@ pub(crate) struct IbpUi {
     pub seen: Option<u64>,
     /// E1 (R16 §11): amostras brutas por quadro, só enquanto gravando (`UI_ACTION perf_samples`).
     pub perf: Perf,
+    /// Geometria da proposta viva, amostrada uma vez.
+    pub geom: Option<Geom>,
 }
 
 /// Amostras brutas de tempo (ms) por quadro: a interface inteira (CPU de montar o quadro) e o desenho da prévia.
@@ -92,8 +94,9 @@ pub(crate) fn request_preview(env: &mut Env, req: &InbetweenPreviewRequest) {
 }
 
 /// Proposta viva no corte mostrado.
+/// (cópia leve: sem candidato nem pares; o aceite usa a proposta guardada na sessão)
 fn current_for(env: &Env, cut: &Id) -> Option<InbetweenProposal> {
-    ibp::current(env.core).filter(|p| &p.cut == cut).cloned()
+    ibp::current(env.core).filter(|p| &p.cut == cut).map(InbetweenProposal::light)
 }
 
 /// Há prévia viva neste corte?
@@ -120,17 +123,10 @@ pub(crate) fn tick(env: &mut Env) {
 }
 
 /// Cel → canvas no quadro alvo com a transformação identidade do candidato (R16 REQ-U02).
-fn placement(env: &Env, p: &InbetweenProposal) -> Option<aiai_paint::Affine> {
-    let l = cmds::layer_data(&env.core.project, &p.layer)?;
-    let (w, h) = cmds::canvas_size(&env.core.project, &p.cut);
-    Some(aiai_render::compose::layer_placement_in(&env.core.project, l, [0.0, 0.0, 1.0, 0.0], p.frame, w, h))
-}
-
-fn strokes_of<'a>(env: &'a Env, cel: &Id) -> &'a [Stroke] {
-    match env.core.project.node(cel).map(|n| &n.data) {
-        Some(NodeKind::Cel(c)) => &c.strokes,
-        _ => &[],
-    }
+fn placement_of(project: &aiai_core::Project, p: &InbetweenProposal) -> Option<aiai_paint::Affine> {
+    let l = cmds::layer_data(project, &p.layer)?;
+    let (w, h) = cmds::canvas_size(project, &p.cut);
+    Some(aiai_render::compose::layer_placement_in(project, l, [0.0, 0.0, 1.0, 0.0], p.frame, w, h))
 }
 
 /// Escala média da transformação (raio do traço no canvas).
@@ -144,54 +140,154 @@ fn to_canvas(a: &aiai_paint::Affine, x: f32, y: f32) -> Vec2 {
     Vec2::new(cx, cy)
 }
 
-fn thin(painter: &egui::Painter, xf: &Xf, a: &aiai_paint::Affine, s: &Stroke, color: Color32, width: f32) {
-    let pts: Vec<Pos2> = aiai_paint::sample_stroke(s).iter().map(|q| xf.to_screen(to_canvas(a, q.x, q.y))).collect();
-    if pts.len() >= 2 {
-        painter.add(egui::Shape::line(pts, egui::Stroke::new(width, color)));
-    }
+/// Geometria da prévia já amostrada e levada ao canvas: não muda enquanto a proposta vive (qualquer mudança no projeto
+/// derruba a proposta), então é feita uma vez por proposta em vez de a cada quadro (E1: reamostrar 380 curvas por quadro
+/// custava ~11 ms no desenho no limite).
+pub(crate) struct Geom {
+    id: u64,
+    a: Vec<(Id, Vec<Vec2>)>,
+    b: Vec<(Id, Vec<Vec2>)>,
+    cand: Vec<(Vec<Vec2>, Vec<f32>)>,
+    links: Vec<(Vec2, Vec2, Support, bool)>,
 }
 
-/// Desenha a prévia por cima do canvas (só visão).
-pub(crate) fn paint(env: &Env, painter: &egui::Painter, xf: &Xf, cut: &Id) {
-    let Some(p) = current_for(env, cut).filter(|p| p.frame == env.ed.frame) else { return };
-    let Some(a) = placement(env, &p) else { return };
-    // as chaves, finas, para ver e escolher os pares
-    for s in strokes_of(env, &p.cel_a) {
-        let picked = env.ed.ibp.pick_a.as_ref() == Some(&s.id) || env.ed.ibp.selected.as_ref().is_some_and(|x| x.0 == s.id);
-        thin(painter, xf, &a, s, if picked { Color32::from_rgb(255, 120, 60) } else { KEY_A }, if picked { 3.0 } else { 1.2 });
+/// Monta (ou reaproveita) a geometria da proposta viva neste corte.
+fn ensure_geom(env: &mut Env, cut: &Id) -> bool {
+    let Some(p) = ibp::current(env.core).filter(|p| &p.cut == cut) else {
+        env.ed.ibp.geom = None;
+        return false;
+    };
+    if env.ed.ibp.geom.as_ref().is_some_and(|g| g.id == p.id) {
+        return true;
     }
-    for s in strokes_of(env, &p.cel_b) {
-        let picked = env.ed.ibp.selected.as_ref().is_some_and(|x| x.1 == s.id);
-        thin(painter, xf, &a, s, if picked { Color32::from_rgb(60, 220, 120) } else { KEY_B }, if picked { 3.0 } else { 1.2 });
+    let project = &env.core.project;
+    let Some(a) = placement_of(project, p) else { return false };
+    let k = scale_of(&a);
+    let line = |s: &Stroke| -> Vec<Vec2> { aiai_paint::sample_stroke(s).iter().map(|q| to_canvas(&a, q.x, q.y)).collect() };
+    let cel = |id: &Id| -> Vec<(Id, Vec<Vec2>)> {
+        match project.node(id).map(|n| &n.data) {
+            Some(NodeKind::Cel(c)) => c.strokes.iter().map(|s| (s.id.clone(), line(s))).collect(),
+            _ => Vec::new(),
+        }
+    };
+    let cand = p
+        .candidate
+        .iter()
+        .map(|s| {
+            let sm = aiai_paint::sample_stroke(s);
+            (sm.iter().map(|q| to_canvas(&a, q.x, q.y)).collect(), sm.iter().map(|q| q.r * k).collect())
+        })
+        .collect();
+    let links = p
+        .pairs
+        .iter()
+        .filter_map(|pv| match (pv.a_center, pv.b_center) {
+            (Some(ca), Some(cb)) => Some((to_canvas(&a, ca[0], ca[1]), to_canvas(&a, cb[0], cb[1]), pv.support, pv.manual)),
+            _ => None,
+        })
+        .collect();
+    let g = Geom { id: p.id, a: cel(&p.cel_a), b: cel(&p.cel_b), cand, links };
+    env.ed.ibp.geom = Some(g);
+    true
+}
+
+/// Traço de largura variável numa malha só (trapézios + leque nas juntas que dobram e nas pontas), tela em pontos.
+fn mesh_line(mesh: &mut egui::Mesh, sp: &[Pos2], sr: &[f32], color: Color32) {
+    let fan = |mesh: &mut egui::Mesh, c: Pos2, r: f32| {
+        let base = mesh.vertices.len() as u32;
+        mesh.colored_vertex(c, color);
+        const N: u32 = 10;
+        for i in 0..=N {
+            let t = i as f32 / N as f32 * std::f32::consts::TAU;
+            mesh.colored_vertex(c + egui::vec2(t.cos(), t.sin()) * r, color);
+        }
+        for i in 0..N {
+            mesh.add_triangle(base, base + 1 + i, base + 2 + i);
+        }
+    };
+    for i in 0..sp.len().saturating_sub(1) {
+        let (a, b) = (sp[i], sp[i + 1]);
+        let d = b - a;
+        let len = d.length();
+        if len < 1e-3 {
+            continue;
+        }
+        let n = egui::vec2(-d.y, d.x) / len;
+        let base = mesh.vertices.len() as u32;
+        for q in [a + n * sr[i], a - n * sr[i], b - n * sr[i + 1], b + n * sr[i + 1]] {
+            mesh.colored_vertex(q, color);
+        }
+        mesh.add_triangle(base, base + 1, base + 2);
+        mesh.add_triangle(base, base + 2, base + 3);
     }
-    // o candidato como a linha vai ficar (largura do traço)
-    let color = if p.stale { PREVIEW.gamma_multiply(0.45) } else { PREVIEW };
-    for s in &p.candidate {
-        let samples = aiai_paint::sample_stroke(s);
-        let pts: Vec<Vec2> = samples.iter().map(|q| to_canvas(&a, q.x, q.y)).collect();
-        let k = scale_of(&a);
-        let radii: Vec<f32> = samples.iter().map(|q| q.r * k).collect();
-        super::canvas::variable_line(painter, &pts, &radii, color, xf);
-    }
-    // ligações dos pares
-    for pv in &p.pairs {
-        if let (Some(ca), Some(cb)) = (pv.a_center, pv.b_center) {
-            let (sa, sb) = (xf.to_screen(to_canvas(&a, ca[0], ca[1])), xf.to_screen(to_canvas(&a, cb[0], cb[1])));
-            let c = match pv.support {
-                Support::Refuse => REFUSE,
-                Support::Approximate => APPROX,
-                Support::Preserve => Color32::from_gray(200),
-            };
-            painter.line_segment([sa, sb], egui::Stroke::new(if pv.manual { 2.2 } else { 1.0 }, c));
-            painter.circle_filled(sa, 2.5, c);
-            painter.circle_stroke(sb, 3.0, egui::Stroke::new(1.0, c));
+    for (i, (p, r)) in sp.iter().zip(sr).enumerate() {
+        let joint = i > 0 && i + 1 < sp.len() && {
+            let (u, v) = (sp[i] - sp[i - 1], sp[i + 1] - sp[i]);
+            u.length() > 1e-3 && v.length() > 1e-3 && u.normalized().dot(v.normalized()) < 0.94
+        };
+        if i == 0 || i + 1 == sp.len() || joint {
+            fan(mesh, *p, *r);
         }
     }
 }
 
-/// Distância (canvas) do ponto ao traço projetado.
-fn dist_to(a: &aiai_paint::Affine, s: &Stroke, q: Vec2) -> f32 {
-    aiai_paint::sample_stroke(s).iter().map(|p| (to_canvas(a, p.x, p.y) - q).length()).fold(f32::INFINITY, f32::min)
+/// Desenha a prévia por cima do canvas (só visão).
+pub(crate) fn paint(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &Id) {
+    let Some((frame, stale)) = ibp::current(env.core).filter(|p| &p.cut == cut).map(|p| (p.frame, p.stale)) else {
+        env.ed.ibp.geom = None;
+        return;
+    };
+    if frame != env.ed.frame || !ensure_geom(env, cut) {
+        return;
+    }
+    let ui = &env.ed.ibp;
+    let Some(g) = ui.geom.as_ref() else { return };
+    // as chaves, finas, para ver e escolher os pares
+    let thin = |pts: &[Vec2], color: Color32, w: f32| {
+        if pts.len() >= 2 {
+            painter.add(egui::Shape::line(pts.iter().map(|q| xf.to_screen(*q)).collect(), egui::Stroke::new(w, color)));
+        }
+    };
+    for (id, pts) in &g.a {
+        let picked = ui.pick_a.as_ref() == Some(id) || ui.selected.as_ref().is_some_and(|x| &x.0 == id);
+        thin(pts, if picked { Color32::from_rgb(255, 120, 60) } else { KEY_A }, if picked { 3.0 } else { 1.2 });
+    }
+    for (id, pts) in &g.b {
+        let picked = ui.selected.as_ref().is_some_and(|x| &x.1 == id);
+        thin(pts, if picked { Color32::from_rgb(60, 220, 120) } else { KEY_B }, if picked { 3.0 } else { 1.2 });
+    }
+    // o candidato como a linha vai ficar (largura do traço), numa malha só
+    let color = if stale { PREVIEW.gamma_multiply(0.45) } else { PREVIEW };
+    let mut mesh = egui::Mesh::default();
+    for (pts, radii) in &g.cand {
+        let sp: Vec<Pos2> = pts.iter().map(|q| xf.to_screen(*q)).collect();
+        let sr: Vec<f32> = radii.iter().map(|r| (r * xf.scale).max(0.5)).collect();
+        mesh_line(&mut mesh, &sp, &sr, color);
+    }
+    painter.add(egui::Shape::mesh(mesh));
+    // ligações dos pares
+    for (ca, cb, support, manual) in &g.links {
+        let (sa, sb) = (xf.to_screen(*ca), xf.to_screen(*cb));
+        let c = match support {
+            Support::Refuse => REFUSE,
+            Support::Approximate => APPROX,
+            Support::Preserve => Color32::from_gray(200),
+        };
+        painter.line_segment([sa, sb], egui::Stroke::new(if *manual { 2.2 } else { 1.0 }, c));
+        painter.circle_filled(sa, 2.5, c);
+        painter.circle_stroke(sb, 3.0, egui::Stroke::new(1.0, c));
+    }
+}
+
+/// Traço mais perto de `q` (canvas) dentro de `tol`.
+fn nearest_in(lines: &[(Id, Vec<Vec2>)], q: Vec2, tol: f32) -> Option<Id> {
+    lines
+        .iter()
+        .filter(|(id, _)| !id.0.is_empty())
+        .map(|(id, pts)| (pts.iter().map(|p| (*p - q).length()).fold(f32::INFINITY, f32::min), id))
+        .filter(|(d, _)| *d <= tol)
+        .min_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|x| x.1.clone())
 }
 
 /// Clique no canvas com "Corrigir pares" ligado: A e depois B = par manual; clique num traço de A que já tem par manual
@@ -205,19 +301,17 @@ pub(crate) fn pick(env: &mut Env, canvas_pos: Vec2, scale: f32) -> bool {
         env.ed.ibp.pairs_mode = false;
         return false;
     };
-    let Some(a) = placement(env, &p) else { return true };
+    if !ensure_geom(env, &cut) {
+        return true;
+    }
     let tol = 12.0 / scale.max(1e-3);
-    let nearest = |strokes: &[Stroke]| -> Option<Id> {
-        strokes
-            .iter()
-            .map(|s| (dist_to(&a, s, canvas_pos), s.id.clone()))
-            .filter(|(d, id)| *d <= tol && !id.0.is_empty())
-            .min_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal))
-            .map(|x| x.1)
+    let (near_a, near_b) = {
+        let g = env.ed.ibp.geom.as_ref().expect("montada");
+        (nearest_in(&g.a, canvas_pos, tol), nearest_in(&g.b, canvas_pos, tol))
     };
     match env.ed.ibp.pick_a.clone() {
         None => {
-            let Some(sa) = nearest(strokes_of(env, &p.cel_a)) else {
+            let Some(sa) = near_a else {
                 env.ed.ibp.selected = None;
                 env.ed.notify(tr("ibp.pick_a").to_owned());
                 return true;
@@ -227,7 +321,7 @@ pub(crate) fn pick(env: &mut Env, canvas_pos: Vec2, scale: f32) -> bool {
             env.ed.notify(tr("ibp.pick_b").to_owned());
         }
         Some(sa) => {
-            let Some(sb) = nearest(strokes_of(env, &p.cel_b)) else {
+            let Some(sb) = near_b else {
                 env.ed.notify(tr("ibp.pick_b").to_owned());
                 return true;
             };
@@ -306,20 +400,21 @@ fn dropped_bar(env: &mut Env, ctx: &egui::Context, rect: Rect, cut: &Id) {
 
 /// Barra da prévia no rodapé do canvas (some sem prévia).
 pub(crate) fn bar(env: &mut Env, ctx: &egui::Context, rect: Rect, cut: &Id) {
-    let Some(p) = current_for(env, cut) else {
+    let Some(full) = ibp::current(env.core).filter(|p| &p.cut == cut) else {
         env.ed.ibp.pairs_mode = false;
         dropped_bar(env, ctx, rect, cut);
         return;
     };
     let t = env.t;
-    let layer_name = env.core.project.node(&p.layer).map(|n| n.name.clone()).unwrap_or_default();
-    let locked = cmds::layer_data(&env.core.project, &p.layer).is_some_and(|l| l.locked);
-    let blocked: Option<String> = match p.acceptable() {
+    let layer_name = env.core.project.node(&full.layer).map(|n| n.name.clone()).unwrap_or_default();
+    let locked = cmds::layer_data(&env.core.project, &full.layer).is_some_and(|l| l.locked);
+    let blocked: Option<String> = match full.acceptable() {
         Err(e) => Some(e),
         Ok(()) if locked => Some(tr("ibp.locked").to_owned()),
         Ok(()) => None,
     };
-    let label = ibp::accept_scope(&env.core.project, &p).map(|s| s.button_text(&layer_name)).unwrap_or_else(|e| e.to_string());
+    let label = ibp::accept_scope(&env.core.project, full).map(|s| s.button_text(&layer_name)).unwrap_or_else(|e| e.to_string());
+    let p = full.light();
     let mut act: Option<&'static str> = None;
     let w = (rect.width() - 24.0).clamp(240.0, 760.0);
     let area = egui::Area::new(egui::Id::new("ibp_bar"))
