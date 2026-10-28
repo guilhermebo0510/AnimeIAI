@@ -552,7 +552,7 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
     assert!(plan("aiai_zzz", json!({})).is_err());
     // o catálogo é uma lista estável de ferramentas, todas com plano
     let defs = tools::definitions();
-    assert_eq!(defs.as_array().unwrap().len(), 89);
+    assert_eq!(defs.as_array().unwrap().len(), 90);
     // todas as ferramentas de produção: descrição com exemplo de uma linha, schema de objeto, plano com a ação certa e frame 0 por padrão
     for t in defs.as_array().unwrap() {
         let n = t["name"].as_str().unwrap();
@@ -570,6 +570,7 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
         ("aiai_gradient_paint", json!({"op": "presets"}), "GRADIENT_PAINT"),
         ("aiai_lines", json!({"cut": "c", "layer": "l", "kind": {}, "count": 3, "length": [1, 2], "width": [1, 2], "color": {}}), "LINES"),
         ("aiai_gag_bg", json!({"cut": "c", "layer": "l", "pattern": {}}), "GAG_BG"),
+        ("aiai_anime_fx", json!({"cut": "c", "layer": "l", "kind": {}}), "ANIME_FX"),
         ("aiai_particles", json!({"layer": "l", "preset": "neve"}), "PARTICLES"),
         ("aiai_guide3d", json!({"cut": "c", "layer": "l", "scene": {}, "camera": {}}), "GUIDE3D"),
         ("aiai_perspective", json!({"cut": "c", "layer": "l"}), "PERSPECTIVE"),
@@ -623,7 +624,7 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
     ] {
         let p = plan(tool, args.clone()).unwrap_or_else(|e| panic!("{tool}: {e}"));
         assert_eq!(p.action, action, "{tool}");
-        if ["aiai_sky", "aiai_text", "aiai_lines", "aiai_gag_bg", "aiai_guide3d", "aiai_perspective", "aiai_compare", "aiai_fill_shape", "aiai_pattern_fill"].contains(&tool) {
+        if ["aiai_sky", "aiai_text", "aiai_lines", "aiai_gag_bg", "aiai_anime_fx", "aiai_guide3d", "aiai_perspective", "aiai_compare", "aiai_fill_shape", "aiai_pattern_fill"].contains(&tool) {
             assert_eq!(p.params["frame"], json!(0), "{tool}: frame ausente vira 0");
         }
         assert!(defs.as_array().unwrap().iter().any(|t| t["name"] == tool && t["inputSchema"]["type"] == "object"), "{tool} está no catálogo");

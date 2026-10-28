@@ -308,7 +308,17 @@ pub(crate) fn filter_groups(w: f32, h: f32) -> Vec<(&'static str, Vec<(&'static 
         ("filter.group.style", pick(&["drop_shadow", "outline", "color_overlay", "two_tone", "para"])),
         ("filter.group.lens", pick(&["chromatic_aberration", "vignette", "grain", "deband"])),
         // renderizar: linhas de foco e de velocidade numa camada vetorial nova (traços editáveis, não efeito)
-        ("filter.group.render", vec![("filter.focus_lines", json!({ "render": "focus" })), ("filter.speed_lines", json!({ "render": "speed" }))]),
+        (
+            "filter.group.render",
+            vec![
+                ("filter.focus_lines", json!({ "render": "focus" })),
+                ("filter.speed_lines", json!({ "render": "speed" })),
+                // efeitos de anime desenhados (auditoria 4.5j) numa camada raster nova
+                ("filter.fx_fire", json!({ "render": "anime_fx", "kind": "fire" })),
+                ("filter.fx_smoke", json!({ "render": "anime_fx", "kind": "smoke" })),
+                ("filter.fx_lightning", json!({ "render": "anime_fx", "kind": "lightning" })),
+            ],
+        ),
         // cenário (auditoria 4.5c): céu numa camada nova e texturas (plana, ou em perspectiva no laço de 4 cantos)
         (
             "filter.group.sky",
@@ -381,6 +391,34 @@ fn render_sky(env: &mut Env, tod: &str) {
     }
 }
 
+/// Fogo, fumaça ou raio numa camada raster nova, no meio do canvas (com seleção, dentro da caixa dela). Para animar,
+/// a bridge/MCP (`ANIME_FX`) desenha um cel por quadro variando `phase`.
+fn render_anime_fx(env: &mut Env, kind: &str) {
+    let key = match kind {
+        "smoke" => "filter.fx_smoke",
+        "lightning" => "filter.fx_lightning",
+        _ => "filter.fx_fire",
+    };
+    let sel_box = env.ed.selection.as_ref().filter(|s| !s.whole).and_then(|s| s.rect_of());
+    let Some((cut, layer)) = new_raster(env, tr(key)) else { return };
+    let (w, h) = super::commands::canvas_size(&env.core.project, &cut);
+    let r = sel_box.unwrap_or([w as f32 * 0.25, h as f32 * 0.15, w as f32 * 0.5, h as f32 * 0.75]);
+    let fx = match kind {
+        "smoke" => json!({ "type": "smoke", "center": [r[0] + r[2] * 0.4, r[1] + r[3] * 0.75], "radius": r[2].min(r[3]) * 0.16, "puffs": 3, "drift": [r[2] * 0.06, -r[3] * 0.22] }),
+        "lightning" => json!({ "type": "lightning", "from": [r[0] + r[2] * 0.65, r[1]], "to": [r[0] + r[2] * 0.35, r[1] + r[3]], "width": (r[2].min(r[3]) * 0.03).max(4.0) }),
+        _ => json!({ "type": "fire", "base": [r[0] + r[2] * 0.5, r[1] + r[3] * 0.92], "height": r[3] * 0.8 }),
+    };
+    let frame = env.ed.frame;
+    let req: aiai_tools::anime_fx::AnimeFxRequest = match serde_json::from_value(json!({ "cut": cut, "frame": frame, "layer": layer, "kind": fx, "seed": env.core.change_counter })) {
+        Ok(r) => r,
+        Err(e) => return env.ed.notify(e.to_string()),
+    };
+    let planned = super::commands::plan_with_prep(env.core, &cut, &layer, frame, None, vec![], |p, blobs| aiai_tools::anime_fx::anime_fx_command(p, blobs, &req).map_err(|e| e.to_string()));
+    if let Err(e) = planned.and_then(|c| super::commands::run(env.core, c).map(|_| ())) {
+        env.ed.notify(e);
+    }
+}
+
 /// Textura numa camada nova: dentro da seleção; um laço poligonal de 4 cantos (sup-esq, sup-dir, inf-dir, inf-esq)
 /// vira o plano em perspectiva (o padrão diminui com a distância), como uma parede ou um chão.
 fn render_texture(env: &mut Env, kind: &str) {
@@ -417,6 +455,7 @@ pub(crate) fn apply_filter(env: &mut Env, effect: Value) {
         return match kind {
             "sky" => render_sky(env, effect.get("tod").and_then(Value::as_str).unwrap_or("day")),
             "texture" => render_texture(env, effect.get("kind").and_then(Value::as_str).unwrap_or("brick")),
+            "anime_fx" => render_anime_fx(env, effect.get("kind").and_then(Value::as_str).unwrap_or("fire")),
             _ => render_lines(env, kind),
         };
     }
