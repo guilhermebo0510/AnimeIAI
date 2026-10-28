@@ -512,6 +512,10 @@ pub struct Spray {
     /// com manchas do tamanho do pincel espalhadas bem além dele).
     #[serde(default = "d_one", skip_serializing_if = "is_one")]
     pub spread: f32,
+    /// Direção das partículas: alinhadas ao ângulo da ponta (com "seguir o traço", à direção do traço) em vez de
+    /// sorteadas.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub align: bool,
 }
 
 fn is_one(v: &f32) -> bool {

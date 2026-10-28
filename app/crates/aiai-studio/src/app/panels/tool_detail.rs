@@ -13,8 +13,8 @@ use crate::app::ui_kit::Env;
 use crate::i18n::tr;
 use crate::icons::{IconId, Icons};
 use crate::theme::Tokens;
-use aiai_paint::brush::{BrushMode, BrushPreset, BrushTexture, BrushTip, DualBrush, TextureKind, TextureMode, TipShape, TwoTone};
-use aiai_paint::brush_dyn::{DynInput, Dynamics, EdgeNoise, Stabilization, Taper, curve_eval};
+use aiai_paint::brush::{BrushMode, BrushPreset, BrushTexture, BrushTip, DualBrush, TextureKind, TextureMode, TipShape, TwoTone, VectorErase};
+use aiai_paint::brush_dyn::{DynInput, Dynamics, EdgeNoise, Grain, GrainKind, PaintMix, Spray, Stabilization, Taper, curve_eval};
 use egui::{Rect, Sense, Stroke, StrokeKind, Ui};
 
 /// Categoria das configurações avançadas.
@@ -72,6 +72,8 @@ const fn prm(key: &'static str, label: &'static str, cat: Cat) -> Param {
 /// Todos os parâmetros, na ordem das categorias.
 pub(crate) const PARAMS: &[Param] = &[
     prm("size", "tprop.size", Cat::Size),
+    prm("screen_size", "tprop.screen_size", Cat::Size),
+    prm("min_one_px", "tprop.min_one_px", Cat::Size),
     prm("opacity", "tprop.opacity", Cat::Ink),
     prm("flow", "tprop.flow", Cat::Ink),
     prm("blend_mode", "tprop.blend_mode", Cat::Ink),
@@ -80,6 +82,9 @@ pub(crate) const PARAMS: &[Param] = &[
     prm("hue_jitter", "tprop.hue_jitter", Cat::Ink),
     prm("sat_jitter", "tprop.sat_jitter", Cat::Ink),
     prm("value_jitter", "tprop.value_jitter", Cat::Ink),
+    prm("sub_jitter", "tprop.sub_jitter", Cat::Ink),
+    prm("jitter_per_stroke", "tprop.jitter_per_stroke", Cat::Ink),
+    prm("paint_mix", "tprop.paint_mix", Cat::Ink),
     prm("aa", "tprop.aa", Cat::AntiAlias),
     prm("tip_shape", "tprop.tip_shape", Cat::Shape),
     prm("follow", "tprop.follow", Cat::Shape),
@@ -87,24 +92,35 @@ pub(crate) const PARAMS: &[Param] = &[
     prm("two_tone", "tprop.two_tone", Cat::Shape),
     prm("extra_tips", "tprop.extra_tips", Cat::Shape),
     prm("ribbon", "tprop.ribbon", Cat::Shape),
+    prm("shape_preset", "tprop.shape_preset", Cat::Shape),
     prm("hardness", "tprop.hardness", Cat::Tip),
     prm("thickness", "tprop.thickness", Cat::Tip),
     prm("angle", "tprop.angle", Cat::Tip),
     prm("aspect", "tprop.aspect", Cat::Tip),
     prm("edge", "tprop.edge", Cat::Tip),
+    prm("flow_by_spacing", "tprop.flow_by_spacing", Cat::Tip),
     prm("scatter", "tprop.scatter", Cat::Spray),
     prm("count", "tprop.count", Cat::Spray),
     prm("size_jitter", "tprop.size_jitter", Cat::Spray),
     prm("angle_jitter", "tprop.angle_jitter", Cat::Spray),
+    prm("spray", "tprop.spray", Cat::Spray),
     prm("spacing", "tprop.spacing", Cat::Stroke),
+    prm("max_ink", "tprop.max_ink", Cat::Stroke),
     prm("texture", "tprop.texture", Cat::Texture),
     prm("texture_depth", "tprop.texture_depth", Cat::Texture),
     prm("texture_scale", "tprop.texture_scale", Cat::Texture),
+    prm("texture_rotation", "tprop.texture_rotation", Cat::Texture),
+    prm("grain", "tprop.grain", Cat::Texture),
     prm("dual", "tprop.dual", Cat::Dual),
     prm("wet_edges", "tprop.wet_edges", Cat::Watercolor),
+    prm("wet_darkness", "tprop.wet_darkness", Cat::Watercolor),
+    prm("wet_width", "tprop.wet_width", Cat::Watercolor),
     prm("erase", "tprop.erase", Cat::Erase),
+    prm("vector_erase", "tprop.vector_erase", Cat::Erase),
+    prm("all_layers", "tprop.all_layers", Cat::Erase),
     prm("stabilizer", "tprop.stabilizer", Cat::Correction),
     prm("velocity_full", "tprop.velocity_full", Cat::Correction),
+    prm("snap", "tprop.snap", Cat::Correction),
     prm("taper", "tprop.taper", Cat::StartEnd),
 ];
 
@@ -121,7 +137,8 @@ pub(crate) fn applies(p: &BrushPreset, key: &str) -> bool {
         "aspect" | "two_tone" => shape,
         "extra_tips" => !matches!(p.tip, BrushTip::Image { .. }),
         "ribbon" => matches!(p.tip, BrushTip::Image { .. }),
-        "texture_depth" | "texture_scale" => p.texture.is_some(),
+        "texture_depth" | "texture_scale" | "texture_rotation" => p.texture.is_some(),
+        "wet_darkness" | "wet_width" => p.wet_edges > 0.0,
         _ => true,
     }
 }
@@ -168,20 +185,37 @@ pub(crate) fn param_ui(ui: &mut Ui, e: &mut Edit, key: &str) -> bool {
         "sat_jitter" => pct_bar(ui, e, prm.label, Field::Sat, Dyn::None),
         "value_jitter" => pct_bar(ui, e, prm.label, Field::Val, Dyn::None),
         "wet_edges" => pct_bar(ui, e, prm.label, Field::Wet, Dyn::None),
+        "wet_darkness" => pct_bar(ui, e, prm.label, Field::WetDark, Dyn::None),
+        "sub_jitter" => pct_bar(ui, e, prm.label, Field::SubJitter, Dyn::None),
+        "wet_width" => {
+            let mut v = e.p.wet_width;
+            bar(ui, e, prm.label, &mut v, 0.0, 64.0, false, 0, " px", Dyn::None);
+            e.p.wet_width = v.clamp(0.0, 64.0);
+        }
+        "texture_rotation" => {
+            let mut v = e.p.texture.as_ref().map(|x| x.rotation).unwrap_or(0.0);
+            bar(ui, e, prm.label, &mut v, -180.0, 180.0, false, 0, "°", Dyn::None);
+            if let Some(x) = &mut e.p.texture {
+                x.rotation = v;
+            }
+        }
+        "screen_size" => check_row(ui, e, prm.label, "tprop.screen_size.tip", |p| &mut p.screen_size),
+        "min_one_px" => check_row(ui, e, prm.label, "tprop.min_one_px.tip", |p| &mut p.min_one_px),
+        "jitter_per_stroke" => check_row(ui, e, prm.label, "tprop.jitter_per_stroke.tip", |p| &mut p.jitter_per_stroke),
+        "flow_by_spacing" => check_row(ui, e, prm.label, "tprop.flow_by_spacing.tip", |p| &mut p.flow_by_spacing),
+        "max_ink" => check_row(ui, e, prm.label, "tprop.max_ink.tip", |p| &mut p.max_ink),
+        "all_layers" => check_row(ui, e, prm.label, "tprop.all_layers.tip", |p| &mut p.all_layers),
+        "snap" => check_row(ui, e, prm.label, "tprop.snap.tip", |p| &mut p.snap),
+        "vector_erase" => labeled(ui, e, prm.label, |ui, e| vector_erase_combo(ui, e)),
+        "paint_mix" => paint_mix_ui(ui, e, prm.label),
+        "spray" => spray_ui(ui, e, prm.label),
+        "grain" => grain_ui(ui, e, prm.label),
+        "shape_preset" => labeled(ui, e, prm.label, |ui, e| shape_preset_ui(ui, e)),
         "size_jitter" => pct_bar(ui, e, prm.label, Field::SizeJitter, Dyn::None),
         "blend_mode" => labeled(ui, e, prm.label, |ui, e| {
-            let key = |m: BrushMode| match m {
-                BrushMode::Normal => "bmode.normal",
-                BrushMode::Multiply => "bmode.multiply",
-                BrushMode::Screen => "bmode.screen",
-                BrushMode::Overlay => "bmode.overlay",
-                BrushMode::Add => "bmode.add",
-                BrushMode::Behind => "bmode.behind",
-                BrushMode::Erase => "bmode.erase",
-            };
-            egui::ComboBox::from_id_salt(("tprop_mode", e.salt)).width(ui.available_width().min(140.0)).selected_text(tr(key(e.p.mode))).show_ui(ui, |ui| {
-                for m in [BrushMode::Normal, BrushMode::Multiply, BrushMode::Screen, BrushMode::Overlay, BrushMode::Add, BrushMode::Behind] {
-                    ui.selectable_value(&mut e.p.mode, m, tr(key(m)));
+            egui::ComboBox::from_id_salt(("tprop_mode", e.salt)).width(ui.available_width().min(140.0)).selected_text(tr(bmode_key(e.p.mode))).show_ui(ui, |ui| {
+                for m in BMODES {
+                    ui.selectable_value(&mut e.p.mode, m, tr(bmode_key(m)));
                 }
             });
         }),
@@ -283,7 +317,10 @@ pub(crate) fn param_ui(ui: &mut Ui, e: &mut Edit, key: &str) -> bool {
             bar(ui, e, prm.label, &mut v, 2.0, 200.0, true, 0, "%", Dyn::None);
             e.p.spacing = (v / 100.0).clamp(0.02, 2.0);
         }
-        "texture" => labeled(ui, e, prm.label, |ui, e| texture_combo(ui, e)),
+        "texture" => {
+            labeled(ui, e, prm.label, |ui, e| texture_combo(ui, e));
+            texture_mode_row(ui, e);
+        }
         "texture_depth" => {
             let mut v = e.p.texture.as_ref().map(|x| x.depth * 100.0).unwrap_or(0.0);
             bar(ui, e, prm.label, &mut v, 0.0, 100.0, false, 0, "%", Dyn::None);
@@ -318,6 +355,48 @@ pub(crate) fn param_ui(ui: &mut Ui, e: &mut Edit, key: &str) -> bool {
     *e.p != before || after_o != before_o
 }
 
+/// Modos de mesclagem do traço, na ordem do Clip Studio (apagar fica de fora: é a opção "Pincel apaga").
+pub(crate) const BMODES: [BrushMode; 16] = [
+    BrushMode::Normal,
+    BrushMode::Darken,
+    BrushMode::Multiply,
+    BrushMode::Subtract,
+    BrushMode::Lighten,
+    BrushMode::Screen,
+    BrushMode::Add,
+    BrushMode::Overlay,
+    BrushMode::SoftLight,
+    BrushMode::HardLight,
+    BrushMode::Difference,
+    BrushMode::Hue,
+    BrushMode::Saturation,
+    BrushMode::Color,
+    BrushMode::Luminosity,
+    BrushMode::Behind,
+];
+
+pub(crate) fn bmode_key(m: BrushMode) -> &'static str {
+    match m {
+        BrushMode::Normal => "bmode.normal",
+        BrushMode::Multiply => "bmode.multiply",
+        BrushMode::Screen => "bmode.screen",
+        BrushMode::Overlay => "bmode.overlay",
+        BrushMode::Add => "bmode.add",
+        BrushMode::Behind => "bmode.behind",
+        BrushMode::Erase => "bmode.erase",
+        BrushMode::Darken => "bmode.darken",
+        BrushMode::Lighten => "bmode.lighten",
+        BrushMode::SoftLight => "bmode.soft_light",
+        BrushMode::HardLight => "bmode.hard_light",
+        BrushMode::Subtract => "bmode.subtract",
+        BrushMode::Difference => "bmode.difference",
+        BrushMode::Hue => "bmode.hue",
+        BrushMode::Saturation => "bmode.saturation",
+        BrushMode::Color => "bmode.color",
+        BrushMode::Luminosity => "bmode.luminosity",
+    }
+}
+
 #[derive(Clone, Copy)]
 enum Field {
     Opacity,
@@ -328,6 +407,8 @@ enum Field {
     Sat,
     Val,
     Wet,
+    WetDark,
+    SubJitter,
     SizeJitter,
 }
 
@@ -341,6 +422,8 @@ fn field(p: &mut BrushPreset, f: Field) -> &mut f32 {
         Field::Sat => &mut p.saturation_jitter,
         Field::Val => &mut p.value_jitter,
         Field::Wet => &mut p.wet_edges,
+        Field::WetDark => &mut p.wet_darkness,
+        Field::SubJitter => &mut p.sub_jitter,
         Field::SizeJitter => &mut p.size_jitter,
     }
 }
@@ -727,16 +810,188 @@ fn texture_combo(ui: &mut Ui, e: &mut Edit) {
         for k in [TextureKind::Paper, TextureKind::Canvas, TextureKind::Noise, TextureKind::Cells, TextureKind::Grain] {
             let sel = e.p.texture.as_ref().is_some_and(|x| x.image.is_none() && x.kind == k);
             if ui.selectable_label(sel, tr(key(k))).clicked() {
-                e.p.texture = Some(BrushTexture { kind: k, scale: 4.0, depth: 0.6, mode: TextureMode::Multiply, seed: 7, invert: false, image: None, image_mask: None });
+                e.p.texture = Some(BrushTexture { kind: k, scale: 4.0, depth: 0.6, mode: TextureMode::Multiply, seed: 7, invert: false, rotation: 0.0, image: None, image_mask: None });
             }
         }
     });
-    if !e.compact {
-        if let Some(x) = &mut e.p.texture {
+}
+
+/// Modo e inverter da textura, numa linha própria (na mesma linha do tipo, a janela alargava).
+fn texture_mode_row(ui: &mut Ui, e: &mut Edit) {
+    if e.compact {
+        return;
+    }
+    if let Some(x) = &mut e.p.texture {
+        ui.horizontal(|ui| {
             ui.selectable_value(&mut x.mode, TextureMode::Multiply, tr("maker.tex_multiply"));
             ui.selectable_value(&mut x.mode, TextureMode::Subtract, tr("maker.tex_subtract"));
             ui.checkbox(&mut x.invert, tr("maker.invert"));
+        });
+    }
+}
+
+/// Liga/desliga com dica.
+fn check_row(ui: &mut Ui, e: &mut Edit, label: &str, tip: &str, f: impl Fn(&mut BrushPreset) -> &mut bool) {
+    labeled(ui, e, label, |ui, e| {
+        ui.checkbox(f(e.p), "").on_hover_text(tr(tip));
+    })
+}
+
+fn vector_erase_combo(ui: &mut Ui, e: &mut Edit) {
+    let key = |m: Option<VectorErase>| match m {
+        None => "tprop.vector_erase.tool",
+        Some(VectorErase::Segment) => "opt.erase_segment",
+        Some(VectorErase::Intersection) => "opt.erase_intersection",
+        Some(VectorErase::Whole) => "opt.erase_whole",
+    };
+    egui::ComboBox::from_id_salt(("tprop_verase", e.salt)).width(ui.available_width().min(160.0)).selected_text(tr(key(e.p.vector_erase))).show_ui(ui, |ui| {
+        for m in [None, Some(VectorErase::Segment), Some(VectorErase::Intersection), Some(VectorErase::Whole)] {
+            ui.selectable_value(&mut e.p.vector_erase, m, tr(key(m)));
         }
+    });
+}
+
+/// Mistura de tinta (Clip Studio: "Misturar cores"): desligada, misturar (a tinta pega a cor da camada) ou borrar
+/// (arrasta a da camada), com quantidade e densidade de tinta, esticar a cor e desfoque.
+fn paint_mix_ui(ui: &mut Ui, e: &mut Edit, label: &str) {
+    labeled(ui, e, label, |ui, e| {
+        let cur = match &e.p.paint_mix {
+            None => 0,
+            Some(m) if m.smear => 2,
+            Some(_) => 1,
+        };
+        let names = ["tprop.paint_mix.off", "tprop.paint_mix.blend", "tprop.paint_mix.smear"];
+        let mut sel = cur;
+        egui::ComboBox::from_id_salt(("tprop_pmix", e.salt)).width(ui.available_width().min(140.0)).selected_text(tr(names[cur])).show_ui(ui, |ui| {
+            for (i, n) in names.iter().enumerate() {
+                ui.selectable_value(&mut sel, i, tr(n));
+            }
+        });
+        if sel != cur {
+            e.p.paint_mix = match sel {
+                0 => None,
+                k => {
+                    let mut m = e.p.paint_mix.clone().unwrap_or(PaintMix { amount: 0.6, density: 0.8, stretch: 0.3, smear: false, blur: 0.0, amount_dyn: None });
+                    m.smear = k == 2;
+                    Some(m)
+                }
+            };
+        }
+    });
+    if e.compact {
+        return;
+    }
+    if let Some(mut m) = e.p.paint_mix.clone() {
+        for (k, v) in [("tprop.paint_mix.amount", &mut m.amount), ("tprop.paint_mix.density", &mut m.density), ("tprop.paint_mix.stretch", &mut m.stretch)] {
+            let mut x = *v * 100.0;
+            bar(ui, e, k, &mut x, 0.0, 100.0, false, 0, "%", Dyn::None);
+            *v = (x / 100.0).clamp(0.0, 1.0);
+        }
+        bar(ui, e, "tprop.paint_mix.blur", &mut m.blur, 0.0, 64.0, false, 1, " px", Dyn::None);
+        m.blur = m.blur.clamp(0.0, 64.0);
+        e.p.paint_mix = Some(m);
+    }
+}
+
+/// Efeito spray: o carimbo vira partículas.
+fn spray_ui(ui: &mut Ui, e: &mut Edit, label: &str) {
+    labeled(ui, e, label, |ui, e| {
+        let mut on = e.p.spray.is_some();
+        if ui.checkbox(&mut on, "").on_hover_text(tr("tprop.spray.tip")).changed() {
+            e.p.spray = on.then(|| Spray { count: 8.0, size: 0.15, sync: true, size_min: 0.5, roundness_min: 1.0, bias: 0.3, count_exp: 0.0, spread: 1.0, align: false });
+        }
+    });
+    if e.compact {
+        return;
+    }
+    if let Some(mut sp) = e.p.spray.clone() {
+        if sp.sync {
+            let mut x = sp.size * 100.0;
+            bar(ui, e, "tprop.spray.size", &mut x, 1.0, 100.0, true, 0, "%", Dyn::None);
+            sp.size = (x / 100.0).clamp(0.01, 1.0);
+        } else {
+            bar(ui, e, "tprop.spray.size", &mut sp.size, 0.5, 200.0, true, 1, " px", Dyn::None);
+        }
+        ui.horizontal(|ui| {
+            if ui.checkbox(&mut sp.sync, tr("tprop.spray.sync")).changed() {
+                // mantém o tamanho na tela ao trocar entre fração do pincel e px
+                let brush = e.p.size.max(0.5);
+                sp.size = if sp.sync { (sp.size / brush).clamp(0.01, 1.0) } else { (sp.size * brush).clamp(0.5, 200.0) };
+            }
+            ui.checkbox(&mut sp.align, tr("tprop.spray.align")).on_hover_text(tr("tprop.spray.align.tip"));
+        });
+        bar(ui, e, "tprop.spray.count", &mut sp.count, 0.0, 500.0, true, 1, "", Dyn::None);
+        let mut x = sp.size_min * 100.0;
+        bar(ui, e, "tprop.spray.size_min", &mut x, 0.0, 100.0, false, 0, "%", Dyn::None);
+        sp.size_min = (x / 100.0).clamp(0.0, 1.0);
+        let mut x = sp.roundness_min * 100.0;
+        bar(ui, e, "tprop.spray.roundness", &mut x, 2.0, 100.0, false, 0, "%", Dyn::None);
+        sp.roundness_min = (x / 100.0).clamp(0.02, 1.0);
+        let mut x = sp.bias * 100.0;
+        bar(ui, e, "tprop.spray.bias", &mut x, 0.0, 100.0, false, 0, "%", Dyn::None);
+        sp.bias = (x / 100.0).clamp(0.0, 1.0);
+        bar(ui, e, "tprop.spray.spread", &mut sp.spread, 0.1, 8.0, false, 2, "", Dyn::None);
+        sp.spread = sp.spread.clamp(0.1, 8.0);
+        e.p.spray = Some(sp);
+    }
+}
+
+/// Grão de papel em cada carimbo.
+fn grain_ui(ui: &mut Ui, e: &mut Edit, label: &str) {
+    let key = |k: GrainKind| match k {
+        GrainKind::Paper => "tprop.grain.paper",
+        GrainKind::Coarse => "tprop.grain.coarse",
+        GrainKind::Speckle => "tprop.grain.speckle",
+    };
+    labeled(ui, e, label, |ui, e| {
+        let cur = e.p.grain.as_ref().map(|g| tr(key(g.kind)).to_owned()).unwrap_or_else(|| tr("maker.tex_none").to_owned());
+        egui::ComboBox::from_id_salt(("tprop_grain", e.salt)).width(ui.available_width().min(140.0)).selected_text(cur).show_ui(ui, |ui| {
+            if ui.selectable_label(e.p.grain.is_none(), tr("maker.tex_none")).clicked() {
+                e.p.grain = None;
+            }
+            for k in [GrainKind::Paper, GrainKind::Coarse, GrainKind::Speckle] {
+                if ui.selectable_label(e.p.grain.as_ref().is_some_and(|g| g.kind == k), tr(key(k))).clicked() {
+                    let mut g = e.p.grain.clone().unwrap_or(Grain { kind: k, scale: 3.0, depth: 0.5, contrast: 1.0, brightness: 0.0, subtract: false, moving: false, seed: 5 });
+                    g.kind = k;
+                    e.p.grain = Some(g);
+                }
+            }
+        });
+    });
+    if e.compact {
+        return;
+    }
+    if let Some(mut g) = e.p.grain.clone() {
+        bar(ui, e, "tprop.grain.scale", &mut g.scale, 0.5, 40.0, true, 1, " px", Dyn::None);
+        let mut x = g.depth * 100.0;
+        bar(ui, e, "tprop.grain.depth", &mut x, 0.0, 100.0, false, 0, "%", Dyn::None);
+        g.depth = (x / 100.0).clamp(0.0, 1.0);
+        bar(ui, e, "tprop.grain.contrast", &mut g.contrast, 0.2, 5.0, false, 2, "", Dyn::None);
+        bar(ui, e, "tprop.grain.brightness", &mut g.brightness, -1.0, 1.0, false, 2, "", Dyn::None);
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut g.subtract, tr("maker.tex_subtract"));
+            ui.checkbox(&mut g.moving, tr("tprop.grain.moving")).on_hover_text(tr("tprop.grain.moving.tip"));
+        });
+        if g.validate().is_ok() {
+            e.p.grain = Some(g);
+        }
+    }
+}
+
+/// Forma do pincel (Clip Studio: predefinições de forma): copia a forma deste pincel e cola em outro.
+fn shape_preset_ui(ui: &mut Ui, e: &mut Edit) {
+    let id = egui::Id::new("tprop_shape_clipboard");
+    if ui.button(tr("tprop.shape_preset.copy")).on_hover_text(tr("tprop.shape_preset.tip")).clicked() {
+        let p = e.p.clone();
+        ui.ctx().data_mut(|d| d.insert_temp(id, p));
+    }
+    let held: Option<BrushPreset> = ui.ctx().data(|d| d.get_temp(id));
+    let r = ui.add_enabled(held.is_some(), egui::Button::new(tr("tprop.shape_preset.paste")));
+    if let (true, Some(from)) = (r.clicked(), held.as_ref()) {
+        e.p.apply_shape(from);
+    }
+    if let Some(from) = held {
+        r.on_hover_text(format!("{} {}", tr("tprop.shape_preset.from"), from.name));
     }
 }
 
@@ -852,46 +1107,52 @@ pub(crate) fn open(env: &mut Env) {
 
 /// As categorias (lista à esquerda) e os parâmetros da escolhida (à direita), com o olho de cada um quando `eyes`
 /// (chave da sub-ferramenta). Usada pela janela e pelo criador de pincel.
-pub(crate) fn categories_ui(ui: &mut Ui, e: &mut Edit, cat: &mut Cat, eyes: Option<(&str, &mut crate::drawing_prefs::DrawingPrefs)>) -> bool {
+/// `height`: altura da área; a lista de categorias fica parada e só os parâmetros rolam (como no Clip Studio).
+pub(crate) fn categories_ui(ui: &mut Ui, e: &mut Edit, cat: &mut Cat, eyes: Option<(&str, &mut crate::drawing_prefs::DrawingPrefs)>, height: f32) -> bool {
     let mut changed = false;
     let mut eyes = eyes;
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.set_width(150.0);
-            for c in Cat::ALL {
-                let r = ui.selectable_label(*cat == c, tr(c.title_key()));
-                e.notes.push((format!("tdet:cat:{}", tr_key_tail(c.title_key())), r.rect));
-                if r.clicked() {
-                    *cat = c;
+            egui::ScrollArea::vertical().id_salt(("tdet_cats", e.salt)).max_height(height).show(ui, |ui| {
+                for c in Cat::ALL {
+                    let r = ui.selectable_label(*cat == c, tr(c.title_key()));
+                    e.notes.push((format!("tdet:cat:{}", tr_key_tail(c.title_key())), r.rect));
+                    if r.clicked() {
+                        *cat = c;
+                    }
                 }
-            }
+            });
         });
         ui.separator();
-        ui.vertical(|ui| {
-            ui.set_min_width(300.0);
-            for prm in PARAMS.iter().filter(|p| p.cat == *cat) {
-                ui.horizontal(|ui| {
-                    if let Some((key, prefs)) = eyes.as_mut() {
-                        let on = prefs.is_shown(key, prm.key);
-                        let (r, resp) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), Sense::click());
-                        e.notes.push((format!("tdet:eye:{}", prm.key), r));
-                        let p = ui.painter();
-                        if resp.hovered() {
-                            p.rect_filled(r, 3.0, e.t.bg_hover);
+        // cada categoria com a sua rolagem (trocar de categoria volta ao topo dela)
+        egui::ScrollArea::vertical().id_salt(("tdet_params", e.salt, cat.title_key())).auto_shrink([false, false]).max_height(height).min_scrolled_height(height).show(ui, |ui| {
+            ui.vertical(|ui| {
+                ui.set_min_width(300.0);
+                for prm in PARAMS.iter().filter(|p| p.cat == *cat) {
+                    ui.horizontal(|ui| {
+                        if let Some((key, prefs)) = eyes.as_mut() {
+                            let on = prefs.is_shown(key, prm.key);
+                            let (r, resp) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), Sense::click());
+                            e.notes.push((format!("tdet:eye:{}", prm.key), r));
+                            let p = ui.painter();
+                            if resp.hovered() {
+                                p.rect_filled(r, 3.0, e.t.bg_hover);
+                            }
+                            e.icons.paint(p, if on { IconId::Eye } else { IconId::EyeOff }, r.shrink(3.0), if on { e.t.text } else { e.t.text_dim.gamma_multiply(0.6) });
+                            if resp.on_hover_text(tr("tdet.eye.tip")).clicked() {
+                                prefs.set_shown(key, prm.key, !on);
+                            }
                         }
-                        e.icons.paint(p, if on { IconId::Eye } else { IconId::EyeOff }, r.shrink(3.0), if on { e.t.text } else { e.t.text_dim.gamma_multiply(0.6) });
-                        if resp.on_hover_text(tr("tdet.eye.tip")).clicked() {
-                            prefs.set_shown(key, prm.key, !on);
-                        }
-                    }
-                    ui.vertical(|ui| {
-                        changed |= param_ui(ui, e, prm.key);
+                        ui.vertical(|ui| {
+                            changed |= param_ui(ui, e, prm.key);
+                        });
                     });
-                });
-            }
-            if *cat == Cat::Erase {
-                ui.label(egui::RichText::new(tr("tdet.erase.note")).size(11.0).color(e.t.text_dim));
-            }
+                }
+                if *cat == Cat::Erase {
+                    ui.label(egui::RichText::new(tr("tdet.erase.note")).size(11.0).color(e.t.text_dim));
+                }
+            });
         });
     });
     changed
@@ -938,10 +1199,10 @@ pub(crate) fn window(env: &mut Env, ctx: &egui::Context) {
         }
         ui.separator();
         let body = (ui.available_height() - 44.0).max(120.0);
-        egui::ScrollArea::vertical().id_salt("tdet_scroll").auto_shrink([false, false]).max_height(body).min_scrolled_height(body).show(ui, |ui| {
+        {
             let mut e = Edit { p: &mut w, o: Some(&mut env.ed.opts), t, icons: env.icons, notes: env.notes, compact: false, salt: "detail" };
-            changed = categories_ui(ui, &mut e, &mut d.cat, Some((&key, &mut prefs)));
-        });
+            changed = categories_ui(ui, &mut e, &mut d.cat, Some((&key, &mut prefs)), body);
+        }
         ui.separator();
         ui.horizontal(|ui| {
             let b = ui.add(egui::Button::image_and_text(egui::Image::new((env.icons.texture(ui.ctx(), IconId::ToolReset, 14.0), egui::vec2(14.0, 14.0))).tint(t.text), tr("tdet.reset")));

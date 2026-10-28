@@ -611,7 +611,16 @@ fn brush_preset(env: &Env) -> BrushPreset {
     let o = &env.ed.opts;
     let mut p = o.brush_custom.clone().or_else(|| env.ed.brushes.get(o.brush_preset).cloned()).or_else(|| presets().first().cloned()).unwrap_or_else(|| BrushPreset::round("Pincel", 24.0, 0.9));
     p.size = o.brush_size.max(0.5);
+    // tamanho na tela (Clip Studio): o tamanho da barra vale em px da tela, então no canvas depende do zoom
+    if p.screen_size {
+        p.size = (p.size / env.ed.view.zoom.max(0.01)).clamp(0.5, 2000.0);
+    }
     p.opacity = o.brush_opacity.clamp(0.0, 1.0);
+    // variação para a secundária: a cor que não está em uso no painel Cores
+    if p.sub_jitter > 0.0 {
+        let c = cmds::resolve_color(&env.core.project, &env.ed.draw_ui.colors.other).0;
+        p.sub_color = Some([c[0].clamp(0.0, 1.0), c[1].clamp(0.0, 1.0), c[2].clamp(0.0, 1.0)]);
+    }
     // degradê como cor (painel Cores): ao longo do traço
     p.color_ramp = super::panels::gradient_edit::brush_ramp(env);
     // cor transparente (painel Cores, S25): o pincel tira tinta em vez de pôr

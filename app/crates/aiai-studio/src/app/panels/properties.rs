@@ -262,20 +262,11 @@ pub(crate) fn preset_grid(ui: &mut Ui, p: &mut aiai_paint::brush::BrushPreset, a
         }
         // modo de mistura do traço e antisserrilhado
         {
-            use aiai_paint::brush::BrushMode as M;
-            let key = |m: M| match m {
-                M::Normal => "bmode.normal",
-                M::Multiply => "bmode.multiply",
-                M::Screen => "bmode.screen",
-                M::Overlay => "bmode.overlay",
-                M::Add => "bmode.add",
-                M::Behind => "bmode.behind",
-                M::Erase => "bmode.erase",
-            };
+            use super::tool_detail::{BMODES, bmode_key};
             ui.label(tr("brush.mode"));
-            egui::ComboBox::from_id_salt(("brush_mode", salt)).selected_text(tr(key(p.mode))).show_ui(ui, |ui| {
-                for m in [M::Normal, M::Multiply, M::Screen, M::Overlay, M::Add, M::Behind, M::Erase] {
-                    ui.selectable_value(&mut p.mode, m, tr(key(m)));
+            egui::ComboBox::from_id_salt(("brush_mode", salt)).selected_text(tr(bmode_key(p.mode))).show_ui(ui, |ui| {
+                for m in BMODES.into_iter().chain([aiai_paint::brush::BrushMode::Erase]) {
+                    ui.selectable_value(&mut p.mode, m, tr(bmode_key(m)));
                 }
             });
             ui.end_row();

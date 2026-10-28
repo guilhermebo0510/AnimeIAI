@@ -275,7 +275,7 @@ fn preset_of(b: &ImportedBrush, name: &str, cat: &str) -> (BrushPreset, Option<V
 }
 
 fn texture_image(hash: aiai_core::BlobHash, m: Mask) -> BrushTexture {
-    BrushTexture { kind: TextureKind::Paper, scale: 1.0, depth: 0.6, mode: TextureMode::Multiply, seed: 0, invert: false, image: Some(hash), image_mask: Some(std::sync::Arc::new(m)) }
+    BrushTexture { kind: TextureKind::Paper, scale: 1.0, depth: 0.6, mode: TextureMode::Multiply, seed: 0, invert: false, rotation: 0.0, image: Some(hash), image_mask: Some(std::sync::Arc::new(m)) }
 }
 
 /// Categorias para escolher: as de fábrica e as que os pincéis do usuário já usam.
@@ -402,7 +402,7 @@ fn maker_window(env: &mut Env, ctx: &egui::Context) {
                     for k in [TextureKind::Paper, TextureKind::Canvas, TextureKind::Noise, TextureKind::Cells, TextureKind::Grain] {
                         let sel = m.preset.texture.as_ref().is_some_and(|t| t.image.is_none() && t.kind == k);
                         if ui.selectable_label(sel, tr(tex_key(k))).clicked() {
-                            m.preset.texture = Some(BrushTexture { kind: k, scale: 4.0, depth: 0.6, mode: TextureMode::Multiply, seed: 7, invert: false, image: None, image_mask: None });
+                            m.preset.texture = Some(BrushTexture { kind: k, scale: 4.0, depth: 0.6, mode: TextureMode::Multiply, seed: 7, invert: false, rotation: 0.0, image: None, image_mask: None });
                             m.tex_bytes = None;
                         }
                     }
@@ -437,10 +437,10 @@ fn maker_window(env: &mut Env, ctx: &egui::Context) {
         // a janela cresceu com autor/licença/fonte/etiquetas: a lista de ajustes encolhe em telas baixas (o Salvar fica à vista)
         let grid_h = (ctx.content_rect().height() - 640.0).clamp(100.0, 300.0);
         // os ajustes do motor nas categorias das configurações avançadas (tamanho e opacidade estão em Tamanho e Tinta)
-        egui::ScrollArea::vertical().max_height(grid_h).show(ui, |ui| {
+        {
             let mut e = super::tool_detail::Edit { p: &mut m.preset, o: None, t: env.t, icons: env.icons, notes: env.notes, compact: false, salt: "maker" };
-            super::tool_detail::categories_ui(ui, &mut e, &mut m.cat_ui, None);
-        });
+            super::tool_detail::categories_ui(ui, &mut e, &mut m.cat_ui, None, grid_h);
+        }
         if let Some(e) = &m.error {
             ui.colored_label(env.t.danger, e);
         }

@@ -1088,7 +1088,7 @@ mod tests {
         let (tb, xb) = (tip.encode(), tex.encode());
         let mut p = BrushPreset::round(name, 30.0, 0.8);
         p.tip = BrushTip::Image { blob: BlobHash::of(&tb), mask: Some(tip) };
-        p.texture = Some(BrushTexture { kind: TextureKind::Paper, scale: 1.0, depth: 0.6, mode: TextureMode::Multiply, seed: 0, invert: false, image: Some(BlobHash::of(&xb)), image_mask: Some(std::sync::Arc::new(tex)) });
+        p.texture = Some(BrushTexture { kind: TextureKind::Paper, scale: 1.0, depth: 0.6, mode: TextureMode::Multiply, seed: 0, invert: false, rotation: 0.0, image: Some(BlobHash::of(&xb)), image_mask: Some(std::sync::Arc::new(tex)) });
         p.spacing = 0.25;
         p.category = "cenario".into();
         p.tags = vec!["nuvem".into(), "céu".into()];

@@ -43,9 +43,14 @@ Auditoria 2: as 8 propostas estão feitas; relidos os `AUDITORIA_V2*.md` (28/10)
 
 ## 3. Criação de pincéis e canetas pelo usuário
 
-- [ ] Estudar (internet + o próprio CSP) como o CSP deixa criar qualquer caneta: categorias da Configuração de
-  sub-ferramenta, pontas, dinâmicas, textura, mistura, entrada/saída, correção, etc.
-- [ ] Comparar com o nosso criador (Configurações avançadas, Criar pincel) e implementar o que falta
+- [x] Estudar (internet + o próprio CSP) como o CSP deixa criar qualquer caneta: categorias da Configuração de
+  sub-ferramenta, pontas, dinâmicas, textura, mistura, entrada/saída, correção, etc. — `10-criador-de-pinceis.md`
+- [x] Comparar com o nosso criador (Configurações avançadas, Criar pincel) e implementar o que falta — novos no motor:
+  tamanho na tela, pelo menos 1 px, variar para a secundária e por traço, densidade pelo intervalo, rotação da textura,
+  partículas alinhadas, borda de aquarela (escurecer, largura), 10 modos de mesclagem, forma do pincel (copiar/colar);
+  no editor: mistura de tinta, spray, grão, misturar pontas com escurecer, borracha vetorial/todas as camadas, encaixe;
+  ponta minúscula que sumia na divisa de pixels corrigida; lista de categorias parada e só os parâmetros rolam;
+  `set_brush` com `custom` (qualquer campo do pincel pela ponte/MCP). Fica de fora: saída em % do traço (motivo no 10)
 
 ## 4. Workspace de Modelagem
 

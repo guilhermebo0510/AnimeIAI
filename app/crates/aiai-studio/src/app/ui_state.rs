@@ -327,7 +327,8 @@ impl StudioApp {
     /// set_theme {theme: light|dark}, set_language {language: pt|en}, open_dialog/close_dialog {dialog: about|prefs|start, tab?: general|keys|folders|performance},
     /// set_window_size {width, height, maximized?} (pontos lógicos), library_import {files} (abre a janela de importar da Biblioteca),
     /// select_layer {layer}, select_cut {cut}, set_frame {frame}, set_color {color}, fit_view,
-    /// set_brush {preset (nome, sem diferenciar maiúsculas), size?, opacity?} (pincel da biblioteca em uso; um do grupo
+    /// set_brush {preset (nome, sem diferenciar maiúsculas), size?, opacity?, custom? (campos do pincel por cima do
+    /// preset: vira a cópia do usuário, como mexer nas configurações avançadas)} (pincel da biblioteca em uso; um do grupo
     /// borracha vira também a ponta da ferramenta Borracha).
     /// dock {op: list|maximize|restore|detach|redock|redock_all, panel?, group?} (painel maximizado e janelas soltas).
     /// Apelidos aceitos: set_tool = select_tool; open_panel = toggle_panel com visible=true.
@@ -345,7 +346,7 @@ impl StudioApp {
             "set_tool_option" => Some(&["key", "value"]),
             "fit_view" => Some(&[]),
             "lint" | "lint_next" | "lint_prev" | "lint_fill" | "lint_clear" => Some(&[]),
-            "set_brush" => Some(&["preset", "value", "size", "opacity"]),
+            "set_brush" => Some(&["preset", "value", "size", "opacity", "custom"]),
             "toggle_panel" | "open_panel" => Some(&["panel", "value", "visible"]),
             "layout" => Some(&["op", "name"]),
             "set_theme" => Some(&["theme", "value"]),
@@ -473,6 +474,23 @@ impl StudioApp {
                 o.brush_custom = None;
                 o.brush_size = num("size").unwrap_or(p.size).clamp(0.5, 2000.0);
                 o.brush_opacity = num("opacity").unwrap_or(p.opacity).clamp(0.0, 1.0);
+                // ajustes por cima do pincel (os campos do preset, como nas configurações avançadas): vira a cópia do usuário
+                if let Some(c) = m.get("custom").filter(|c| !c.is_null()) {
+                    let Value::Object(c) = c else { return Err(BridgeError::invalid_params("set_brush: 'custom' deve ser um objeto com campos do pincel")) };
+                    let mut base = serde_json::to_value(&p).map_err(|e| BridgeError::invalid_params(e.to_string()))?;
+                    let fields = aiai_paint::brush::BrushPreset::field_names();
+                    for (k, v) in c {
+                        if !fields.iter().any(|f| f == k) {
+                            return Err(BridgeError::invalid_params(format!("set_brush: campo desconhecido no pincel: {k}")));
+                        }
+                        base[k] = v.clone();
+                    }
+                    let mut w: aiai_paint::brush::BrushPreset = serde_json::from_value(base).map_err(|e| BridgeError::invalid_params(format!("set_brush: custom inválido: {e}")))?;
+                    w.size = o.brush_size;
+                    w.opacity = o.brush_opacity;
+                    w.validate().map_err(|e| BridgeError::invalid_params(format!("set_brush: {e}")))?;
+                    o.brush_custom = Some(w);
+                }
                 // pincel do grupo borracha: a ferramenta Borracha apaga com ele (como escolher a borracha na prateleira)
                 if p.group == "borracha" {
                     o.eraser_use_brush = true;

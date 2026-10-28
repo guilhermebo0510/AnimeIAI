@@ -87,7 +87,7 @@ fn spray_scatters_particles_inside_the_tip_and_scales_with_size() {
     let mut p = BrushPreset::round("s", 60.0, 1.0);
     p.size_pressure_min = 1.0;
     p.antialias = Some(2);
-    p.spray = Some(Spray { count: 10.0, size: 2.0, sync: false, size_min: 1.0, roundness_min: 1.0, bias: 0.0, count_exp: 2.0, spread: 1.0 });
+    p.spray = Some(Spray { count: 10.0, size: 2.0, sync: false, size_min: 1.0, roundness_min: 1.0, bias: 0.0, count_exp: 2.0, spread: 1.0, align: false });
     let ink = |size: f32| {
         let mut q = p.clone();
         q.size = size;
