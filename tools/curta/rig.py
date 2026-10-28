@@ -70,7 +70,11 @@ class Head:
 
 
 def hexrgba(h, a=1.0):
-    return [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)] + [a]
+    """"#rrggbb" ou "#rrggbbaa" (o alfa do texto vale no lugar de `a`)."""
+    rgb = [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+    if len(h) >= 9:
+        a = int(h[7:9], 16) / 255
+    return rgb + [a]
 
 
 # ------------------------------------------------------------------------------------------------- rosto (comum)
@@ -147,6 +151,40 @@ def eye_highlights(h, side, open_=1.0, mood="neutral"):
     big = [(ex - 0.02 * f + 0.016 * math.cos(t) * f, ey - 0.03 * open_ + 0.018 * math.sin(t) * open_) for t in [k * math.tau / 8 for k in range(8)]]
     small = [(ex + 0.022 * f + 0.008 * math.cos(t) * f, ey + 0.035 * open_ + 0.008 * math.sin(t) * open_) for t in [k * math.tau / 6 for k in range(6)]]
     return [[h.p(*q) for q in big], [h.p(*q) for q in small]]
+
+
+def sparkle(h, side, open_=1.0):
+    """Cintilância de quatro pontas no olho (momento de emoção): perto do brilho grande, um pouco para fora."""
+    if open_ < 0.3:
+        return []
+    s = side
+    f = h.facing(s * 0.175)
+    # sobre a íris, do lado oposto ao brilho grande (que fica em cima, para dentro)
+    cx, cy = s * 0.179 + 0.026 * f, 0.612
+    r, k = 0.036, 0.16
+    pts = []
+    for i in range(8):
+        a = i * math.tau / 8 - math.pi / 2
+        rr = r if i % 2 == 0 else r * k
+        pts.append((cx + rr * math.cos(a) * f, cy + rr * math.sin(a)))
+    return [[h.p(*q) for q in pts]]
+
+
+def blush(h, ink, amount=1.0):
+    """Blush de anime: mancha rosada translúcida nas maçãs do rosto e três tracinhos inclinados por cima.
+    Devolve (traços, formas)."""
+    if amount <= 0.0:
+        return [], []
+    out, shapes = [], []
+    for sg in (-1, 1):
+        f = h.facing(sg * 0.22)
+        cx, cy = sg * 0.215, 0.745
+        rx, ry = 0.085 * f, 0.032
+        shapes.append(("blush", [h.p(cx + rx * math.cos(t), cy + ry * math.sin(t)) for t in [k * math.tau / 14 for k in range(14)]]))
+        for k in (-1, 0, 1):
+            x0 = cx + k * 0.032 * f
+            out.append(h.curve([(x0 + 0.012 * f * sg, cy - 0.022 * amount), (x0 - 0.012 * f * sg, cy + 0.022 * amount)], 0.45, ink, widths=[0.3, 1.0, 0.3]))
+    return out, shapes
 
 
 def brows(h, ink, mood="neutral", female=True):
@@ -315,6 +353,13 @@ def face_hana(h, mood="neutral", open_=1.0, mouth_shape="closed"):
     top = [[X, h.top + (jaw_y(h, X) + 0.012) * h.H] for X in xs]
     shapes.append(("pele_sombra", top + [h.p(0.094, 1.03, None, False), h.p(0.0, 1.07, None, False), h.p(-0.094, 1.03, None, False)]))
     shapes += [("brilho", q) for q in eye_highlights(h, -1, open_, mood) + eye_highlights(h, 1, open_, mood)]
+    # blush (vergonha/alegria) e cintilância (emoção): `h.blush` 0..1 e `h.sparkle`, ou pelo humor
+    amt = getattr(h, "blush", 1.0 if mood in ("happy", "shy") else 0.0)
+    bs, bsh = blush(h, ink, amt)
+    strokes += bs
+    shapes += bsh
+    if getattr(h, "sparkle", False):
+        shapes += [("brilho", q) for q in sparkle(h, -1, open_) + sparkle(h, 1, open_)]
     return strokes, seeds, shapes
 
 
@@ -368,6 +413,9 @@ def hair_ren(h, ink):
               # lasca entre a mecha da costeleta e a lateral (no giro ela abre e fica maior que uma fresta)
               h.seed(h.follow(-0.4045, 0.50), 0.50, "cabelo", rot=False), h.seed(h.follow(0.4045, 0.50), 0.50, "cabelo", rot=False),
               h.seed(h.follow(-0.425, 0.39), 0.39, "cabelo", rot=False), h.seed(h.follow(0.425, 0.39), 0.39, "cabelo", rot=False),
+              # bolsinho entre a borda de baixo da bandana, o topo da lateral e o topo da costeleta (centroide em px)
+              *[h.seed((sum(q[0] for q in tri) / 3 - h.cx) / h.H, (sum(q[1] for q in tri) / 3 - h.top) / h.H, "cabelo", rot=False)
+                for tri in ([h.p(h.follow(sg * 0.40, 0.355), 0.355, None, False), h.p(sg * 0.40, 0.365), h.p(h.follow(sg * 0.42, 0.42), 0.42, None, False)] for sg in (-1, 1))],
               h.seed(0.0, 0.25, "bandana"), h.seed(-0.30, 0.26, "bandana"), h.seed(0.30, 0.26, "bandana")]
     # cada mecha é um triângulo (vale, vale, ponta): a semente vai no centroide, que sempre fica dentro
     seeds += [h.seed((valleys[i][0] + valleys[i + 1][0] + t[0]) / 3, (valleys[i][1] + valleys[i + 1][1] + t[1]) / 3, "cabelo") for i, t in enumerate(tips)]
@@ -409,12 +457,19 @@ def face_ren(h, mood="neutral", open_=1.0, mouth_shape="closed"):
     top = [[X, h.top + (jaw_y(h, X) + 0.012) * h.H] for X in xs]
     shapes.append(("pele_sombra", top + [h.p(0.113, 1.03, None, False), h.p(0.0, 1.07, None, False), h.p(-0.113, 1.03, None, False)]))
     shapes += [("brilho", q) for q in eye_highlights(h, -1, open_, mood) + eye_highlights(h, 1, open_, mood)]
+    # blush (vergonha/alegria) e cintilância (emoção): `h.blush` 0..1 e `h.sparkle`, ou pelo humor
+    amt = getattr(h, "blush", 1.0 if mood in ("happy", "shy") else 0.0)
+    bs, bsh = blush(h, ink, amt)
+    strokes += bs
+    shapes += bsh
+    if getattr(h, "sparkle", False):
+        shapes += [("brilho", q) for q in sparkle(h, -1, open_) + sparkle(h, 1, open_)]
     return strokes, seeds, shapes
 
 
 # ------------------------------------------------------------------------------------------------- corpo (busto)
 
-def body_bust(h, who, bottom=2.45, turn=0.0):
+def body_bust(h, who, bottom=2.45, turn=0.0, breath=0.0):
     """Busto até `bottom` (cabeças), com a roupa do personagem; `turn` -1..1 encolhe o lado distante (3/4).
     O busto não gira com a cabeça (fica no eixo); fecha embaixo com uma linha (borda do quadro/recorte)."""
     ink = INK[who]
@@ -430,7 +485,10 @@ def body_bust(h, who, bottom=2.45, turn=0.0):
     X = lambda sg, x: ox + sg * x * k(sg)
     Xn = lambda sg: sg * nw * 1.03     # base do pescoço: fica no eixo da cabeça (o pescoço não desloca)
     out, seeds, shapes = [], [], []
-    c = lambda pts, w=1.0, **kw: h.curve([(x, y, False) for x, y in pts], w, ink, **kw)
+    # respiração: na inspiração (`breath` > 0) ombros e peito sobem um pouco; o pescoço (y ≤ 1,12) fica
+    lift = 0.014 * breath
+    B = lambda y: y if y <= 1.12 or y >= bottom else y - lift * min(1.0, (y - 1.12) / 0.3)
+    c = lambda pts, w=1.0, **kw: h.curve([(x, B(y), False) for x, y in pts], w, ink, **kw)
     for sg in (-1, 1):
         # trapézio → ombro → braço (contorno externo) até a borda de baixo
         out.append(c([(Xn(sg), 1.12), (X(sg, 0.30), 1.20), (X(sg, sh), 1.33), (X(sg, sh + 0.06), 1.50), (X(sg, sh + 0.08), 1.90), (X(sg, sh + 0.07), bottom)], 1.1, widths=[0.7, 1.0, 1.0]))
@@ -464,8 +522,8 @@ def body_bust(h, who, bottom=2.45, turn=0.0):
             # alça do avental como forma entre as duas linhas: no 3/4 a do lado distante fica mais estreita que o
             # fechamento do balde e se juntava com a blusa
             strap = [(X(sg, 0.22), 1.62), (X(sg, 0.30), 1.40), (X(sg, 0.40), 1.215), (X(sg, 0.47), 1.235), (X(sg, 0.35), 1.42), (X(sg, 0.27), 1.62)]
-            shapes.append(("avental", [h.p(x, y, None, False) for x, y in strap]))
-            shapes.append(("blusa_sombra", [h.p(x, y, None, False) for x, y in [(X(sg, sh - 0.07), 1.52), (X(sg, sh - 0.10), 1.75), (X(sg, wa + 0.02), 2.1), (X(sg, wa), bottom), (X(sg, wa - 0.07), bottom), (X(sg, wa - 0.05), 2.05), (X(sg, sh - 0.16), 1.6)]]))
+            shapes.append(("avental", [h.p(x, B(y), None, False) for x, y in strap]))
+            shapes.append(("blusa_sombra", [h.p(x, B(y), None, False) for x, y in [(X(sg, sh - 0.07), 1.52), (X(sg, sh - 0.10), 1.75), (X(sg, wa + 0.02), 2.1), (X(sg, wa), bottom), (X(sg, wa - 0.07), bottom), (X(sg, wa - 0.05), 2.05), (X(sg, sh - 0.16), 1.6)]]))
     else:
         # camisa azul com gola em V, avental creme com alça no pescoço, manga dobrada
         out.append(c([(Xn(-1), 1.12), (X(0, 0.0), 1.30), (Xn(1), 1.12)], 0.9, geometry="polyline"))
@@ -482,16 +540,16 @@ def body_bust(h, who, bottom=2.45, turn=0.0):
                   h.seed(X(-1, sh), 2.2, "camisa", False), h.seed(X(1, sh), 2.2, "camisa", False), h.seed(ox, 1.25, "pele", False), h.seed(X(-1, 0.15), 1.20, "camisa", False), h.seed(X(1, 0.15), 1.20, "camisa", False),
                   h.seed(ox, 1.45, "camisa", False)]
         for sg in (-1, 1):
-            shapes.append(("camisa_sombra", [h.p(x, y, None, False) for x, y in [(X(sg, sh - 0.07), 1.52), (X(sg, sh - 0.10), 1.75), (X(sg, wa + 0.02), 2.1), (X(sg, wa), bottom), (X(sg, wa - 0.08), bottom), (X(sg, wa - 0.06), 2.05), (X(sg, sh - 0.17), 1.6)]]))
+            shapes.append(("camisa_sombra", [h.p(x, B(y), None, False) for x, y in [(X(sg, sh - 0.07), 1.52), (X(sg, sh - 0.10), 1.75), (X(sg, wa + 0.02), 2.1), (X(sg, wa), bottom), (X(sg, wa - 0.08), bottom), (X(sg, wa - 0.06), 2.05), (X(sg, sh - 0.17), 1.6)]]))
     return out, seeds, shapes
 
 
-def bust(h, who, mood="neutral", open_=1.0, mouth_shape="closed", bottom=2.45, turn=None):
+def bust(h, who, mood="neutral", open_=1.0, mouth_shape="closed", bottom=2.45, turn=None, breath=0.0):
     """Rosto + busto. `turn` padrão segue o giro da cabeça (metade)."""
     h.collar = False
     f, sd, sh = (face_hana if who == "hana" else face_ren)(h, mood, open_, mouth_shape)
     t = (math.degrees(h.yaw) / 60.0) if turn is None else turn
-    b, bs, bsh = body_bust(h, who, bottom, t)
+    b, bs, bsh = body_bust(h, who, bottom, t, breath)
     return f + b, sd + bs, sh + bsh
 
 

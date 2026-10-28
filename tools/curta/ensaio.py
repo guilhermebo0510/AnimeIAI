@@ -37,7 +37,10 @@ for k in L:
     d.apply({"kind": "replace_data", "id": ids["ens_" + k + "_c1"], "data": {"type": "cel", "number": 1}})
 BUST = os.environ.get("BUSTO") == "1"
 h = rig.Head(960, 80, 400, yaw) if BUST else rig.Head(960, 120, 760, yaw)
-strokes, seeds, shapes = rig.bust(h, who, mood, 1.0, mouth) if BUST else getattr(rig, "face_" + who)(h, mood, 1.0, mouth)
+if os.environ.get("BLUSH"):
+    h.blush = float(os.environ["BLUSH"])
+h.sparkle = os.environ.get("SPARKLE") == "1"
+strokes, seeds, shapes = rig.bust(h, who, mood, 1.0, mouth, breath=float(os.environ.get("BREATH", "0"))) if BUST else getattr(rig, "face_" + who)(h, mood, 1.0, mouth)
 # a mesma pintura da produção (curta.paint): sementes de reserva só onde não há tinta, frestas pelo próprio balde
 from curta import paint
 lint = paint(cut, 0, L, [(who, strokes, seeds, shapes, h.top, h.H)])

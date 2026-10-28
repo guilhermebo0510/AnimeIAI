@@ -35,10 +35,10 @@ def col(h, a=1.0):
 PALETTE = {
     "hana": {"pele": "#f6d5c3", "pele_sombra": "#e0ad9a", "cabelo": "#9b4a32", "cabelo_sombra": "#6e2f20", "olho": "#3f8a55",
              "olho_claro": "#7cc28a", "pupila": "#1d3d27", "branco_olho": "#fbf8f4", "boca": "#8a3434", "lingua": "#d9707a",
-             "presilha": "#5fae6a", "blusa": "#f3efe4", "blusa_sombra": "#d6cfbd", "avental": "#5d7048", "bota": "#6b4a32", "brilho": "#ffffff"},
+             "presilha": "#5fae6a", "blush": "#ee8e8a8c", "blusa": "#f3efe4", "blusa_sombra": "#d6cfbd", "avental": "#5d7048", "bota": "#6b4a32", "brilho": "#ffffff"},
     "ren": {"pele": "#f3d0bb", "pele_sombra": "#d9a690", "cabelo": "#2b2a35", "cabelo_realce": "#4f5068", "olho": "#b07a2a",
             "olho_claro": "#d9a85a", "pupila": "#4a2e10", "branco_olho": "#fbf8f4", "boca": "#7a3030", "lingua": "#d06a72",
-            "bandana": "#f7f5ef", "bandana_sombra": "#d8d2c4", "camisa": "#6f8fb3", "camisa_sombra": "#526f90", "avental": "#efe2c4",
+            "bandana": "#f7f5ef", "bandana_sombra": "#d8d2c4", "blush": "#e08a7c80", "camisa": "#6f8fb3", "camisa_sombra": "#526f90", "avental": "#efe2c4",
             "calca": "#4a4752", "sapato": "#3a2c25", "brilho": "#ffffff"},
 }
 LAYER_KINDS = (("cor", "fill"), ("sombra", "raster"), ("olhos", "raster"), ("linha", "vector"), ("brilho", "raster"))

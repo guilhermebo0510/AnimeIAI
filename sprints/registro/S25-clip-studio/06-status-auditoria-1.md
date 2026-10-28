@@ -88,7 +88,7 @@ Os 5 itens P0 do plano da auditoria estão feitos (um deles com decisão mantida
 | 3.7 | Atmosfera inicial em 3 cortes (jardim, fuurin, ninho) | NÃO FEITO | só `C001` | roteiro/produção, não ferramenta |
 | 3.8 | Cena C002: braços rígidos como tábuas, sem flare no toque | NÃO FEITO | `c13_c002.py` ainda `offset_x` | poses-chave de mão e `LensFlare` no contato |
 | 3.9 | Satsuei nos personagens (RimLight, LightWrap, Para) e sombras faciais | NÃO FEITO | nenhum uso nos `c0x`/`c1x` (só no C007) | aplicar o que o `aiai-fx` já tem |
-| 3.10 | Blush, brilho de olho, respiração | NÃO FEITO | backlog "pendente" | camada de blush no rig, partículas de brilho |
+| 3.10 | Blush, brilho de olho, respiração | FEITO NO RIG (28/10), A APROVAR | `rig.blush` (mancha translúcida + tracinhos; `h.blush` ou humor happy/shy), `rig.sparkle` (cintilância de 4 pontas sobre a íris, `h.sparkle`), `body_bust(..., breath)` (ombros e peito sobem na inspiração, formas junto); cores `blush` com alfa no `PALETTE` | `evidencias/S25/curta/blush_cintilancia.png`; os cortes ainda não usam (decisão do usuário: onde entra blush/cintilância, e a respiração nos planos parados) |
 | 3.11 | Dissolve do C005 para C006 com dupla exposição | NÃO FEITO | `c17_edicao.py:12` | fade só do fundo (Edição v2 pode ajudar) |
 
 ### Parte 4 (engenharia)
