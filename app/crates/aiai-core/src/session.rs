@@ -262,8 +262,9 @@ impl CoreSession {
         }
         command.resolve_ids(&mut self.ids);
         let revision = self.project.revision + 1;
-        // com diário, a proveniência de todos os nós antes do comando: o desfazer de emergência a devolve exata, inclusive
-        // de nós apagados e recriados e de nós tocados duas vezes num lote (CX12 C12-02). Sem diário não há como falhar.
+        // a proveniência de todos os nós antes do comando, sempre que ele ainda pode voltar depois de aplicado (diário,
+        // validação completa, trava de corte): toda volta a devolve exata, inclusive de nós apagados e recriados e de nós
+        // tocados duas vezes num lote (CX12 C12-02, CX13 C13-01)
         let prior = self.provenance_snapshot();
         let applied = {
             let ctx = ApplyCtx { blobs: &self.blobs, author, revision };
@@ -274,6 +275,7 @@ impl CoreSession {
                 // Bug de comando: desfaz e reporta.
                 let ctx = ApplyCtx { blobs: &self.blobs, author, revision };
                 applied.inverse.apply(&mut self.project, &ctx).expect("inverso deve restaurar");
+                self.restore_provenance(prior);
                 return Err(CoreError::Hierarchy(format!("o comando deixou o projeto inválido ({e}); revertido")));
             }
         }
@@ -282,6 +284,7 @@ impl CoreSession {
         if let Err(e) = self.claim_cuts_for(&applied.affected) {
             let ctx = ApplyCtx { blobs: &self.blobs, author, revision };
             applied.inverse.apply(&mut self.project, &ctx).expect("inverso deve restaurar");
+            self.restore_provenance(prior);
             return Err(e);
         }
         self.project.revision = revision;
@@ -313,9 +316,12 @@ impl CoreSession {
         Ok(outcome)
     }
 
-    /// Proveniência de todos os nós, só quando há diário (é o único caso em que um comando aplicado pode ter de voltar).
+    /// Proveniência de todos os nós, quando um comando aplicado ainda pode ter de voltar: diário (a gravação pode falhar),
+    /// validação completa (comando com bug) ou projeto com pasta (a trava de um corte pode estar com outro processo; a
+    /// pasta conta mesmo sem a divisão ligada, porque o próprio comando pode ligá-la). Sem nenhum dos três não há volta.
     fn provenance_snapshot(&self) -> Option<std::collections::HashMap<crate::Id, crate::model::Provenance>> {
-        self.wal.as_ref().map(|_| self.project.nodes.iter().map(|(id, n)| (id.clone(), n.provenance.clone())).collect())
+        let may_roll_back = self.wal.is_some() || self.full_validate || self.path.is_some();
+        may_roll_back.then(|| self.project.nodes.iter().map(|(id, n)| (id.clone(), n.provenance.clone())).collect())
     }
 
     /// Devolve a proveniência de antes do comando a todos os nós que existiam (desfazer de emergência).

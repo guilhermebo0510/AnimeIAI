@@ -753,9 +753,30 @@ fn split_cuts_storage_round_trips_and_cut_locks_guard_edits() {
     let other = json!({"pid": 4, "host": aiai_core::lock::host_name(), "started_ms": 0, "exe": "outro.exe", "token": "x"});
     std::fs::write(aiai_core::lock::cut_lock_path(&dir, &cut_b), other.to_string()).unwrap();
     let rev = s2.project.revision;
+    // CX13 C13-01: a recusa pela trava devolve o projeto inteiro, com a proveniência, sem passo no log nem no histórico
+    let whole_before = serde_json::to_string(&s2.project).unwrap();
+    let (log_before, hist_before) = (s2.log().len(), s2.history());
     let r = s2.apply(Command::InsertStrokes { cel: cel_b.clone(), items: vec![IndexedStroke { index: 1, stroke: stroke("sb2", 40.0) }] });
     assert!(matches!(r, Err(CoreError::Locked(_))), "{r:?}");
     assert_eq!(s2.project.revision, rev, "o comando foi desfeito");
+    assert_eq!(serde_json::to_string(&s2.project).unwrap(), whole_before, "proveniência exata depois da recusa");
+    assert_eq!((s2.log().len(), s2.history()), (log_before, hist_before.clone()));
+    // o mesmo sem diário, com um lote do jeito do aceite da intercalação (cria um nó no corte e mexe num cel dele)
+    let wal = s2.detach_wal();
+    let aceite = Command::Batch {
+        commands: vec![
+            Command::CreateNode { id: None, parent: Some(cut_b.clone()), index: None, name: "novo".into(), data: NodeKind::Layer(LayerData::new(LayerType::Vector)) },
+            Command::InsertStrokes { cel: cel_b.clone(), items: vec![IndexedStroke { index: 1, stroke: stroke("sb3", 41.0) }] },
+        ],
+        label: Some("aceite".into()),
+    };
+    let r = s2.apply(aceite);
+    assert!(matches!(r, Err(CoreError::Locked(_))), "{r:?}");
+    assert_eq!(serde_json::to_string(&s2.project).unwrap(), whole_before, "sem diário: proveniência exata depois da recusa");
+    assert_eq!((s2.log().len(), s2.history()), (log_before, hist_before));
+    if let Some(w) = wal {
+        s2.attach_wal(w);
+    }
     std::fs::write(&fb, b"{\"format\":2,\"cut\":\"mexido por outro\",\"nodes\":{}}\n").unwrap_or(());
     let theirs = std::fs::read(&fb).unwrap();
     s2.apply(Command::InsertStrokes { cel: cel_a.clone(), items: vec![IndexedStroke { index: 2, stroke: stroke("sa3", 50.0) }] }).unwrap();

@@ -584,3 +584,32 @@ fn group_morphs_count_both_alignments() {
     assert!(codes(&p.refusals).contains(&NoticeCode::TooLarge), "{:?}", codes(&p.refusals));
     assert!(t0.elapsed().as_millis() < 3000);
 }
+
+#[test]
+fn accept_refused_by_a_cut_lock_leaves_the_whole_project_log_and_history_untouched() {
+    // CX13 C13-01: projeto dividido por corte, outro processo com a trava do corte; o aceite volta inteiro (conteúdo,
+    // proveniência, revisão, log, histórico) e a prévia continua aceitável para quando a trava sair
+    let mut f = two_keys();
+    f.s.apply(Command::SetProjectProps { patch: json!({"settings": {"split_cuts": true}}) }).unwrap();
+    let dir = std::env::temp_dir().join(format!("aiai-ibp-lock-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    persist::save(&mut f.s, &dir).unwrap();
+    let (cut, layer) = (f.cut.clone(), f.layer.clone());
+    drop(f);
+    let (mut s, rep) = persist::open(&dir).unwrap();
+    assert!(!rep.read_only());
+    let other = json!({"pid": 4, "host": aiai_core::lock::host_name(), "started_ms": 0, "exe": "outro.exe", "token": "x"});
+    std::fs::write(aiai_core::lock::cut_lock_path(&dir, &cut), other.to_string()).unwrap();
+    let p = ibp::preview(&mut s, &req(&cut, &layer, 4)).unwrap();
+    let before = (serde_json::to_string(&s.project).unwrap(), s.project.revision, s.log().len(), s.history());
+    let e = ibp::accept(&mut s, p.id, "agent:claude").unwrap_err().to_string();
+    assert!(e.contains("sendo editado em outro lugar"), "{e}");
+    let after = (serde_json::to_string(&s.project).unwrap(), s.project.revision, s.log().len(), s.history());
+    assert_eq!(after, before, "a recusa não deixa rastro");
+    // a trava sai: a mesma proposta é aceita
+    std::fs::remove_file(aiai_core::lock::cut_lock_path(&dir, &cut)).unwrap();
+    ibp::accept(&mut s, p.id, "agent:claude").unwrap();
+    assert_eq!(s.project.revision, before.1 + 1);
+    drop(s);
+    let _ = std::fs::remove_dir_all(&dir);
+}
