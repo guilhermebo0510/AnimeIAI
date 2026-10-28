@@ -3,6 +3,8 @@ Roda num projeto à parte (calibracao/tmp/ensaio-rig.aiai), nunca no arquivo de 
 import os, sys
 os.environ.setdefault("AIAI_CURTA_PROJ", "C:/AnimeIAI/calibracao/tmp/ensaio-rig.aiai")
 os.environ.setdefault("AIAI_CURTA_IDS", "C:/AnimeIAI/calibracao/tmp/ensaio-rig.ids.json")
+os.environ.setdefault("AIAI_CURTA_OUT", "C:/AnimeIAI/calibracao/tmp/ensaio")
+os.makedirs(os.environ["AIAI_CURTA_OUT"], exist_ok=True)
 if not os.path.exists(os.environ["AIAI_CURTA_PROJ"] + "/project.json"):
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "calib"))
     from drive import Drive
@@ -36,19 +38,8 @@ for k in L:
 BUST = os.environ.get("BUSTO") == "1"
 h = rig.Head(960, 80, 400, yaw) if BUST else rig.Head(960, 120, 760, yaw)
 strokes, seeds, shapes = rig.bust(h, who, mood, 1.0, mouth) if BUST else getattr(rig, "face_" + who)(h, mood, 1.0, mouth)
-d.call("DRAW_CURVES", {"cut": cut, "frame": 0, "layer": L["linha"], "curves": strokes})
-pal = COLORS[who]
-fs = [{"x": s["x"], "y": s["y"], "color": {"type": "direct", "rgba": rig.hexrgba(pal[s["name"]])}} for s in seeds if s["name"] in pal]
-r = d.call("FILL", {"cut": cut, "frame": 0, "layer": L["cor"], "seeds": fs, "gap": 4})
-for name, shape in shapes:
-    layer = L["brilho"] if name == "brilho" else (L["sombra"] if name.endswith("_sombra") or name.endswith("_realce") else L["olhos"])
-    d.call("FILL_SHAPE", {"cut": cut, "frame": 0, "layer": layer, "shapes": [{"points": shape}], "color": {"type": "direct", "rgba": rig.hexrgba(pal[name])}})
-lint = d.call("LINT", {"cut": cut, "frame": 0, "layer": L["cor"], "gap": 4, "min_area": 30})
-# sobras pequenas entre mechas: cor do cabelo
-small = [u for u in lint["unpainted"] if u["area"] < 4000]
-if small:
-    roupa = "blusa" if who == "hana" else "camisa"
-    d.call("FILL", {"cut": cut, "frame": 0, "layer": L["cor"], "gap": 4, "seeds": [{"x": u["point"][0], "y": u["point"][1], "color": {"type": "direct", "rgba": rig.hexrgba(pal["cabelo" if u["point"][1] < h.top + h.H else roupa])}} for u in small]})
-    lint = d.call("LINT", {"cut": cut, "frame": 0, "layer": L["cor"], "gap": 4, "min_area": 30})
+# a mesma pintura da produção (curta.paint): sementes de reserva só onde não há tinta, frestas pelo próprio balde
+from curta import paint
+lint = paint(cut, 0, L, [(who, strokes, seeds, shapes, h.top, h.H)])
 print("regiões sem cor:", len(lint["unpainted"]), [u["point"] for u in lint["unpainted"]][:10])
 print(d.call("RENDER", {"cut": cut, "frame": 0, "background": "#e8e4dc", "out": f"{OUT}/ensaio_{who}_{mood}_{mouth}_{int(yaw)}.png"})["path"])

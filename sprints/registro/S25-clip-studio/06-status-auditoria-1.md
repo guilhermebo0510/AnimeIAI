@@ -80,8 +80,8 @@ Os 5 itens P0 do plano da auditoria estão feitos (um deles com decisão mantida
 | # | Item | Status | Evidência | O que falta |
 |---|---|---|---|---|
 | 3.1 | Model sheet: manequim 90° com desenho de costas | PARCIAL | `tools/curta/c02_sheets.py:5` `VIEWS=[0,30,180]` agora coerente com o desenho | vista de perfil (90°) e 3/4 costas (135°) ainda sem desenho (rig sem perfil) |
-| 3.2 | `hair_ren` com `rot=False` descola do rosto em 3/4 | NÃO FEITO | `tools/curta/rig.py:284` todos `False`; backlog "pendente" | girar a silhueta lateral com o rosto |
-| 3.3 | `body_bust` não gira em 3/4 | NÃO FEITO | `rig.py` comentário "não gira com a cabeça"; backlog "pendente (rig)" | ombros/avental/bolso assimétricos, tronco que gira |
+| 3.2 | `hair_ren` com `rot=False` descola do rosto em 3/4 | FEITO NO RIG (28/10), A APROVAR | `rig.py` `Head.follow`/`jaw_x`: as laterais do cabelo (Ren e Hana) acompanham o contorno do rosto, a silhueta do lado de cá fica como volume; sementes que giram junto; o ensaio pinta igual à produção (`curta.paint`) | antes/depois em `evidencias/S25/curta/rig_3_4_antes_depois.png`; os cortes de produção não foram refeitos (decisão do usuário) |
+| 3.3 | `body_bust` não gira em 3/4 | FEITO NO RIG (28/10), A APROVAR | o `turn` estreitava o lado de cá (sinal trocado): agora o lado de lá estreita, o de cá alarga e o meio do peito (gola, avental, bolso) desloca | idem |
 | 3.4 | Gambiarra de `curta.py`/`c21_sobras.py` que pinta frestas com cor vizinha | FEITO | `tools/curta/curta.py:70-99` usa `skip_seeds_on_line`/`only_unpainted`/`close_leftovers`; `c21_sobras.py` removido; repintura `c22_repintura.py` | nada |
 | 3.5 | Teste de consistência comparando 0,60 com 0,60 | FEITO (27/10) | `c20_revisao.py` mede o render do corte e do sheet; no app as medidas vêm do canvas (ver 2.22), não de números digitados | |
 | 3.6 | Corte C999/Ensaios no projeto de produção | FEITO | sem `C999` em `producoes/micro-anime/ultima-rosa.aiai/project.json` | nada |

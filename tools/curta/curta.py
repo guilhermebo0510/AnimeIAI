@@ -6,7 +6,7 @@ from drive import Drive
 ROOT = "C:/AnimeIAI/producoes/micro-anime"
 # AIAI_CURTA_PROJ aponta para outro projeto (ensaios do rig ficam fora do arquivo de produção)
 PROJ = os.environ.get("AIAI_CURTA_PROJ", ROOT + "/ultima-rosa.aiai")
-OUT = ROOT + "/saida"
+OUT = os.environ.get("AIAI_CURTA_OUT", ROOT + "/saida")
 IDS_F = os.environ.get("AIAI_CURTA_IDS", ROOT + "/ids.json")
 d = Drive(PROJ)
 ids = json.load(open(IDS_F, encoding="utf-8")) if os.path.exists(IDS_F) else {}

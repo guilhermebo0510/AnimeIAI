@@ -33,6 +33,24 @@ class Head:
             X, Y = ox + (X - ox) * c - (Y - oy) * s, oy + (X - ox) * s + (Y - oy) * c
         return [round(X, 1), round(Y, 1)]
 
+    def follow(self, x, y):
+        """x (unidades de cabeça) de um ponto da lateral do cabelo que acompanha o contorno do rosto naquela altura: o
+        deslocamento que a bochecha (x = ±0,385) sofre com o giro. Assim a costeleta não cruza o olho do lado de lá nem
+        descola da bochecha (os pontos da lateral ficam fora da esfera de frente e não giram direito com `rot`)."""
+        c = math.copysign(0.385, x) if x else 0.385
+        d = (self.p(c, y)[0] - self.p(c, y, None, False)[0]) / self.H
+        return x + d
+
+    def jaw_x(self, sg, y):
+        """x (unidades de cabeça, sem giro) do contorno do rosto girado do lado `sg` na altura `y` (bochecha → maxilar),
+        para o cabelo do lado de lá não deixar o maxilar passar dele."""
+        pts = [(sg * 0.385, 0.55), (sg * 0.37, 0.66), (sg * 0.29, 0.84), (sg * 0.12, 0.97)]
+        px = [(self.p(x, yy)[0], yy) for x, yy in pts]
+        for (xa, ya), (xb, yb) in zip(px, px[1:]):
+            if ya <= y <= yb:
+                return (lerp(xa, xb, (y - ya) / (yb - ya)) - self.cx) / self.H
+        return (px[0][0] - self.cx) / self.H if y < px[0][1] else (px[-1][0] - self.cx) / self.H
+
     def facing(self, x):
         """Quanto o ponto x da frente do rosto está voltado para a câmera (0..1): encolhe o olho do lado distante."""
         R = 0.40
@@ -209,29 +227,45 @@ def hair_hana(h, ink):
     out, seeds = [], []
     sil = [(-0.43, 0.94), (-0.51, 0.70), (-0.54, 0.42), (-0.48, 0.15), (-0.30, -0.03), (0.02, -0.08), (0.31, -0.03), (0.49, 0.15),
            (0.55, 0.42), (0.52, 0.70), (0.43, 0.94)]
-    out.append(h.curve(sil, 1.3, ink, widths=[0.5, 1.2, 0.5], rot=False))
+    # 3/4: as laterais do bob acompanham o contorno do rosto (`follow`); a silhueta do lado de lá segue junto, a do
+    # lado de cá fica (volume do cabelo) e só a ponta de baixo encosta na lateral
+    far = math.copysign(1.0, h.yaw) if h.yaw else 0.0
+
+    def fx(x, y):
+        # do lado de lá, o maxilar girado não passa da mecha (a mecha cai por cima da bochecha)
+        v = h.follow(x, y)
+        if x * far > 0 and y >= 0.55:
+            v = far * max(far * v, far * h.jaw_x(far, y) + 0.012)
+        return v
+
+    F = lambda x, y: (fx(x, y), y, False)
+    wgt = lambda y: max(0.0, min(1.0, (y - 0.22) / 0.16))
+    sil = [((lerp(x, fx(x, y), wgt(y)) if x * far > 0 else (h.follow(x, y) if y >= 0.9 else x)), y, False) for x, y in sil]
+    out.append(h.curve(sil, 1.3, ink, widths=[0.5, 1.2, 0.5]))
     # borda de baixo da franja: mechas com lados curvos que afinam até a ponta (vales mais altos, pontas acima das
     # sobrancelhas); cada lado é um traço, as pontas se encontram (fecha a massa do cabelo)
     valleys = [(-0.39, 0.40), (-0.29, 0.30), (-0.16, 0.31), (-0.04, 0.29), (0.09, 0.27), (0.22, 0.29), (0.32, 0.31), (0.39, 0.40)]
     tips = [(-0.335, 0.455), (-0.215, 0.445), (-0.095, 0.47), (0.03, 0.445), (0.165, 0.44), (0.28, 0.43), (0.37, 0.44)]
     for i, t in enumerate(tips):
         for v, sgn in ((valleys[i], -1), (valleys[i + 1], 1)):
+            # as pontas da franja nas têmporas encostam nas laterais (que acompanham o rosto)
+            edge = v in (valleys[0], valleys[-1])
             # lado da mecha: sai do vale abaulado para fora e chega reto na ponta
             dx, dy = t[0] - v[0], t[1] - v[1]
             n = (math.hypot(dx, dy) or 1.0)
             ox, oy = -dy / n * sgn * -0.018, dx / n * sgn * -0.018
             c1 = (v[0] + dx * 0.3 + ox, v[1] + dy * 0.3 + oy)
             c2 = (v[0] + dx * 0.7 + ox * 0.5, v[1] + dy * 0.7 + oy * 0.5)
-            out.append(h.curve([v, c1, c2, t], 1.05, ink, widths=[0.35, 1.0, 0.12]))
+            out.append(h.curve([F(*v) if edge else v, c1, c2, t], 1.05, ink, widths=[0.35, 1.0, 0.12]))
     # sombra do cabelo (cel): por dentro das laterais do bob, junto do rosto
     shadow = []
     for sg in (-1, 1):
-        shadow.append([h.p(sg * 0.39, 0.40), h.p(sg * 0.385, 0.62), h.p(sg * 0.38, 0.84), h.p(sg * 0.43, 0.94, None, False), h.p(sg * 0.47, 0.88, None, False),
-                       h.p(sg * 0.47, 0.62, None, False), h.p(sg * 0.45, 0.42, None, False)])
+        shadow.append([h.p(*F(sg * 0.39, 0.40)), h.p(*F(sg * 0.385, 0.62)), h.p(*F(sg * 0.38, 0.84)), h.p(*F(sg * 0.43, 0.94)), h.p(*F(sg * 0.47, 0.88)),
+                       h.p(*F(sg * 0.47, 0.62)), h.p(*F(sg * 0.45, 0.42))])
     h.shadow_shapes = [("cabelo_sombra", sh) for sh in shadow]
     # lados do bob: da têmpora até a ponta, por dentro (encosta na bochecha) e a ponta curvando para dentro
     for sg in (-1, 1):
-        out.append(h.curve([(sg * 0.39, 0.40), (sg * 0.385, 0.55), (sg * 0.375, 0.68), (sg * 0.38, 0.84), (sg * 0.415, 0.92, False), (sg * 0.43, 0.94, False)], 1.0, ink, widths=[0.6, 1.0, 0.5]))
+        out.append(h.curve([F(sg * 0.39, 0.40), F(sg * 0.385, 0.55), F(sg * 0.375, 0.68), F(sg * 0.38, 0.84), F(sg * 0.415, 0.92), F(sg * 0.43, 0.94)], 1.0, ink, widths=[0.6, 1.0, 0.5]))
     # mechas internas (traços soltos, não fecham região)
     for a, b in [((-0.30, 0.05), (-0.36, 0.30)), ((-0.12, -0.02), (-0.16, 0.28)), ((0.12, -0.04), (0.10, 0.22)), ((0.30, 0.03), (0.30, 0.25)),
                  ((-0.47, 0.50), (-0.45, 0.80)), ((0.48, 0.50), (0.47, 0.80))]:
@@ -239,7 +273,14 @@ def hair_hana(h, ink):
     # presilha verde (retângulo inclinado) à esquerda, sobre a franja
     clip = [(-0.35, 0.22), (-0.21, 0.17), (-0.195, 0.215), (-0.335, 0.265)]
     out.append(h.curve(clip, 0.9, ink, closed=True, geometry="polyline", tip="marker"))
-    seeds += [h.seed(-0.27, 0.218, "presilha"), h.seed(0.02, 0.10, "cabelo", rot=False), h.seed(-0.47, 0.72, "cabelo", rot=False), h.seed(0.48, 0.72, "cabelo", rot=False)]
+    seeds += [h.seed(-0.27, 0.218, "presilha"), h.seed(0.02, 0.10, "cabelo", rot=False), h.seed(h.follow(-0.47, 0.72) if far < 0 else -0.47, 0.72, "cabelo", rot=False),
+              h.seed(h.follow(0.48, 0.72) if far > 0 else 0.48, 0.72, "cabelo", rot=False),
+              # laterais altas, entre a franja e a silhueta, e o alto da cabeça entre as mechas internas (no giro as
+              # mechas internas encostam na silhueta e fecham regiões novas)
+              h.seed(-0.46, 0.30, "cabelo", rot=False), h.seed(0.46, 0.30, "cabelo", rot=False),
+              h.seed(-0.46, 0.22, "cabelo", rot=False), h.seed(0.46, 0.22, "cabelo", rot=False),
+              # entre as mechas internas do alto (giram junto com elas)
+              h.seed(-0.21, 0.10, "cabelo"), h.seed(0.21, 0.10, "cabelo"), h.seed(0.0, 0.10, "cabelo")]
     # pele entre duas mechas da franja (embaixo de cada vale): a sobrancelha pode fechar esse triângulo
     # (centroide do triângulo ponta anterior, vale, ponta seguinte: fica dentro mesmo quando as mechas são estreitas)
     seeds += [h.seed((tips[i][0] + valleys[i + 1][0] + tips[i + 1][0]) / 3, (tips[i][1] + valleys[i + 1][1] + tips[i + 1][1]) / 3, "pele") | {"reserve": True} for i in range(len(tips) - 1)]
@@ -267,7 +308,8 @@ def face_hana(h, mood="neutral", open_=1.0, mouth_shape="closed"):
     hs, hsd = hair_hana(h, ink)
     strokes += hs
     seeds += hsd
-    seeds += [h.seed(0.25, 0.75, "pele"), h.seed(-0.25, 0.75, "pele"), h.seed(0.0, 1.05, "pele", rot=False)]
+    # bochechas: perto do nariz (no 3/4 a bochecha do lado de lá fica estreita e a semente em 0,25 caía no cabelo)
+    seeds += [h.seed(0.13, 0.75, "pele"), h.seed(-0.13, 0.75, "pele"), h.seed(0.0, 1.05, "pele", rot=False)]
     shapes += getattr(h, "shadow_shapes", [])
     xs = [h.p(x, 1.0, None, False)[0] for x in (-0.092, -0.046, 0.0, 0.046, 0.092)]
     top = [[X, h.top + (jaw_y(h, X) + 0.012) * h.H] for X in xs]
@@ -285,6 +327,11 @@ def hair_ren(h, ink):
            (-0.45, 0.10, False), (-0.47, -0.02, False), (-0.33, 0.0, False), (-0.27, -0.12, False), (-0.15, -0.05, False), (-0.04, -0.15, False),
            (0.06, -0.06, False), (0.19, -0.13, False), (0.26, -0.02, False), (0.42, -0.06, False), (0.44, 0.08, False), (0.56, 0.14, False),
            (0.50, 0.28, False), (0.55, 0.40, False), (0.47, 0.50, False), (0.45, 0.60, False), (0.375, 0.64, False)]
+    far = math.copysign(1.0, h.yaw) if h.yaw else 0.0
+    wgt = lambda y: max(0.0, min(1.0, (y - 0.22) / 0.16))
+    # do lado de lá, a parte baixa acompanha o rosto; do lado de cá a silhueta fica (volume do cabelo), menos a ponta
+    # de baixo, que encosta na lateral (senão sobra uma fresta e o cabelo vaza para o fundo)
+    sil = [((lerp(x, h.follow(x, y), wgt(y)) if x * far > 0 else (h.follow(x, y) if y >= 0.62 else x)), y, False) for x, y, _ in sil]
     out.append(h.curve(sil, 1.3, ink, geometry="polyline", widths=[0.6, 1.2, 0.6]))
     # bandana: faixa entre y 0.17 e 0.33 seguindo a curvatura da cabeça (gira com o rosto)
     top = [(x / 100, 0.17 + 0.03 * (x / 42) ** 2) for x in range(-42, 43, 6)]
@@ -304,17 +351,23 @@ def hair_ren(h, ink):
         for v in (valleys[i], valleys[i + 1]):
             c = (lerp(v[0], t[0], 0.5) + (0.012 if v is valleys[i] else -0.012), lerp(v[1], t[1], 0.5))
             out.append(h.curve([v, c, t], 1.0, ink, widths=[0.35, 1.0, 0.12]))
-    # laterais: da borda da bandana até a maçã do rosto (fecha cabelo × rosto)
+    # laterais: da borda da bandana até a maçã do rosto (fecha cabelo × rosto); acompanham o contorno do rosto no giro
+    F = lambda x, y: (h.follow(x, y), y, False)
     for sg in (-1, 1):
-        out.append(h.curve([(sg * 0.40, 0.355), (sg * 0.395, 0.48), (sg * 0.385, 0.58), (sg * 0.375, 0.64, False)], 1.0, ink, widths=[0.6, 1.0, 0.4]))
+        out.append(h.curve([F(sg * 0.40, 0.355), F(sg * 0.395, 0.48), F(sg * 0.385, 0.58), F(sg * 0.375, 0.64)], 1.0, ink, widths=[0.6, 1.0, 0.4]))
         # mechas pontudas da costeleta
-        out.append(h.curve([(sg * 0.42, 0.42, False), (sg * 0.41, 0.52), (sg * 0.395, 0.60)], 0.6, ink, widths=[0.3, 1.0, 0.1]))
+        out.append(h.curve([F(sg * 0.42, 0.42), F(sg * 0.41, 0.52), F(sg * 0.395, 0.60)], 0.6, ink, widths=[0.3, 1.0, 0.1]))
     # mechas internas no topo
     for a, b in [((-0.30, 0.02), (-0.26, 0.15)), ((-0.06, -0.10), (-0.04, 0.12)), ((0.20, -0.08), (0.16, 0.13)), ((0.40, 0.02), (0.34, 0.15))]:
         out.append(h.curve([a, b], 0.6, ink, widths=[0.2, 1.0, 0.2], rot=False))
     # as mechas internas fecham o topo em três regiões (esquerda, meio, direita): uma semente em cada
     seeds += [h.seed(0.0, 0.04, "cabelo", rot=False), h.seed(-0.39, 0.09, "cabelo", rot=False), h.seed(0.33, 0.06, "cabelo", rot=False), h.seed(0.47, 0.16, "cabelo", rot=False),
-              h.seed(-0.48, 0.45, "cabelo", rot=False), h.seed(0.49, 0.45, "cabelo", rot=False),
+              h.seed(lerp(-0.48, h.follow(-0.48, 0.45), 1.0 if far < 0 else 0.0), 0.45, "cabelo", rot=False), h.seed(lerp(0.49, h.follow(0.49, 0.45), 1.0 if far > 0 else 0.0), 0.45, "cabelo", rot=False),
+              # logo abaixo da bandana, entre a lateral (que acompanha o rosto) e a silhueta
+              h.seed((h.follow(-0.40, 0.42) - 0.53) / 2, 0.42, "cabelo", rot=False), h.seed((h.follow(0.40, 0.42) + 0.53) / 2, 0.42, "cabelo", rot=False),
+              # lasca entre a mecha da costeleta e a lateral (no giro ela abre e fica maior que uma fresta)
+              h.seed(h.follow(-0.4045, 0.50), 0.50, "cabelo", rot=False), h.seed(h.follow(0.4045, 0.50), 0.50, "cabelo", rot=False),
+              h.seed(h.follow(-0.425, 0.39), 0.39, "cabelo", rot=False), h.seed(h.follow(0.425, 0.39), 0.39, "cabelo", rot=False),
               h.seed(0.0, 0.25, "bandana"), h.seed(-0.30, 0.26, "bandana"), h.seed(0.30, 0.26, "bandana")]
     # cada mecha é um triângulo (vale, vale, ponta): a semente vai no centroide, que sempre fica dentro
     seeds += [h.seed((valleys[i][0] + valleys[i + 1][0] + t[0]) / 3, (valleys[i][1] + valleys[i + 1][1] + t[1]) / 3, "cabelo") for i, t in enumerate(tips)]
@@ -369,8 +422,11 @@ def body_bust(h, who, bottom=2.45, turn=0.0):
     sh = 0.63 if male else 0.55        # largura dos ombros
     wa = 0.50 if male else 0.40        # cintura
     nw = 0.105 if male else 0.085
-    k = lambda sg: 1.0 - 0.35 * max(0.0, -sg * turn)   # lado distante mais estreito
-    ox = 0.10 * turn                   # o tronco desloca um pouco para o lado em que o rosto olha
+    # 3/4 (rosto olhando para o lado de `turn`): o lado de lá (sg com o mesmo sinal de `turn`) estreita e o de cá
+    # alarga um pouco; o meio do peito (gola, avental) desloca para onde o rosto olha. (Antes o sinal estava trocado e
+    # quem estreitava era o lado de cá.)
+    k = lambda sg: 1.0 - 0.40 * max(0.0, sg * turn) + 0.08 * max(0.0, -sg * turn)
+    ox = 0.15 * turn
     X = lambda sg, x: ox + sg * x * k(sg)
     Xn = lambda sg: sg * nw * 1.03     # base do pescoço: fica no eixo da cabeça (o pescoço não desloca)
     out, seeds, shapes = [], [], []
