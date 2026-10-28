@@ -509,7 +509,7 @@ pub fn factory_rev(ws: WorkspaceId) -> u32 {
         W::Cenario | W::Pintura => 4,
         // S24 3D (fase 12): viewport 3D no centro, Objetos e Biblioteca à esquerda, Propriedades do objeto e
         // Modificadores à direita
-        W::Modelagem => 3,
+        W::Modelagem => 4,
         // S24 2.7–2.8: Biblioteca de verdade (árvore e grade, prévia e metadados) com as Cores para editar paletas
         W::Biblioteca => 3,
         // S24 3.1–3.5: viewer no centro, Linha do tempo da composição embaixo, Efeitos e predefinições e Controles de
@@ -1273,7 +1273,7 @@ mod tests {
             (W::Pintura, 4, 0x92c9dca60add5222),
             (W::Composicao, 4, 0x097fc0aca4a379a6),
             (W::Biblioteca, 3, 0x1a430bf82b451dc2),
-            (W::Modelagem, 3, 0x575fe9a79c6ad671),
+            (W::Modelagem, 4, 0xf934e709501b458f),
             (W::Audio, 2, 0xb370ba9cf04cb8ac),
             (W::Edicao, 3, 0x3d752f0083dbd76d),
             (W::Entrega, 2, 0x5ef237c098c7824b),
