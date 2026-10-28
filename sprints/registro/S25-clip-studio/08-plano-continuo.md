@@ -15,7 +15,7 @@ O mouse está liberado (pode usar o Clip Studio e o app de verdade, segurando `c
 Status em `06-status-auditoria-1.md` e `07-status-auditoria-2.md`. Em aberto na auditoria 1 (27/10, 22h):
 
 - [ ] 4.7h colorização por dicas
-- [ ] 4.8f casamento de inclusão (BasicPBC) no `propagate_fills`
+- [x] 4.8f casamento de inclusão (BasicPBC) no `propagate_fills`
 - [ ] 4.4c alocações (imagem f32 de quadro inteiro no composto)
 - [ ] 4.4a compositor na GPU (e as metas de 4K de 4.4g)
 - [ ] 4.6g Kokoro sem `uv` (ONNX embutido) — só se a instalação não oferecer risco

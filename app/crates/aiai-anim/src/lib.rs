@@ -281,6 +281,24 @@ impl GlobalMotion {
         let q = interpolate_points(&[P { x: pa[0], y: pa[1], p: 1.0 }], &[P { x: pb[0], y: pb[1], p: 1.0 }], t, self.rigid, self.bend);
         [q[0].x, q[0].y]
     }
+
+    /// Onde o ponto `p` do tempo `t` estava na chave A e onde estará na B, só pelo movimento rígido (sem o resto de cada
+    /// ponto): para saber em que região das chaves cai uma região do desenho intermediário. Sem traços casados, o próprio
+    /// ponto nas duas.
+    pub fn back_and_forth(&self, p: [f32; 2], t: f32) -> ([f32; 2], [f32; 2]) {
+        let Some((ang, sc, ca, cb)) = self.rigid else { return (p, p) };
+        let (dx, dy) = (cb[0] - ca[0], cb[1] - ca[1]);
+        let off = self.bend * (std::f32::consts::PI * t).sin();
+        let center = [ca[0] + dx * t - dy * off, ca[1] + dy * t + dx * off];
+        let sct = sc.powf(t).max(1e-6);
+        let (st, ct) = (-ang * t).sin_cos();
+        let (qx, qy) = (p[0] - center[0], p[1] - center[1]);
+        let a = [(ct * qx - st * qy) / sct + ca[0], (st * qx + ct * qy) / sct + ca[1]];
+        let (s1, c1) = ang.sin_cos();
+        let (ax, ay) = (a[0] - ca[0], a[1] - ca[1]);
+        let b = [sc * (c1 * ax - s1 * ay) + cb[0], sc * (s1 * ax + c1 * ay) + cb[1]];
+        (a, b)
+    }
 }
 
 /// Primeira fração `f` (0..1) do comprimento da polilinha `pts`.

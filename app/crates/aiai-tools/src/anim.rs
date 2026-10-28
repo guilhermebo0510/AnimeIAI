@@ -161,6 +161,105 @@ fn fills_at(p: &Project, cut: &CutData, layer: &Id, frame: u32) -> Vec<FillRegio
     }
 }
 
+/// Máscara de uma região pintada já decodificada, para perguntar muitas vezes "este ponto está nela?".
+struct KeyRegion {
+    bounds: [i32; 4],
+    mask: Option<aiai_paint::Mask>,
+    color: ColorRef,
+}
+
+impl KeyRegion {
+    fn covers(&self, x: f32, y: f32) -> bool {
+        let [bx, by, bw, bh] = self.bounds;
+        let (xi, yi) = (x.floor() as i32, y.floor() as i32);
+        if xi < bx || yi < by || xi >= bx + bw || yi >= by + bh {
+            return false;
+        }
+        self.mask.as_ref().is_some_and(|m| m.get((xi - bx) as u32, (yi - by) as u32) > 0.5)
+    }
+}
+
+fn key_regions(blobs: &BlobStore, fills: &[FillRegion]) -> Vec<KeyRegion> {
+    fills
+        .iter()
+        .map(|f| KeyRegion { bounds: f.bounds, mask: f.mask.as_ref().and_then(|h| blobs.get(h)).and_then(|b| aiai_paint::Mask::decode(&b).ok()), color: f.color.clone() })
+        .collect()
+}
+
+/// Sementes para as regiões do quadro `frame` (no tempo `t` entre as chaves) que nenhuma das `taken` alcança: até 9
+/// pontos de cada região voltam para a chave A e vão para a B pelo movimento rígido; cada ponto que cai numa região
+/// pintada vota na cor dela (peso 1-t na A, t na B). Ganha a cor com mais de 40% dos votos possíveis.
+#[allow(clippy::too_many_arguments)]
+fn inclusion_seeds(
+    p: &Project,
+    blobs: &BlobStore,
+    cut: &Id,
+    frame: u32,
+    refs: &[Id],
+    gap: f32,
+    t: f32,
+    motion: &aiai_anim::GlobalMotion,
+    fa: &[FillRegion],
+    fb: &[FillRegion],
+    taken: &[FillSeed],
+) -> ToolResult<Vec<FillSeed>> {
+    let params = aiai_paint::fill::FillParams { gap, expand: 2, line_threshold: 0.35 };
+    let lr = crate::fill::compute_regions(p, blobs, cut, frame, refs, &params)?;
+    let r = &lr.regions;
+    let n = r.count as usize + 1;
+    let (w, h) = (r.width, r.height);
+    let mut area = vec![0usize; n];
+    for &l in &r.labels {
+        area[l as usize] += 1;
+    }
+    let mut seeded = vec![false; n];
+    for s in taken {
+        if s.x >= 0.0 && s.y >= 0.0 && (s.x as usize) < w && (s.y as usize) < h {
+            seeded[r.label_at(s.x as u32, s.y as u32) as usize] = true;
+        }
+    }
+    // até 9 amostras por região, espalhadas pela ordem de varredura
+    let mut samples: Vec<Vec<[f32; 2]>> = vec![Vec::new(); n];
+    let mut seen = vec![0usize; n];
+    for (i, &l) in r.labels.iter().enumerate() {
+        let l = l as usize;
+        if l == 0 || seeded[l] || area[l] < 12 {
+            continue;
+        }
+        let step = (area[l] / 9).max(1);
+        if seen[l] % step == step / 2 && samples[l].len() < 9 {
+            samples[l].push([(i % w) as f32 + 0.5, (i / w) as f32 + 0.5]);
+        }
+        seen[l] += 1;
+    }
+    let (ka, kb) = (key_regions(blobs, fa), key_regions(blobs, fb));
+    let mut out = Vec::new();
+    for pts in samples.iter().filter(|s| !s.is_empty()) {
+        let mut votes: Vec<(ColorRef, f32)> = Vec::new();
+        let mut vote = |c: &ColorRef, wgt: f32| match votes.iter_mut().find(|(x, _)| x == c) {
+            Some(v) => v.1 += wgt,
+            None => votes.push((c.clone(), wgt)),
+        };
+        for q in pts {
+            let (a, b) = motion.back_and_forth(*q, t);
+            if let Some(k) = ka.iter().find(|k| k.covers(a[0], a[1])) {
+                vote(&k.color, 1.0 - t);
+            }
+            if let Some(k) = kb.iter().find(|k| k.covers(b[0], b[1])) {
+                vote(&k.color, t);
+            }
+        }
+        let possible = pts.len() as f32;
+        if let Some((c, wgt)) = votes.into_iter().max_by(|x, y| x.1.partial_cmp(&y.1).unwrap_or(std::cmp::Ordering::Equal)) {
+            if wgt >= 0.4 * possible {
+                let mid = pts[pts.len() / 2];
+                out.push(FillSeed { x: mid[0], y: mid[1], color: c });
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Gera os comandos de balde para cada quadro, com sementes interpoladas entre as regiões das chaves (casadas por cor
 /// e proximidade). Aplicar em ordem; cada um é independente.
 pub fn propagate_fills(p: &Project, blobs: &mut BlobStore, req: &PropagateFillsRequest) -> ToolResult<Vec<Command>> {
@@ -216,6 +315,12 @@ pub fn propagate_fills(p: &Project, blobs: &mut BlobStore, req: &PropagateFillsR
                 FillSeed { x: q[0], y: q[1], color: ra.color.clone() }
             })
             .collect();
+        let mut seeds = seeds;
+        // casamento por inclusão (auditoria 4.8f, a ideia do BasicPBC): cada região do quadro que nenhuma semente
+        // interpolada alcançou ganha a cor da região das chaves que a contém, desfeito o movimento do desenho
+        if !refs.is_empty() {
+            seeds.extend(inclusion_seeds(p, blobs, &req.cut, f, &refs, req.gap, t, &motion, &fa, &fb, &seeds)?);
+        }
         let req_f = FillRequest { cut: req.cut.clone(), frame: f, layer: req.fill_layer.clone(), seeds, line_layers: vec![], gap: req.gap, expand: 2, line_threshold: 0.35, close_leftovers: None, skip_seeds_on_line: false, only_unpainted: false };
         out.push(fill_command(p, blobs, &req_f)?);
     }

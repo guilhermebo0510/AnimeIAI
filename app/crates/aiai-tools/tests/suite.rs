@@ -871,3 +871,61 @@ fn psd_written_by_us_imports_back_into_layers() {
     assert!(img.get(115, 50)[3] < 0.01, "a oculta continua oculta");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn propagate_fills_paints_new_regions_by_inclusion() {
+    // auditoria 4.8f: no intermediário há um círculo fechado novo dentro da metade azul; nenhuma semente interpolada cai
+    // nele, mas desfeito o movimento ele está dentro da região azul das chaves, então sai azul
+    use aiai_tools::anim::{PropagateFillsRequest, propagate_fills};
+    let mut s = CoreSession::for_tests("incl");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 320, "height": 200}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = create(&mut s, Some(&sc), "C", NodeKind::Cut(CutData::new(12)));
+    let fill = create(&mut s, Some(&cut), "cor", NodeKind::Layer(LayerData::new(LayerType::Fill)));
+    let line = create(&mut s, Some(&cut), "linha", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+    s.apply(Command::SetProps { id: fill.clone(), name: None, data: json!({"line_refs": [line.0]}) }).unwrap();
+    for n in [1u32, 2, 3] {
+        create(&mut s, Some(&line), &format!("L{n}"), NodeKind::Cel(CelData::new(n)));
+        create(&mut s, Some(&fill), &format!("C{n}"), NodeKind::Cel(CelData::new(n)));
+    }
+    let (tl, tf) = (s.ids.next(), s.ids.next());
+    s.apply(Command::AddTrack { cut: cut.clone(), index: None, track: Track::new(tl.clone(), "linha", TrackKind::Drawing, Some(line.clone())) }).unwrap();
+    s.apply(Command::AddTrack { cut: cut.clone(), index: None, track: Track::new(tf.clone(), "cor", TrackKind::Drawing, Some(fill.clone())) }).unwrap();
+    for t in [&tl, &tf] {
+        s.apply(Command::SetCells { cut: cut.clone(), track: t.clone(), cells: vec![
+            aiai_core::command::CellEdit { frame: 0, cell: Some(CellRef::Cel { number: 1 }) },
+            aiai_core::command::CellEdit { frame: 4, cell: Some(CellRef::Cel { number: 3 }) },
+            aiai_core::command::CellEdit { frame: 8, cell: Some(CellRef::Cel { number: 2 }) },
+        ] }).unwrap();
+    }
+    let ink = ColorRef::Direct { rgba: Rgba::from_hex("#202020").unwrap() };
+    let red = ColorRef::Direct { rgba: Rgba::from_hex("#d02020").unwrap() };
+    let blue = ColorRef::Direct { rgba: Rgba::from_hex("#2040d0").unwrap() };
+    let shape = |dx: f32| vec![
+        curve(&[[60.0 + dx, 50.0, 1.0], [180.0 + dx, 50.0, 1.0], [180.0 + dx, 150.0, 1.0], [60.0 + dx, 150.0, 1.0]], 3.0, &ink, true),
+        curve(&[[120.0 + dx, 30.0, 1.0], [120.0 + dx, 170.0, 1.0]], 3.0, &ink, false),
+    ];
+    for (f, dx) in [(0u32, 0.0f32), (8, 40.0)] {
+        s.apply(draw_command(&s.project, &DrawRequest { cut: cut.clone(), frame: f, layer: line.clone(), curves: shape(dx), mirror_x: None }).unwrap()).unwrap();
+        let seeds = vec![FillSeed { x: 90.0 + dx, y: 100.0, color: red.clone() }, FillSeed { x: 150.0 + dx, y: 100.0, color: blue.clone() }];
+        let req = FillRequest { cut: cut.clone(), frame: f, layer: fill.clone(), seeds, line_layers: vec![], gap: 3.0, expand: 2, line_threshold: 0.35, close_leftovers: None, skip_seeds_on_line: false, only_unpainted: false };
+        let c = fill_command(&s.project, &mut s.blobs, &req).unwrap();
+        s.apply(c).unwrap();
+    }
+    // intermediário desenhado à mão: o meio do caminho + um círculo fechado novo na metade da direita
+    let mut mid = shape(20.0);
+    let circle: Vec<[f32; 3]> = (0..12).map(|k| { let a = k as f32 / 12.0 * std::f32::consts::TAU; [180.0 + 9.0 * a.cos(), 72.0 + 9.0 * a.sin(), 1.0] }).collect();
+    mid.push(curve(&circle, 2.0, &ink, true));
+    s.apply(draw_command(&s.project, &DrawRequest { cut: cut.clone(), frame: 4, layer: line.clone(), curves: mid, mirror_x: None }).unwrap()).unwrap();
+    let pf = PropagateFillsRequest { cut: cut.clone(), fill_layer: fill.clone(), key_frame_a: 0, key_frame_b: 8, frames: vec![4], gap: 3.0 };
+    for c in propagate_fills(&s.project, &mut s.blobs, &pf).unwrap() {
+        s.apply(c).unwrap();
+    }
+    let img = render_frame(&s.project, &s.blobs, &cut, 4, &RenderOptions { background: Some([1.0; 3]), ..Default::default() }).unwrap().image;
+    let px = img.get(180, 72);
+    assert!(px[2] > 0.6 && px[0] < 0.3, "o miolo do círculo novo sai azul: {px:?}");
+    assert!(img.get(110, 100)[0] > 0.6, "a metade da esquerda continua vermelha: {:?} {:?} {:?}", img.get(110, 100), img.get(100, 70), img.get(185, 70));
+    let r = lint(&s.project, &s.blobs, &cut, 4, &fill, 3.0, 30).unwrap();
+    assert!(r.unpainted.is_empty(), "nada sem cor: {:?}", r.unpainted);
+}
