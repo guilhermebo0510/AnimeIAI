@@ -50,9 +50,9 @@ pub struct TimelineV1 {
     pub total: u32,
 }
 
-/// Dissolve/wipe sobrepõem o clipe anterior no v1.
+/// Dissolve (também a dupla exposição) e wipe sobrepõem o clipe anterior no v1.
 pub(crate) fn overlaps(kind: TransitionKind) -> bool {
-    matches!(kind, TransitionKind::Dissolve | TransitionKind::WipeLeft | TransitionKind::WipeRight)
+    matches!(kind, TransitionKind::Dissolve | TransitionKind::AdditiveDissolve | TransitionKind::WipeLeft | TransitionKind::WipeRight)
 }
 
 pub fn timeline_v1(p: &Project, clips: &[EditClip], credits: usize, credits_seconds: f32, fps: f32) -> ToolResult<TimelineV1> {

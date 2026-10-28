@@ -2422,6 +2422,7 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("panel.captions.empty", "Trilhas de legenda da edição.", "Caption tracks of the edit."),
     ("editing.tr.dip_black", "Mergulho no preto", "Dip to black"),
     ("editing.tr.dip_white", "Mergulho no branco", "Dip to white"),
+    ("editing.tr.additive_dissolve", "Dupla exposição", "Additive dissolve"),
     ("editing.tr.wipe_up", "Cortina para cima", "Wipe up"),
     ("editing.tr.wipe_down", "Cortina para baixo", "Wipe down"),
     ("editing.tr.slide_left", "Deslizar para a esquerda", "Slide left"),

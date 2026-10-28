@@ -27,6 +27,9 @@ pub enum TransitionKind {
     FadeWhite,
     /// Dissolver cruzado (cross dissolve).
     Dissolve,
+    /// Dupla exposição (a dissolvência aditiva do Premiere): as duas imagens somadas; no meio as duas aparecem
+    /// inteiras e mais claras, como uma lembrança.
+    AdditiveDissolve,
     /// Cortina: a imagem nova entra da direita para a esquerda.
     WipeLeft,
     WipeRight,
@@ -51,9 +54,10 @@ pub enum TransitionKind {
 
 impl TransitionKind {
     /// Todas, na ordem do painel Transições.
-    pub const ALL: [TransitionKind; 17] = [
+    pub const ALL: [TransitionKind; 18] = [
         TransitionKind::Cut,
         TransitionKind::Dissolve,
+        TransitionKind::AdditiveDissolve,
         TransitionKind::DipBlack,
         TransitionKind::DipWhite,
         TransitionKind::FadeBlack,
@@ -82,6 +86,7 @@ impl TransitionKind {
             TransitionKind::FadeBlack => "fade_black",
             TransitionKind::FadeWhite => "fade_white",
             TransitionKind::Dissolve => "dissolve",
+            TransitionKind::AdditiveDissolve => "additive_dissolve",
             TransitionKind::WipeLeft => "wipe_left",
             TransitionKind::WipeRight => "wipe_right",
             TransitionKind::Flash => "flash",

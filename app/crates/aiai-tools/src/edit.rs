@@ -256,6 +256,18 @@ pub fn blend_transition(kind: TransitionKind, a: &Image, b: &Image, k: f32) -> I
             let d = -((1.0 - k) * wf).round() as i32;
             shifted(Some(d + w as i32), d)
         }
+        TransitionKind::AdditiveDissolve => {
+            // cada uma entra/sai em metade do trecho; no meio as duas somadas (cortado em 1)
+            let (ka, kb) = ((2.0 * (1.0 - k)).clamp(0.0, 1.0), (2.0 * k).clamp(0.0, 1.0));
+            let mut out = a.clone();
+            for (o, q) in out.data.iter_mut().zip(&b.data) {
+                for c in 0..3 {
+                    o[c] = (o[c] * ka + q[c] * kb).min(o[3].max(q[3]));
+                }
+                o[3] = (o[3] * ka + q[3] * kb).min(1.0);
+            }
+            out
+        }
         // dissolver (e o que sobrar: fades usados entre dois vizinhos, cruzamento de áudio numa trilha de vídeo)
         _ => mix_images(a, b, k.clamp(0.0, 1.0)),
     }

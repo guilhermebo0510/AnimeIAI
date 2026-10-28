@@ -356,3 +356,26 @@ fn markers_toggle_sort_and_navigate() {
     assert_eq!(back.markers, d.markers);
     assert!(!serde_json::to_string(&EditDoc::default()).unwrap().contains("markers"), "sem marcadores não sai no arquivo");
 }
+
+#[test]
+fn additive_dissolve_keeps_both_images_bright_in_the_middle() {
+    use aiai_tools::edit::blend_transition;
+    let mut a = aiai_paint::Image::new(4, 4);
+    let mut b = aiai_paint::Image::new(4, 4);
+    for p in &mut a.data {
+        *p = [0.6, 0.2, 0.1, 1.0];
+    }
+    for p in &mut b.data {
+        *p = [0.1, 0.3, 0.7, 1.0];
+    }
+    let mid = blend_transition(TransitionKind::AdditiveDissolve, &a, &b, 0.5);
+    let c = mid.data[0];
+    assert!((c[0] - 0.7).abs() < 1e-5 && (c[1] - 0.5).abs() < 1e-5 && (c[2] - 0.8).abs() < 1e-5, "no meio, as duas somadas: {c:?}");
+    let start = blend_transition(TransitionKind::AdditiveDissolve, &a, &b, 0.0).data[0];
+    let end = blend_transition(TransitionKind::AdditiveDissolve, &a, &b, 1.0).data[0];
+    assert_eq!(start, a.data[0]);
+    assert_eq!(end, b.data[0]);
+    let cross = blend_transition(TransitionKind::Dissolve, &a, &b, 0.5).data[0];
+    assert!(c[2] > cross[2], "mais clara que o dissolver comum");
+    assert_eq!(TransitionKind::AdditiveDissolve.key(), "additive_dissolve");
+}
