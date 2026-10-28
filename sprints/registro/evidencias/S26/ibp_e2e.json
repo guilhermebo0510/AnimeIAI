@@ -1,16 +1,94 @@
 {
+ "h_preview": {
+  "proposal_id": 710343048480769,
+  "frame_a": 0,
+  "frame_b": 12,
+  "key_a": 1,
+  "key_b": 2,
+  "t": 0.5,
+  "acceptable": true,
+  "accept_label": "Criar desenho A4 no quadro 7 no lugar de A3 (o quadro 8 continua mostrando A3)",
+  "counts": {
+   "approximations": 0,
+   "candidate_points": 43,
+   "candidate_strokes": 4,
+   "pairs": 4,
+   "refusals": 0,
+   "strokes_a": 4,
+   "strokes_b": 4
+  }
+ },
+ "h_accept_after_discard": "Falha (código -32010): proposta 710343048480769 não encontrada nesta sessão (descartada, ou a sessão foi reaberta)",
+ "h_accept": {
+  "_via": "headless",
+  "affected": [
+   "01a18368-44de-72fa-b008-3d1ba2597092",
+   "01a18368-40df-767e-b163-c88479496082"
+  ],
+  "cel": "01a18368-44de-72fa-b008-3d1ba2597092",
+  "created": [
+   "01a18368-44de-72fa-b008-3d1ba2597092"
+  ],
+  "description": "Intercalar no quadro 7 entre 1 e 2",
+  "frames": [
+   6,
+   7
+  ],
+  "number": 4,
+  "revision": 11
+ },
+ "h_second_accept": "Falha (código -32602): proposta 710343048480770 já usada",
+ "h_log_last": {
+  "description": "Intercalar no quadro 7 entre 1 e 2",
+  "author": "agent:claude",
+  "source": "direct_tool_call"
+ },
+ "h_origin": {
+  "cel_a": "01a18368-41e3-7154-9c28-b02446d1bec9",
+  "cel_b": "01a18368-4257-748c-84c9-fbdc583100e8",
+  "engine": "6655c0688eb2ebbdcae454df21e090a7f4e0bbfc",
+  "frame": 6,
+  "frame_a": 0,
+  "frame_b": 12,
+  "key_a": 1,
+  "key_b": 2,
+  "mechanism": "inbetween",
+  "options": {
+   "bend": 0.0,
+   "max_cost": 200.0,
+   "motion": "global",
+   "pairs": []
+  },
+  "revision": 10,
+  "source": "direct_tool_call",
+  "strokes_a": [
+   "a_head",
+   "a_eyeL",
+   "a_eyeR",
+   "a_mouth"
+  ],
+  "strokes_b": [
+   "b_head",
+   "b_eyeL",
+   "b_eyeR",
+   "b_mouth"
+  ],
+  "t": 0.5
+ },
+ "h_lost_owner": "Falha (código -32010): proposta 710343048480771 não encontrada nesta sessão (descartada, ou a sessão foi reaberta)",
  "a_ui_after_bridge_preview": {
   "frame": 6,
   "ibp": {
    "acceptable": true,
    "approximations": 0,
+   "blocked_reason": null,
    "frame": 6,
    "frame_a": 0,
    "frame_b": 12,
    "manual_pairs": [],
    "pairs_mode": false,
    "pick_a": null,
-   "proposal_id": 710334009592833,
+   "proposal_id": 710343057223681,
    "refusals": 0,
    "stale": false
   }
@@ -18,6 +96,7 @@
  "a_after_pair_clicks": {
   "acceptable": false,
   "approximations": 0,
+  "blocked_reason": "os pares mudaram: Atualizar antes de aceitar",
   "frame": 6,
   "frame_a": 0,
   "frame_b": 12,
@@ -29,7 +108,7 @@
   ],
   "pairs_mode": true,
   "pick_a": null,
-  "proposal_id": 710334009592833,
+  "proposal_id": 710343057223681,
   "refusals": 0,
   "stale": true
  },
@@ -37,6 +116,7 @@
  "a_after_refresh": {
   "acceptable": true,
   "approximations": 2,
+  "blocked_reason": null,
   "frame": 6,
   "frame_a": 0,
   "frame_b": 12,
@@ -48,20 +128,21 @@
   ],
   "pairs_mode": true,
   "pick_a": null,
-  "proposal_id": 710334009592834,
+  "proposal_id": 710343057223682,
   "refusals": 0,
   "stale": false
  },
  "a_after_delete": {
   "acceptable": false,
   "approximations": 2,
+  "blocked_reason": "os pares mudaram: Atualizar antes de aceitar",
   "frame": 6,
   "frame_a": 0,
   "frame_b": 12,
   "manual_pairs": [],
   "pairs_mode": true,
   "pick_a": null,
-  "proposal_id": 710334009592834,
+  "proposal_id": 710343057223682,
   "refusals": 0,
   "stale": true
  },
@@ -71,8 +152,8 @@
   "source": "bridge_injected"
  },
  "a_origin": {
-  "cel_a": "01a182e1-78cc-7499-a018-017fb7967f98",
-  "cel_b": "01a182e1-7945-7405-9dd1-effee247f809",
+  "cel_a": "01a18368-481b-706e-97e1-d2935e9580fb",
+  "cel_b": "01a18368-4897-7198-87e7-288390667549",
   "engine": "6655c0688eb2ebbdcae454df21e090a7f4e0bbfc",
   "frame": 6,
   "frame_a": 0,
@@ -139,13 +220,14 @@
  "a_again": {
   "acceptable": true,
   "approximations": 0,
+  "blocked_reason": null,
   "frame": 3,
   "frame_a": 0,
   "frame_b": 12,
   "manual_pairs": [],
   "pairs_mode": false,
   "pick_a": null,
-  "proposal_id": 710334009592837,
+  "proposal_id": 710343057223685,
   "refusals": 0,
   "stale": false
  },
