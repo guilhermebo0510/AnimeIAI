@@ -301,7 +301,7 @@ impl StudioApp {
             "fix_tool": ed.opts.fix.tool.map(|f| f.key()),
             "audio": json!({ "live": ed.live.enabled(), "starts": ed.live.starts, "scrubs": ed.live.scrubs, "error": ed.live.last_error }),
             "tool_options": json!({ "pen_width": o.pen_width, "brush_size": o.brush_size, "brush_opacity": o.brush_opacity, "eraser_size": o.eraser_size, "eraser_hardness": o.eraser_hardness, "eraser_opacity": o.eraser_opacity, "eraser_flow": o.eraser_flow, "eraser_tip": format!("{:?}", o.eraser_tip), "eraser_use_brush": o.eraser_use_brush, "fill_gap": o.fill_gap, "fill_expand": o.fill_expand, "fill_close_leftovers": o.fill_close_leftovers }),
-            "tool_options_s25": json!({ "brush_no_overflow": o.brush_no_overflow, "pen_weld": o.pen_weld, "pen_quickshape": o.pen_quickshape, "pen_simplify": o.pen_simplify, "pen_taper_in": o.pen_taper_in, "pen_taper_out": o.pen_taper_out, "pen_width": o.pen_width, "pen_tip": o.pen_tip }),
+            "tool_options_s25": json!({ "brush_no_overflow": o.brush_no_overflow, "pen_weld": o.pen_weld, "pen_quickshape": o.pen_quickshape, "pen_ghost": o.pen_ghost, "pen_simplify": o.pen_simplify, "pen_taper_in": o.pen_taper_in, "pen_taper_out": o.pen_taper_out, "pen_width": o.pen_width, "pen_tip": o.pen_tip }),
             "timeline": { "cell_w": ed.tl_cell_w, "scroll": [round(ed.tl_scroll.x), round(ed.tl_scroll.y)], "header_w": ed.anim.tl.header_w, "ruler_h": ed.anim.tl.ruler_h, "row_h": ed.anim.tl.row_h, "density": if ed.anim.density(self.ws) == super::anim::Density::Compact { "compact" } else { "normal" } },
             "anim": { "onion": ed.anim.onion.on, "onion_visible": ed.anim.onion_visible(), "onion_renders": ed.anim.onion_renders, "phase": ed.cut.as_ref().map(|c| if super::anim::cut_phase(&self.core.project, c) == aiai_core::CutPhase::Douga { "douga" } else { "genga" }), "layout_variant": format!("{:?}", self.layouts.variant(crate::workspace::WorkspaceId::Animacao)) },
             "render": render,
@@ -342,6 +342,7 @@ impl StudioApp {
             "select_cut" => Some(&["cut", "id", "value"]),
             "set_frame" => Some(&["frame"]),
             "set_color" => Some(&["color", "value"]),
+            "set_tool_option" => Some(&["key", "value"]),
             "fit_view" => Some(&[]),
             "lint" | "lint_next" | "lint_prev" | "lint_fill" | "lint_clear" => Some(&[]),
             "set_brush" => Some(&["preset", "value", "size", "opacity"]),
@@ -416,6 +417,26 @@ impl StudioApp {
                 let c = aiai_core::Rgba::from_hex(hex).ok_or_else(|| BridgeError::invalid_params(format!("cor inválida: {hex}")))?;
                 self.ed.set_color_direct(c);
                 json!({ "color": c.to_hex() })
+            }
+            "set_tool_option" => {
+                // opções da ferramenta que os testes ligam sem depender do layout do painel (caixas cortadas)
+                let key = text(&m, &["key"]).ok_or_else(|| BridgeError::invalid_params("set_tool_option exige 'key'"))?.to_string();
+                let v = m.get("value").cloned().unwrap_or(Value::Null);
+                let o = &mut self.ed.opts;
+                let flag = |v: &Value| v.as_bool().ok_or_else(|| BridgeError::invalid_params(format!("{key}: 'value' deve ser true/false")));
+                let num = |v: &Value| v.as_f64().map(|x| x as f32).filter(|x| x.is_finite()).ok_or_else(|| BridgeError::invalid_params(format!("{key}: 'value' deve ser número")));
+                match key.as_str() {
+                    "pen_ghost" => o.pen_ghost = flag(&v)?,
+                    "pen_weld" => o.pen_weld = flag(&v)?,
+                    "pen_quickshape" => o.pen_quickshape = flag(&v)?,
+                    "pen_color_trace" => o.pen_color_trace = flag(&v)?,
+                    "pen_autoclose" => o.pen_autoclose = flag(&v)?,
+                    "brush_no_overflow" => o.brush_no_overflow = flag(&v)?,
+                    "pen_width" => o.pen_width = num(&v)?.clamp(0.1, 500.0),
+                    "pen_simplify" => o.pen_simplify = num(&v)?.clamp(0.0, 100.0),
+                    _ => return Err(BridgeError::invalid_params(format!("opção desconhecida: {key} (pen_ghost, pen_weld, pen_quickshape, pen_color_trace, pen_autoclose, brush_no_overflow, pen_width, pen_simplify)"))),
+                }
+                json!({ "key": key, "value": v })
             }
             "fit_view" => {
                 self.ed.fit_pending = true;

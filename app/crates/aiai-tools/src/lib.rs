@@ -2,6 +2,7 @@
 //! devolve **comandos** do núcleo — quem chama aplica pela sessão, então tudo tem undo, entra no log e funciona igual
 //! na UI, na bridge/MCP e no modo headless.
 
+pub mod assist;
 pub mod anim;
 pub mod audio;
 pub mod audio_edit;

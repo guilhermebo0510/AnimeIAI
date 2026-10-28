@@ -691,6 +691,9 @@ pub(crate) struct ToolOptions {
     pub pen_weld: bool,
     /// Forma rápida: parar a caneta no fim do traço encaixa numa reta, arco ou elipse.
     pub pen_quickshape: bool,
+    /// Linha fantasma (auditoria 4.8e, sem IA generativa): parar a caneta no meio do traço mostra a continuação da curva
+    /// (fechando na linha mais perto à frente); Tab aceita. Depois de soltar, a versão sem tremido aparece e Tab troca.
+    pub pen_ghost: bool,
     /// Início e fim (como no Clip Studio, auditoria 1.8e): afina o começo e o fim do traço por este comprimento (px do
     /// desenho), com qualquer ponta e sem pressão (mouse). 0 = desligado.
     pub pen_taper_in: f32,
@@ -776,6 +779,7 @@ impl Default for ToolOptions {
             pen_color_trace: false,
             pen_weld: true,
             pen_quickshape: true,
+            pen_ghost: false,
             pen_shape: PenShape::Freehand,
             stab_mode: StabMode::Average,
             stab_window: 4,
@@ -827,6 +831,18 @@ pub(crate) struct Sample {
     pub tilt: Option<[f32; 2]>,
 }
 
+/// Oferta de embelezar o último traço: onde ele está, as pontas dele (para achar o mesmo traço) e os pontos novos (cel).
+#[derive(Debug, Clone)]
+pub(crate) struct BeautifyOffer {
+    pub cut: NodeId,
+    pub layer: NodeId,
+    pub frame: u32,
+    pub ends: [[f32; 2]; 2],
+    pub points: Vec<[f32; 2]>,
+    /// Transformação cel -> canvas da camada (para desenhar a oferta no lugar).
+    pub fwd: Option<aiai_paint::Affine>,
+}
+
 pub(crate) struct StrokeGesture {
     pub tool: ToolId,
     pub layer: NodeId,
@@ -849,6 +865,11 @@ pub(crate) struct StrokeGesture {
     pub moved_t: f32,
     /// Inclinação da caneta no ponto que vai entrar agora (o canvas põe antes de cada `push`).
     pub tilt: Option<[f32; 2]>,
+    /// Linha fantasma mostrada agora (caneta parada, `pen_ghost`), no espaço do cel.
+    pub ghost: Option<aiai_tools::assist::Ghost>,
+    /// Onde a caneta estava (cel) quando a fantasma foi aceita: enquanto ela fica ali, os pontos não entram (soltar não
+    /// puxa o traço de volta da ponta da fantasma).
+    pub ghost_tip: Option<Vec2>,
     /// Onde o cursor estava em `moved_t`.
     pub moved_p: Option<Vec2>,
 }
@@ -1080,6 +1101,8 @@ pub(crate) struct Editor {
     pub pen_seen: bool,
     /// Inclinação da caneta na última amostra nativa (graus); `None` com mouse.
     pub pen_tilt: Option<[f32; 2]>,
+    /// Versão sem tremido do último traço da caneta (linha fantasma ligada): Tab troca o traço por ela.
+    pub beautify_offer: Option<BeautifyOffer>,
     /// Ferramenta a voltar quando a caneta for solta: a ponta de borracha (caneta virada) apaga e o botão lateral pega
     /// a cor, como no Clip Studio, e depois volta a ferramenta que estava.
     pub pen_restore: Option<crate::workspace::ToolId>,
@@ -1225,6 +1248,7 @@ impl Default for Editor {
             pen_seen: false,
             pen_tilt: None,
             pen_restore: None,
+            beautify_offer: None,
             toast: None,
             pending_latency: None,
             latency: None,

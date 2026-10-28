@@ -522,6 +522,14 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
             _ => {}
         }
     }
+    // linha fantasma da caneta (4.8e): Tab no meio do traço aceita a continuação; depois de soltar, troca pelo traço
+    // sem tremido
+    let tab = env.ed.opts.pen_ghost && *env.tool == ToolId::Pen && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab));
+    if matches!(env.ed.gesture, Gesture::Stroke(_)) {
+        super::tools::update_ghost(env, tab);
+    } else if tab && super::tools::accept_beautify(env) {
+        env.ed.notify(tr("pen.ghost.beautified"));
+    }
     // soltou fora da janela sem o evento de soltar: termina o gesto
     if !any_down {
         env.ed.beh.size_drag = None;
@@ -1853,13 +1861,17 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
         super::nodes::paint(env, painter, |p| xf.to_screen(p), env.t.accent);
     }
     let t = env.t;
+    if matches!(env.ed.gesture, Gesture::None) {
+        paint_beautify_offer(env, painter, xf);
+    }
     match &env.ed.gesture {
         Gesture::Stroke(g) => {
             let pts: Vec<Vec2> = g.samples.iter().map(|s| g.to_canvas(s.p)).collect();
             let k = g.fwd.map(|a| a.0[0].hypot(a.0[3])).unwrap_or(1.0);
             match g.tool {
-                ToolId::Pen if has_live => {}
+                ToolId::Pen if has_live => ghost_line(painter, g, xf, env.t.accent),
                 ToolId::Pen => {
+                    ghost_line(painter, g, xf, env.t.accent);
                     // a prévia é o traço que a caneta gravaria agora (ponta, pressão e afinamento do motor)
                     let c = cmds::resolve_color(&env.core.project, &env.ed.color);
                     let color = super::ui_kit::rgba_to_color32(Rgba([c.0[0], c.0[1], c.0[2], 1.0]));
@@ -1907,6 +1919,35 @@ fn paint_gestures(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId)
         _ => {}
     }
     let _ = t;
+}
+
+/// Linha fantasma da caneta (4.8e): tracejada e translúcida; termina num ponto marcado quando fecha numa linha.
+fn ghost_line(painter: &egui::Painter, g: &StrokeGesture, xf: &Xf, accent: Color32) {
+    let Some(gh) = &g.ghost else { return };
+    let pts: Vec<Pos2> = gh.points.iter().map(|q| xf.to_screen(g.to_canvas(Vec2::new(q[0], q[1])))).collect();
+    let col = Color32::from_rgba_unmultiplied(64, 190, 255, 170);
+    painter.extend(egui::Shape::dashed_line(&pts, egui::Stroke::new(2.0, col), 6.0, 4.0));
+    if let (Some(j), Some(p)) = (gh.joins, pts.last()) {
+        let _ = j;
+        painter.circle_stroke(*p, 5.0, egui::Stroke::new(1.5, accent));
+    }
+}
+
+/// Oferta de embelezar o último traço (4.8e): a versão sem tremido, tracejada, até o próximo traço.
+fn paint_beautify_offer(env: &Env, painter: &egui::Painter, xf: &Xf) {
+    let Some(of) = &env.ed.beautify_offer else { return };
+    if env.ed.cut.as_ref() != Some(&of.cut) || env.ed.frame != of.frame || *env.tool != ToolId::Pen {
+        return;
+    }
+    let to_canvas = |q: &[f32; 2]| match of.fwd {
+        Some(a) => {
+            let (x, y) = a.apply(q[0], q[1]);
+            Vec2::new(x, y)
+        }
+        None => Vec2::new(q[0], q[1]),
+    };
+    let pts: Vec<Pos2> = of.points.iter().map(|q| xf.to_screen(to_canvas(q))).collect();
+    painter.extend(egui::Shape::dashed_line(&pts, egui::Stroke::new(1.5, Color32::from_rgba_unmultiplied(64, 190, 255, 150)), 5.0, 4.0));
 }
 
 fn readout(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, c: Vec2) {

@@ -152,6 +152,13 @@ impl StrokeGesture {
             }
             None => p,
         };
+        // fantasma aceita e a caneta ainda parada no mesmo lugar: o ponto não entra
+        if let Some(tip) = self.ghost_tip {
+            if (p - tip).length() * self.screen_scale < 4.0 {
+                return;
+            }
+            self.ghost_tip = None;
+        }
         let t = self.t0.elapsed().as_secs_f32();
         if self.moved_p.is_none_or(|l| (l - p).length() * self.screen_scale >= 1.0) {
             self.moved_t = t;
@@ -229,7 +236,7 @@ pub(crate) fn begin_stroke(env: &mut Env, tool: ToolId, p: Vec2, pressure: f32, 
     let inv = fwd.and_then(|a| a.inverse());
     let fwd = inv.and(fwd);
     let scale = scale * fwd.map(|a| a.0[0].hypot(a.0[3])).unwrap_or(1.0);
-    let mut g = StrokeGesture { tool, layer: t.layer, samples: Vec::new(), stab, t0: Instant::now(), hits: Vec::new(), path: Vec::new(), screen_scale: scale, fwd, inv, snap, moved_t: 0.0, moved_p: None, tilt: env.ed.pen_tilt };
+    let mut g = StrokeGesture { tool, layer: t.layer, samples: Vec::new(), stab, t0: Instant::now(), hits: Vec::new(), path: Vec::new(), screen_scale: scale, fwd, inv, snap, moved_t: 0.0, moved_p: None, tilt: env.ed.pen_tilt, ghost: None, ghost_tip: None };
     g.push(p, pressure);
     Gesture::Stroke(Box::new(g))
 }
@@ -253,7 +260,8 @@ pub(crate) fn update_eraser_hits(env: &mut Env, g: &mut StrokeGesture) {
 }
 
 pub(crate) fn finish_stroke(env: &mut Env, mut g: Box<StrokeGesture>, released_at: Instant) {
-    let tail = g.stab.finish();
+    // linha fantasma aceita: a cauda do estabilizador (que corre atrás da caneta parada) não volta o traço da ponta dela
+    let tail = if g.ghost_tip.is_some() { Vec::new() } else { g.stab.finish() };
     let pressure = g.samples.last().map(|s| s.pressure).unwrap_or(1.0);
     let tilt = g.samples.last().and_then(|s| s.tilt);
     for q in tail {
@@ -417,6 +425,18 @@ fn commit_pen(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant
     let k = g.fwd.map(|a| a.0[0].hypot(a.0[3])).unwrap_or(1.0);
     ghost_radii.iter_mut().for_each(|r| *r *= k);
     let ghost_pts: Vec<Vec2> = ghost_pts.into_iter().map(|p| g.to_canvas(p)).collect();
+    // linha fantasma ligada: a versão sem tremido do traço fica oferecida (Tab troca), até o próximo traço
+    env.ed.beautify_offer = None;
+    if o.pen_ghost && geometry == StrokeGeometry::Freehand && !clipped {
+        // a curva como ela é desenhada (a spline dos pontos, mesmo simplificados), não os pontos de controle
+        let xy: Vec<[f32; 2]> = aiai_paint::sample_stroke(&stroke).iter().map(|q| [q.x, q.y]).collect();
+        let ends = stroke.points.first().zip(stroke.points.last()).map(|(a, b)| [[a.x, a.y], [b.x, b.y]]);
+        let strength = (o.pen_width * 1.5).max(4.0 / g.screen_scale.max(1e-3));
+        let b = aiai_tools::assist::beautify(&xy, strength, closed);
+        if let (true, Some(ends)) = (b.len() >= 2, ends) {
+            env.ed.beautify_offer = Some(BeautifyOffer { cut: cut.clone(), layer: layer.clone(), frame, ends, points: b, fwd: g.fwd });
+        }
+    }
     let planned = cmds::plan_with_prep(env.core, &cut, &layer, frame, pref, vec![], |p, _| {
         let cel = cmds::exposed_cel(p, &cut, &layer, frame).ok_or_else(|| tr("err.no_cel").to_owned())?;
         let index = cmds::cel_data(p, &cel).map(|c| c.strokes.len()).unwrap_or(0);
@@ -1386,6 +1406,79 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
             env.ed.auto_fit = false;
         }
     }
+}
+
+/// Linha fantasma da caneta (auditoria 4.8e): com a opção ligada e a caneta parada há 0,15 s no meio do traço, calcula a
+/// continuação (fechando na linha do cel mais perto à frente); `tab` aceita (os pontos entram no traço). Fora disso, a
+/// fantasma some.
+pub(crate) fn update_ghost(env: &mut Env, tab: bool) {
+    let on = env.ed.opts.pen_ghost;
+    let frame = env.ed.frame;
+    let cut = env.ed.cut.clone();
+    let Gesture::Stroke(g) = &mut env.ed.gesture else { return };
+    // já aceita e a caneta ainda parada ali: nada de nova fantasma além da aceita
+    if !on || g.tool != ToolId::Pen || g.samples.len() < 4 || g.ghost_tip.is_some() {
+        g.ghost = None;
+        return;
+    }
+    let now = g.t0.elapsed().as_secs_f32();
+    if now - g.moved_t < 0.15 {
+        g.ghost = None;
+        return;
+    }
+    if g.ghost.is_none() {
+        let path: Vec<[f32; 2]> = g.samples.iter().map(|s| [s.p.x, s.p.y]).collect();
+        let scale = g.screen_scale.max(1e-3);
+        let targets = cut
+            .as_ref()
+            .and_then(|c| cmds::exposed_cel(&env.core.project, c, &g.layer, frame))
+            .and_then(|c| cmds::cel_data(&env.core.project, &c))
+            .map(|cd| aiai_tools::assist::targets_of(&cd.strokes))
+            .unwrap_or_default();
+        // 80 pt da tela à frente; fecha numa linha a até 10 pt do caminho previsto
+        g.ghost = aiai_tools::assist::continuation(&path, 80.0 / scale, &targets, 10.0 / scale);
+    }
+    if tab {
+        if let Some(gh) = g.ghost.take() {
+            let last = *g.samples.last().expect("há amostras");
+            let mut t = last.t;
+            for q in gh.points.iter().skip(1) {
+                t += 0.004;
+                g.samples.push(Sample { p: Vec2::new(q[0], q[1]), pressure: last.pressure, t, tilt: last.tilt });
+            }
+            g.moved_t = g.t0.elapsed().as_secs_f32();
+            g.ghost_tip = g.path.last().copied();
+            env.ed.notify(tr(if gh.joins.is_some() { "pen.ghost.joined" } else { "pen.ghost.taken" }));
+        }
+    }
+}
+
+/// Tab com a oferta de embelezar: troca o último traço (o mesmo das pontas guardadas) pela versão sem tremido, com a
+/// pressão levada pela posição ao longo do traço. Um passo de desfazer.
+pub(crate) fn accept_beautify(env: &mut Env) -> bool {
+    let Some(of) = env.ed.beautify_offer.take() else { return false };
+    let p = &env.core.project;
+    let Some(cel) = cmds::exposed_cel(p, &of.cut, &of.layer, of.frame) else { return false };
+    let Some(cd) = cmds::cel_data(p, &cel) else { return false };
+    let same = |s: &Stroke| {
+        let (a, b) = (s.points.first(), s.points.last());
+        a.zip(b).is_some_and(|(a, b)| (a.x - of.ends[0][0]).hypot(a.y - of.ends[0][1]) < 0.5 && (b.x - of.ends[1][0]).hypot(b.y - of.ends[1][1]) < 0.5)
+    };
+    let Some(old) = cd.strokes.iter().rev().find(|s| same(s)).cloned() else { return false };
+    let n = old.points.len().max(1);
+    let m = of.points.len().max(2);
+    let points: Vec<StrokePoint> = of
+        .points
+        .iter()
+        .enumerate()
+        .map(|(i, q)| {
+            let src = old.points[((i as f32 / (m - 1) as f32) * (n - 1) as f32).round() as usize];
+            StrokePoint { x: q[0], y: q[1], corner: false, handle: None, ..src }
+        })
+        .collect();
+    let mut new = old.clone();
+    new.points = points;
+    env.ed.apply(env.core, Command::ReplaceStrokes { cel, strokes: vec![new] })
 }
 
 #[cfg(test)]

@@ -456,6 +456,7 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
             ui.checkbox(&mut o.pen_color_trace, tr("opt.pen_color_trace")).on_hover_text(tr("opt.pen_color_trace.tip"));
             ui.checkbox(&mut o.pen_weld, tr("opt.pen_weld")).on_hover_text(tr("opt.pen_weld.tip"));
             ui.checkbox(&mut o.pen_quickshape, tr("opt.pen_quickshape")).on_hover_text(tr("opt.pen_quickshape.tip"));
+            ui.checkbox(&mut o.pen_ghost, tr("opt.pen_ghost")).on_hover_text(tr("opt.pen_ghost.tip"));
         }
         ToolId::Brush => {
             // o pincel é escolhido no painel Pincéis (categorias e miniaturas): aqui só o nome, que leva até lá

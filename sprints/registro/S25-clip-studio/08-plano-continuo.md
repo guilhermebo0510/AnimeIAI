@@ -24,7 +24,7 @@ Status em `06-status-auditoria-1.md` e `07-status-auditoria-2.md`. Em aberto na 
 - [ ] 4.6d rigging 2D nativo (ossos, IK, pai-filho)
 - [x] 4.9h bancada de calibração (Steger, w(s), junções; tolerância de borda) — w(s) aponta 6 canetas para recalibrar (seção 2)
 - [ ] 4.9g plugins `.aiaiplugin`
-- [ ] 4.8e IA pontual de traço (só assistência determinística; sem IA generativa de imagem)
+- [x] 4.8e IA pontual de traço (só assistência determinística; sem IA generativa de imagem) — linha fantasma + embelezar
 - [x] 4.1c–f mesa digitalizadora (WM_POINTER nativo, inclinação, borracha traseira, coalescência; WinTab fica de fora)
 - [ ] 1.7B / 1.7C2 decisões do usuário (deixar registrado o motivo)
 - [ ] 3.1–3.11 roteiro do curta (rig e cenas) — scripts de produção

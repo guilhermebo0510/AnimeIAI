@@ -279,6 +279,8 @@ fn pen_rows(env: &mut Env, ui: &mut Ui) {
     env.notes.push(("tprop:pen_weld".into(), r.rect));
     let r = ui.checkbox(&mut o.pen_quickshape, tr("opt.pen_quickshape")).on_hover_text(tr("opt.pen_quickshape.tip"));
     env.notes.push(("tprop:pen_quickshape".into(), r.rect));
+    let r = ui.checkbox(&mut o.pen_ghost, tr("opt.pen_ghost")).on_hover_text(tr("opt.pen_ghost.tip"));
+    env.notes.push(("tprop:pen_ghost".into(), r.rect));
     let r = ui.checkbox(&mut o.pen_color_trace, tr("opt.pen_color_trace")).on_hover_text(tr("opt.pen_color_trace.tip"));
     env.notes.push(("tprop:pen_color_trace".into(), r.rect));
 }
