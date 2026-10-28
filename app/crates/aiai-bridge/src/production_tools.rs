@@ -46,7 +46,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 pub const PRODUCTION_ACTIONS: &[&str] = &[
-    "SKY", "PATTERN_FILL", "TEXT", "TEXT_LAYER", "LAYER_MERGE", "LINES", "GAG_BG", "ANIME_FX", "COLORIZE_HINTS", "RIG", "PARTICLES", "GUIDE3D", "PERSPECTIVE", "MODEL_SHEET", "CHARACTER_MATERIAL", "CONSISTENCY", "INBETWEEN", "PROPAGATE_FILLS",
+    "SKY", "PATTERN_FILL", "TEXT", "TEXT_LAYER", "LAYER_MERGE", "LINES", "GAG_BG", "ANIME_FX", "COLORIZE_HINTS", "RIG", "PLUGIN_LIST", "PLUGIN_FILTER", "PARTICLES", "GUIDE3D", "PERSPECTIVE", "MODEL_SHEET", "CHARACTER_MATERIAL", "CONSISTENCY", "INBETWEEN", "PROPAGATE_FILLS",
     "TTS_LINE", "TTS_KOKORO", "VOICE_PROFILE", "LIPSYNC", "SFX", "BGM", "IMPORT_AUDIO", "IMPORT_IMAGE", "IMPORT_LAYERS", "EXPORT_PSD", "EXPORT_XDTS", "EXPORT_SVG", "EXPORT_OTIO", "MIX_CUT", "LOUDNESS", "COMPARE", "PROBE_COLOR", "MEASURE_LINE", "MEASURE_EDGE", "FILL_SHAPE", "EDIT_SET", "EXPORT_VIDEO", "GRADIENT_PAINT",
 ];
 
@@ -54,7 +54,7 @@ pub const PRODUCTION_ACTIONS: &[&str] = &[
 pub fn is_mutating(action: &str) -> bool {
     matches!(
         action,
-        "SKY" | "PATTERN_FILL" | "TEXT" | "TEXT_LAYER" | "LAYER_MERGE" | "LINES" | "GAG_BG" | "ANIME_FX" | "COLORIZE_HINTS" | "RIG" | "PARTICLES" | "GUIDE3D" | "PERSPECTIVE" | "MODEL_SHEET" | "CHARACTER_MATERIAL" | "INBETWEEN" | "PROPAGATE_FILLS" | "TTS_LINE" | "TTS_KOKORO" | "VOICE_PROFILE" | "LIPSYNC" | "SFX" | "BGM" | "IMPORT_AUDIO" | "IMPORT_IMAGE" | "IMPORT_LAYERS" | "FILL_SHAPE" | "EDIT_SET" | "GRADIENT_PAINT"
+        "SKY" | "PATTERN_FILL" | "TEXT" | "TEXT_LAYER" | "LAYER_MERGE" | "LINES" | "GAG_BG" | "ANIME_FX" | "COLORIZE_HINTS" | "RIG" | "PLUGIN_FILTER" | "PARTICLES" | "GUIDE3D" | "PERSPECTIVE" | "MODEL_SHEET" | "CHARACTER_MATERIAL" | "INBETWEEN" | "PROPAGATE_FILLS" | "TTS_LINE" | "TTS_KOKORO" | "VOICE_PROFILE" | "LIPSYNC" | "SFX" | "BGM" | "IMPORT_AUDIO" | "IMPORT_IMAGE" | "IMPORT_LAYERS" | "FILL_SHAPE" | "EDIT_SET" | "GRADIENT_PAINT"
     )
 }
 
@@ -129,6 +129,20 @@ pub fn handle(session: &mut CoreSession, action: &str, params: &Value) -> Result
             let r: GagBgRequest = request(params, action)?;
             let cmd = gag_bg_command(&session.project, &mut session.blobs, &r).map_err(tool_error)?;
             apply(session, params, cmd)
+        }
+        "PLUGIN_LIST" => {
+            // plugins da pasta do usuário (ou de `dir`): id, nome, parâmetros; os que não abrem vêm em `problems`
+            crate::params_check::check_keys(params, "PLUGIN_LIST", &["dir"])?;
+            let dir = params.get("dir").and_then(Value::as_str).map(std::path::PathBuf::from).or_else(aiai_tools::plugin::plugins_dir);
+            let Some(dir) = dir else { return Ok(json!({ "plugins": [], "problems": ["pasta de plugins desconhecida"] })) };
+            let (ok, bad) = aiai_tools::plugin::list_plugins(&dir);
+            let list: Vec<Value> = ok.iter().map(|p| json!({ "id": p.manifest.id, "name": p.manifest.name, "version": p.manifest.version, "description": p.manifest.description, "params": p.manifest.params, "path": p.path.display().to_string() })).collect();
+            Ok(json!({ "dir": dir.display().to_string(), "plugins": list, "problems": bad }))
+        }
+        "PLUGIN_FILTER" => {
+            let r: aiai_tools::plugin::PluginFilterRequest = request(params, action)?;
+            let (cmd, info) = aiai_tools::plugin::plugin_filter_command(&session.project, &mut session.blobs, &r).map_err(tool_error)?;
+            apply_with(session, params, cmd, info)
         }
         "RIG" => {
             let r: aiai_tools::rig::RigRequest = request(params, action)?;

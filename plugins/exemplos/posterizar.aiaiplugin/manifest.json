@@ -1,0 +1,13 @@
+{
+  "id": "aiai.posterizar",
+  "name": "Posterizar (cel)",
+  "version": "1.0",
+  "author": "AnimeIAI",
+  "description": "Reduz cada canal a poucos níveis: cor chapada de cel a partir de um fundo pintado.",
+  "kind": "filter",
+  "shader": "filter.wgsl",
+  "workgroup": [8, 8],
+  "params": [
+    {"key": "niveis", "label": "Níveis", "min": 2, "max": 16, "default": 4}
+  ]
+}

@@ -1354,6 +1354,7 @@ impl StudioApp {
         self.dock_floats_ui(&ctx);
         self.about_window(&ctx);
         self.filter_window(&ctx);
+        self.plugin_window(&ctx);
         self.prefs_window(&ctx);
         self.start_window(&ctx);
         self.confirm_window(&ctx);

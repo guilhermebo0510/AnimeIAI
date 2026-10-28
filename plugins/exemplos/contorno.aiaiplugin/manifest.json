@@ -1,0 +1,14 @@
+{
+  "id": "aiai.contorno",
+  "name": "Contorno (Sobel)",
+  "version": "1.0",
+  "author": "AnimeIAI",
+  "description": "Linha escura onde a cor muda (bordas de Sobel na luminância), sobre fundo transparente: rascunho de linha a partir de uma pintura.",
+  "kind": "filter",
+  "shader": "filter.wgsl",
+  "workgroup": [8, 8],
+  "params": [
+    {"key": "limiar", "label": "Limiar", "min": 0.02, "max": 1.0, "default": 0.15},
+    {"key": "suavidade", "label": "Suavidade da linha", "min": 0.01, "max": 0.5, "default": 0.1}
+  ]
+}

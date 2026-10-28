@@ -552,7 +552,7 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
     assert!(plan("aiai_zzz", json!({})).is_err());
     // o catálogo é uma lista estável de ferramentas, todas com plano
     let defs = tools::definitions();
-    assert_eq!(defs.as_array().unwrap().len(), 92);
+    assert_eq!(defs.as_array().unwrap().len(), 93);
     // todas as ferramentas de produção: descrição com exemplo de uma linha, schema de objeto, plano com a ação certa e frame 0 por padrão
     for t in defs.as_array().unwrap() {
         let n = t["name"].as_str().unwrap();
@@ -573,6 +573,8 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
         ("aiai_anime_fx", json!({"cut": "c", "layer": "l", "kind": {}}), "ANIME_FX"),
         ("aiai_colorize_hints", json!({"cut": "c", "fill_layer": "f", "hint_layer": "h"}), "COLORIZE_HINTS"),
         ("aiai_rig", json!({"op": "parent", "layer": "l", "parent": "p"}), "RIG"),
+        ("aiai_plugin", json!({"op": "filter", "cut": "c", "layer": "l", "plugin": "p"}), "PLUGIN_FILTER"),
+        ("aiai_plugin", json!({"op": "list"}), "PLUGIN_LIST"),
         ("aiai_particles", json!({"layer": "l", "preset": "neve"}), "PARTICLES"),
         ("aiai_guide3d", json!({"cut": "c", "layer": "l", "scene": {}, "camera": {}}), "GUIDE3D"),
         ("aiai_perspective", json!({"cut": "c", "layer": "l"}), "PERSPECTIVE"),

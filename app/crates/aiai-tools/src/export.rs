@@ -275,7 +275,7 @@ fn crc32(data: &[u8]) -> u32 {
 
 /// ZIP com os arquivos guardados sem compressão (os PNG já vêm comprimidos), na ordem dada: o ORA pede `mimetype`
 /// primeiro e guardado, para ser reconhecido pelos primeiros bytes.
-fn zip_stored(files: &[(&str, Vec<u8>)]) -> Vec<u8> {
+pub(crate) fn zip_stored(files: &[(&str, Vec<u8>)]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut central = Vec::new();
     let le16 = |v: &mut Vec<u8>, x: u16| v.extend_from_slice(&x.to_le_bytes());

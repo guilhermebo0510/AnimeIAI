@@ -36,11 +36,13 @@ pub(crate) struct WorkbarState {
     pub grow_px: f32,
     /// Onde o lançador da seleção ficou no último quadro (um clique nele não conta como desenho).
     pub launcher_rect: Option<egui::Rect>,
+    /// Plugin aberto na janela de parâmetros (Filtro > Plugins) e os valores.
+    pub plugin: Option<(aiai_tools::plugin::Plugin, std::collections::BTreeMap<String, f32>)>,
 }
 
 impl Default for WorkbarState {
     fn default() -> Self {
-        WorkbarState { materials: Default::default(), sel_border: true, filter_open: false, flip_v: false, thumbs: Default::default(), grow_px: 4.0, launcher_rect: None }
+        WorkbarState { materials: Default::default(), sel_border: true, filter_open: false, flip_v: false, thumbs: Default::default(), grow_px: 4.0, launcher_rect: None, plugin: None }
     }
 }
 
@@ -681,6 +683,46 @@ impl StudioApp {
                 ui.label(egui::RichText::new(tr("filter.no_layer")).size(11.5).color(self.tokens().text_dim));
             }
             filter = filter_menu_items(ui, &mut notes, enabled, canvas);
+            // plugins do usuário (auditoria 4.9g): filtros WGSL da pasta de plugins
+            let r = ui.menu_button(tr("filter.group.plugins"), |ui| {
+                let dir = aiai_tools::plugin::plugins_dir();
+                let (list, bad) = dir.as_deref().map(aiai_tools::plugin::list_plugins).unwrap_or_default();
+                if list.is_empty() {
+                    ui.label(egui::RichText::new(tr("filter.plugins.none")).size(11.5));
+                }
+                for pl in list {
+                    let b = ui.add_enabled(enabled, egui::Button::new(&pl.manifest.name)).on_hover_text(&pl.manifest.description);
+                    notes.push((format!("menu_item:plugin:{}", pl.manifest.id), b.rect));
+                    if b.clicked() {
+                        let vals = pl.manifest.params.iter().map(|p| (p.key.clone(), p.default)).collect();
+                        self.ed.workbar.plugin = Some((pl, vals));
+                        ui.close();
+                    }
+                }
+                for b in &bad {
+                    ui.label(egui::RichText::new(b).size(10.5).color(egui::Color32::from_rgb(220, 120, 100)));
+                }
+                ui.separator();
+                if ui.button(tr("filter.plugins.open_dir")).clicked() {
+                    if let Some(d) = &dir {
+                        let _ = std::fs::create_dir_all(d);
+                        let _ = std::process::Command::new("explorer").arg(d).spawn();
+                    }
+                    ui.close();
+                }
+                if ui.button(tr("filter.plugins.install")).clicked() {
+                    if let (Some(src), Some(d)) = (rfd::FileDialog::new().set_title(tr("filter.plugins.install")).add_filter("AnimeIAI plugin", &["aiaiplugin"]).pick_file(), &dir) {
+                        let _ = std::fs::create_dir_all(d);
+                        let to = d.join(src.file_name().unwrap_or_default());
+                        match aiai_tools::plugin::load_plugin(&src).and_then(|_| std::fs::copy(&src, &to).map_err(|e| aiai_tools::context::ToolError::Invalid(e.to_string()))) {
+                            Ok(_) => self.ed.notify(tr("filter.plugins.installed")),
+                            Err(e) => self.ed.notify(e.to_string()),
+                        }
+                    }
+                    ui.close();
+                }
+            });
+            notes.push(("menu_item:filter.group.plugins".into(), r.response.rect));
             ui.separator();
             let b = ui.add_enabled(enabled, egui::Button::new(tr("filter.edit")));
             notes.push(("menu_item:filter.edit".into(), b.rect));
@@ -698,6 +740,51 @@ impl StudioApp {
         }
         if let Some(e) = filter {
             self.with_env(|env| apply_filter(env, e));
+        }
+    }
+
+    /// Janela do plugin (Filtro > Plugins): os parâmetros do manifesto e Aplicar na camada raster ativa.
+    pub(super) fn plugin_window(&mut self, ctx: &egui::Context) {
+        let Some((pl, mut vals)) = self.ed.workbar.plugin.take() else { return };
+        let mut open = true;
+        let mut apply = false;
+        let mut notes = Vec::new();
+        let win = egui::Window::new(&pl.manifest.name).id(egui::Id::new("aiai_plugin_window")).open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
+            if !pl.manifest.description.is_empty() {
+                ui.label(egui::RichText::new(&pl.manifest.description).size(11.5));
+            }
+            for p in &pl.manifest.params {
+                let v = vals.entry(p.key.clone()).or_insert(p.default);
+                let (lo, hi) = (p.min.min(p.max), p.max.max(p.min));
+                let r = ui.add(egui::Slider::new(v, lo..=hi).text(if p.label.is_empty() { &p.key } else { &p.label }));
+                notes.push((format!("plugin:param:{}", p.key), r.rect));
+            }
+            let b = ui.button(tr("filter.plugins.apply"));
+            notes.push(("plugin:apply".to_string(), b.rect));
+            apply = b.clicked();
+        });
+        if let Some(w) = win {
+            self.rects.note("dialog:plugin", w.response.rect);
+        }
+        for (n, r) in notes {
+            self.rects.note(n, r);
+        }
+        if apply {
+            let frame = self.ed.frame;
+            let (Some(cut), Some(layer)) = (self.ed.cut.clone(), self.ed.active_layer(&self.core)) else {
+                self.ed.notify(tr("filter.no_layer"));
+                self.ed.workbar.plugin = Some((pl, vals));
+                return;
+            };
+            let req = aiai_tools::plugin::PluginFilterRequest { cut: cut.clone(), frame, layer: layer.clone(), plugin: pl.path.display().to_string(), params: vals.clone() };
+            let planned = super::commands::plan_with_prep(&mut self.core, &cut, &layer, frame, None, vec![], |p, blobs| aiai_tools::plugin::plugin_filter_command(p, blobs, &req).map(|(c, _)| c).map_err(|e| e.to_string()));
+            match planned.and_then(|c| super::commands::run(&mut self.core, c).map(|_| ())) {
+                Ok(()) => self.ed.notify(tr("filter.plugins.applied").replace("{name}", &pl.manifest.name)),
+                Err(e) => self.ed.notify(e),
+            }
+        }
+        if open {
+            self.ed.workbar.plugin = Some((pl, vals));
         }
     }
 

@@ -1,0 +1,14 @@
+{
+  "id": "aiai.reticula",
+  "name": "Retícula (mangá)",
+  "version": "1.0",
+  "author": "AnimeIAI",
+  "description": "Troca o tom por pontos de retícula (screentone): quanto mais escuro, maior o ponto. A cor fica a do desenho.",
+  "kind": "filter",
+  "shader": "filter.wgsl",
+  "workgroup": [8, 8],
+  "params": [
+    {"key": "celula", "label": "Tamanho da célula (px)", "min": 3, "max": 40, "default": 8},
+    {"key": "angulo", "label": "Ângulo (graus)", "min": 0, "max": 90, "default": 45}
+  ]
+}

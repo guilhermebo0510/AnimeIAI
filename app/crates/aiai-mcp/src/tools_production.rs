@@ -28,6 +28,19 @@ Exemplo: {"layer":"<camada de cima>"}  ou  {"op":"selected","layers":["<a>","<b>
 const LINES_DESC: &str = r##"Linhas de velocidade (paralelas) ou de foco/concentração (集中線, convergindo num ponto) como traços vetoriais afinados na camada VETORIAL (editáveis; troque `seed` por quadro para "ferver"). `kind`: {type:"speed", angle (graus), area:[x,y,w,h]} ou {type:"focus", center:[x,y], clear:[rx,ry] (elipse livre no meio)}; `count` (até 2000), `length` [mín,máx] px, `width` [mín,máx] px, `color`, `seed`. Entra no undo. Confirme com aiai_render.
 Exemplo: {"cut":"<corte>","layer":"<vetorial>","kind":{"type":"focus","center":[960,540],"clear":[220,160]},"count":90,"length":[300,900],"width":[2,9],"color":{"type":"direct","rgba":[0,0,0,1]}}"##;
 
+const PLUGIN_DESC: &str = r##"Plugins .aiaiplugin (filtros WGSL na GPU, sem acesso a arquivo nem rede). op "list" {dir?}: os plugins da pasta do usuário (%APPDATA%\AnimeIAI\plugins) com id, nome e parâmetros. op "filter" {cut, layer (raster), plugin (id ou caminho do .aiaiplugin), params {chave: valor}, frame}: roda o filtro no cel exposto e troca os tiles (um passo de desfazer). Um plugin é uma pasta ou zip com manifest.json {id, name, kind:"filter", shader, workgroup, params:[{key,label,min,max,default}]} e o shader (src: texture_2d<f32> binding 0, dst: texture_storage_2d<rgba32float, write> binding 1, uniform {size, frame, count, p: array<vec4<f32>,4>} binding 2, entrada main). Exemplo: {"op":"filter","cut":"C","layer":"fundo","plugin":"aiai.posterizar","params":{"niveis":4}}."##;
+
+/// Schema de aiai_plugin: op list | filter, e os campos do filtro.
+fn plugin_schema() -> Value {
+    let mut s = schema_frame0::<aiai_tools::plugin::PluginFilterRequest>();
+    if let Some(props) = s.get_mut("properties").and_then(Value::as_object_mut) {
+        props.insert("op".into(), json!({ "type": "string", "enum": ["list", "filter"] }));
+        props.insert("dir".into(), json!({ "type": "string", "description": "list: outra pasta de plugins" }));
+    }
+    s["required"] = json!(["op"]);
+    s
+}
+
 const RIG_DESC: &str = r##"Rigging 2D: hierarquia pai-filho entre camadas e cinemática inversa de dois ossos. op "parent" {layer, parent}: o filho anda, gira e escala com o pai em volta do pivô (âncora) de cada um (pegbar; parent null solta; ciclo é recusado). op "bone_tip" {layer, tip:[x,y]}: a ponta do osso da camada, em px do canvas na pose de repouso (o osso vai do pivô da camada até a ponta). op "ik" {cut, layer, target:[x,y], frame, bend?, keyframe=true}: gira o pai (osso de cima) e a camada (osso de baixo) para a ponta chegar no alvo, gravando chaves de rotação no quadro; devolve reached, parent_rotation, rotation, bend. Exemplo: {"op":"ik","cut":"C","layer":"antebraço","target":[380,300],"frame":6}. Confira com aiai_render."##;
 
 const COLORIZE_HINTS_DESC: &str = r##"Colorir por dicas (sem IA): rabisque as cores, sem capricho, numa camada RASTER de dicas (`hint_layer`); cada região fechada pelas linhas da camada de cor (`fill_layer`, linhas do line_refs dela) ganha a cor mais presente entre os rabiscos que caem nela. `spread` (padrão true): regiões sem rabisco que encostam numa colorida herdam a cor da vizinha com mais borda em comum (o fora do desenho, que toca a borda do quadro, não). Vira um balde comum (um passo de desfazer). Devolve regions_from_hints e regions_from_neighbors. Exemplo: {"cut":"C","fill_layer":"cor","hint_layer":"dicas","frame":0}. Confirme com aiai_render."##;
@@ -145,6 +158,7 @@ pub fn definitions() -> Vec<Value> {
         json!({ "name": "aiai_layer_merge", "description": LAYER_MERGE_DESC, "inputSchema": schema_of::<aiai_tools::layer_merge::LayerMergeRequest>() }),
         json!({ "name": "aiai_lines", "description": LINES_DESC, "inputSchema": schema_frame0::<fx2d::LinesRequest>() }),
         json!({ "name": "aiai_gag_bg", "description": GAG_BG_DESC, "inputSchema": schema_frame0::<fx2d::GagBgRequest>() }),
+        json!({ "name": "aiai_plugin", "description": PLUGIN_DESC, "inputSchema": plugin_schema() }),
         json!({ "name": "aiai_rig", "description": RIG_DESC, "inputSchema": crate::tools_preprod::object_schema::<aiai_tools::rig::RigRequest>() }),
         json!({ "name": "aiai_colorize_hints", "description": COLORIZE_HINTS_DESC, "inputSchema": schema_frame0::<aiai_tools::hints::ColorizeHintsRequest>() }),
         json!({ "name": "aiai_anime_fx", "description": ANIME_FX_DESC, "inputSchema": schema_frame0::<aiai_tools::anime_fx::AnimeFxRequest>() }),
@@ -244,6 +258,18 @@ pub fn plan(name: &str, m: &Map<String, Value>) -> Option<Result<Plan, ToolError
         "aiai_anime_fx" => with_req(&["cut", "layer", "kind"], "ANIME_FX", true),
         "aiai_colorize_hints" => with_req(&["cut", "fill_layer", "hint_layer"], "COLORIZE_HINTS", true),
         "aiai_rig" => with_req(&["op"], "RIG", true),
+        "aiai_plugin" => match m.get("op").and_then(Value::as_str) {
+            Some("list") => simple("PLUGIN_LIST", Value::Object(m.clone())),
+            Some("filter") => {
+                let mut mm = m.clone();
+                mm.remove("op");
+                if mm.get("frame").is_none_or(Value::is_null) {
+                    mm.insert("frame".into(), json!(0));
+                }
+                required(&mm, &["cut", "layer", "plugin"]).and_then(|_| simple("PLUGIN_FILTER", Value::Object(mm)))
+            }
+            _ => Err(ToolError::invalid("Missing 'op': list | filter")),
+        },
         "aiai_particles" => {
             required(m, &["layer"]).and_then(|_| {
                 if m.get("preset").is_none_or(Value::is_null) && m.get("system").is_none_or(Value::is_null) {

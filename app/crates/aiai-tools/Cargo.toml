@@ -28,6 +28,9 @@ rayon = { workspace = true }
 image = { workspace = true }
 base64 = { workspace = true }
 miniz_oxide = "0.8"
+# plugins .aiaiplugin: filtros WGSL na GPU (o mesmo wgpu do app)
+wgpu = { workspace = true }
+pollster = { workspace = true }
 
 [dev-dependencies]
 glam = { workspace = true }

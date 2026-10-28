@@ -115,7 +115,7 @@ dependencies = [
  "glam",
  "image",
  "naga",
- "pollster",
+ "pollster 1.0.1",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -326,7 +326,7 @@ dependencies = [
  "embed-resource",
  "glam",
  "image",
- "pollster",
+ "pollster 1.0.1",
  "raw-window-handle",
  "rayon",
  "resvg",
@@ -362,11 +362,13 @@ dependencies = [
  "glam",
  "image",
  "miniz_oxide 0.8.9",
+ "pollster 0.4.0",
  "rayon",
  "schemars",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "wgpu",
 ]
 
 [[package]]
@@ -950,7 +952,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
- "pollster",
+ "pollster 1.0.1",
  "profiling",
  "raw-window-handle",
  "ron",
@@ -2384,6 +2386,12 @@ dependencies = [
  "rustix 1.1.5",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "pollster"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f3a9f18d041e6d0e102a0a46750538147e5e8992d3b4873aaafee2520b00ce3"
 
 [[package]]
 name = "pollster"
