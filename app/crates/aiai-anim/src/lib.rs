@@ -183,16 +183,30 @@ fn same_group(x: &Stroke, y: &Stroke) -> bool {
 
 /// Trabalho (distâncias ponto a ponto) que [`correspond`] faria com estes traços, sem fazer nada: para limitar antes.
 /// Zero quando a estrutura é a mesma (casa por ordem).
-pub fn correspond_work(a: &[Stroke], b: &[Stroke]) -> u64 {
+pub fn correspond_work(a: &[Stroke], b: &[Stroke], opts: &InbetweenOptions) -> u64 {
+    // os mesmos "usados" de `correspond` (pares manuais, depois a ordem quando a estrutura é a mesma)
+    let mut used_a = vec![false; a.len()];
+    let mut used_b = vec![false; b.len()];
+    for &(i, j) in &opts.pairs {
+        if i < a.len() && j < b.len() && !used_a[i] && !used_b[j] {
+            used_a[i] = true;
+            used_b[j] = true;
+        }
+    }
     let same_structure = a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.points.len() == y.points.len() && x.closed == y.closed && x.group == y.group);
     if same_structure {
-        return 0;
+        for i in 0..a.len() {
+            if !used_a[i] && !used_b[i] {
+                used_a[i] = true;
+                used_b[i] = true;
+            }
+        }
     }
     let n = SHAPE_N as u64;
     let mut w = 0u64;
-    for x in a {
-        for y in b {
-            if x.closed != y.closed || !same_group(x, y) {
+    for (i, x) in a.iter().enumerate() {
+        for (j, y) in b.iter().enumerate() {
+            if used_a[i] || used_b[j] || x.closed != y.closed || !same_group(x, y) {
                 continue;
             }
             w += if x.closed { n + 2 * n * n } else { 2 * n };
@@ -228,9 +242,11 @@ pub fn correspond(a: &[Stroke], b: &[Stroke], opts: &InbetweenOptions) -> Vec<Pa
                 pairs.push((Some(i), Some(i)));
             }
         }
-    } else {
-        let ra: Vec<Vec<P>> = a.iter().map(|s| resample(s, SHAPE_N)).collect();
-        let rb: Vec<Vec<P>> = b.iter().map(|s| resample(s, SHAPE_N)).collect();
+    }
+    // o que sobrou (tudo, sem a mesma estrutura; com ela, os traços que um par manual deslocou — A7-03) casa por custo
+    if used_a.iter().any(|u| !u) && used_b.iter().any(|u| !u) {
+        let ra: Vec<Vec<P>> = a.iter().zip(&used_a).map(|(s, u)| if *u { Vec::new() } else { resample(s, SHAPE_N) }).collect();
+        let rb: Vec<Vec<P>> = b.iter().zip(&used_b).map(|(s, u)| if *u { Vec::new() } else { resample(s, SHAPE_N) }).collect();
         let mut costs = Vec::new();
         for i in 0..a.len() {
             for j in 0..b.len() {

@@ -197,16 +197,24 @@ impl Command {
 
     /// Valida e aplica. Em erro, `project` fica intacto (lotes desfazem o que já tinham aplicado).
     pub fn apply(&self, project: &mut Project, ctx: &ApplyCtx) -> CoreResult<Applied> {
+        self.apply_keeping_provenance(project, ctx).map(|(a, _)| a)
+    }
+
+    /// Como [`Command::apply`], devolvendo também a proveniência que os nós mexidos tinham antes (para um desfazer de
+    /// emergência devolver o metadado de auditoria exato, CX11 C11-04).
+    pub fn apply_keeping_provenance(&self, project: &mut Project, ctx: &ApplyCtx) -> CoreResult<(Applied, Vec<(Id, crate::model::Provenance)>)> {
         let mut created = Vec::new();
         let mut affected = Vec::new();
         let inverse = self.apply_inner(project, ctx, &mut created, &mut affected)?;
+        let mut prior = Vec::with_capacity(affected.len());
         for id in &affected {
             if let Some(n) = project.nodes.get_mut(id) {
+                prior.push((id.clone(), n.provenance.clone()));
                 n.provenance.modified_by = ctx.author.to_string();
                 n.provenance.revision = ctx.revision;
             }
         }
-        Ok(Applied { command: self.clone(), inverse, created, affected })
+        Ok((Applied { command: self.clone(), inverse, created, affected }, prior))
     }
 
     fn apply_inner(&self, p: &mut Project, ctx: &ApplyCtx, created: &mut Vec<Id>, affected: &mut Vec<Id>) -> CoreResult<Command> {

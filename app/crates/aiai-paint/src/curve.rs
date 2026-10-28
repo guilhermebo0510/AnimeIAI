@@ -42,6 +42,55 @@ pub fn flatten_points(stroke: &Stroke) -> Vec<(f32, f32, f32)> {
     flatten(stroke).into_iter().map(|q| (q.x, q.y, q.p)).collect()
 }
 
+/// Quantas amostras `sample_stroke` produz para este traço, sem produzir nenhuma (mesmas contas de `flatten`: alças,
+/// fechamento, controles da spline e o teto de 20 000 passos por segmento). Para limitar antes de amostrar.
+pub fn sample_count(stroke: &Stroke) -> usize {
+    let pts: Vec<P> = stroke.points.iter().map(|q| P { x: q.x, y: q.y, p: q.pressure, w: q.width }).collect();
+    let corners: Vec<bool> = stroke.points.iter().map(|q| q.corner).collect();
+    let handles: Vec<Option<[f32; 2]>> = stroke.points.iter().map(|q| q.handle.filter(|_| !q.corner)).collect();
+    let cubic_steps = |b0: P, b1: P, b2: P, b3: P| -> usize {
+        let est = b0.dist(b1) + b1.dist(b2) + b2.dist(b3);
+        if !est.is_finite() {
+            return 20_000;
+        }
+        (est / STEP).ceil().clamp(1.0, 20000.0) as usize
+    };
+    if pts.len() <= 1 {
+        return pts.len();
+    }
+    match stroke.geometry {
+        StrokeGeometry::Polyline => {
+            let n = pts.len();
+            let segs = if stroke.closed { n } else { n - 1 };
+            (0..segs)
+                .map(|i| {
+                    let d = pts[i].dist(pts[(i + 1) % n]);
+                    if d.is_finite() { (d / STEP).ceil().max(1.0).min(1e9) as usize } else { 1_000_000_000 }
+                })
+                .fold(1usize, |a, b| a.saturating_add(b))
+        }
+        StrokeGeometry::Bezier => {
+            let mut c = 1usize;
+            let mut i = 0;
+            while i + 3 < pts.len() {
+                c = c.saturating_add(cubic_steps(pts[i], pts[i + 1], pts[i + 2], pts[i + 3]));
+                i += 3;
+            }
+            c
+        }
+        StrokeGeometry::Spline | StrokeGeometry::Freehand => {
+            let n = pts.len();
+            let segs = if stroke.closed { n } else { n - 1 };
+            (0..segs)
+                .map(|i| {
+                    let (p1, b1, b2, p2) = segment_controls(&pts, &corners, &handles, stroke.closed, stroke.tension, i);
+                    cubic_steps(p1, b1, b2, p2)
+                })
+                .fold(1usize, |a, b| a.saturating_add(b))
+        }
+    }
+}
+
 /// Pontos da curva (x, y, pressão) já achatados, antes da largura.
 fn flatten(stroke: &Stroke) -> Vec<P> {
     let pts: Vec<P> = stroke.points.iter().map(|q| P { x: q.x, y: q.y, p: q.pressure, w: q.width }).collect();
@@ -299,6 +348,18 @@ pub fn sample_stroke(stroke: &Stroke) -> Vec<StrokeSample> {
 mod tests {
     use super::*;
     use aiai_core::{ColorRef, Id, StrokePoint, WidthProfile};
+
+    #[test]
+    fn sample_count_matches_the_samples() {
+        for g in [StrokeGeometry::Polyline, StrokeGeometry::Spline, StrokeGeometry::Bezier] {
+            for closed in [false, true] {
+                let mut s = mk(&[(0.0, 0.0, 1.0), (40.0, 10.0, 1.0), (80.0, -20.0, 1.0), (120.0, 5.0, 1.0)], g, VectorTip::GPen, 3.0);
+                s.closed = closed && g != StrokeGeometry::Bezier;
+                s.points[1].handle = Some([30.0, 25.0]);
+                assert_eq!(sample_count(&s), sample_stroke(&s).len(), "{g:?} fechado={closed}");
+            }
+        }
+    }
 
     pub(crate) fn mk(points: &[(f32, f32, f32)], geometry: StrokeGeometry, tip: VectorTip, width: f32) -> Stroke {
         Stroke {

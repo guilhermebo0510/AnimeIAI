@@ -26,9 +26,10 @@ pub const MAX_POINTS_TOTAL: usize = 20_000;
 pub const MAX_PAIR_SAMPLES: usize = 1_000;
 /// Pontos somados da saída (candidato e sobreposição).
 pub const MAX_OUTPUT_POINTS: usize = 60_000;
-/// Comprimento de traço somado nas duas chaves (e na saída), em px: a sobreposição e o render amostram ~1 ponto por px
-/// (CX10 C10-02: dois pontos a 1 000 000 px de distância passavam pelas contagens e geravam milhões de amostras).
-pub const MAX_DRAW_LENGTH: f32 = 400_000.0;
+/// Amostras somadas das duas chaves e do candidato (a conta exata de `aiai_paint::sample_count`: alças, fechamento,
+/// controles da spline). A sobreposição desenha tudo isso; acima, a prévia recusa antes de expandir (CX10 C10-02,
+/// CX11 C11-02, A7-04).
+pub const MAX_PREVIEW_SAMPLES: usize = 400_000;
 /// Trabalho de alinhamento somado na proposta (casar os traços + cada par fechado ~2n², a prévia e o motor), em
 /// comparações ponto a ponto (A6-02: o limite por par sozinho deixava passar muitos pares fechados grandes).
 pub const MAX_ALIGN_WORK: u64 = 20_000_000;
@@ -463,8 +464,8 @@ pub fn inbetween_preview(p: &Project, env: ProposalEnvelope, req: &InbetweenPrev
     if req.frame >= cut.duration {
         return Err(ToolError::Invalid(format!("quadro {} fora do corte (duração {})", req.frame, cut.duration)));
     }
-    if !(req.bend.is_finite() && req.max_cost.is_finite() && req.max_cost >= 0.0) {
-        return Err(ToolError::Invalid("bend e max_cost precisam ser números finitos (max_cost ≥ 0)".into()));
+    if !(req.bend.is_finite() && (-2.0..=2.0).contains(&req.bend) && req.max_cost.is_finite() && req.max_cost >= 0.0) {
+        return Err(ToolError::Invalid("bend entre -2 e 2 e max_cost ≥ 0 (números finitos)".into()));
     }
     // 2. chaves pelos começos de bloco
     let ((frame_a, key_a, cel_a), (frame_b, key_b, cel_b)) = resolve_keys(p, cut, req)?;
@@ -514,14 +515,14 @@ pub fn inbetween_preview(p: &Project, env: ProposalEnvelope, req: &InbetweenPrev
     // limites antes do motor: contagens, comprimento desenhado (amostras da sobreposição e do render) e trabalho de
     // alinhamento somado (a correspondência e cada par fechado custam ~n²)
     let pts_total: usize = a.iter().chain(b).map(|s| s.points.len()).sum();
-    let draw_len: f32 = a.iter().chain(b).map(polyline_len).sum();
+    let key_samples: usize = a.iter().chain(b).map(aiai_paint::sample_count).fold(0usize, usize::saturating_add);
     let mut too_large: Option<String> = None;
     if a.len() > MAX_STROKES_PER_KEY || b.len() > MAX_STROKES_PER_KEY || pts_total > MAX_POINTS_TOTAL {
         too_large = Some(format!("{} e {} traços, {} pontos; limite {} traços por chave e {} pontos", a.len(), b.len(), pts_total, MAX_STROKES_PER_KEY, MAX_POINTS_TOTAL));
-    } else if !(draw_len.is_finite() && draw_len <= MAX_DRAW_LENGTH) {
-        too_large = Some(format!("{:.0} px de traço somados nas duas chaves; limite {:.0} px", draw_len, MAX_DRAW_LENGTH));
+    } else if key_samples > MAX_PREVIEW_SAMPLES {
+        too_large = Some(format!("{key_samples} amostras de traço nas duas chaves; limite {MAX_PREVIEW_SAMPLES}"));
     } else {
-        let w = correspond_work(a, b);
+        let w = correspond_work(a, b, &options);
         if w > MAX_ALIGN_WORK {
             too_large = Some(format!("casar os traços custaria {w} comparações; limite {MAX_ALIGN_WORK}"));
         }
@@ -540,7 +541,7 @@ pub fn inbetween_preview(p: &Project, env: ProposalEnvelope, req: &InbetweenPrev
     // 5. pares (os mesmos do motor, calculados uma vez) e classificação de cada correspondência efetiva
     let pairs = correspond(a, b, &options);
     let mut out_points = 0usize;
-    let mut work = correspond_work(a, b);
+    let mut work = correspond_work(a, b, &options);
     for &(ia, ib) in &pairs {
         let manual_pair = matches!((ia, ib), (Some(i), Some(j)) if manual.contains(&(i, j)));
         let mut notes: Vec<Notice> = Vec::new();
@@ -596,7 +597,8 @@ pub fn inbetween_preview(p: &Project, env: ProposalEnvelope, req: &InbetweenPrev
                         let (from, to) = if side_a { (s, other) } else { (other, s) };
                         link = if side_a { (Some(s), Some(other)) } else { (Some(other), Some(s)) };
                         let n = resampled_len(from.points.len(), to.points.len());
-                        work += align_work(n, from.closed && to.closed);
+                        // a prévia alinha uma vez para classificar (morph_path) e o motor de novo (CX11 C11-03)
+                        work += 2 * align_work(n, from.closed && to.closed);
                         if n > MAX_PAIR_SAMPLES || work > MAX_ALIGN_WORK {
                             notes.push(notice(NoticeCode::TooLarge, na, nb, format!("{ls}: {n} pontos por traço no grupo; o alinhamento somado passa do limite da prévia")));
                         } else if s.geometry == StrokeGeometry::Bezier || other.geometry == StrokeGeometry::Bezier {
@@ -675,9 +677,9 @@ pub fn inbetween_preview(p: &Project, env: ProposalEnvelope, req: &InbetweenPrev
             prop.refusals.push(notice(NoticeCode::InvalidOutput, None, None, format!("traço {k} da saída inválido: {e}")));
         }
     }
-    let out_len: f32 = candidate.iter().map(polyline_len).sum();
-    if !(out_len.is_finite() && out_len <= MAX_DRAW_LENGTH) {
-        prop.refusals.push(notice(NoticeCode::TooLarge, None, None, format!("desenho grande demais para a prévia ({out_len:.0} px de traço na saída)")));
+    let out_samples = candidate.iter().map(aiai_paint::sample_count).fold(key_samples, usize::saturating_add);
+    if out_samples > MAX_PREVIEW_SAMPLES {
+        prop.refusals.push(notice(NoticeCode::TooLarge, None, None, format!("desenho grande demais para a prévia ({out_samples} amostras com a saída; limite {MAX_PREVIEW_SAMPLES})")));
     }
     if candidate.is_empty() {
         prop.refusals.push(notice(NoticeCode::InvalidOutput, None, None, "o motor não gerou nenhum traço"));
@@ -690,11 +692,6 @@ pub fn inbetween_preview(p: &Project, env: ProposalEnvelope, req: &InbetweenPrev
         }
     }
     Ok(prop)
-}
-
-/// Comprimento da poligonal dos pontos de controle (a curva desenhada tem a mesma ordem de grandeza: ~1 amostra por px).
-pub fn polyline_len(s: &Stroke) -> f32 {
-    s.points.windows(2).map(|w| ((w[1].x - w[0].x).powi(2) + (w[1].y - w[0].y).powi(2)).sqrt()).sum()
 }
 
 /// Perfil de largura: diferente recusa; igual e com o começo invertido/deslocado também (o perfil segue o parâmetro).
@@ -903,19 +900,23 @@ impl ProposalStore {
 }
 
 /// Pede uma prévia nova (substitui a anterior) e devolve a proposta guardada.
+/// Pedido que falha não mexe na proposta viva nem no aviso da que caiu (A7-01: um Atualizar com par inválido não
+/// apaga a prévia nem os pares já feitos).
 pub fn preview(s: &mut CoreSession, req: &InbetweenPreviewRequest) -> ToolResult<InbetweenProposal> {
     let (epoch, revision) = (s.document_epoch(), s.project.revision);
+    let saved = (0, s.ext_mut::<ProposalStore>().generation);
     let env = s.ext_mut::<ProposalStore>().envelope(epoch, revision);
     let prop = inbetween_preview(&s.project, env, req);
     let store = s.ext_mut::<ProposalStore>();
-    store.invalidated = None;
     match prop {
         Ok(prop) => {
+            store.invalidated = None;
             store.current = Some(prop.clone());
             Ok(prop)
         }
         Err(e) => {
-            store.current = None;
+            // o envelope não foi usado: a geração volta (a proposta viva continua aceitável); o id gasto não volta
+            store.generation = saved.1;
             Err(e)
         }
     }
@@ -970,7 +971,14 @@ pub fn invalidate_if_changed(s: &mut CoreSession) -> Option<String> {
 
 /// Muda os pares manuais da proposta atual: fica desatualizada (aceite bloqueado) até [`refresh`].
 pub fn set_manual_pairs(s: &mut CoreSession, id: ProposalId, pairs: Vec<(Id, Id)>) -> ToolResult<()> {
-    current_checked(s, id)?;
+    let prop = current_checked(s, id)?;
+    // o par é conferido na hora (ids, repetição, fechado/aberto, linha de cor, antisserrilhado): par inválido é recusado
+    // e os pares de antes ficam (A7-01)
+    let strokes = |cel: &Id| match s.project.node(cel).map(|n| &n.data) {
+        Some(NodeKind::Cel(c)) => c.strokes.clone(),
+        _ => Vec::new(),
+    };
+    manual_indices(&strokes(&prop.cel_a), &strokes(&prop.cel_b), &pairs)?;
     let store = s.ext_mut::<ProposalStore>();
     let prop = store.current.as_mut().expect("conferida");
     prop.request.manual_pairs = pairs;

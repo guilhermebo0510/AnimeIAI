@@ -410,12 +410,14 @@ fn key_change_and_document_swap_invalidate() {
 #[test]
 fn huge_coordinates_are_refused_before_any_expansion() {
     // C10-02: dois pontos a 1 000 000 px passavam pelas contagens e geravam milhões de amostras na sobreposição
-    let far = st("f", &[[0.0, 0.0], [1_000_000.0, 0.0]], false);
+    // polilinha: ~1 amostra por px, sem teto por segmento (na spline o teto é 20 000 por segmento)
+    let mut far = st("f", &[[0.0, 0.0], [1_000_000.0, 0.0]], false);
+    far.geometry = StrokeGeometry::Polyline;
     let mut f = fixture(&[(1, CelRole::Key, vec![far.clone()]), (2, CelRole::Key, vec![shift(&far, 5.0, 0.0, "g")])], &[(0, 1), (8, 2)]);
     let t0 = std::time::Instant::now();
     let p = ibp::preview(&mut f.s, &req(&f.cut, &f.layer, 4)).unwrap();
     assert!(codes(&p.refusals).contains(&NoticeCode::TooLarge), "{:?}", p.refusals);
-    assert!(p.refusals[0].text.contains("px de traço"), "{}", p.refusals[0].text);
+    assert!(p.refusals[0].text.contains("amostras de traço"), "{}", p.refusals[0].text);
     assert!(p.candidate.is_empty());
     assert!(t0.elapsed().as_millis() < 500);
 }
@@ -504,4 +506,81 @@ fn engine_options_make_the_proposal_stale_until_refresh() {
     let q = ibp::refresh(&mut f.s, p.id).unwrap();
     assert_eq!((q.options.motion, q.options.bend, q.options.max_cost), (MotionMode::Linear, 0.3, 150.0));
     assert!(ibp::set_options(&mut f.s, q.id, MotionMode::Global, f32::NAN, 1.0).is_err());
+}
+
+// ---------------------------------------------------------------------------------------------- rodada 8 (A07, CX11)
+
+#[test]
+fn manual_pair_in_same_structure_keeps_the_displaced_strokes_paired() {
+    // A7-03: com a mesma estrutura, um par manual i→j deixava A[j] e B[i] sem par (cortados ao meio)
+    let eye_l = st("aL", &[[100.0, 100.0], [110.0, 95.0], [120.0, 100.0]], false);
+    let eye_r = st("aR", &[[150.0, 100.0], [160.0, 95.0], [170.0, 100.0]], false);
+    let a = vec![eye_l.clone(), eye_r.clone()];
+    let b = vec![shift(&eye_l, 10.0, 0.0, "bL"), shift(&eye_r, 10.0, 0.0, "bR")];
+    let mut f = fixture(&[(1, CelRole::Key, a), (2, CelRole::Key, b)], &[(0, 1), (8, 2)]);
+    let mut r = req(&f.cut, &f.layer, 4);
+    r.manual_pairs = vec![(Id::from("aL"), Id::from("bR"))];
+    let p = ibp::preview(&mut f.s, &r).unwrap();
+    assert!(!codes(&p.approximations).contains(&NoticeCode::Unmatched), "{:?}", p.approximations);
+    assert!(p.pairs.iter().any(|x| x.a.as_ref().map(|i| i.0.as_str()) == Some("aR") && x.b.as_ref().map(|i| i.0.as_str()) == Some("bL")));
+}
+
+#[test]
+fn incompatible_manual_pair_is_refused_at_once_and_refresh_errors_keep_the_proposal() {
+    // A7-01: o par inválido era aceito e o Atualizar apagava a prévia e os pares de antes
+    let mut f = two_keys();
+    let p = ibp::preview(&mut f.s, &req(&f.cut, &f.layer, 4)).unwrap();
+    ibp::set_manual_pairs(&mut f.s, p.id, vec![(Id::from("la"), Id::from("lb"))]).unwrap();
+    let e = ibp::set_manual_pairs(&mut f.s, p.id, vec![(Id::from("la"), Id::from("lb")), (Id::from("ra"), Id::from("lb"))]).unwrap_err().to_string();
+    assert!(e.contains("mais de um par") || e.contains("incompatível"), "{e}");
+    let e = ibp::set_manual_pairs(&mut f.s, p.id, vec![(Id::from("la"), Id::from("rb"))]).unwrap_err().to_string();
+    assert!(e.contains("fechado"), "{e}");
+    let cur = ibp::current(&f.s).unwrap();
+    assert_eq!(cur.request.manual_pairs, vec![(Id::from("la"), Id::from("lb"))], "os pares de antes ficaram");
+    // um pedido que falha não apaga a proposta viva e ela continua aceitável depois de atualizar
+    let mut bad = req(&f.cut, &f.layer, 4);
+    bad.manual_pairs = vec![(Id::from("sumiu"), Id::from("lb"))];
+    assert!(ibp::preview(&mut f.s, &bad).is_err());
+    let q = ibp::refresh(&mut f.s, p.id).unwrap();
+    ibp::accept(&mut f.s, q.id, "a").unwrap();
+}
+
+#[test]
+fn sample_budget_counts_handles_and_closing_segments() {
+    // A7-04 / C11-02: alça longa com pontos de controle próximos passava pelo comprimento da poligonal
+    // 50 pontos a 2 px com alça enorme em cada um: 49 segmentos × 20 000 amostras (exemplo do A07)
+    let pts: Vec<[f32; 2]> = (0..50).map(|i| [100.0 + 2.0 * i as f32, 100.0]).collect();
+    let mut h = st("h", &pts, false);
+    for q in &mut h.points {
+        q.handle = Some([100_000.0, 0.0]);
+    }
+    let mut f = fixture(&[(1, CelRole::Key, vec![h.clone()]), (2, CelRole::Key, vec![shift(&h, 5.0, 0.0, "h2")])], &[(0, 1), (8, 2)]);
+    let p = ibp::preview(&mut f.s, &req(&f.cut, &f.layer, 4)).unwrap();
+    assert!(codes(&p.refusals).contains(&NoticeCode::TooLarge), "{:?}", p.refusals);
+    // o contraexemplo do CX11 como polilinha (A = B, 180 000 px cada): passa do teto de amostras
+    let mut c = st("c", &[[0.0, 0.0], [75_000.0, 50_000.0], [150_000.0, 0.0]], false);
+    c.geometry = StrokeGeometry::Polyline;
+    let mut g = fixture(&[(1, CelRole::Key, vec![c.clone()]), (2, CelRole::Key, vec![shift(&c, 0.0, 0.0, "c2")])], &[(0, 1), (8, 2)]);
+    let p = ibp::preview(&mut g.s, &req(&g.cut, &g.layer, 4)).unwrap();
+    assert!(codes(&p.refusals).contains(&NoticeCode::TooLarge), "{:?}", p.refusals);
+    assert!(p.candidate.is_empty(), "nada de candidato para mostrar simplificado");
+}
+
+#[test]
+fn group_morphs_count_both_alignments() {
+    // C11-03: 1 para N em fechados grandes contava só metade do alinhamento
+    let mk = |id: &str, dx: f32| {
+        let mut c = circle(id, 200.0 + dx, 200.0, 30.0, 450, 0);
+        c.group = "g".into();
+        c
+    };
+    let a = vec![mk("a0", 0.0)];
+    let b: Vec<Stroke> = (0..11).map(|i| mk(&format!("b{i}"), 3.0 * i as f32)).collect();
+    let mut f = fixture(&[(1, CelRole::Key, a), (2, CelRole::Key, b)], &[(0, 1), (8, 2)]);
+    let mut r = req(&f.cut, &f.layer, 4);
+    r.manual_pairs = vec![(Id::from("a0"), Id::from("b0"))];
+    let t0 = std::time::Instant::now();
+    let p = ibp::preview(&mut f.s, &r).unwrap();
+    assert!(codes(&p.refusals).contains(&NoticeCode::TooLarge), "{:?}", codes(&p.refusals));
+    assert!(t0.elapsed().as_millis() < 3000);
 }

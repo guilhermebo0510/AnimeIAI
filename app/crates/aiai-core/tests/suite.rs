@@ -595,14 +595,8 @@ fn wal_failure_rolls_the_command_back() {
     persist::save(&mut s, &dir).unwrap();
     s.apply(Command::SetProps { id: cel.clone(), name: Some("antes".into()), data: json!({}) }).unwrap();
     let (rev, hist, log) = (s.project.revision, s.history().0.len(), s.log().len());
-    // conteúdo sem a proveniência (metadado de auditoria que o inverso regrava)
-    let content = |p: &Project| {
-        let mut v = serde_json::to_value(p).unwrap();
-        for n in v["nodes"].as_object_mut().unwrap().values_mut() {
-            n.as_object_mut().unwrap().remove("provenance");
-        }
-        v.to_string()
-    };
+    // o projeto inteiro, inclusive a proveniência (o desfazer de emergência devolve o metadado exato, CX11 C11-04)
+    let content = |p: &Project| serde_json::to_string(p).unwrap();
     let snap = content(&s.project);
     s.wal_mut().unwrap().fail_next_append_for_tests();
     let e = s.apply(Command::SetProps { id: cel.clone(), name: Some("depois".into()), data: json!({}) });
@@ -621,6 +615,42 @@ fn wal_failure_rolls_the_command_back() {
     let (re, rep) = persist::open(&dir).unwrap();
     assert_eq!(rep.wal_truncated_at, None, "nenhuma linha parcial no diário");
     assert_eq!(serde_json::to_string(&re.project.nodes.get(&cel).unwrap().name).unwrap(), want);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// CX11 C11-04: se nem o desfazer da linha parcial do diário funciona, o diário fecha para gravação (com o motivo) em vez
+/// de seguir gravando depois de lixo; o comando volta em memória; Salvar recria o diário e tudo volta a funcionar.
+#[test]
+fn wal_that_cannot_recover_is_closed_until_saved() {
+    let dir = std::env::temp_dir().join(format!("aiai-walpoison-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut s = CoreSession::for_tests("walpoison");
+    let (_ep, _cut, _layer, cel) = build_basic(&mut s);
+    persist::save(&mut s, &dir).unwrap();
+    let snap = serde_json::to_string(&s.project).unwrap();
+    s.wal_mut().unwrap().fail_next_append_and_recovery_for_tests();
+    assert!(s.apply(Command::SetProps { id: cel.clone(), name: Some("x".into()), data: json!({}) }).is_err());
+    assert_eq!(serde_json::to_string(&s.project).unwrap(), snap, "o comando voltou, com a proveniência exata");
+    assert!(s.wal_mut().unwrap().poisoned().is_some());
+    let e = s.apply(Command::SetProps { id: cel.clone(), name: Some("y".into()), data: json!({}) }).unwrap_err().to_string();
+    assert!(e.contains("salve o projeto"), "{e}");
+    assert_eq!(serde_json::to_string(&s.project).unwrap(), snap, "nada aplicado com o diário fechado");
+    // redo/undo também recusam
+    persist::save(&mut s, &dir).unwrap();
+    assert!(s.wal_mut().unwrap().poisoned().is_none(), "Salvar recria o diário");
+    s.apply(Command::SetProps { id: cel.clone(), name: Some("z".into()), data: json!({}) }).unwrap();
+    s.wal_mut().unwrap().fail_next_append_for_tests();
+    assert!(s.undo().is_err());
+    s.wal_mut().unwrap().fail_next_append_for_tests();
+    s.undo().unwrap_err();
+    s.undo().unwrap();
+    s.wal_mut().unwrap().fail_next_append_for_tests();
+    assert!(s.redo().is_err(), "refazer com o diário falhando também volta");
+    s.redo().unwrap();
+    drop(s);
+    let (re, rep) = persist::open(&dir).unwrap();
+    assert_eq!(rep.wal_truncated_at, None);
+    assert_eq!(re.project.nodes.get(&cel).unwrap().name, "z");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

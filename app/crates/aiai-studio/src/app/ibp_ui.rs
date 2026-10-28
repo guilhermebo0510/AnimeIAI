@@ -26,8 +26,8 @@ const KEY_B: Color32 = Color32::from_rgba_premultiplied(24, 112, 50, 150);
 const REFUSE: Color32 = Color32::from_rgb(230, 60, 50);
 const APPROX: Color32 = Color32::from_rgb(222, 160, 40);
 const FOUND: Color32 = Color32::from_rgb(255, 200, 0);
-/// Amostras somadas que a sobreposição monta (acima disso, os traços entram pelos pontos de controle; CX10 C10-02).
-const OVERLAY_BUDGET: usize = 300_000;
+/// Pontos que a sobreposição monta no máximo quando a proposta passou do teto (chaves simplificadas, com aviso).
+const SIMPLIFIED_BUDGET: usize = 100_000;
 
 /// Estado da interface da prévia (o que é só da tela; a proposta fica na sessão).
 pub(crate) struct IbpUi {
@@ -201,21 +201,26 @@ pub(crate) struct Geom {
     b: Vec<GLine>,
     cand: Vec<(Vec<Vec2>, Vec<f32>)>,
     links: Vec<Link>,
+    /// As chaves passaram do teto de amostras (a proposta foi recusada por tamanho e não tem candidato): aparecem pelos
+    /// pontos de controle, e a barra diz isso.
+    pub simplified: bool,
 }
 
-/// Amostras de um traço no canvas dentro do orçamento (senão os pontos de controle, no máximo 2 000).
-fn sampled(s: &Stroke, a: &aiai_paint::Affine, k: f32, budget: &mut usize) -> (Vec<Vec2>, Vec<f32>) {
-    let est = ibp::polyline_len(s).min(1e9) as usize + s.points.len();
-    if est <= *budget {
-        *budget -= est;
-        let sm = aiai_paint::sample_stroke(s);
-        (sm.iter().map(|q| to_canvas(a, q.x, q.y)).collect(), sm.iter().map(|q| q.r * k).collect())
-    } else {
-        let step = (s.points.len() / 2_000).max(1);
-        let pts: Vec<Vec2> = s.points.iter().step_by(step).map(|q| to_canvas(a, q.x, q.y)).collect();
-        let r = vec![s.width * 0.5 * k; pts.len()];
-        (pts, r)
+/// Amostras reais de um traço no canvas (a mesma geometria do render).
+fn sampled(s: &Stroke, a: &aiai_paint::Affine, k: f32) -> (Vec<Vec2>, Vec<f32>) {
+    let sm = aiai_paint::sample_stroke(s);
+    (sm.iter().map(|q| to_canvas(a, q.x, q.y)).collect(), sm.iter().map(|q| q.r * k).collect())
+}
+
+/// Só para chaves de proposta acima do teto: os pontos de controle, no máximo 2 000 por traço, dentro de `budget`.
+fn simplified(s: &Stroke, a: &aiai_paint::Affine, budget: &mut usize) -> Vec<Vec2> {
+    let step = s.points.len().div_ceil(2_000).max(1);
+    let n = s.points.len().div_ceil(step);
+    if n > *budget {
+        return Vec::new();
     }
+    *budget -= n;
+    s.points.iter().step_by(step).map(|q| to_canvas(a, q.x, q.y)).collect()
 }
 
 fn cel_center(s: &Stroke, a: &aiai_paint::Affine) -> Vec2 {
@@ -236,15 +241,25 @@ fn ensure_geom(env: &mut Env, cut: &Id) -> bool {
     let project = &env.core.project;
     let Some(a) = placement_of(project, p) else { return false };
     let k = scale_of(&a);
-    let mut budget = OVERLAY_BUDGET;
-    let mut cel = |id: &Id| -> Vec<GLine> {
+    let strokes = |id: &Id| -> &[Stroke] {
         match project.node(id).map(|n| &n.data) {
-            Some(NodeKind::Cel(c)) => c.strokes.iter().map(|s| GLine { id: s.id.clone(), pts: sampled(s, &a, k, &mut budget).0, center: cel_center(s, &a) }).collect(),
-            _ => Vec::new(),
+            Some(NodeKind::Cel(c)) => &c.strokes,
+            _ => &[],
         }
     };
-    let (ga, gb) = (cel(&p.cel_a), cel(&p.cel_b));
-    let cand = p.candidate.iter().map(|s| sampled(s, &a, k, &mut budget)).collect();
+    let (sa, sb) = (strokes(&p.cel_a), strokes(&p.cel_b));
+    // a prévia garante que chaves + candidato cabem no teto (senão recusa e não há candidato): dentro dele tudo é
+    // desenhado com as amostras reais; o candidato nunca é trocado por outra geometria (CX11 C11-02)
+    let total = sa.iter().chain(sb).chain(&p.candidate).map(aiai_paint::sample_count).fold(0usize, usize::saturating_add);
+    let simple = total > ibp::MAX_PREVIEW_SAMPLES;
+    let mut budget = SIMPLIFIED_BUDGET;
+    let mut lines = |list: &[Stroke]| -> Vec<GLine> {
+        list.iter()
+            .map(|s| GLine { id: s.id.clone(), pts: if simple { simplified(s, &a, &mut budget) } else { sampled(s, &a, k).0 }, center: cel_center(s, &a) })
+            .collect()
+    };
+    let (ga, gb) = (lines(sa), lines(sb));
+    let cand = if simple { Vec::new() } else { p.candidate.iter().map(|s| sampled(s, &a, k)).collect() };
     let links = p
         .pairs
         .iter()
@@ -253,7 +268,7 @@ fn ensure_geom(env: &mut Env, cut: &Id) -> bool {
             _ => None,
         })
         .collect();
-    env.ed.ibp.geom = Some(Geom { id: p.id, a: ga, b: gb, cand, links });
+    env.ed.ibp.geom = Some(Geom { id: p.id, a: ga, b: gb, cand, links, simplified: simple });
     true
 }
 
@@ -386,20 +401,22 @@ pub(crate) fn paint(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &Id) {
     }
 }
 
-/// Traço mais perto de `q` (canvas) dentro de `tol`.
-fn nearest_in(lines: &[GLine], q: Vec2, tol: f32) -> Option<Id> {
+/// Traço mais perto de `q` (canvas) dentro de `tol`, com a distância.
+fn nearest_in(lines: &[GLine], q: Vec2, tol: f32) -> Option<(Id, f32)> {
     lines
         .iter()
         .filter(|l| !l.id.0.is_empty())
         .map(|l| (l.pts.iter().map(|p| (*p - q).length()).fold(f32::INFINITY, f32::min), &l.id))
         .filter(|(d, _)| *d <= tol)
         .min_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal))
-        .map(|x| x.1.clone())
+        .map(|(d, id)| (id.clone(), d))
 }
 
-/// Clique no canvas com "Corrigir pares" ligado, no quadro da prévia: A e depois B = par manual; clique num traço de A
-/// que já tem par manual escolhe o par (Delete desfaz). `true` = o clique foi da prévia (não desenha). Fora do quadro da
-/// prévia nada é interceptado (não se escolhe o que não está à mostra, CX10 C10-04 / A6-04).
+/// Clique no canvas com "Corrigir pares" ligado, no quadro da prévia (A7-02):
+/// * sem traço de A escolhido: clicar num traço de A escolhe (e, se ele tem par manual, escolhe o par: Delete solta);
+/// * com A escolhido: o traço mais perto decide — de B forma o par; de A troca a escolha; no vazio cancela.
+///
+/// `true` = o clique foi da prévia (não desenha). Fora do quadro da prévia nada é interceptado (CX10 C10-04 / A6-04).
 pub(crate) fn pick(env: &mut Env, canvas_pos: Vec2, scale: f32) -> bool {
     if !env.ed.ibp.pairs_mode {
         return false;
@@ -417,28 +434,44 @@ pub(crate) fn pick(env: &mut Env, canvas_pos: Vec2, scale: f32) -> bool {
         let g = env.ed.ibp.geom.as_ref().expect("montada");
         (nearest_in(&g.a, canvas_pos, tol), nearest_in(&g.b, canvas_pos, tol))
     };
+    let choose_a = |env: &mut Env, sa: Id| {
+        env.ed.ibp.selected = p.request.manual_pairs.iter().find(|m| m.0 == sa).cloned();
+        env.ed.ibp.pick_a = Some(sa);
+        env.ed.notify(tr("ibp.pick_b").to_owned());
+    };
     match env.ed.ibp.pick_a.clone() {
-        None => {
-            let Some(sa) = near_a else {
+        None => match near_a {
+            Some((sa, _)) => choose_a(env, sa),
+            None => {
                 env.ed.ibp.selected = None;
                 env.ed.notify(tr("ibp.pick_a").to_owned());
-                return true;
-            };
-            env.ed.ibp.selected = p.request.manual_pairs.iter().find(|m| m.0 == sa).cloned();
-            env.ed.ibp.pick_a = Some(sa);
-            env.ed.notify(tr("ibp.pick_b").to_owned());
-        }
+            }
+        },
         Some(sa) => {
-            let Some(sb) = near_b else {
-                env.ed.notify(tr("ibp.pick_b").to_owned());
-                return true;
+            let b_wins = match (&near_a, &near_b) {
+                (_, None) => false,
+                (None, Some(_)) => true,
+                (Some((_, da)), Some((_, db))) => db <= da,
             };
-            let mut pairs: Vec<(Id, Id)> = p.request.manual_pairs.iter().filter(|m| m.0 != sa && m.1 != sb).cloned().collect();
-            pairs.push((sa.clone(), sb.clone()));
-            env.ed.ibp.pick_a = None;
-            env.ed.ibp.selected = Some((sa, sb));
-            if let Err(e) = ibp::set_manual_pairs(env.core, p.id, pairs) {
-                env.ed.notify(e.to_string());
+            if b_wins {
+                let sb = near_b.expect("b").0;
+                let mut pairs: Vec<(Id, Id)> = p.request.manual_pairs.iter().filter(|m| m.0 != sa && m.1 != sb).cloned().collect();
+                pairs.push((sa.clone(), sb.clone()));
+                env.ed.ibp.pick_a = None;
+                match ibp::set_manual_pairs(env.core, p.id, pairs) {
+                    Ok(()) => env.ed.ibp.selected = Some((sa, sb)),
+                    // par recusado na hora (fechado com aberto, linha de cor...): os pares de antes ficam
+                    Err(e) => {
+                        env.ed.ibp.selected = None;
+                        env.ed.notify(format!("{}: {e}", tr("ibp.pair_refused")));
+                    }
+                }
+            } else if let Some((other, _)) = near_a {
+                choose_a(env, other);
+            } else {
+                env.ed.ibp.pick_a = None;
+                env.ed.ibp.selected = None;
+                env.ed.notify(tr("ibp.pick_a").to_owned());
             }
         }
     }
@@ -542,7 +575,13 @@ pub(crate) fn bar(env: &mut Env, ctx: &egui::Context, rect: Rect, cut: &Id) {
         env.ed.ibp.pick_a = None;
     }
     let (mut motion, mut bend, mut max_cost) = (p.request.motion, p.request.bend, p.request.max_cost);
+    // só uma edição do usuário muda as opções (abrir a área não corrige valores que vieram do MCP, CX11 C11-05)
+    let mut edited = false;
     let mut act: Option<&'static str> = None;
+    // como o Aceitar foi acionado (CX11 C11-01): clique do ponteiro, Enter/Espaço com o botão em foco, ou acessibilidade
+    let mut accept_src = aiai_core::InputSource::UnknownLegacy;
+    let (ptr_src, key_src) = env.ed.input_src;
+    let simplified = env.ed.ibp.geom.as_ref().is_some_and(|g| g.id == p.id && g.simplified);
     let w = (rect.width() - 24.0).clamp(240.0, 820.0);
     let area = egui::Area::new(egui::Id::new("ibp_bar"))
         .order(egui::Order::Foreground)
@@ -576,6 +615,13 @@ pub(crate) fn bar(env: &mut Env, ctx: &egui::Context, rect: Rect, cut: &Id) {
                     env.note("ibp:accept", r.rect);
                     if r.clicked() {
                         act = Some("accept");
+                        accept_src = if r.clicked_by(egui::PointerButton::Primary) {
+                            ptr_src
+                        } else if ui.input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Space)) {
+                            key_src
+                        } else {
+                            aiai_core::InputSource::UnknownLegacy
+                        };
                     }
                     let r = ui.add_enabled(p.stale, egui::Button::new(tr("ibp.refresh"))).on_hover_text(tr("ibp.refresh_tip"));
                     env.note("ibp:refresh", r.rect);
@@ -606,20 +652,27 @@ pub(crate) fn bar(env: &mut Env, ctx: &egui::Context, rect: Rect, cut: &Id) {
                         for (m, k, name) in [(MotionMode::Global, "ibp.motion.global", "global"), (MotionMode::PerStroke, "ibp.motion.per_stroke", "per_stroke"), (MotionMode::Linear, "ibp.motion.linear", "linear")] {
                             let r = ui.selectable_label(motion == m, tr(k));
                             env.note(format!("ibp:motion.{name}"), r.rect);
-                            if r.clicked() {
+                            if r.clicked() && motion != m {
                                 motion = m;
+                                edited = true;
                             }
                         }
                         ui.label(RichText::new(tr("ibp.bend")).size(11.5));
-                        let r = ui.add(egui::Slider::new(&mut bend, -1.0..=1.0).step_by(0.05).max_decimals(2)).on_hover_text(tr("ibp.bend_tip"));
+                        // mesmo domínio do núcleo (−2…2; custo ≥ 0), sem prender valores existentes
+                        let r = ui.add(egui::Slider::new(&mut bend, -2.0..=2.0).step_by(0.05).max_decimals(2).clamping(egui::SliderClamping::Never)).on_hover_text(tr("ibp.bend_tip"));
+                        edited |= r.changed();
                         env.note("ibp:bend", r.rect);
                         ui.label(RichText::new(tr("ibp.max_cost")).size(11.5));
-                        let r = ui.add(egui::DragValue::new(&mut max_cost).range(5.0..=2000.0).speed(2.0).suffix(" px")).on_hover_text(tr("ibp.max_cost_tip"));
+                        let r = ui.add(egui::DragValue::new(&mut max_cost).range(0.0..=100_000.0).clamp_existing_to_range(false).speed(2.0).suffix(" px")).on_hover_text(tr("ibp.max_cost_tip"));
+                        edited |= r.changed();
                         env.note("ibp:max_cost", r.rect);
                     });
                 }
                 if let Some(why) = &blocked {
                     ui.label(RichText::new(why).size(11.0).color(if p.refusals.is_empty() { APPROX } else { REFUSE }));
+                }
+                if simplified {
+                    ui.label(RichText::new(tr("ibp.simplified")).size(11.0).color(APPROX));
                 }
                 let (nr, na, nn) = (p.refusals.len(), p.approximations.len(), p.notes.len());
                 if nr + na + nn > 0 {
@@ -640,10 +693,14 @@ pub(crate) fn bar(env: &mut Env, ctx: &egui::Context, rect: Rect, cut: &Id) {
             });
         });
     env.note("ibp:bar", area.response.rect);
-    if (motion, bend, max_cost) != (p.request.motion, p.request.bend, p.request.max_cost) {
+    if edited && (motion, bend, max_cost) != (p.request.motion, p.request.bend, p.request.max_cost) {
         if let Err(e) = ibp::set_options(env.core, p.id, motion, bend, max_cost) {
             env.ed.notify(e.to_string());
         }
+    }
+    if env.ed.ibp.pairs_mode && (env.ed.ibp.pick_a.is_some() || env.ed.ibp.selected.is_some()) && !ctx.egui_wants_keyboard_input() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        env.ed.ibp.pick_a = None;
+        env.ed.ibp.selected = None;
     }
     // consome a tecla: senão o Delete da seleção do canvas (que roda depois) apagaria o conteúdo selecionado
     if env.ed.ibp.pairs_mode
@@ -655,8 +712,8 @@ pub(crate) fn bar(env: &mut Env, ctx: &egui::Context, rect: Rect, cut: &Id) {
     }
     match act {
         Some("accept") => {
-            // o aceite é um clique: grava a fonte do gesto do ponteiro, não a do quadro inteiro (CX10 C10-01)
-            let prev = std::mem::replace(&mut env.core.source, env.ed.input_src.0);
+            // a fonte do que acionou o botão, não a do quadro inteiro (CX10 C10-01, CX11 C11-01)
+            let prev = std::mem::replace(&mut env.core.source, accept_src);
             let r = ibp::accept(env.core, p.id, super::doc::AUTHOR);
             env.core.source = prev;
             match r {

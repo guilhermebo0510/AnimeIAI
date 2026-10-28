@@ -1,6 +1,6 @@
 {
  "h_preview": {
-  "proposal_id": 710343048480769,
+  "proposal_id": 710349689631745,
   "frame_a": 0,
   "frame_b": 12,
   "key_a": 1,
@@ -18,16 +18,16 @@
    "strokes_b": 4
   }
  },
- "h_accept_after_discard": "Falha (código -32010): proposta 710343048480769 não encontrada nesta sessão (descartada, ou a sessão foi reaberta)",
+ "h_accept_after_discard": "Falha (código -32010): proposta 710349689631745 não encontrada nesta sessão (descartada, ou a sessão foi reaberta)",
  "h_accept": {
   "_via": "headless",
   "affected": [
-   "01a18368-44de-72fa-b008-3d1ba2597092",
-   "01a18368-40df-767e-b163-c88479496082"
+   "01a183cb-3af9-7075-b7f0-db32ef3fae98",
+   "01a183cb-36a5-7392-a409-93404b50c339"
   ],
-  "cel": "01a18368-44de-72fa-b008-3d1ba2597092",
+  "cel": "01a183cb-3af9-7075-b7f0-db32ef3fae98",
   "created": [
-   "01a18368-44de-72fa-b008-3d1ba2597092"
+   "01a183cb-3af9-7075-b7f0-db32ef3fae98"
   ],
   "description": "Intercalar no quadro 7 entre 1 e 2",
   "frames": [
@@ -37,15 +37,15 @@
   "number": 4,
   "revision": 11
  },
- "h_second_accept": "Falha (código -32602): proposta 710343048480770 já usada",
+ "h_second_accept": "Falha (código -32602): proposta 710349689631746 já usada",
  "h_log_last": {
   "description": "Intercalar no quadro 7 entre 1 e 2",
   "author": "agent:claude",
   "source": "direct_tool_call"
  },
  "h_origin": {
-  "cel_a": "01a18368-41e3-7154-9c28-b02446d1bec9",
-  "cel_b": "01a18368-4257-748c-84c9-fbdc583100e8",
+  "cel_a": "01a183cb-3791-71cf-ba10-d1d75d43f660",
+  "cel_b": "01a183cb-3809-730b-ac2f-d710505f5e00",
   "engine": "6655c0688eb2ebbdcae454df21e090a7f4e0bbfc",
   "frame": 6,
   "frame_a": 0,
@@ -75,7 +75,7 @@
   ],
   "t": 0.5
  },
- "h_lost_owner": "Falha (código -32010): proposta 710343048480771 não encontrada nesta sessão (descartada, ou a sessão foi reaberta)",
+ "h_lost_owner": "Falha (código -32010): proposta 710349689631747 não encontrada nesta sessão (descartada, ou a sessão foi reaberta)",
  "a_ui_after_bridge_preview": {
   "frame": 6,
   "ibp": {
@@ -88,7 +88,7 @@
    "manual_pairs": [],
    "pairs_mode": false,
    "pick_a": null,
-   "proposal_id": 710343057223681,
+   "proposal_id": 710349699735553,
    "refusals": 0,
    "stale": false
   }
@@ -108,7 +108,7 @@
   ],
   "pairs_mode": true,
   "pick_a": null,
-  "proposal_id": 710343057223681,
+  "proposal_id": 710349699735553,
   "refusals": 0,
   "stale": true
  },
@@ -128,7 +128,7 @@
   ],
   "pairs_mode": true,
   "pick_a": null,
-  "proposal_id": 710343057223682,
+  "proposal_id": 710349699735554,
   "refusals": 0,
   "stale": false
  },
@@ -142,7 +142,7 @@
   "manual_pairs": [],
   "pairs_mode": true,
   "pick_a": null,
-  "proposal_id": 710343057223682,
+  "proposal_id": 710349699735554,
   "refusals": 0,
   "stale": true
  },
@@ -152,8 +152,8 @@
   "source": "bridge_injected"
  },
  "a_origin": {
-  "cel_a": "01a18368-481b-706e-97e1-d2935e9580fb",
-  "cel_b": "01a18368-4897-7198-87e7-288390667549",
+  "cel_a": "01a183cb-3e43-7029-a36d-408a89b1c775",
+  "cel_b": "01a183cb-3eba-742c-83ca-8007d6e10b35",
   "engine": "6655c0688eb2ebbdcae454df21e090a7f4e0bbfc",
   "frame": 6,
   "frame_a": 0,
@@ -227,7 +227,7 @@
   "manual_pairs": [],
   "pairs_mode": false,
   "pick_a": null,
-  "proposal_id": 710343057223685,
+  "proposal_id": 710349699735557,
   "refusals": 0,
   "stale": false
  },

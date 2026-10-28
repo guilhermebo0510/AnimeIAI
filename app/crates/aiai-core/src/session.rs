@@ -262,9 +262,9 @@ impl CoreSession {
         }
         command.resolve_ids(&mut self.ids);
         let revision = self.project.revision + 1;
-        let applied = {
+        let (applied, prior) = {
             let ctx = ApplyCtx { blobs: &self.blobs, author, revision };
-            command.apply(&mut self.project, &ctx)?
+            command.apply_keeping_provenance(&mut self.project, &ctx)?
         };
         if self.full_validate {
             if let Err(e) = self.project.validate() {
@@ -286,10 +286,11 @@ impl CoreSession {
         let description = applied.command.description();
         let outcome = Outcome { revision, description: description.clone(), created: applied.created.clone(), affected: applied.affected.clone() };
         if let Err(e) = self.record("apply", &description, author, Some(applied.command.clone())) {
-            // sem diário não há passo: o comando volta e a revisão também (nada aplicado sem o seu desfazer). A
-            // proveniência dos nós mexidos fica com a revisão anterior (o metadado de auditoria não é guardado antes)
+            // sem diário não há passo: o comando volta, a revisão também e a proveniência dos nós mexidos volta ao valor
+            // exato de antes (nada aplicado sem o seu desfazer, nenhum autor inventado)
             let ctx = ApplyCtx { blobs: &self.blobs, author, revision: revision - 1 };
             applied.inverse.apply(&mut self.project, &ctx).expect("inverso deve restaurar");
+            self.restore_provenance(prior);
             self.project.revision = revision - 1;
             self.change_counter += 1;
             return Err(e);
@@ -309,13 +310,23 @@ impl CoreSession {
         Ok(outcome)
     }
 
+    /// Devolve a proveniência guardada antes de um comando (desfazer de emergência). Nós que o comando apagou e o
+    /// desfazer recriou não estão na lista (ganham a do desfazer).
+    fn restore_provenance(&mut self, prior: Vec<(crate::Id, crate::model::Provenance)>) {
+        for (id, p) in prior {
+            if let Some(n) = self.project.nodes.get_mut(&id) {
+                n.provenance = p;
+            }
+        }
+    }
+
     pub fn undo(&mut self) -> CoreResult<Outcome> {
         let a = self.undo.pop().ok_or(CoreError::NothingToUndo)?;
         let author = self.author.clone();
         let revision = self.project.revision + 1;
-        let r = {
+        let (r, prior) = {
             let ctx = ApplyCtx { blobs: &self.blobs, author: &author, revision };
-            match a.inverse.apply(&mut self.project, &ctx) {
+            match a.inverse.apply_keeping_provenance(&mut self.project, &ctx) {
                 Ok(r) => r,
                 Err(e) => {
                     self.undo.push(a);
@@ -330,6 +341,7 @@ impl CoreSession {
         if let Err(e) = self.record("undo", &description, &author, Some(a.inverse.clone())) {
             let ctx = ApplyCtx { blobs: &self.blobs, author: &author, revision: revision - 1 };
             r.inverse.apply(&mut self.project, &ctx).expect("refazer deve restaurar");
+            self.restore_provenance(prior);
             self.project.revision = revision - 1;
             self.change_counter += 1;
             self.undo.push(a);
@@ -345,9 +357,9 @@ impl CoreSession {
         let a = self.redo.pop().ok_or(CoreError::NothingToRedo)?;
         let author = self.author.clone();
         let revision = self.project.revision + 1;
-        let r = {
+        let (r, prior) = {
             let ctx = ApplyCtx { blobs: &self.blobs, author: &author, revision };
-            match a.command.apply(&mut self.project, &ctx) {
+            match a.command.apply_keeping_provenance(&mut self.project, &ctx) {
                 Ok(r) => r,
                 Err(e) => {
                     self.redo.push(a);
@@ -362,6 +374,7 @@ impl CoreSession {
         if let Err(e) = self.record("redo", &description, &author, Some(a.command.clone())) {
             let ctx = ApplyCtx { blobs: &self.blobs, author: &author, revision: revision - 1 };
             r.inverse.apply(&mut self.project, &ctx).expect("desfazer deve restaurar");
+            self.restore_provenance(prior);
             self.project.revision = revision - 1;
             self.change_counter += 1;
             self.redo.push(a);

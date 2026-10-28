@@ -922,8 +922,13 @@ enum WalLine {
 pub struct Wal {
     dir: PathBuf,
     file: std::fs::File,
-    /// Testes: a próxima entrada falha depois de escrever parte da linha (prova o desfazer da linha parcial).
+    /// Testes: a próxima entrada falha depois de escrever parte da linha (prova o desfazer da linha parcial); com
+    /// `fail_recovery`, o desfazer da linha também falha.
     fail_next: bool,
+    fail_recovery: bool,
+    /// O diário não pôde voltar a um estado seguro depois de uma falha: nenhuma gravação nele até um Salvar recriá-lo
+    /// (CX11 C11-04). Guarda o motivo.
+    poisoned: Option<String>,
 }
 
 impl Wal {
@@ -932,7 +937,7 @@ impl Wal {
         let mut file = retry_io(|| std::fs::File::create(&path))?;
         writeln!(file, "{}", serde_json::to_string(&WalLine::Header { wal_base_revision: base_revision })?)?;
         file.sync_data()?;
-        Ok(Wal { dir: dir.to_path_buf(), file, fail_next: false })
+        Ok(Wal { dir: dir.to_path_buf(), file, fail_next: false, fail_recovery: false, poisoned: None })
     }
 
     /// Testes de atomicidade: faz a próxima `append` falhar no meio da linha.
@@ -941,19 +946,34 @@ impl Wal {
         self.fail_next = true;
     }
 
+    /// Testes: a próxima `append` falha no meio da linha E o desfazer da linha parcial também falha.
+    #[doc(hidden)]
+    pub fn fail_next_append_and_recovery_for_tests(&mut self) {
+        self.fail_next = true;
+        self.fail_recovery = true;
+    }
+
+    /// Motivo de o diário estar fechado para gravação (`None` = em ordem).
+    pub fn poisoned(&self) -> Option<&str> {
+        self.poisoned.as_deref()
+    }
+
     fn open_append(dir: &Path, keep_existing: bool, base_revision: u64) -> CoreResult<Self> {
         if !keep_existing || !dir.join(WAL_FILE).exists() {
             return Wal::create(dir, base_revision);
         }
         // escrita (não `append`): o desfazer de uma linha parcial precisa de `set_len`
         let file = retry_io(|| std::fs::OpenOptions::new().read(true).write(true).open(dir.join(WAL_FILE)))?;
-        Ok(Wal { dir: dir.to_path_buf(), file, fail_next: false })
+        Ok(Wal { dir: dir.to_path_buf(), file, fail_next: false, fail_recovery: false, poisoned: None })
     }
 
     /// Grava os blobs novos (para a recuperação ter o conteúdo) e depois a entrada. Os blobs vão com `sync` (arquivo e
     /// pasta) ANTES da linha do diário que os cita ser sincronizada: queda de energia depois do diário nunca deixa uma
     /// linha apontando para um blob vazio. Em paralelo, para a pincelada não esperar um `sync` de cada vez.
     pub fn append(&mut self, entry: &LogEntry, blobs: &mut BlobStore) -> CoreResult<()> {
+        if let Some(why) = &self.poisoned {
+            return Err(CoreError::Io(format!("o diário do projeto está fechado depois de uma falha de disco ({why}); salve o projeto (Salvar ou Salvar como) para recomeçar o diário")));
+        }
         let dirty = blobs.take_dirty();
         let items: Vec<_> = dirty.iter().filter_map(|h| blobs.get(h).map(|b| (h.clone(), b))).collect();
         let written = {
@@ -988,9 +1008,21 @@ impl Wal {
             self.file.write_all(text.as_bytes()).and_then(|_| self.file.sync_data())
         };
         if let Err(e) = written {
-            let _ = self.file.set_len(start);
-            let _ = self.file.seek(std::io::SeekFrom::End(0));
-            let _ = self.file.sync_data();
+            let fail_recovery = std::mem::take(&mut self.fail_recovery);
+            let recovered = if fail_recovery {
+                Err(std::io::Error::other("falha simulada ao desfazer a linha"))
+            } else {
+                self.file
+                    .set_len(start)
+                    .and_then(|_| self.file.seek(std::io::SeekFrom::End(0)))
+                    .and_then(|end| if end == start { Ok(()) } else { Err(std::io::Error::other(format!("o diário ficou com {end} bytes, esperado {start}"))) })
+                    .and_then(|_| self.file.sync_data())
+            };
+            if let Err(r) = recovered {
+                // não dá para garantir o que está no arquivo: nada mais é gravado nele (a próxima gravação poderia
+                // confirmar uma linha depois de lixo, ou um comando desfeito reapareceria ao reabrir)
+                self.poisoned = Some(format!("{e}; ao desfazer a linha: {r}"));
+            }
             return Err(e.into());
         }
         Ok(())

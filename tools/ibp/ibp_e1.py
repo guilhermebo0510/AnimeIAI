@@ -125,6 +125,17 @@ def run_case(name, exe, build_fn, frame, frames, reps, out):
         case["compute_ms"] = computes
         case["counts"] = p["counts"]
         aiai.call("INBETWEEN_DISCARD", {"proposal_id": p["proposal_id"]})
+        # pedido → primeira imagem completa (CX11): o quadro que atende o pedido calcula a prévia e o seguinte monta a
+        # geometria; o pior dos 4 primeiros quadros (CPU) de 20 pedidos frios, com a lista de avisos aberta
+        first = []
+        for _ in range(20):
+            aiai.call("UI_ACTION", {"action": "perf_samples", "op": "start"})
+            q = aiai.call("INBETWEEN_PREVIEW", {"cut": cut, "layer": layer, "frame": frame})
+            aiai.call("INPUT", {"events": [{"kind": "wait", "frames": 4}], "wait": True})
+            smp = aiai.call("UI_ACTION", {"action": "perf_samples", "op": "stop"})
+            first.append({"compute_ms": q["compute_ms"], "frames_ms": smp["ui_ms"][:4]})
+            aiai.call("INBETWEEN_DISCARD", {"proposal_id": q["proposal_id"]})
+        case["first_presentation"] = first
         for rep in range(reps):
             for cond in ("off", "on"):
                 pid = None
@@ -138,8 +149,10 @@ def run_case(name, exe, build_fn, frame, frames, reps, out):
                 if pid:
                     alive = (aiai.call("GET_UI_STATE")["editor"].get("ibp") or {}).get("proposal_id") == pid
                     case["conditions"][cond][-1]["preview_alive_at_end"] = alive
+                    if rep == reps - 1:
+                        # a foto é tirada com a prévia aberta (A7-05)
+                        aiai.call("SCREENSHOT", {"out": os.path.join(EVID, f"e1_{name}.png")})
                     aiai.call("INBETWEEN_DISCARD", {"proposal_id": pid})
-        aiai.call("SCREENSHOT", {"out": os.path.join(EVID, f"e1_{name}.png")})
     finally:
         proc.kill()
     out[name] = case
@@ -169,6 +182,9 @@ def main():
     for name in ("normal", "limite", "realista"):
         c = out[name]
         res[name] = {"counts": c["counts"], "compute_ms": summary(c["compute_ms"])}
+        fp = c.get("first_presentation", [])
+        worst = [max(x["frames_ms"]) if x["frames_ms"] else None for x in fp]
+        res[name]["first_presentation_ms"] = summary([w for w in worst if w is not None])
         for cond, runs in c["conditions"].items():
             ui = [x for r in runs for x in r["ui_ms"]]
             paint = [x for r in runs for x in r["ibp_paint_ms"]]
