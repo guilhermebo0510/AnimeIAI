@@ -419,6 +419,14 @@ impl EditItem {
     }
 }
 
+/// Marcador da linha do tempo (o M dos editores): quadro global e nome.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct EditMarker {
+    pub frame: u32,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+}
+
 /// Documento de edição v2.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct EditDoc {
@@ -438,6 +446,9 @@ pub struct EditDoc {
     /// Fade para o preto no fim do programa (quadros).
     #[serde(default)]
     pub fade_out_end: u32,
+    /// Marcadores da linha do tempo, em ordem de quadro.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markers: Vec<EditMarker>,
     /// v1 (convertido ao gravar): sequência de cortes [{cut, in_frame, out_frame?, transition_in?}].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub clips: Vec<EditClip>,
@@ -455,7 +466,7 @@ fn d_credits_s() -> f32 {
 
 impl Default for EditDoc {
     fn default() -> Self {
-        EditDoc { version: EDIT_VERSION, tracks: Vec::new(), items: Vec::new(), credits: Vec::new(), credits_seconds: 6.0, fade_out_end: 0, clips: Vec::new(), subtitles: Vec::new() }
+        EditDoc { version: EDIT_VERSION, tracks: Vec::new(), items: Vec::new(), credits: Vec::new(), credits_seconds: 6.0, fade_out_end: 0, markers: Vec::new(), clips: Vec::new(), subtitles: Vec::new() }
     }
 }
 
@@ -467,6 +478,23 @@ pub struct Timeline {
 }
 
 impl EditDoc {
+    /// Marcador no quadro: tira se já há um ali, senão põe (nome "M<n>"). Devolve se ficou um marcador.
+    pub fn toggle_marker(&mut self, frame: u32) -> bool {
+        if let Some(i) = self.markers.iter().position(|m| m.frame == frame) {
+            self.markers.remove(i);
+            return false;
+        }
+        let n = self.markers.len() + 1;
+        self.markers.push(EditMarker { frame, name: format!("M{n}") });
+        self.markers.sort_by_key(|m| m.frame);
+        true
+    }
+
+    /// O marcador seguinte (depois de `frame`) ou o anterior.
+    pub fn marker_near(&self, frame: u32, forward: bool) -> Option<u32> {
+        if forward { self.markers.iter().map(|m| m.frame).find(|f| *f > frame) } else { self.markers.iter().rev().map(|m| m.frame).find(|f| *f < frame) }
+    }
+
     /// Documento vazio com as trilhas padrão: V1, V2, A1, A2, A3, S1.
     pub fn with_default_tracks() -> EditDoc {
         let mut d = EditDoc::default();

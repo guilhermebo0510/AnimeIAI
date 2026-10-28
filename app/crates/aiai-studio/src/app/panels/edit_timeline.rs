@@ -81,6 +81,7 @@ impl View {
 /// Pontos onde o imã gruda: pontas dos itens (fora `except`), cabeçote e zero.
 fn snap_points(doc: &EditDoc, except: &[u32], playhead: u32) -> Vec<u32> {
     let mut v = vec![0, playhead];
+    v.extend(doc.markers.iter().map(|m| m.frame));
     for it in doc.items.iter().filter(|i| !except.contains(&i.id)) {
         v.push(it.start);
         v.push(it.end());
@@ -200,8 +201,36 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
         let r = Rect::from_min_max(egui::pos2(view.x(tl.credits_start as f32), ruler.bottom() - 4.0), egui::pos2(view.x(tl.total as f32), ruler.bottom()));
         rp.rect_filled(r, 0.0, t.text_dim.gamma_multiply(0.5));
     }
+    // marcadores: bandeirinha na régua com o nome e uma linha fina pelas trilhas
+    let marker_col = Color32::from_rgb(232, 170, 60);
+    let mut marker_hit: Option<u32> = None;
+    for m in &view_doc.markers {
+        let x = view.x(m.frame as f32);
+        if x < ruler.left() - 40.0 || x > ruler.right() {
+            continue;
+        }
+        let flag = vec![egui::pos2(x, ruler.bottom()), egui::pos2(x - 5.0, ruler.bottom() - 8.0), egui::pos2(x + 5.0, ruler.bottom() - 8.0)];
+        rp.add(egui::Shape::convex_polygon(flag, marker_col, Stroke::NONE));
+        rp.text(egui::pos2(x + 6.0, ruler.top() + 1.0), egui::Align2::LEFT_TOP, &m.name, FontId::proportional(9.5), marker_col);
+        painter.with_clip_rect(rows_area).vline(x, rows_area.y_range(), Stroke::new(1.0, marker_col.gamma_multiply(0.35)));
+        let hit = Rect::from_center_size(egui::pos2(x, ruler.bottom() - 5.0), egui::vec2(12.0, 12.0));
+        env.note(format!("edit:marker:{}", m.frame), hit);
+        if ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| hit.contains(p)) {
+            marker_hit = Some(m.frame);
+        }
+    }
     let rr = ui.interact(ruler, EId::new("edit_ruler"), Sense::click_and_drag());
     env.note("edit:ruler", ruler);
+    // clique direito num marcador tira o marcador
+    if let (Some(mf), true) = (marker_hit, rr.secondary_clicked()) {
+        edit::modify(env, |d, _| {
+            d.toggle_marker(mf);
+            true
+        });
+    }
+    if let Some(mf) = marker_hit {
+        rr.clone().on_hover_text(format!("{} · {}", tr("editing.marker.tip"), edit::timecode(mf, fps)));
+    }
     if rr.drag_started() || rr.clicked() {
         env.ed.edit.stop_play();
         env.ed.edit.focus = Focus::Program;
@@ -851,6 +880,9 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
         fit: bool,
         esc: bool,
         caption: bool,
+        marker: bool,
+        next_marker: bool,
+        prev_marker: bool,
     }
     let k = ctx.input_mut(|i| {
         let plain = |i: &mut egui::InputState, key: K| crate::keymap::Chord::plain(key).take(i);
@@ -890,6 +922,9 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
             fit: plain(i, K::Backslash),
             esc: plain(i, K::Escape),
             caption: plain(i, K::T),
+            prev_marker: crate::keymap::Chord::ctrl_shift(K::M).take(i),
+            next_marker: crate::keymap::Chord::shift(K::M).take(i),
+            marker: plain(i, K::M),
         }
     });
     let st = &mut env.ed.edit;
@@ -987,6 +1022,19 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
         super::edit_panels::place_from_source(env, k.overwrite);
     }
     let f = env.ed.edit.frame;
+    // marcadores: M põe/tira no cabeçote; Shift+M vai ao próximo, Ctrl+Shift+M ao anterior
+    if k.marker {
+        edit::modify(env, |d, _| {
+            d.toggle_marker(f);
+            true
+        });
+    }
+    if k.next_marker || k.prev_marker {
+        if let Some(m) = o.doc.marker_near(f, k.next_marker) {
+            env.ed.edit.stop_play();
+            env.ed.edit.frame = m;
+        }
+    }
     if k.add_edit {
         edit::modify(env, |d, _| {
             let ids: Vec<u32> = d.items.iter().filter(|i| i.source.track_kind() != TrackKind::Subtitle && i.start < f && f < i.end()).map(|i| i.id).collect();

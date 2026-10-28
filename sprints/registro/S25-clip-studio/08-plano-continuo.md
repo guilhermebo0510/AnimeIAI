@@ -62,7 +62,7 @@ Auditoria 2: as 8 propostas estão feitas; relidos os `AUDITORIA_V2*.md` (28/10)
 
 ## 5. Revisão das workspaces de Edição, Áudio e Roteiro
 
-- [ ] Pesquisar o que melhorar e implementar
+- [x] Pesquisar o que melhorar e implementar — `12-revisao-edicao-audio-roteiro.md` (ondas e marcadores na Edição, multipista que cabe no painel, Ctrl+Enter, Fountain e elenco no Roteiro)
 
 ## 6. Por último: pasta `ferramenta de Ia`
 

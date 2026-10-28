@@ -1824,6 +1824,7 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("audio.mt.h_big", "G", "L"),
     ("audio.mt.zoom", "zoom", "zoom"),
     ("audio.mt.zoom.fit", "ajustar ao corte", "fit to cut"),
+    ("editing.marker.tip", "Marcador (M põe/tira no cabeçote, Shift+M vai ao próximo, Ctrl+Shift+M ao anterior; clique direito tira)", "Marker (M adds/removes at the playhead, Shift+M goes to the next, Ctrl+Shift+M to the previous; right-click removes)"),
     ("script.ctrl_enter.tip", "Num campo do roteiro, Ctrl+Enter cria o próximo elemento logo abaixo (fala puxa a fala do outro personagem da conversa)", "In a script field, Ctrl+Enter creates the next element right below (a line brings the other character's line)"),
     ("script.cast", "Personagens", "Characters"),
     ("script.cast.name", "Personagem", "Character"),

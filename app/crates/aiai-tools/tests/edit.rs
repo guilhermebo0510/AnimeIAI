@@ -341,3 +341,18 @@ fn srt_and_vtt_round_trip() {
     assert!(checks[0].issues.is_empty(), "{:?}", checks[0]);
     assert!(checks[2].issues.contains(&captions::CaptionIssue::TooShort));
 }
+
+#[test]
+fn markers_toggle_sort_and_navigate() {
+    let mut d = EditDoc::default();
+    assert!(d.toggle_marker(48));
+    assert!(d.toggle_marker(12));
+    assert_eq!(d.markers.iter().map(|m| m.frame).collect::<Vec<_>>(), vec![12, 48], "em ordem de quadro");
+    assert_eq!(d.marker_near(20, true), Some(48));
+    assert_eq!(d.marker_near(20, false), Some(12));
+    assert_eq!(d.marker_near(48, true), None);
+    assert!(!d.toggle_marker(12), "no mesmo quadro tira");
+    let back: EditDoc = serde_json::from_str(&serde_json::to_string(&d).unwrap()).unwrap();
+    assert_eq!(back.markers, d.markers);
+    assert!(!serde_json::to_string(&EditDoc::default()).unwrap().contains("markers"), "sem marcadores não sai no arquivo");
+}
