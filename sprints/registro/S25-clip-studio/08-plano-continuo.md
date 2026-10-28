@@ -27,7 +27,7 @@ Status em `06-status-auditoria-1.md` e `07-status-auditoria-2.md`. Em aberto na 
 - [x] 4.8e IA pontual de traço (só assistência determinística; sem IA generativa de imagem) — linha fantasma + embelezar
 - [x] 4.1c–f mesa digitalizadora (WM_POINTER nativo, inclinação, borracha traseira, coalescência; WinTab fica de fora)
 - [x] 1.7B / 1.7C2 decisões do usuário (1.7B virou opção; 1.7C2 registrada)
-- [ ] 3.1–3.11 roteiro do curta (rig e cenas) — scripts de produção. Adiado para depois da seção 5: é arte no projeto real do usuário; vai ser feito numa cópia de ensaio (`AIAI_CURTA_PROJ`/`AIAI_CURTA_IDS`) com renders para ele aprovar
+- [x] 3.1–3.11 roteiro do curta (rig e cenas) — feito no rig e ensaiado numa cópia do projeto (renders antes/depois em `evidencias/S25/curta/`, a aprovar): 3.2/3.3 cabelo e busto em 3/4, 3.9 satsuei, 3.10 blush/cintilância/respiração, 3.8 braços em arco e flare, 3.11 passagem C005→C006 (+ transição dupla exposição). 3.1 (perfil) e 3.7 (3 planos de atmosfera) ficam para a próxima rodada de produção com o usuário
 
 Auditoria 2: as 8 propostas estão feitas; relidos os `AUDITORIA_V2*.md` (28/10): os 35 IDs estão no `07-status` (F-NLE-01..03
 = F01, F-REC-04 = F02, F-REC-05 na proposta 6).
