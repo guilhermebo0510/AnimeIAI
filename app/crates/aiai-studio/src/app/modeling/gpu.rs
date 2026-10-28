@@ -171,7 +171,9 @@ fn object_key(o: &doc::Object3d) -> u64 {
     let mods = serde_json::to_string(&o.modifiers).unwrap_or_default();
     // a máscara da escultura não entra no `content_hash` da malha, mas muda a cor do sólido
     let mask = o.mesh.verts.iter().enumerate().filter(|(_, v)| v.mask != 0.0).fold(0u64, |h, (i, v)| h.rotate_left(5) ^ (i as u64).wrapping_mul(0x9E37_79B9) ^ v.mask.to_bits() as u64);
-    let mut parts = vec![o.mesh.content_hash(), hash_str(&mods), o.shading as u64, mask];
+    // normais personalizadas também ficam fora do `content_hash`
+    let custom = o.mesh.faces.iter().flat_map(|f| f.corners.iter()).filter_map(|c| c.normal).fold(0u64, |h, n| h.rotate_left(7) ^ n.x.to_bits() as u64 ^ ((n.y.to_bits() as u64) << 21) ^ ((n.z.to_bits() as u64) << 42));
+    let mut parts = vec![o.mesh.content_hash(), hash_str(&mods), o.shading as u64, mask, custom];
     parts.extend(f32s(&o.color));
     fnv(&parts)
 }

@@ -306,6 +306,49 @@ fn uv_host<R>(env: &mut Env, f: impl FnOnce(&mut mdl::uv::UvHost) -> R) -> R {
     r
 }
 
+/// Normais personalizadas (sombra cel do rosto): a partir do centro, da vista ou de outro objeto, média, suavizar.
+fn normals_section(env: &mut Env, ui: &mut Ui) {
+    use crate::app::modeling::normals::{self as nm, NormalOp};
+    use crate::app::modeling::uv::l;
+    egui::CollapsingHeader::new(RichText::new(l("Normais (sombra cel)", "Normals (cel shading)")).strong()).id_salt("mdl_normals").default_open(false).show(ui, |ui| {
+        let t = env.t;
+        dim_label(ui, &t, l("Nas faces escolhidas (sem seleção: a malha toda).", "On the selected faces (no selection: the whole mesh)."));
+        let a = env.ed.modeling.active;
+        let names: Vec<(usize, String)> = env.ed.modeling.doc.objects.iter().enumerate().filter(|(i, _)| Some(*i) != a).map(|(i, o)| (i, o.name.clone())).collect();
+        let nu = &mut env.ed.modeling.normals_ui;
+        ui.horizontal(|ui| {
+            ui.label(l("Força", "Amount"));
+            ui.add(egui::Slider::new(&mut nu.factor, 0.0..=1.0).max_decimals(2));
+        });
+        ui.horizontal(|ui| {
+            ui.label(l("Origem", "Source"));
+            let cur = nu.source.and_then(|s| names.iter().find(|(i, _)| *i == s)).map(|(_, n)| n.clone()).unwrap_or_else(|| "—".into());
+            egui::ComboBox::from_id_salt("mdl_normals_src").selected_text(cur).show_ui(ui, |ui| {
+                for (i, n) in &names {
+                    ui.selectable_value(&mut nu.source, Some(*i), n);
+                }
+            });
+        });
+        let mut run = None;
+        ui.horizontal_wrapped(|ui| {
+            for op in NormalOp::ALL {
+                let r = ui.button(op.label()).on_hover_text(op.tip());
+                env.notes.push((format!("mdl:normals.{}", op.key()), r.rect));
+                if r.clicked() {
+                    run = Some(op);
+                }
+            }
+        });
+        if let Some(op) = run {
+            let st = env.ed.modeling.normals_ui;
+            match nm::run(&mut env.ed.modeling, op, st) {
+                Ok(n) => env.ed.notify(format!("{}: {n}", op.label())),
+                Err(e) => env.ed.notify(e),
+            }
+        }
+    });
+}
+
 /// Painel Editor de UV.
 pub(crate) fn uv_editor(env: &mut Env, ui: &mut Ui, body: Rect) {
     let t = env.t;
@@ -338,6 +381,7 @@ pub(crate) fn properties(env: &mut Env, ui: &mut Ui, body: Rect) {
             adjust_last(env, ui);
             egui::CollapsingHeader::new(egui::RichText::new(tr("mdl.ops_catalog")).strong()).id_salt("mdl_ops_catalog").default_open(true).show(ui, |ui| operators(env, ui));
             uv_host(env, |h| h.inspector_uv(ui));
+            normals_section(env, ui);
         }
         let o = env.ed.modeling.doc.objects[a].clone();
         section(ui, &t, "mdl.object");

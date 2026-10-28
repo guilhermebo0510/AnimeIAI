@@ -335,6 +335,8 @@ impl StudioApp {
     /// (multivista da Modelagem).
     /// uv {edit?: bool, select_mode?: vertex|edge|face, select?: all|none|tree_seams, op?: mark_seam|unwrap|pack|…}
     /// (editor de UV da Modelagem).
+    /// normals {op: from_center|from_view|from_object|average|smooth|reset, factor?, source? (índice do objeto)}
+    /// (normais personalizadas da Modelagem).
     /// sculpt {mode?: bool, brush?, radius? (px), strength?, symmetry? [x,y,z], invert?, paths? [[[x,y]..]..] (0..1 da vista
     /// ativa), op?: mask_invert|mask_clear|smooth_all|voxel_remesh|symmetrize} (escultura da Modelagem).
     /// Apelidos aceitos: set_tool = select_tool; open_panel = toggle_panel com visible=true.
@@ -365,6 +367,7 @@ impl StudioApp {
             "modeling_view" => Some(&["layout", "slot", "view"]),
             "sculpt" => Some(&["mode", "brush", "radius", "strength", "invert", "paths", "op", "symmetry"]),
             "uv" => Some(&["edit", "select", "op", "select_mode"]),
+            "normals" => Some(&["op", "factor", "source"]),
             _ => None,
         };
         if let Some(keys) = keys {
@@ -525,6 +528,22 @@ impl StudioApp {
                 json!({ "panel": key, "visible": target, "workspace": ws.key(), "inserted": found.is_none() && target })
             }
             "dock" => self.bridge_dock(params)?,
+            "normals" => {
+                // normais personalizadas da Modelagem (escopo = seleção do modo Edição; sem seleção, a malha toda)
+                use super::modeling::normals::{self as nm, NormalOp};
+                let ms = &mut self.ed.modeling;
+                let op = text(&m, &["op"]).ok_or_else(|| BridgeError::invalid_params("normals exige 'op'"))?;
+                let op = NormalOp::from_key(op).ok_or_else(|| BridgeError::invalid_params(format!("op desconhecida: {op} ({})", NormalOp::ALL.iter().map(|o| o.key()).collect::<Vec<_>>().join(", "))))?;
+                let mut st = ms.normals_ui;
+                if let Some(f) = m.get("factor").and_then(Value::as_f64) {
+                    st.factor = (f as f32).clamp(0.0, 1.0);
+                }
+                if let Some(s) = m.get("source").and_then(Value::as_u64) {
+                    st.source = Some(s as usize);
+                }
+                let n = nm::run(ms, op, st).map_err(BridgeError::failed)?;
+                json!({ "op": op.key(), "corners": n, "history": ms.history.labels() })
+            }
             "uv" => {
                 // UV da Modelagem: modo Edição, seleção (all | none | tree_seams = a cruz que abre a malha numa ilha) e
                 // uma ação do editor de UV (mark_seam, unwrap, pack, project_box…)

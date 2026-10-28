@@ -11,6 +11,7 @@ pub mod history;
 pub mod mesh;
 pub mod modifiers;
 pub mod normals;
+pub mod normals_tools;
 pub mod ops;
 pub mod primitives;
 pub mod sculpt;

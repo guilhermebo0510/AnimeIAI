@@ -18,6 +18,7 @@ mod gpu;
 pub(crate) mod keys;
 mod modal;
 pub(crate) mod multiview;
+pub(crate) mod normals;
 mod nav_gizmo;
 mod picking;
 pub(crate) mod sculpt;
@@ -135,6 +136,8 @@ pub(crate) struct ModelingState {
     pub sculpt: sculpt::SculptState,
     /// Editor de UV (modo Edição).
     pub uv: uv::UvState,
+    /// Ajustes das normais personalizadas.
+    pub normals_ui: normals::NormalsUi,
     pub shade: ViewShade,
     pub snap: bool,
     pub xray: bool,
@@ -188,6 +191,7 @@ impl Default for ModelingState {
             views: multiview::MultiView::default(),
             sculpt: sculpt::SculptState::default(),
             uv: uv::UvState::default(),
+            normals_ui: normals::NormalsUi::default(),
             shade: ViewShade::Toon,
             snap: false,
             xray: false,

@@ -14,6 +14,7 @@ ANIGO", é do mesmo commit). Código do mesmo autor (regra 4). Em todos: `anigo_
 | `bvh.rs`, `sculpt/automask.rs`, `brush.rs`, `dyntopo.rs`, `falloff.rs`, `stroke.rs`, `symmetry.rs`, `voxel_remesh.rs`, `sculpt/mod.rs` | nenhuma (28/10, escultura) |
 | `history.rs` (só `PositionDelta`) | acrescentado ao nosso `history.rs` (que é o `History<T>` do estúdio) |
 | `uv/mod.rs`, `metrics.rs`, `pack.rs`, `project.rs`, `seams.rs`, `unwrap.rs` | nenhuma (28/10, UV) |
+| `normals_tools.rs` | nenhuma (28/10, normais personalizadas) |
 | `ops/mod.rs`, `modifiers/mod.rs` | só a lista de módulos (mais `catalog` e `slide`, do AnimeIAI) |
 
 ## Copiados de `crates/anigo-studio/src`
