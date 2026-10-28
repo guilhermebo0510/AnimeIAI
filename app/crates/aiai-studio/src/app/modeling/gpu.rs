@@ -70,6 +70,8 @@ pub(crate) struct FrameIn<'a> {
     pub sel: &'a Selection,
     pub cam: &'a OrbitCamera,
     pub size_px: (u32, u32),
+    /// Vista (multivista): cada uma tem o seu alvo do Workbench e a sua textura cel.
+    pub slot: usize,
     pub ppp: f32,
     pub shade: ViewShade,
     pub xray: bool,
@@ -102,10 +104,12 @@ struct Keys {
     objects: Vec<u64>,
 }
 
+const SLOTS: usize = workbench::MAX_VIEW_SLOTS;
+
 struct Cel {
     renderer: aiai_3d_render::HeadlessRenderer,
-    texture: Option<(wgpu::Texture, (u32, u32))>,
-    tex_id: Option<egui::TextureId>,
+    texture: [Option<(wgpu::Texture, (u32, u32))>; SLOTS],
+    tex_id: [Option<egui::TextureId>; SLOTS],
     scene: Scene,
     node_keys: Vec<u64>,
     last_error: Option<String>,
@@ -113,11 +117,13 @@ struct Cel {
 
 pub(crate) struct ModelingGpu {
     wb: Workbench,
-    wb_tex: Option<egui::TextureId>,
+    wb_tex: [Option<egui::TextureId>; SLOTS],
     cache: Vec<Cached>,
     cel: Option<Cel>,
     /// Assinatura do último quadro desenhado (nada mudou = reaproveita as texturas).
-    last_sig: u64,
+    last_sig: [u64; SLOTS],
+    /// VRAM de cada vista (alvos do Workbench + textura cel).
+    slot_bytes: [u64; SLOTS],
     keys: Keys,
     /// Revisão (e sombreamento) com que os buffers do Workbench foram montados: só a câmera mudou = só uniformes.
     synced: Option<(u64, ViewShade)>,
@@ -174,33 +180,34 @@ impl ModelingGpu {
             Ok(renderer) => {
                 let mut scene = Scene::new_empty();
                 scene.background_color = [0.0; 4];
-                Some(Cel { renderer, texture: None, tex_id: None, scene, node_keys: Vec::new(), last_error: None })
+                Some(Cel { renderer, texture: Default::default(), tex_id: [None; SLOTS], scene, node_keys: Vec::new(), last_error: None })
             }
             Err(e) => {
                 tracing::warn!("Modelagem: prévia cel indisponível ({e}); o viewport usa o sólido do Workbench");
                 None
             }
         };
-        Ok(ModelingGpu { wb, wb_tex: None, cache: Vec::new(), cel, last_sig: 0, keys: Keys::default(), synced: None, last_error: None })
+        Ok(ModelingGpu { wb, wb_tex: [None; SLOTS], cache: Vec::new(), cel, last_sig: [0; SLOTS], slot_bytes: [0; SLOTS], keys: Keys::default(), synced: None, last_error: None })
     }
 
     /// Solta as texturas e os buffers (orçamento de VRAM); voltam no próximo quadro.
     fn release(&mut self, rs: &egui_wgpu::RenderState) {
         let mut r = rs.renderer.write();
-        if let Some(t) = self.wb_tex.take() {
+        for t in self.wb_tex.iter_mut().filter_map(Option::take) {
             r.free_texture(&t);
         }
         if let Some(c) = self.cel.as_mut() {
-            if let Some(t) = c.tex_id.take() {
+            for t in c.tex_id.iter_mut().filter_map(Option::take) {
                 r.free_texture(&t);
             }
-            c.texture = None;
+            c.texture = Default::default();
             c.renderer.release_cached_targets();
         }
         drop(r);
         self.wb.release_targets();
         self.cache.clear();
-        self.last_sig = 0;
+        self.last_sig = [0; SLOTS];
+        self.slot_bytes = [0; SLOTS];
         self.synced = None;
         GPU_BYTES.store(0, Ordering::Relaxed);
     }
@@ -324,15 +331,17 @@ impl ModelingGpu {
         let t0 = std::time::Instant::now();
         let (w, h) = (f.size_px.0.max(1), f.size_px.1.max(1));
         let c = f.cam;
+        let slot = f.slot.min(SLOTS - 1);
+        self.wb.set_slot(slot);
         let mut sig = vec![w as u64, h as u64, f.shade as u64, f.xray as u64, f.grid as u64, f.edit as u64, f.sel_mode as u64, f.revision, f.active.map_or(u64::MAX, |a| a as u64), c.orthographic as u64];
         sig.extend(f32s(&[c.target.x, c.target.y, c.target.z, c.yaw, c.pitch, c.distance, c.fov_y, f.ppp]));
         sig.extend(f32s(&f.bg));
         let sig = fnv(&sig);
-        let mut out = FrameOut { cel: self.cel.as_ref().and_then(|c| c.tex_id), overlay: self.wb_tex, cpu_ms: 0.0, redrawn: false };
-        if sig == self.last_sig && out.overlay.is_some() && (!f.shade.is_cel() || out.cel.is_some()) {
+        let mut out = FrameOut { cel: self.cel.as_ref().and_then(|c| c.tex_id[slot]), overlay: self.wb_tex[slot], cpu_ms: 0.0, redrawn: false };
+        if sig == self.last_sig[slot] && out.overlay.is_some() && (!f.shade.is_cel() || out.cel.is_some()) {
             return out;
         }
-        self.last_sig = sig;
+        self.last_sig[slot] = sig;
         self.last_error = None;
         self.refresh_keys(f);
         // Workbench: Sólido/Arame com fundo; Cel = só sobreposições por cima da prévia cel
@@ -357,22 +366,22 @@ impl ModelingGpu {
         let items: Vec<DrawItem> = self.cache.iter().map(|c| DrawItem { mesh: &c.mesh }).collect();
         let recreated = self.wb.render((w, h), f.cam, &items, &settings);
         drop(items);
-        if recreated || self.wb_tex.is_none() {
+        if recreated || self.wb_tex[slot].is_none() {
             let mut r = rs.renderer.write();
-            if let Some(old) = self.wb_tex.take() {
+            if let Some(old) = self.wb_tex[slot].take() {
                 r.free_texture(&old);
             }
             if let Some(view) = self.wb.output_view() {
-                self.wb_tex = Some(r.register_native_texture(&rs.device, view, wgpu::FilterMode::Linear));
+                self.wb_tex[slot] = Some(r.register_native_texture(&rs.device, view, wgpu::FilterMode::Linear));
             }
         }
-        out.overlay = self.wb_tex;
+        out.overlay = self.wb_tex[slot];
         // prévia cel
         if use_cel {
             if let Some(cel) = self.cel.as_mut() {
                 let aspect = w as f32 / h as f32;
                 Self::sync_cel(cel, f, &self.keys.objects, aspect, h);
-                let fresh = cel.texture.as_ref().is_none_or(|t| t.1 != (w, h));
+                let fresh = cel.texture[slot].as_ref().is_none_or(|t| t.1 != (w, h));
                 if fresh {
                     let tex = rs.device.create_texture(&wgpu::TextureDescriptor {
                         label: Some("mdl cel"),
@@ -384,10 +393,10 @@ impl ModelingGpu {
                         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                         view_formats: &[],
                     });
-                    cel.texture = Some((tex, (w, h)));
+                    cel.texture[slot] = Some((tex, (w, h)));
                 }
                 let has_mesh = cel.scene.nodes.iter().any(|n| n.mesh.is_some());
-                if let Some((tex, _)) = &cel.texture {
+                if let Some((tex, _)) = &cel.texture[slot] {
                     let r = if has_mesh {
                         cel.renderer.render_to_texture(&cel.scene, tex).map(|_| ())
                     } else {
@@ -408,27 +417,28 @@ impl ModelingGpu {
                     if let Err(e) = r {
                         cel.last_error = Some(format!("{e:#}"));
                     }
-                    if fresh || cel.tex_id.is_none() {
+                    if fresh || cel.tex_id[slot].is_none() {
                         let view = tex.create_view(&Default::default());
                         let mut rr = rs.renderer.write();
-                        if let Some(old) = cel.tex_id.take() {
+                        if let Some(old) = cel.tex_id[slot].take() {
                             rr.free_texture(&old);
                         }
-                        cel.tex_id = Some(rr.register_native_texture(&rs.device, &view, wgpu::FilterMode::Linear));
+                        cel.tex_id[slot] = Some(rr.register_native_texture(&rs.device, &view, wgpu::FilterMode::Linear));
                     }
                 }
                 if let Some(e) = &cel.last_error {
                     self.last_error = Some(format!("cel: {e}"));
                 }
-                out.cel = cel.tex_id;
+                out.cel = cel.tex_id[slot];
             }
         } else {
             out.cel = None;
         }
         // VRAM: alvo MSAA 4× + profundidade 4× + resolve do Workbench, mais a textura cel e os alvos do renderer
         let px = w as u64 * h as u64;
-        let cel_bytes = self.cel.as_ref().map_or(0, |c| c.renderer.cached_gpu_bytes() + if c.texture.is_some() { px * 4 } else { 0 });
-        GPU_BYTES.store(px * 4 * (4 + 4 + 1) + cel_bytes, Ordering::Relaxed);
+        self.slot_bytes[slot] = px * 4 * (4 + 4 + 1) + self.cel.as_ref().map_or(0, |c| if c.texture[slot].is_some() { px * 4 } else { 0 });
+        let renderer_bytes = self.cel.as_ref().map_or(0, |c| c.renderer.cached_gpu_bytes());
+        GPU_BYTES.store(self.slot_bytes.iter().sum::<u64>() + renderer_bytes, Ordering::Relaxed);
         out.cpu_ms = t0.elapsed().as_secs_f32() * 1000.0;
         out.redrawn = true;
         out
@@ -477,7 +487,7 @@ impl GpuSlot {
     pub(crate) fn release(&mut self) -> bool {
         match (self.gpu.as_mut(), RENDER_STATE.get()) {
             (Some(g), Some(rs)) => {
-                let had = g.wb_tex.is_some() || g.cel.as_ref().is_some_and(|c| c.tex_id.is_some());
+                let had = g.wb_tex.iter().any(Option::is_some) || g.cel.as_ref().is_some_and(|c| c.tex_id.iter().any(Option::is_some));
                 g.release(rs);
                 had
             }
@@ -548,7 +558,7 @@ mod tests {
         let renderer = aiai_3d_render::HeadlessRenderer::from_device(std::sync::Arc::new(device.clone()), std::sync::Arc::new(queue.clone()), info).unwrap();
         let mut scene = Scene::new_empty();
         scene.background_color = [0.0; 4];
-        let mut cel = Cel { renderer, texture: None, tex_id: None, scene, node_keys: Vec::new(), last_error: None };
+        let mut cel = Cel { renderer, texture: Default::default(), tex_id: [None; SLOTS], scene, node_keys: Vec::new(), last_error: None };
         let tex = device.create_texture(&wgpu::TextureDescriptor { label: Some("bench cel"), size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 }, mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2, format: aiai_3d_render::offscreen_color_format(), usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[] });
         let keys: Vec<u64> = d.objects.iter().map(object_key).collect();
         let items_data: Vec<GpuMesh> = d.objects.iter().map(|o| wb.upload(&build_draw_data_eval(&o.mesh, &o.evaluated().unwrap(), &BuildOptions::default()), o.matrix(), [1.0; 4])).collect();
@@ -557,7 +567,7 @@ mod tests {
         for k in 0..n {
             cam.zoom(if k % 2 == 0 { 0.97 } else { 1.03 });
             let t = Instant::now();
-            let f = FrameIn { doc: &d, active: Some(0), edit: false, sel_mode: SelectMode::Face, sel: &sel, cam: &cam, size_px: (w, h), ppp: 1.0, shade: ViewShade::Toon, xray: false, grid: true, bg: [0.1, 0.1, 0.12, 1.0], revision: 1 };
+            let f = FrameIn { doc: &d, active: Some(0), edit: false, sel_mode: SelectMode::Face, sel: &sel, cam: &cam, size_px: (w, h), slot: 0, ppp: 1.0, shade: ViewShade::Toon, xray: false, grid: true, bg: [0.1, 0.1, 0.12, 1.0], revision: 1 };
             ModelingGpu::sync_cel(&mut cel, &f, &keys, w as f32 / h as f32, h);
             cel.renderer.render_to_texture(&cel.scene, &tex).unwrap();
             let items: Vec<DrawItem> = items_data.iter().map(|m| DrawItem { mesh: m }).collect();

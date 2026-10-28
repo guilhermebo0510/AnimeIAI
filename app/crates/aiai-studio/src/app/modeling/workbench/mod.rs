@@ -67,6 +67,28 @@ impl ObjectUniform {
     }
 }
 
+/// Plano da grade para o shader: 0 perspectiva e 1 ortográfica livre (chão), 2 ortográfica de frente/costas (XY),
+/// 3 de lado (ZY). Topo e base continuam no chão.
+fn grid_plane(camera: &OrbitCamera) -> f32 {
+    use std::f32::consts::{FRAC_PI_2, PI, TAU};
+    if !camera.orthographic {
+        return 0.0;
+    }
+    const EPS: f32 = 0.02;
+    if camera.pitch.abs() >= EPS {
+        return 1.0;
+    }
+    let yaw = camera.yaw.rem_euclid(TAU);
+    let near = |a: f32, b: f32| (a - b).abs() < EPS || (a - b).abs() > TAU - EPS;
+    if near(yaw, 0.0) || near(yaw, PI) {
+        2.0
+    } else if near(yaw, FRAC_PI_2) || near(yaw, TAU - FRAC_PI_2) {
+        3.0
+    } else {
+        1.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ShadingMode {
     #[default]
@@ -557,7 +579,7 @@ impl Workbench {
                 // desloca overlays levemente para a câmera (evita z-fighting com o sólido)
                 if camera.orthographic { 0.0004 } else { 0.00008 },
                 settings.grid_scale.max(1e-4),
-                camera.orthographic as u32 as f32,
+                grid_plane(camera),
             ],
             bg_top: self.background_top,
             bg_bottom: self.background_bottom,

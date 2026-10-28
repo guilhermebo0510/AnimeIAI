@@ -9,7 +9,8 @@ struct Globals {
     eye: vec4<f32>,
     // x = largura px, y = altura px, z = 1/largura, w = 1/altura
     viewport: vec4<f32>,
-    // x = xray (0/1), y = bias de profundidade do overlay (clip), z = escala do grid, w = ortográfica (0/1)
+    // x = xray (0/1), y = bias de profundidade do overlay (clip), z = escala do grid,
+    // w = 0 perspectiva / 1 ortográfica (grade no chão), 2 ortográfica de frente (grade XY), 3 de lado (grade ZY)
     params: vec4<f32>,
     bg_top: vec4<f32>,
     bg_bottom: vec4<f32>,
@@ -245,31 +246,44 @@ fn fs_grid(i: GridOut) -> GridFrag {
     let n = n4.xyz / n4.w;
     let f = f4.xyz / f4.w;
     let dir = f - n;
-    if (abs(dir.y) < 1e-7) { discard; }
-    let t = -n.y / dir.y;
+    // plano da grade: o chão (y = 0) ou, nas vistas ortográficas alinhadas, o plano da vista (z = 0 ou x = 0)
+    let plane = g.params.w;
+    var k = 1; // eixo normal ao plano (0 = x, 1 = y, 2 = z)
+    if (plane > 2.5) { k = 0; } else if (plane > 1.5) { k = 2; }
+    let dk = dir[k];
+    if (abs(dk) < 1e-7) { discard; }
+    let t = -n[k] / dk;
     if (t < 0.0) { discard; }
     let hit = n + dir * t;
     let clip = g.view_proj * vec4(hit, 1.0);
     var out: GridFrag;
     out.depth = clip.z / clip.w;
     if (out.depth < 0.0 || out.depth > 1.0) { discard; }
+    // grade da vista alinhada fica atrás de tudo (como no Blender), não corta o modelo ao meio
+    if (plane > 1.5) { out.depth = 0.99999; }
+    // coordenadas no plano: (u, v) e as cores dos dois eixos que passam nele
+    var uv = hit.xz;
+    var cu = vec3(0.90, 0.25, 0.28); // linha v = 0 (eixo X no chão)
+    var cv = vec3(0.30, 0.52, 0.95); // linha u = 0 (eixo Z no chão)
+    if (k == 2) { uv = hit.xy; cu = vec3(0.90, 0.25, 0.28); cv = vec3(0.45, 0.80, 0.30); }
+    if (k == 0) { uv = hit.zy; cu = vec3(0.30, 0.52, 0.95); cv = vec3(0.45, 0.80, 0.30); }
 
     let eye_dist = length(g.eye.xyz - hit);
     let ortho_extent = max(length(dir), 1.0);
-    let fade_dist = select(60.0 * g.params.z, 400.0, g.params.w > 0.5);
+    let fade_dist = select(60.0 * g.params.z, 400.0, plane > 0.5);
     let fade = 1.0 - clamp(eye_dist / fade_dist, 0.0, 1.0);
 
-    let minor = grid_line(hit.xz, 0.1 * g.params.z) * 0.10;
-    let mid = grid_line(hit.xz, 1.0 * g.params.z) * 0.22;
-    let major = grid_line(hit.xz, 10.0 * g.params.z) * 0.38;
+    let minor = grid_line(uv, 0.1 * g.params.z) * 0.10;
+    let mid = grid_line(uv, 1.0 * g.params.z) * 0.22;
+    let major = grid_line(uv, 10.0 * g.params.z) * 0.38;
     var a = max(max(minor, mid), major);
 
     var rgb = vec3(0.62, 0.62, 0.66);
-    let aw = fwidth(hit.xz);
-    let ax = 1.0 - clamp(abs(hit.z) / max(aw.y, 1e-6), 0.0, 1.0); // eixo X (z = 0)
-    let az = 1.0 - clamp(abs(hit.x) / max(aw.x, 1e-6), 0.0, 1.0); // eixo Z (x = 0)
-    if (ax > 0.0) { rgb = mix(rgb, vec3(0.90, 0.25, 0.28), ax); a = max(a, ax * 0.85); }
-    if (az > 0.0) { rgb = mix(rgb, vec3(0.30, 0.52, 0.95), az); a = max(a, az * 0.85); }
+    let aw = fwidth(uv);
+    let ax = 1.0 - clamp(abs(uv.y) / max(aw.y, 1e-6), 0.0, 1.0); // linha v = 0
+    let az = 1.0 - clamp(abs(uv.x) / max(aw.x, 1e-6), 0.0, 1.0); // linha u = 0
+    if (ax > 0.0) { rgb = mix(rgb, cu, ax); a = max(a, ax * 0.85); }
+    if (az > 0.0) { rgb = mix(rgb, cv, az); a = max(a, az * 0.85); }
 
     out.color = vec4(rgb, a * fade);
     return out;

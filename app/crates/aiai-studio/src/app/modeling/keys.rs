@@ -85,13 +85,15 @@ pub(crate) enum MAction {
     ViewRight,
     ViewTop,
     ViewOrtho,
+    MaximizeView,
+    QuadView,
     Proportional,
     Xray,
     ShadingToggle,
 }
 
 /// (ação, id guardado, chave i18n, atalho AnimeIAI, atalho Blender/ANIGO).
-pub(crate) const ACTIONS: [(MAction, &str, &str, Option<Chord>, Option<Chord>); 40] = {
+pub(crate) const ACTIONS: [(MAction, &str, &str, Option<Chord>, Option<Chord>); 42] = {
     use Key as K;
     const fn p(k: Key) -> Option<Chord> {
         Some(Chord::plain(k))
@@ -107,6 +109,9 @@ pub(crate) const ACTIONS: [(MAction, &str, &str, Option<Chord>, Option<Chord>); 
     }
     const fn cs(k: Key) -> Option<Chord> {
         Some(Chord::ctrl_shift(k))
+    }
+    const fn ca(k: Key) -> Option<Chord> {
+        Some(Chord { ctrl: true, shift: false, alt: true, key: k })
     }
     [
         (MAction::Select, "select", "mdl.key.select", p(K::S), p(K::B)),
@@ -146,6 +151,8 @@ pub(crate) const ACTIONS: [(MAction, &str, &str, Option<Chord>, Option<Chord>); 
         (MAction::ViewRight, "view_right", "mdl.key.view_right", c(K::Num3), c(K::Num3)),
         (MAction::ViewTop, "view_top", "mdl.key.view_top", c(K::Num7), c(K::Num7)),
         (MAction::ViewOrtho, "view_ortho", "mdl.key.view_ortho", c(K::Num5), c(K::Num5)),
+        (MAction::MaximizeView, "maximize_view", "mdl.key.maximize_view", c(K::Space), c(K::Space)),
+        (MAction::QuadView, "quad_view", "mdl.key.quad_view", ca(K::Q), ca(K::Q)),
         (MAction::Proportional, "proportional", "mdl.key.proportional", p(K::O), p(K::O)),
         (MAction::Xray, "xray", "mdl.key.xray", a(K::Z), a(K::Z)),
         (MAction::ShadingToggle, "shading_toggle", "mdl.key.shading_toggle", s(K::Z), s(K::Z)),

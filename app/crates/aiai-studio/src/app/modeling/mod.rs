@@ -17,6 +17,7 @@ mod gizmo;
 mod gpu;
 pub(crate) mod keys;
 mod modal;
+pub(crate) mod multiview;
 mod nav_gizmo;
 mod picking;
 mod workbench;
@@ -124,6 +125,8 @@ pub(crate) struct ModelingState {
     pub sel_mode: SelectMode,
     pub sel: Selection,
     pub cam: OrbitCamera,
+    /// Multivista: as câmeras das outras vistas (a da ativa é `cam`).
+    pub views: multiview::MultiView,
     pub shade: ViewShade,
     pub snap: bool,
     pub xray: bool,
@@ -174,6 +177,7 @@ impl Default for ModelingState {
             sel_mode: SelectMode::Face,
             sel: Selection::default(),
             cam: default_cam(),
+            views: multiview::MultiView::default(),
             shade: ViewShade::Toon,
             snap: false,
             xray: false,
@@ -449,10 +453,38 @@ fn world_topo(ms: &mut ModelingState) -> Option<(&Topology, &EditMesh)> {
 pub(crate) fn viewport(env: &mut Env, ui: &mut Ui, body: Rect) {
     let t = env.t;
     let bar = Rect::from_min_size(body.min, egui::vec2(body.width(), 30.0));
-    let rect = Rect::from_min_max(egui::pos2(body.left(), bar.bottom()), body.max);
+    let area = Rect::from_min_max(egui::pos2(body.left(), bar.bottom()), body.max);
     env.ed.modeling.fix();
     env.ed.modeling.sanitize_selection();
     header(env, ui, bar);
+    // multivista: a vista sob o ponteiro vira a ativa (só ela recebe entrada); as outras só desenham
+    let rect = {
+        let ms = &mut env.ed.modeling;
+        let busy = ms.modal.is_some() || ms.box_start.is_some() || !ms.lasso.is_empty();
+        ms.views.seed(&ms.cam);
+        let panes = ms.views.pane_rects(area);
+        for (s, r) in ms.views.visible().into_iter().zip(panes) {
+            ms.views.rects[s] = r;
+        }
+        ms.views.follow_pointer(&mut ms.cam, ui.ctx(), busy);
+        ms.views.rects[ms.views.active]
+    };
+    let others: Vec<usize> = env.ed.modeling.views.visible().into_iter().filter(|&s| s != env.ed.modeling.views.active).collect();
+    for s in others {
+        let r = env.ed.modeling.views.rects[s];
+        let painter = ui.painter_at(r);
+        painter.rect_filled(r, 0.0, viewport_bg(&t));
+        {
+            let ms = &mut env.ed.modeling;
+            std::mem::swap(&mut ms.cam, &mut ms.views.cams[s]);
+        }
+        draw_frame(env, ui.ctx(), &painter, r, s);
+        {
+            let ms = &mut env.ed.modeling;
+            std::mem::swap(&mut ms.cam, &mut ms.views.cams[s]);
+        }
+        view_label(env, ui, r, s);
+    }
     env.note("mdl:viewport", rect);
     let resp = ui.interact(rect, ui.id().with("mdl_viewport"), Sense::click_and_drag());
     env.ed.modeling.hovered = resp.hovered() || resp.dragged();
@@ -469,7 +501,8 @@ pub(crate) fn viewport(env: &mut Env, ui: &mut Ui, body: Rect) {
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, viewport_bg(&t));
     // quadro da GPU (nada volta para a CPU: as texturas são nativas do egui)
-    draw_frame(env, ui.ctx(), &painter, rect);
+    let active_slot = env.ed.modeling.views.active;
+    draw_frame(env, ui.ctx(), &painter, rect, active_slot);
     // gizmo de eixos (antes da entrada: o ponteiro em cima dele não começa gesto no viewport)
     let nav = {
         let ms = &mut env.ed.modeling;
@@ -482,6 +515,14 @@ pub(crate) fn viewport(env: &mut Env, ui: &mut Ui, body: Rect) {
         input(env, ui, rect, &resp);
     }
     overlay(env, ui, &painter, rect);
+    if env.ed.modeling.views.layout != multiview::ViewLayout::Single {
+        view_label(env, ui, rect, active_slot);
+        ui.painter().rect_stroke(rect.shrink(0.5), 0.0, Stroke::new(1.0, t.accent.gamma_multiply(0.7)), egui::StrokeKind::Inside);
+    }
+    {
+        let ms = &mut env.ed.modeling;
+        ms.views.dividers_ui(ui, area, &t, env.notes);
+    }
     add_menu(env, ui);
     // a câmera mexeu neste quadro: pede o próximo já (zoom e órbita fluidos)
     if env.ed.modeling.last_cam != Some(env.ed.modeling.cam) {
@@ -533,7 +574,46 @@ fn doc_fingerprint(ms: &ModelingState) -> u64 {
     h
 }
 
-fn draw_frame(env: &mut Env, ctx: &egui::Context, painter: &egui::Painter, rect: Rect) {
+/// Nome da vista no canto (clique = trocar: perspectiva, ortográfica, frente, costas, lados, topo, base).
+fn view_label(env: &mut Env, ui: &mut Ui, rect: Rect, slot: usize) {
+    let t = env.t;
+    let kind = {
+        let ms = &env.ed.modeling;
+        multiview::ViewKind::of(if slot == ms.views.active { &ms.cam } else { &ms.views.cams[slot] })
+    };
+    let text = tr(kind.label_key());
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), egui::FontId::proportional(11.5), t.text);
+    let r = Rect::from_min_size(rect.left_top() + egui::vec2(8.0, 6.0), galley.size() + egui::vec2(12.0, 6.0));
+    let resp = ui.interact(r, ui.id().with(("mdl_view_kind", slot)), Sense::click());
+    env.note(format!("mdl:view{slot}.kind"), r);
+    let p = ui.painter();
+    p.rect_filled(r, 3.0, if resp.hovered() { t.bg_hover } else { t.bg_header.gamma_multiply(0.85) });
+    p.galley(r.min + egui::vec2(6.0, 3.0), galley, t.text);
+    let resp = resp.on_hover_text(tr("mview.kind.tip"));
+    let mut chosen = None;
+    egui::Popup::from_toggle_button_response(&resp).close_behavior(egui::PopupCloseBehavior::CloseOnClick).show(|ui| {
+        for k in multiview::ViewKind::ALL {
+            let b = ui.selectable_label(k == kind, tr(k.label_key()));
+            env.notes.push((format!("mdl:view{slot}.kind.{}", k.key()), b.rect));
+            if b.clicked() {
+                chosen = Some(k);
+            }
+        }
+    });
+    if let Some(k) = chosen {
+        let ms = &mut env.ed.modeling;
+        let cam = if slot == ms.views.active { &mut ms.cam } else { &mut ms.views.cams[slot] };
+        k.apply(cam);
+    }
+}
+
+/// Arranjo das vistas (uma, lado a lado, empilhadas, quatro).
+pub(crate) fn set_layout(env: &mut Env, l: multiview::ViewLayout) {
+    let ms = &mut env.ed.modeling;
+    ms.views.set_layout(&mut ms.cam, l);
+}
+
+fn draw_frame(env: &mut Env, ctx: &egui::Context, painter: &egui::Painter, rect: Rect, slot: usize) {
     let t = env.t;
     let ppp = ctx.pixels_per_point();
     let ms = &mut env.ed.modeling;
@@ -549,6 +629,7 @@ fn draw_frame(env: &mut Env, ctx: &egui::Context, painter: &egui::Painter, rect:
         sel: &ms.sel,
         cam: &ms.cam,
         size_px: gpu::px_size(glam::Vec2::new(rect.width(), rect.height()), ppp),
+        slot,
         ppp,
         shade: ms.shade,
         xray: ms.xray,
@@ -691,6 +772,27 @@ fn header_tail(env: &mut Env, ui: &mut Ui, edit: bool) {
         }
         if ui.button(format!("{}  ({})", tr("mdl.view.frame_all"), k.label(MAction::FrameAll))).clicked() {
             frame_all(env);
+            ui.close();
+        }
+        // multivista (como o Blender): uma, duas ou quatro vistas, cada uma com a sua câmera
+        ui.separator();
+        let cur = env.ed.modeling.views.layout;
+        for l in multiview::ViewLayout::ALL {
+            let label = match l {
+                multiview::ViewLayout::Quad => format!("{}  ({})", tr(l.label_key()), k.label(MAction::QuadView)),
+                _ => tr(l.label_key()).to_owned(),
+            };
+            let b = ui.selectable_label(cur == l, label);
+            env.notes.push((format!("mdl:layout.{}", l.key()), b.rect));
+            if b.clicked() {
+                set_layout(env, l);
+                ui.close();
+            }
+        }
+        let b = ui.add_enabled(cur != multiview::ViewLayout::Single || env.ed.modeling.views.restore != multiview::ViewLayout::Single, egui::Button::new(format!("{}  ({})", tr("mview.maximize"), k.label(MAction::MaximizeView))));
+        if b.clicked() {
+            let ms = &mut env.ed.modeling;
+            ms.views.toggle_maximize(&mut ms.cam);
             ui.close();
         }
     });
@@ -1301,6 +1403,11 @@ fn keys(env: &mut Env, ctx: &egui::Context, rect: Rect, mouse: Vec2) {
             MAction::ViewRight => ms.cam.set_preset(ViewPreset::Right),
             MAction::ViewTop => ms.cam.set_preset(ViewPreset::Top),
             MAction::ViewOrtho => ms.cam.orthographic = !ms.cam.orthographic,
+            MAction::MaximizeView => ms.views.toggle_maximize(&mut ms.cam),
+            MAction::QuadView => {
+                let l = if ms.views.layout == multiview::ViewLayout::Quad { multiview::ViewLayout::Single } else { multiview::ViewLayout::Quad };
+                ms.views.set_layout(&mut ms.cam, l);
+            }
             MAction::Proportional if edit => ms.proportional.enabled = !ms.proportional.enabled,
             MAction::Xray => ms.xray = !ms.xray,
             MAction::ShadingToggle => {
@@ -1949,6 +2056,11 @@ pub(crate) fn state_json(ms: &ModelingState) -> serde_json::Value {
         "mesh": ms.active.and_then(|a| ms.doc.objects.get(a)).map(|o| json!({ "verts": o.mesh.vert_count(), "faces": o.mesh.face_count(), "modifiers": o.modifiers.iter().map(|m| m.key()).collect::<Vec<_>>() })),
         "camera": { "target": [r3(ms.cam.target.x), r3(ms.cam.target.y), r3(ms.cam.target.z)], "yaw_deg": r3(ms.cam.yaw.to_degrees()), "pitch_deg": r3(ms.cam.pitch.to_degrees()), "distance": r3(ms.cam.distance), "ortho": ms.cam.orthographic },
         "shade": ms.shade.key(),
+        "views": {
+            "layout": ms.views.layout.key(),
+            "active": ms.views.active,
+            "kinds": ms.views.visible().into_iter().map(|s| multiview::ViewKind::of(if s == ms.views.active { &ms.cam } else { &ms.views.cams[s] }).key()).collect::<Vec<_>>(),
+        },
         "xray": ms.xray,
         "proportional": ms.proportional.enabled,
         "modal": ms.modal.as_ref().map(|m| m.label),

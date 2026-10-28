@@ -331,6 +331,8 @@ impl StudioApp {
     /// preset: vira a cópia do usuário, como mexer nas configurações avançadas)} (pincel da biblioteca em uso; um do grupo
     /// borracha vira também a ponta da ferramenta Borracha).
     /// dock {op: list|maximize|restore|detach|redock|redock_all, panel?, group?} (painel maximizado e janelas soltas).
+    /// modeling_view {layout?: single|split_v|split_h|quad, slot?, view?: perspective|ortho|front|back|right|left|top|bottom}
+    /// (multivista da Modelagem).
     /// Apelidos aceitos: set_tool = select_tool; open_panel = toggle_panel com visible=true.
     pub(crate) fn bridge_ui_action(&mut self, ctx: &egui::Context, params: &Value) -> BridgeResult {
         let m = as_obj(params)?;
@@ -356,6 +358,7 @@ impl StudioApp {
             "library_import" => Some(&["files"]),
             "gpu" => Some(&["op", "mb"]),
             "dock" => Some(&["op", "panel", "group"]),
+            "modeling_view" => Some(&["layout", "slot", "view"]),
             _ => None,
         };
         if let Some(keys) = keys {
@@ -516,6 +519,25 @@ impl StudioApp {
                 json!({ "panel": key, "visible": target, "workspace": ws.key(), "inserted": found.is_none() && target })
             }
             "dock" => self.bridge_dock(params)?,
+            "modeling_view" => {
+                // multivista da Modelagem: arranjo (single | split_v | split_h | quad) e o tipo de uma vista
+                use super::modeling::multiview::{ViewKind, ViewLayout};
+                let ms = &mut self.ed.modeling;
+                if let Some(l) = text(&m, &["layout"]) {
+                    let l = ViewLayout::from_key(l).ok_or_else(|| BridgeError::invalid_params(format!("layout desconhecido: {l} (single, split_v, split_h, quad)")))?;
+                    ms.views.set_layout(&mut ms.cam, l);
+                }
+                if let Some(v) = text(&m, &["view"]) {
+                    let k = ViewKind::from_key(v).ok_or_else(|| BridgeError::invalid_params(format!("vista desconhecida: {v} (perspective, ortho, front, back, right, left, top, bottom)")))?;
+                    let slot = m.get("slot").and_then(Value::as_u64).map(|x| x as usize).unwrap_or(ms.views.active);
+                    if !ms.views.visible().contains(&slot) {
+                        return Err(BridgeError::invalid_params(format!("a vista {slot} não está à mostra no arranjo {}", ms.views.layout.key())));
+                    }
+                    let cam = if slot == ms.views.active { &mut ms.cam } else { &mut ms.views.cams[slot] };
+                    k.apply(cam);
+                }
+                super::modeling::state_json(ms)["views"].clone()
+            }
             "layout" => {
                 let op = text(&m, &["op"]).ok_or_else(|| BridgeError::invalid_params("layout exige 'op' (list|save|apply|delete|reset)"))?.to_owned();
                 let name = text(&m, &["name"]).map(str::to_owned);
