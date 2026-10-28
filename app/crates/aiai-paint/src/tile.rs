@@ -1,15 +1,32 @@
-//! Tiles raster de 256×256: armazenamento em blob (RGBA16 pré-multiplicado sRGB, comprimido com LZ4) e conversão
-//! entre tiles e imagem.
+//! Tiles raster de 256×256: armazenamento em blob (comprimido com LZ4) e conversão entre tiles e imagem.
+//!
+//! Dois formatos: `AIT1` (RGBA16 pré-multiplicado sRGB, 0..1, o de sempre) e `AIT2` (RGBA f32 pré-multiplicado, sem
+//! corte: HDR, auditoria 4.6h). O tile só vira `AIT2` quando tem valor fora de 0..1 (brilho acima do branco que um
+//! efeito ou um pincel em luz linear pôs ali); o resto continua `AIT1`, menor e igual ao que as versões antigas leem.
 
 use crate::image::Image;
 use aiai_core::TILE_SIZE;
 
 const MAGIC: &[u8; 4] = b"AIT1";
+const MAGIC_HDR: &[u8; 4] = b"AIT2";
 pub const TILE_PIXELS: usize = (TILE_SIZE * TILE_SIZE) as usize;
 
 /// Codifica um tile (256×256 pixels f32) em blob.
 pub fn encode_tile(px: &[[f32; 4]]) -> Vec<u8> {
     assert_eq!(px.len(), TILE_PIXELS);
+    // HDR: algum valor acima de 1 (ou abaixo de 0) guarda o tile em f32, sem cortar
+    if px.iter().any(|p| p.iter().any(|c| c.is_finite() && !(0.0..=1.0).contains(c))) {
+        let mut raw = Vec::with_capacity(TILE_PIXELS * 16);
+        for p in px {
+            for c in p {
+                let v = if c.is_finite() { *c } else { 0.0 };
+                raw.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        let mut out = MAGIC_HDR.to_vec();
+        out.extend_from_slice(&lz4_flex::compress_prepend_size(&raw));
+        return out;
+    }
     let mut raw = Vec::with_capacity(TILE_PIXELS * 8);
     for p in px {
         for c in p {
@@ -22,8 +39,21 @@ pub fn encode_tile(px: &[[f32; 4]]) -> Vec<u8> {
 }
 
 pub fn decode_tile(blob: &[u8]) -> Result<Vec<[f32; 4]>, String> {
+    if blob.len() >= 4 && &blob[..4] == MAGIC_HDR {
+        let raw = lz4_flex::decompress_size_prepended(&blob[4..]).map_err(|e| e.to_string())?;
+        if raw.len() != TILE_PIXELS * 16 {
+            return Err(format!("tile HDR com tamanho errado: {}", raw.len()));
+        }
+        return Ok(raw
+            .chunks_exact(16)
+            .map(|c| {
+                let v = |i: usize| f32::from_le_bytes([c[i], c[i + 1], c[i + 2], c[i + 3]]);
+                [v(0), v(4), v(8), v(12)]
+            })
+            .collect());
+    }
     if blob.len() < 4 || &blob[..4] != MAGIC {
-        return Err("blob não é um tile AIT1".into());
+        return Err("blob não é um tile AIT1/AIT2".into());
     }
     let raw = lz4_flex::decompress_size_prepended(&blob[4..]).map_err(|e| e.to_string())?;
     if raw.len() != TILE_PIXELS * 8 {
@@ -98,6 +128,25 @@ pub fn image_to_tiles(img: &Image, origin: [i32; 2]) -> Vec<(i32, i32, Option<Ve
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hdr_tiles_keep_values_above_white_and_plain_tiles_stay_ait1() {
+        let mut px = vec![[0.25f32, 0.5, 0.75, 1.0]; TILE_PIXELS];
+        let plain = encode_tile(&px);
+        assert_eq!(&plain[..4], b"AIT1");
+        // um brilho acima do branco (efeito de luz em linear) vira AIT2 e volta sem corte
+        px[7] = [3.5, 1.25, 0.0, 1.0];
+        px[8] = [-0.1, 0.0, 0.0, 0.5];
+        let hdr = encode_tile(&px);
+        assert_eq!(&hdr[..4], b"AIT2");
+        let back = decode_tile(&hdr).unwrap();
+        assert_eq!(back[7], [3.5, 1.25, 0.0, 1.0]);
+        assert_eq!(back[8], [-0.1, 0.0, 0.0, 0.5]);
+        assert_eq!(back[0], [0.25, 0.5, 0.75, 1.0]);
+        // o AIT1 continua sendo lido igual
+        let b = decode_tile(&plain).unwrap();
+        assert!((b[0][1] - 0.5).abs() < 1e-4);
+    }
 
     #[test]
     fn tile_roundtrip_and_compression() {

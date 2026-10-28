@@ -44,6 +44,11 @@ pub struct Settings {
     pub subtitle_language: String,
     #[serde(default = "default_sample_rate")]
     pub audio_sample_rate: u32,
+    /// Mistura das camadas em luz linear (auditoria 4.6h): as cores viram luz (sRGB -> linear) antes de misturar e
+    /// voltam no fim; brilhos, sombras multiplicadas e degradês de luz ficam fisicamente certos (o "Adicionar" estoura
+    /// como luz de verdade). Desligado = mistura em sRGB, como o Clip Studio e o Photoshop fazem por padrão.
+    #[serde(default)]
+    pub linear_light: bool,
 }
 
 fn default_dialogue_lang() -> String {
@@ -66,6 +71,7 @@ impl Default for Settings {
             dialogue_language: default_dialogue_lang(),
             subtitle_language: default_subtitle_lang(),
             audio_sample_rate: default_sample_rate(),
+            linear_light: false,
         }
     }
 }

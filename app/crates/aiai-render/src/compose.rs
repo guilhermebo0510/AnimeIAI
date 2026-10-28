@@ -62,6 +62,45 @@ pub struct Renderer<'a> {
     warnings: Vec<String>,
     /// Iluminação do corte: variante das paletas (`CutData::palette_variant`).
     variant: Option<String>,
+    /// Mistura em luz linear (`Settings::linear_light`): o quadro em composição fica em linear; as imagens das camadas
+    /// (e o que os efeitos e ajustes leem e escrevem) continuam em sRGB.
+    linear: bool,
+}
+
+/// sRGB -> linear (a curva exata, sem cortar acima de 1: HDR passa).
+#[inline]
+fn srgb_to_linear(c: f32) -> f32 {
+    if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+}
+
+/// linear -> sRGB.
+#[inline]
+fn linear_to_srgb(c: f32) -> f32 {
+    if c <= 0.003_130_8 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 }
+}
+
+/// Pixel pré-multiplicado de sRGB para linear (a cor sai do alfa, converte e volta).
+#[inline]
+fn premul_to_linear(p: [f32; 4]) -> [f32; 4] {
+    let a = p[3];
+    if a <= 0.0 {
+        return p;
+    }
+    [srgb_to_linear(p[0] / a) * a, srgb_to_linear(p[1] / a) * a, srgb_to_linear(p[2] / a) * a, a]
+}
+
+#[inline]
+fn premul_to_srgb(p: [f32; 4]) -> [f32; 4] {
+    let a = p[3];
+    if a <= 0.0 {
+        return p;
+    }
+    [linear_to_srgb(p[0] / a) * a, linear_to_srgb(p[1] / a) * a, linear_to_srgb(p[2] / a) * a, a]
+}
+
+/// A imagem inteira de sRGB para linear (`to_linear`) ou de volta.
+fn convert_image(img: &mut Image, to_linear: bool) {
+    img.data.par_iter_mut().for_each(|p| *p = if to_linear { premul_to_linear(*p) } else { premul_to_srgb(*p) });
 }
 
 /// Câmera avaliada num quadro.
@@ -285,7 +324,7 @@ struct LayerCtx<'c> {
 
 /// Mistura a camada recortada no quadro, só dentro da caixa dela (fora é transparente: misturar não mudaria nada).
 /// Mesma conta, na mesma ordem, que a mistura do quadro inteiro.
-fn blend_placed(buf: &mut Image, p: &Placed, mode: BlendMode, opacity: f32, mask: Option<&[f32]>, clip: Option<&ClipBase>) {
+fn blend_placed(buf: &mut Image, p: &Placed, mode: BlendMode, opacity: f32, mask: Option<&[f32]>, clip: Option<&ClipBase>, linear: bool) {
     let w = buf.width as usize;
     let pw = p.img.width as usize;
     let (x0, y0) = (p.x0 as usize, p.y0 as usize);
@@ -301,7 +340,7 @@ fn blend_placed(buf: &mut Image, p: &Placed, mode: BlendMode, opacity: f32, mask
             if let Some(c) = clip {
                 a *= c.alpha(x as u32, y as u32);
             }
-            blend_pixel(&mut row[x], *s, mode, a);
+            blend_pixel(&mut row[x], if linear { premul_to_linear(*s) } else { *s }, mode, a);
         }
     });
 }
@@ -415,7 +454,7 @@ pub fn render_frame_cached(project: &Project, blobs: &BlobStore, cut_id: &Id, fr
 /// nem o movimento da camada e sem a opacidade/modo dela: o "conteúdo cru" que a mesclagem de camadas compõe.
 /// Devolve também os avisos do render (cor de paleta ausente, blob ilegível...).
 pub fn render_cel_image(project: &Project, blobs: &BlobStore, cel: &CelData, hide_color_trace: bool, canvas: (u32, u32), layer_name: &str) -> (Image, Vec<String>) {
-    let mut r = Renderer { project, blobs, width: canvas.0, height: canvas.1, out_w: canvas.0, out_h: canvas.1, camera: None, layer_motion: false, warnings: Vec::new(), variant: None };
+    let mut r = Renderer { project, blobs, width: canvas.0, height: canvas.1, out_w: canvas.0, out_h: canvas.1, camera: None, layer_motion: false, warnings: Vec::new(), variant: None, linear: false };
     let img = r.render_cel(cel, hide_color_trace, layer_name);
     (img, r.warnings)
 }
@@ -435,7 +474,7 @@ fn render_frame_impl(project: &Project, blobs: &BlobStore, cut_id: &Id, frame: u
     } else {
         (w, h, None)
     };
-    let mut r = Renderer { project, blobs, width: w, height: h, out_w, out_h, camera, layer_motion: opts.layer_motion, warnings: Vec::new(), variant: cut.palette_variant.clone() };
+    let mut r = Renderer { project, blobs, width: w, height: h, out_w, out_h, camera, layer_motion: opts.layer_motion, warnings: Vec::new(), variant: cut.palette_variant.clone(), linear: project.settings.linear_light };
     let allowed = opts.only_layers.as_ref().map(|ids| {
         let mut set = std::collections::BTreeSet::new();
         for id in ids {
@@ -517,6 +556,10 @@ fn render_frame_impl(project: &Project, blobs: &BlobStore, cut_id: &Id, frame: u
             cache.key = Some(key);
             cache.sigs = sigs;
         }
+    }
+    // luz linear: o quadro volta para sRGB antes do fundo
+    if r.linear {
+        convert_image(&mut buf, false);
     }
     if let Some(bg) = opts.background {
         buf.data.par_iter_mut().for_each(|p| {
@@ -636,17 +679,26 @@ impl<'a> Renderer<'a> {
                             }
                             let mut g = Image::new(self.out_w, self.out_h);
                             self.composite_children(&mut g, &node.children, cut, frame, opts, allowed);
+                            if self.linear {
+                                convert_image(&mut g, false);
+                            }
                             Some(g)
                         }
                         LayerType::Effect => {
                             // Camada de efeito: aplica params.effects ao que está composto abaixo, misturado pela opacidade/máscara.
                             match aiai_fx::stack_from_params(&layer.params) {
                                 Ok(stack) => {
-                                    let before = buf.clone();
-                                    let mut processed = buf.clone();
+                                    let mut before = buf.clone();
+                                    if self.linear {
+                                        convert_image(&mut before, false);
+                                    }
+                                    let mut processed = before.clone();
                                     let ctx = aiai_fx::FxContext { frame, below: Some(&before), blobs: self.blobs, seed: fx_seed(id) };
                                     for w in aiai_fx::apply_stack(&mut processed, &stack, &ctx) {
                                         self.warnings.push(format!("{}: {w}", node.name));
+                                    }
+                                    if self.linear {
+                                        convert_image(&mut processed, true);
                                     }
                                     let mask = layer.mask.as_ref().and_then(|m| self.mask_values(m, cut, frame));
                                     let opacity = layer_prop(layer, "opacity", frame, layer.opacity).clamp(0.0, 1.0);
@@ -674,7 +726,13 @@ impl<'a> Renderer<'a> {
                                         (None, Some(b)) => Some(b),
                                         (None, None) => None,
                                     };
+                                    if self.linear {
+                                        convert_image(buf, false);
+                                    }
                                     adj.apply_image(buf, layer.opacity, m.as_deref());
+                                    if self.linear {
+                                        convert_image(buf, true);
+                                    }
                                 }
                                 Some(Err(e)) => self.warnings.push(format!("ajuste inválido em '{}': {e}", node.name)),
                                 None => self.warnings.push(format!("camada de ajuste '{}' sem params.adjustment", node.name)),
@@ -695,7 +753,13 @@ impl<'a> Renderer<'a> {
                         (Some(mut img), Ok(stack)) if !stack.is_empty() => {
                             // só o light wrap lê o composto de baixo: só ele paga a cópia do quadro (e não fica guardado)
                             reads_below = stack_reads_below(&stack);
-                            let below = reads_below.then(|| buf.clone());
+                            let below = reads_below.then(|| {
+                                let mut b = buf.clone();
+                                if self.linear {
+                                    convert_image(&mut b, false);
+                                }
+                                b
+                            });
                             let ctx = aiai_fx::FxContext { frame, below: below.as_ref(), blobs: self.blobs, seed: fx_seed(id) };
                             for w in aiai_fx::apply_stack(&mut img, &stack, &ctx) {
                                 self.warnings.push(format!("{}: {w}", node.name));
@@ -727,7 +791,7 @@ impl<'a> Renderer<'a> {
             let mode = if layer.blend == BlendMode::PassThrough { BlendMode::Normal } else { layer.blend };
             let clip = if layer.clip_to_below { clip_base.as_ref() } else { None };
             let opacity = layer_prop(layer, "opacity", frame, layer.opacity).clamp(0.0, 1.0);
-            blend_placed(buf, &p, mode, opacity, mask.as_deref().map(|m| m.as_slice()), clip);
+            blend_placed(buf, &p, mode, opacity, mask.as_deref().map(|m| m.as_slice()), clip, self.linear);
             if !layer.clip_to_below {
                 clip_base = Some(ClipBase::Layer(p));
             }

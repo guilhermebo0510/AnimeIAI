@@ -483,3 +483,44 @@ fn boxed_cel_matches_the_full_canvas_image() {
     assert_eq!(diff, 0, "{diff} pixels diferentes");
     assert!(full.data.iter().filter(|p| p[3] > 0.0).count() > 10_000, "a cena desenhou");
 }
+
+/// Auditoria 4.6h: mistura em luz linear (opção do projeto). Preto a 50% sobre branco dá o cinza da luz pela metade
+/// (sRGB ≈ 0,735) em vez do cinza 0,5 da mistura em sRGB; camada opaca sozinha sai igual nos dois modos.
+#[test]
+fn linear_light_mixes_as_light_and_leaves_opaque_layers_alone() {
+    let build = |linear: bool| {
+        let mut s = CoreSession::for_tests("linear");
+        s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 64, "height": 64, "linear_light": linear}}) }).unwrap();
+        let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+        let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+        let cut = create(&mut s, Some(&sc), "C", NodeKind::Cut(CutData::new(2)));
+        let put = |s: &mut CoreSession, name: &str, px: [f32; 4], x0: usize, x1: usize| {
+            let (_, cel) = layer(s, &cut, name, LayerType::Raster, serde_json::Value::Null);
+            let mut img = Image::new(64, 64);
+            for y in 0..64 {
+                for x in x0..x1 {
+                    img.data[y * 64 + x] = px;
+                }
+            }
+            let mut edits = Vec::new();
+            for (tx, ty, p) in tile::image_to_tiles(&img, [0, 0]) {
+                if let Some(p) = p {
+                    edits.push(TileEdit { x: tx, y: ty, blob: Some(s.blobs.put(tile::encode_tile(&p))) });
+                }
+            }
+            s.apply(Command::SetTiles { cel, tiles: edits }).unwrap();
+        };
+        // fundo: metade esquerda branca, metade direita um laranja opaco; por cima, preto a 50% só na esquerda
+        put(&mut s, "fundo", [1.0, 1.0, 1.0, 1.0], 0, 32);
+        put(&mut s, "laranja", [0.9, 0.5, 0.2, 1.0], 32, 64);
+        put(&mut s, "sombra", [0.0, 0.0, 0.0, 0.5], 0, 32);
+        render_frame(&s.project, &s.blobs, &cut, 0, &RenderOptions::default()).unwrap().image
+    };
+    let (srgb, lin) = (build(false), build(true));
+    let px = |img: &Image, x: usize| img.data[10 * 64 + x];
+    assert!((px(&srgb, 5)[0] - 0.5).abs() < 1e-3, "sRGB: {:?}", px(&srgb, 5));
+    assert!((px(&lin, 5)[0] - 0.7354).abs() < 2e-3, "linear: {:?}", px(&lin, 5));
+    for c in 0..4 {
+        assert!((px(&lin, 50)[c] - px(&srgb, 50)[c]).abs() < 1e-4, "opaca muda: {:?} x {:?}", px(&lin, 50), px(&srgb, 50));
+    }
+}

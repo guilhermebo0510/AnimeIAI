@@ -321,5 +321,15 @@ fn project_settings(env: &mut Env, ui: &mut Ui) {
             }
         });
         ui.end_row();
+        // mistura das camadas em luz linear (auditoria 4.6h)
+        dim_label(ui, &t, tr("project.linear_light"));
+        next(ui);
+        let mut lin = s.linear_light;
+        let r = ui.checkbox(&mut lin, tr("project.linear_light.on")).on_hover_text(tr("project.linear_light.tip"));
+        env.note("project:linear_light", r.rect);
+        if r.changed() {
+            let _ = cmds::set_project_props(env.core, json!({ "settings": { "linear_light": lin } }));
+        }
+        ui.end_row();
     });
 }
