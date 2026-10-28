@@ -652,7 +652,7 @@ fn extra_tips_ui(ui: &mut Ui, e: &mut Edit) {
     });
 }
 
-const TIP_SHAPES: [(TipShape, &str); 14] = [
+const TIP_SHAPES: [(TipShape, &str); 29] = [
     (TipShape::Leaf, "tipshape.leaf"),
     (TipShape::Petal, "tipshape.petal"),
     (TipShape::GrassBlade, "tipshape.grass"),
@@ -667,10 +667,25 @@ const TIP_SHAPES: [(TipShape, &str); 14] = [
     (TipShape::Maple, "tipshape.maple"),
     (TipShape::Pebble, "tipshape.pebble"),
     (TipShape::Glint, "tipshape.glint"),
+    (TipShape::Note, "tipshape.note"),
+    (TipShape::Book, "tipshape.book"),
+    (TipShape::Building, "tipshape.building"),
+    (TipShape::Button, "tipshape.button"),
+    (TipShape::Bead, "tipshape.bead"),
+    (TipShape::ChainLink, "tipshape.chain"),
+    (TipShape::ChainLinkSide, "tipshape.chain_side"),
+    (TipShape::ZipperA, "tipshape.zipper_a"),
+    (TipShape::ZipperB, "tipshape.zipper_b"),
+    (TipShape::BraidL, "tipshape.braid_l"),
+    (TipShape::BraidR, "tipshape.braid_r"),
+    (TipShape::Scallop, "tipshape.scallop"),
+    (TipShape::Swirl, "tipshape.swirl"),
+    (TipShape::Wave, "tipshape.wave"),
+    (TipShape::Splat, "tipshape.splat"),
 ];
 
 fn tip_combo(ui: &mut Ui, e: &mut Edit) {
-    const SHAPES: [(TipShape, &str); 14] = TIP_SHAPES;
+    const SHAPES: [(TipShape, &str); 29] = TIP_SHAPES;
     let current = match &e.p.tip {
         BrushTip::Round { .. } => tr("tipshape.round").to_owned(),
         BrushTip::Shape { shape, .. } => SHAPES.iter().find(|(s, _)| s == shape).map(|(_, k)| tr(k).to_owned()).unwrap_or_default(),

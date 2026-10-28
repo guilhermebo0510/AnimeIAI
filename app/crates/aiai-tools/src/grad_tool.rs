@@ -21,11 +21,12 @@ use serde_json::{Value, json};
 pub const GRAD_LAYER: &str = "gradient_layer";
 
 /// Prontos da ferramenta que dependem das cores em uso (chave estável, nome em pt).
-pub const COLOR_PRESETS: [(&str, &str); 4] = [
+pub const COLOR_PRESETS: [(&str, &str); 5] = [
     ("main_to_transparent", "Cor principal → transparente"),
     ("main_to_sub", "Cor principal → secundária"),
     ("stripe", "Listra"),
     ("sub_stripe", "Listra com a cor secundária"),
+    ("photosphere", "Fotosfera"),
 ];
 
 /// Céus da ferramenta (além dos do programa).
@@ -48,6 +49,13 @@ pub fn preset_gradient(name: &str, main: &ColorRef, sub: &ColorRef) -> Option<Gr
     let g = match name {
         "main_to_transparent" => Gradient { stops: vec![stop(0.0, main, 1.0), stop(1.0, main, 0.0)], space: GradientSpace::Linear, ..Default::default() },
         "main_to_sub" => Gradient { stops: vec![stop(0.0, main, 1.0), stop(1.0, sub, 1.0)], ..Default::default() },
+        // fotosfera (Clip Studio): luz radial da cor principal, miolo cheio que se espalha até sumir
+        "photosphere" => Gradient {
+            shape: GradientShape::Radial,
+            stops: vec![stop(0.0, main, 1.0), stop(0.12, main, 0.9), stop(0.4, main, 0.3), stop(1.0, main, 0.0)],
+            space: GradientSpace::Linear,
+            ..Default::default()
+        },
         // listras de borda dura: metade da faixa na cor, metade vazia (ou na secundária), repetindo
         "stripe" => Gradient { stops: vec![stop(0.0, main, 1.0), stop(0.5, main, 1.0), stop(0.5, main, 0.0), stop(1.0, main, 0.0)], extend: GradientExtend::Repeat, ..Default::default() },
         "sub_stripe" => Gradient { stops: vec![stop(0.0, main, 1.0), stop(0.5, main, 1.0), stop(0.5, sub, 1.0), stop(1.0, sub, 1.0)], extend: GradientExtend::Repeat, ..Default::default() },

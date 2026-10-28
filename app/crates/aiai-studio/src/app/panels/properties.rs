@@ -161,7 +161,7 @@ pub(crate) fn preset_grid(ui: &mut Ui, p: &mut aiai_paint::brush::BrushPreset, a
         // ponta: redonda (dureza, achatamento, ângulo) ou forma de cenário (folha, grama, nuvem...)
         {
             use aiai_paint::brush::{BrushTip, TipShape};
-            const SHAPES: [(TipShape, &str); 14] = [
+            const SHAPES: [(TipShape, &str); 29] = [
                 (TipShape::Leaf, "tipshape.leaf"),
                 (TipShape::Petal, "tipshape.petal"),
                 (TipShape::GrassBlade, "tipshape.grass"),
@@ -176,6 +176,21 @@ pub(crate) fn preset_grid(ui: &mut Ui, p: &mut aiai_paint::brush::BrushPreset, a
                 (TipShape::Maple, "tipshape.maple"),
                 (TipShape::Pebble, "tipshape.pebble"),
                 (TipShape::Glint, "tipshape.glint"),
+                (TipShape::Note, "tipshape.note"),
+                (TipShape::Book, "tipshape.book"),
+                (TipShape::Building, "tipshape.building"),
+                (TipShape::Button, "tipshape.button"),
+                (TipShape::Bead, "tipshape.bead"),
+                (TipShape::ChainLink, "tipshape.chain"),
+                (TipShape::ChainLinkSide, "tipshape.chain_side"),
+                (TipShape::ZipperA, "tipshape.zipper_a"),
+                (TipShape::ZipperB, "tipshape.zipper_b"),
+                (TipShape::BraidL, "tipshape.braid_l"),
+                (TipShape::BraidR, "tipshape.braid_r"),
+                (TipShape::Scallop, "tipshape.scallop"),
+                (TipShape::Swirl, "tipshape.swirl"),
+                (TipShape::Wave, "tipshape.wave"),
+                (TipShape::Splat, "tipshape.splat"),
             ];
             let current = match &p.tip {
                 BrushTip::Round { .. } => tr("tipshape.round").to_owned(),

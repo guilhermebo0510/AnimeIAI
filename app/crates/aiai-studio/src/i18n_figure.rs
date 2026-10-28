@@ -53,6 +53,7 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("grad.preset.main_to_sub", "Cor principal → secundária", "Main to sub colour"),
     ("grad.preset.stripe", "Listra", "Stripe"),
     ("grad.preset.sub_stripe", "Listra com a secundária", "Sub colour stripe"),
+    ("grad.preset.photosphere", "Fotosfera", "Photosphere"),
     ("grad.named.black_white", "Preto → branco", "Black to white"),
     ("grad.named.sunset", "Pôr do sol", "Sunset"),
     ("grad.named.day_sky", "Céu de dia", "Daytime sky"),

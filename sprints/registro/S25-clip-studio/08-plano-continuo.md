@@ -34,9 +34,12 @@ Auditoria 2: as 8 propostas estão feitas; relidos os `AUDITORIA_V2*.md` (28/10)
 
 ## 2. Calibração com o Clip Studio Paint
 
-- [ ] Rodar de novo as pranchas de calibração (canetas, lápis, pincéis, aerógrafos, borrachas, decoração, misturadores)
-  contra o CSP e corrigir o que destoar
-- [ ] Conferir que todas as subferramentas do CSP que usamos têm equivalente e funcionam (lista por grupo)
+- [x] Rodar de novo as pranchas de calibração (canetas, lápis, pincéis, aerógrafos, borrachas, decoração, misturadores)
+  contra o CSP e corrigir o que destoar — lápis melhorou (2,641→2,532), o resto igual; feltro testado em 3 variações, ficou
+  como estava (`09-equivalencia-csp.md`)
+- [x] Conferir que todas as subferramentas do CSP que usamos têm equivalente e funcionam (lista por grupo) — as 203 em
+  `09-equivalencia-csp.md`; faltavam e foram feitas: Livro, Prédio, Mancha de sangue, as 7 linhas com régua, os 8 de
+  roupas (multi-ponta em sequência) e o degradê Fotosfera
 
 ## 3. Criação de pincéis e canetas pelo usuário
 

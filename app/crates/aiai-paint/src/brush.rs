@@ -66,6 +66,34 @@ pub enum TipShape {
     Pebble,
     /// Cintilância: brilho de quatro raios finos com o miolo macio (purpurina, reflexo).
     Glint,
+    // ---- 28/10: o que faltava das decorações do Clip Studio (linha com régua, roupas, fundo, efeito)
+    /// Nota musical (colcheia): cabeça, haste e bandeirola (linha "Melodia").
+    Note,
+    /// Lombada de livro: retângulo com as faixas de cima e de baixo na segunda cor.
+    Book,
+    /// Prédio: silhueta com a grade de janelas na segunda cor.
+    Building,
+    /// Botão de roupa: disco com aro e quatro furos.
+    Button,
+    /// Conta (miçanga): esfera com sombra embaixo.
+    Bead,
+    /// Elo de corrente de frente (anel) e de lado (barra): em sequência formam a corrente.
+    ChainLink,
+    ChainLinkSide,
+    /// Dentes do zíper, alternando de um lado e do outro.
+    ZipperA,
+    ZipperB,
+    /// Gomos da trança, inclinados para um lado e para o outro.
+    BraidL,
+    BraidR,
+    /// Renda: meia-lua com furos (barrado de renda).
+    Scallop,
+    /// Floreado: espiral de arabesco.
+    Swirl,
+    /// Onda: um período de senoide de ponta a ponta (linha ondulada contínua com o passo = diâmetro).
+    Wave,
+    /// Mancha: borrão irregular com respingos (mancha de sangue, de tinta).
+    Splat,
 }
 
 /// Cobertura 0..1 de uma forma em coordenadas locais normalizadas (u, v ∈ [-1, 1]; v = -1 é a "ponta" superior).
@@ -197,6 +225,100 @@ fn shape_alpha_tone(shape: TipShape, u: f32, v: f32, aa: f32, two_tone: bool) ->
             let core = (1.0 - r / 0.3).clamp(0.0, 1.0);
             (edge(r - (0.06 + 0.9 * ray)) * (1.0 - r * 0.6)).max(core)
         }
+        TipShape::Note => {
+            // colcheia: cabeça oval inclinada embaixo à esquerda, haste do lado direito, bandeirola para a direita
+            let (hx, hy) = (u + 0.25, v - 0.6);
+            let (c, s) = ((-0.35f32).cos(), (-0.35f32).sin());
+            let (x, y) = (c * hx - s * hy, s * hx + c * hy);
+            let head = (((x / 0.34).powi(2) + (y / 0.23).powi(2)).sqrt() - 1.0) * 0.23;
+            let stem = ((u - 0.06).abs() - 0.055).max((v + 0.15).abs() - 0.72);
+            let t = u - 0.06;
+            let flag = if (0.0..=0.45).contains(&t) && v < 0.1 { (v - (-0.87 + 2.2 * t * t + 0.9 * t)).abs() - 0.08 } else { 1.0 };
+            edge(head).max(edge(stem)).max(edge(flag))
+        }
+        TipShape::Book => edge((u.abs() - 0.34).max(v.abs() - 0.96)),
+        TipShape::Building => {
+            // topo com um degrau (caixa d'água) no lado esquerdo
+            let body = (u.abs() - 0.62).max(v.abs() - 0.98);
+            let top = (u + 0.3).abs().max(0.2) - 0.2;
+            let tank = top.max((v + 1.0).abs() - 0.08);
+            edge(body).max(edge(tank))
+        }
+        TipShape::Button => {
+            let r = (u * u + v * v).sqrt();
+            let hole = [(-0.22f32, -0.22f32), (0.22, -0.22), (-0.22, 0.22), (0.22, 0.22)].iter().map(|(x, y)| ((u - x).powi(2) + (v - y).powi(2)).sqrt() - 0.1).fold(f32::MAX, f32::min);
+            edge(r - 0.9) * (1.0 - edge(hole))
+        }
+        TipShape::Bead => edge((u * u + v * v).sqrt() - 0.86),
+        TipShape::ChainLink => {
+            let outer = ((u / 0.95).powi(2) + (v / 0.55).powi(2)).sqrt() - 1.0;
+            let inner = ((u / 0.62).powi(2) + (v / 0.24).powi(2)).sqrt() - 1.0;
+            edge(outer * 0.55) * (1.0 - edge(inner * 0.24))
+        }
+        TipShape::ChainLinkSide => {
+            // barra com as pontas redondas (o elo visto de lado)
+            let x = (u.abs() - 0.8).max(0.0);
+            edge((x * x + v * v).sqrt() - 0.14)
+        }
+        TipShape::ZipperA | TipShape::ZipperB => {
+            let vv = if shape == TipShape::ZipperA { v } else { -v };
+            // dente do lado de cima, com a ponta arredondada no meio
+            let body = (u.abs() - 0.32).max((vv + 0.45).abs() - 0.5);
+            let tip = (u * u + (vv - 0.05).powi(2)).sqrt() - 0.32;
+            edge(body.min(tip.max(vv - 0.05)))
+        }
+        TipShape::BraidL | TipShape::BraidR => {
+            let a: f32 = if shape == TipShape::BraidL { 0.6 } else { -0.6 };
+            let (c, s) = (a.cos(), a.sin());
+            let (x, y) = (c * u - s * v, s * u + c * v);
+            edge((((x / 0.95).powi(2) + (y / 0.42).powi(2)).sqrt() - 1.0) * 0.42)
+        }
+        TipShape::Scallop => {
+            // meia-lua para baixo de uma faixa reta, com um arco de furos
+            let (x, y) = (u, v + 0.25);
+            let r = (x * x + y * y).sqrt();
+            let half = if y >= 0.0 { r - 0.92 } else { 1.0 };
+            let band = (u.abs() - 0.98).max((v + 0.32).abs() - 0.1);
+            let th = y.atan2(x);
+            let holes = if y > 0.05 {
+                let k = ((th / std::f32::consts::PI) * 5.0).round() / 5.0 * std::f32::consts::PI;
+                ((x - 0.62 * k.cos()).powi(2) + (y - 0.62 * k.sin()).powi(2)).sqrt() - 0.09
+            } else {
+                1.0
+            };
+            edge(half.min(band)) * (1.0 - edge(holes))
+        }
+        TipShape::Swirl => {
+            // espiral de Arquimedes r = 0,08 + 0,13·θ, duas voltas e meia, linha de 0,07
+            let r = (u * u + v * v).sqrt();
+            let th = v.atan2(u).rem_euclid(std::f32::consts::TAU);
+            let mut d = f32::MAX;
+            for n in 0..3 {
+                let t = th + std::f32::consts::TAU * n as f32;
+                if t <= 15.5 {
+                    d = d.min((r - (0.08 + 0.055 * t)).abs());
+                }
+            }
+            edge(d - 0.07)
+        }
+        TipShape::Wave => {
+            if u.abs() > 1.0 {
+                return 0.0;
+            }
+            let pi = std::f32::consts::PI;
+            let slope = 0.45 * pi * (pi * u).cos();
+            edge(((v - 0.45 * (pi * u).sin()).abs() / (1.0 + slope * slope).sqrt()) - 0.1)
+        }
+        TipShape::Splat => {
+            let r = (u * u + v * v).sqrt();
+            let th = v.atan2(u);
+            let rad = 0.5 + 0.13 * (5.0 * th).sin() + 0.07 * (11.0 * th + 1.3).sin();
+            let drops = [(0.78f32, 0.22f32, 0.1f32), (-0.62, 0.66, 0.08), (0.2, -0.86, 0.07), (-0.8, -0.35, 0.05)]
+                .iter()
+                .map(|(x, y, s)| ((u - x).powi(2) + (v - y).powi(2)).sqrt() - s)
+                .fold(f32::MAX, f32::min);
+            edge(r - rad).max(edge(drops))
+        }
         TipShape::Rose => {
             let r = (u * u + v * v).sqrt();
             if r > 1.0 { return 0.0 }
@@ -250,7 +372,19 @@ fn shape_tone(shape: TipShape, u: f32, v: f32, aa: f32) -> f32 {
         TipShape::Feather => smoothstep(0.06, 0.0, u.abs()) * 0.7,
         // face de baixo da pedra na sombra
         TipShape::Pebble => smoothstep(-0.1, 0.7, v + 0.3 * u),
+        // faixas da lombada do livro
+        TipShape::Book => if (v.abs() - 0.72).abs() < 0.07 { 1.0 } else { 0.0 },
+        // janelas do prédio (grade)
+        TipShape::Building => {
+            let (gx, gy) = ((u + 0.62) / 0.31, (v + 0.82) / 0.27);
+            if u.abs() < 0.5 && v > -0.82 && v < 0.82 && gx.fract() > 0.3 && gx.fract() < 0.75 && gy.fract() > 0.3 && gy.fract() < 0.78 { 1.0 } else { 0.0 }
+        }
+        // aro do botão e sombra da conta
+        TipShape::Button => smoothstep(0.62, 0.72, (u * u + v * v).sqrt()),
+        TipShape::Bead => smoothstep(-0.5, 0.9, u + v) * 0.8,
         TipShape::Star | TipShape::Square | TipShape::Stick | TipShape::Bokeh | TipShape::Tree | TipShape::Glint => 0.0,
+        TipShape::Note | TipShape::ChainLink | TipShape::ChainLinkSide | TipShape::ZipperA | TipShape::ZipperB | TipShape::BraidL | TipShape::BraidR => 0.0,
+        TipShape::Scallop | TipShape::Swirl | TipShape::Wave | TipShape::Splat => 0.0,
     }
 }
 
@@ -1113,6 +1247,96 @@ impl BrushPreset {
         ru.value_jitter = 0.15;
         ru.two_tone = Some(TwoTone { tint: [0.5, 0.5, 0.55], amount: 0.7, color: None });
         v.push(ru);
+        // ---- 28/10: o que faltava do Clip Studio
+        let mut bk = deco("Livros", 120.0, TipShape::Book);
+        bk.tip = BrushTip::Shape { shape: TipShape::Book, aspect: 1.0 };
+        bk.spacing = 0.38;
+        bk.size_jitter = 0.18;
+        bk.value_jitter = 0.35;
+        bk.hue_jitter = 0.12;
+        bk.two_tone = Some(TwoTone { tint: [0.95, 0.85, 0.5], amount: 0.9, color: None });
+        v.push(bk);
+        let mut bd = deco("Prédios", 260.0, TipShape::Building);
+        bd.spacing = 0.55;
+        bd.size_jitter = 0.45;
+        bd.value_jitter = 0.12;
+        // janelas acesas: cor própria (amarelo quente), não um tom do prédio
+        bd.two_tone = Some(TwoTone { tint: [1.0, 1.0, 1.0], amount: 0.85, color: Some([1.0, 0.86, 0.5]) });
+        v.push(bd);
+        let mut sp = deco("Mancha de sangue", 120.0, TipShape::Splat);
+        sp.spacing = 0.6;
+        sp.count = 2;
+        sp.scatter = 0.9;
+        sp.size_jitter = 0.7;
+        sp.angle_jitter = 180.0;
+        sp.value_jitter = 0.2;
+        v.push(sp);
+        // linha com régua: decoram uma linha seguindo o traço
+        let line = |name: &str, size: f32, shape: TipShape, spacing: f32| {
+            let mut p = deco(name, size, shape);
+            p.follow_direction = true;
+            p.spacing = spacing;
+            p
+        };
+        v.push(line("Linha ondulada", 30.0, TipShape::Wave, 1.0));
+        let mut dash = line("Linha tracejada", 12.0, TipShape::Square, 2.2);
+        dash.tip = BrushTip::Round { hardness: 1.0, roundness: 0.3, angle: 0.0 };
+        v.push(dash);
+        let mut dot = BrushPreset::round("Linha pontilhada", 10.0, 1.0);
+        dot.group = "decoracao".into();
+        dot.category = "cenario".into();
+        dot.size_pressure_min = 1.0;
+        dot.spacing = 1.9;
+        v.push(dot);
+        v.push(line("Linha de estrelas", 30.0, TipShape::Star, 1.3));
+        let mut rough = BrushPreset::round("Bordas rugosas", 16.0, 1.0);
+        rough.group = "decoracao".into();
+        rough.category = "cenario".into();
+        rough.size_pressure_min = 1.0;
+        rough.spacing = 0.04;
+        rough.edge = Some(EdgeNoise { amount: 0.55, grain: 2.5, seed: 0 });
+        v.push(rough);
+        let mut irr = BrushPreset::round("Linha irregular", 14.0, 1.0);
+        irr.group = "decoracao".into();
+        irr.category = "cenario".into();
+        irr.size_pressure_min = 1.0;
+        irr.spacing = 0.05;
+        irr.size_dyn = Some(crate::brush_dyn::Dynamics { random: Some(0.35), random_len: 18.0, ..Default::default() });
+        v.push(irr);
+        let mut mel = line("Melodia", 40.0, TipShape::Note, 1.4);
+        mel.follow_direction = false;
+        mel.scatter = 0.5;
+        mel.size_jitter = 0.3;
+        mel.angle_jitter = 15.0;
+        v.push(mel);
+        // roupas
+        let mut bt = deco("Botões", 40.0, TipShape::Button);
+        bt.spacing = 2.4;
+        bt.two_tone = Some(TwoTone { tint: [0.7, 0.7, 0.75], amount: 0.6, color: None });
+        v.push(bt);
+        let mut bead = deco("Contas", 18.0, TipShape::Bead);
+        bead.spacing = 1.0;
+        bead.two_tone = Some(TwoTone { tint: [0.55, 0.55, 0.6], amount: 0.8, color: None });
+        v.push(bead);
+        for (name, size) in [("Corrente", 36.0f32), ("Corrente fina", 16.0)] {
+            let mut c = line(name, size, TipShape::ChainLink, 0.62);
+            c.extra_tips = vec![BrushTip::Shape { shape: TipShape::ChainLinkSide, aspect: 1.0 }];
+            c.tip_order = TipOrder::Sequence;
+            v.push(c);
+        }
+        let mut zp = line("Zíper", 28.0, TipShape::ZipperA, 0.42);
+        zp.extra_tips = vec![BrushTip::Shape { shape: TipShape::ZipperB, aspect: 1.0 }];
+        zp.tip_order = TipOrder::Sequence;
+        v.push(zp);
+        let mut br = line("Trança", 40.0, TipShape::BraidL, 0.4);
+        br.extra_tips = vec![BrushTip::Shape { shape: TipShape::BraidR, aspect: 1.0 }];
+        br.tip_order = TipOrder::Sequence;
+        br.two_tone = Some(TwoTone { tint: [0.7, 0.62, 0.55], amount: 0.5, color: None });
+        v.push(br);
+        v.push(line("Renda", 40.0, TipShape::Scallop, 0.98));
+        let mut sw = line("Floreado simples", 40.0, TipShape::Swirl, 1.15);
+        sw.follow_direction = true;
+        v.push(sw);
         v
     }
 
