@@ -2,7 +2,7 @@
 
 use crate::context::*;
 use aiai_core::*;
-use aiai_paint::fill::{FillParams, Regions, boundary_from_alpha, label_regions};
+use aiai_paint::fill::{FillParams, Regions, label_regions, sealed_line_boundary};
 use aiai_render::{RenderOptions, render_frame};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -162,7 +162,9 @@ fn compute_regions_uncached(
     };
     let out = render_frame(src, blobs, cut_id, frame, &opts).map_err(|e| ToolError::Render(e.to_string()))?;
     let (w, h) = (out.image.width, out.image.height);
-    let boundary = boundary_from_alpha(&out.image, params.line_threshold);
+    // linhas com as junções vedadas: a ponta clara que afina pela pressão conta como linha, e as pontas soltas se soldam
+    // à linha (ou à ponta) em frente a até 4x o fechamento de buracos (auditoria 4.9h)
+    let boundary = sealed_line_boundary(&out.image, params.line_threshold, 4.0 * params.gap.max(0.0));
     let mut params = *params;
     if trace_half > 0.0 {
         params.expand = params.expand.max((trace_half + 1.0).ceil() as u32);

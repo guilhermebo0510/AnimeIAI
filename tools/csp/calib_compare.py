@@ -9,7 +9,11 @@ Para cada caneta e tamanho mede, na referência e no nosso:
     - aspereza  desvio-padrão da borda ao longo da linha lenta (canetas ásperas/texturizadas), px;
     - direção   largura do círculo por direção do traço (12 faixas de 15°): erro RMS relativo (caligrafia, marcador chato);
     - rápidos   largura dos traços rápidos curtos, nosso ÷ referência;
-    - sobrepos. tinta média na faixa das três linhas sobrepostas e no cruzamento, nosso ÷ referência.
+    - sobrepos. tinta média na faixa das três linhas sobrepostas e no cruzamento, nosso ÷ referência;
+    - centro    linha central subpixel (Steger, `aiai-metrics`): desvio médio da linha central nossa à da referência, px
+                (bancada 4.9.6: <= 0,75), e o perfil de espessura w(s) pareado ponto a ponto: R² e erro médio, px
+                (R² >= 0,90; com espessura quase constante, erro <= 0,3 px). Precisa do exemplo compilado:
+                `cargo build --release -p aiai-metrics --example centerline_pair`.
 Grava, por folha, `<caneta>_s<t>_lado.png` (referência | nosso | diferença: vermelho = só na referência, azul = só no nosso)
 e um `metricas.json` com tudo.
 
@@ -24,6 +28,7 @@ import argparse
 import json
 import math
 import os
+import subprocess
 import sys
 
 import cv2
@@ -294,6 +299,17 @@ def compare(ref, ours, size):
     return r
 
 
+CENTERLINE_EXE = os.path.join(ROOT, "app", "target", "release", "examples", "centerline_pair.exe")
+
+
+def centerline(ref_path, ours_path):
+    """Linha central (Steger) das duas folhas pelo exemplo do aiai-metrics; None sem o executável ou nas borrachas."""
+    if INVERT or not os.path.exists(CENTERLINE_EXE):
+        return None
+    out = subprocess.run([CENTERLINE_EXE, ref_path, ours_path, "--json"], capture_output=True, text=True, check=True)
+    return json.loads(out.stdout)
+
+
 def side_by_side(ref, ours, path):
     a, b = ref > 0.5, ours > 0.5
     diff = np.full((H, W, 3), 255, np.uint8)
@@ -329,6 +345,16 @@ def score(r):
     if r.get("perfil") is not None:
         s += 0.5 * r["perfil"]
     return float(s)
+
+
+def steger_cols(st):
+    """Colunas da linha central: desvio médio (px) e R²/erro do perfil w(s); '!' quando reprova a bancada 4.9.6."""
+    if not st:
+        return f"{'-':>6s} {'-':>13s}"
+    c = st["compare"]
+    dev = f"{c['deviation_mean']:.2f}" + ("" if c["deviation_ok"] else "!")
+    wsp = f"{c['width_r2']:.2f}/{c['width_abs_err']:.2f}" + ("" if c["width_profile_ok"] else "!")
+    return f"{dev:>6s} {wsp:>13s}"
 
 
 def fmt(v, n=2):
@@ -386,7 +412,7 @@ def main():
               f"{'espec':>5s} {'perfil':>6s} {'part/1000 r/n':>13s} {'área r/n':>10s} {'score':>6s}")
     else:
         print(f"{'caneta':14s} {'t':>3s} {'iou':>5s} {'desl':>6s} {'tinta':>5s} {'corpo L/R':>10s} {'pontas':>19s} {'borda r/n':>10s} "
-              f"{'asp r/n':>10s} {'dir':>5s} {'ráp':>5s} {'sobr':>5s} {'score':>6s}")
+              f"{'asp r/n':>10s} {'dir':>5s} {'ráp':>5s} {'sobr':>5s} {'score':>6s} {'centro':>6s} {'w(s) R²/erro':>13s}")
     for pen in pens:
         for s in sizes:
             rp = os.path.join(a.ref, f"{pen}_s{s}.png")
@@ -397,6 +423,7 @@ def main():
             ref, ours = load_ink(rp), load_ink(op)
             r = compare(ref, ours, s)
             r["score"] = score(r)
+            r["steger"] = centerline(rp, op)
             allr[f"{pen}_s{s}"] = r
             if tex:
                 pa = r["particulas"]
@@ -406,7 +433,7 @@ def main():
             else:
                 print(f"{pen:14s} {s:3d} {r['iou']:5.3f} {str(tuple(r['shift'])):>6s} {r['tinta']:5.2f} {fmt(r['corpo']):>10s} "
                       f"{fmt(r['pontas']):>19s} {fmt(r['borda'], 1):>10s} {fmt(r['aspereza'], 1):>10s} {fmt(r['direcao']):>5s} "
-                      f"{r['rapidos']:5.2f} {r['sobreposta']:5.2f} {r['score']:6.3f}")
+                      f"{r['rapidos']:5.2f} {r['sobreposta']:5.2f} {r['score']:6.3f} {steger_cols(r.get('steger'))}")
             if not a.no_images:
                 side_by_side(ref, ours, os.path.join(a.out, f"{pen}_s{s}_lado.png"))
     name = f"metricas{('_' + a.tag) if a.tag else ''}.json"

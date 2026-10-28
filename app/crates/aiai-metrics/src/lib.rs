@@ -23,6 +23,7 @@ mod phase;
 mod report;
 mod rgb;
 mod ssim;
+mod steger;
 
 pub use color::{delta_e2000, delta_e_map, image_to_lab, lab_to_srgb, mean_delta_e, rgb8_to_lab, srgb_to_lab, Lab};
 pub use edges::{edge_f1, edge_map, edge_map_with, flat_region_mask, flat_region_mask_with, EdgeParams, EdgeScore};
@@ -37,3 +38,7 @@ pub use report::{
 };
 pub use rgb::{AsRgb8, Rgb8};
 pub use ssim::{ssim, ssim_full, SsimResult};
+pub use steger::{
+    auto_sigma, centerline_compare, compare_centerlines, steger, steger_on, CenterLine, CenterPoint, CenterlineCompare, StegerParams, StegerResult,
+    WidthSummary, CENTERLINE_DEVIATION_MAX, WIDTH_R2_MIN,
+};

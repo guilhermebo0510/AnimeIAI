@@ -174,7 +174,10 @@ fn line_width_ok(r: &CompareReport) -> bool {
     }
 }
 
-/// Régua perceptual (decisão 25): tolerância de bordas, F1 mínimo e teto do SSIM exigido.
+/// Régua perceptual (decisão 25): tolerância de bordas, F1 mínimo e teto do SSIM exigido. Vale para o quadro inteiro
+/// redesenhado contra a referência (4 px ≈ 0,4% da altura, invisível em movimento). A medida fina de linha é a linha
+/// central subpixel (Steger) que vai junto no relatório (`report.centerline`: desvio da linha central e R² de w(s)), e é
+/// ela que aprova as canetas na bancada de calibração (`tools/csp/calib_compare.py`, auditoria 4.9h).
 pub const EDGE_TOLERANCE_PX: f32 = 4.0;
 pub const EDGE_F1_MIN_PERCEPTUAL: f64 = 0.90;
 pub const SSIM_MIN_PERCEPTUAL: f64 = 0.93;

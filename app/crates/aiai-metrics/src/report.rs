@@ -9,6 +9,7 @@ use crate::palette::{palette_shift, PaletteMatch};
 use crate::phase::phase_correlation;
 use crate::rgb::{same_size, AsRgb8, Rgb8};
 use crate::ssim::ssim_full;
+use crate::steger::{centerline_compare, CenterlineCompare, StegerParams, WidthSummary};
 use aiai_paint::Image;
 use serde::{Deserialize, Serialize};
 
@@ -126,6 +127,13 @@ pub struct CompareReport {
     pub ppd: f32,
     pub edge_tolerance_px: f32,
     pub worst_regions: Vec<[u32; 4]>,
+    /// Linha central subpixel (Steger) e largura pareada ponto a ponto (auditoria 4.9h): desvio da linha central e R²
+    /// do perfil de espessura w(s). Informativo no veredito do protocolo; é o critério da bancada das canetas.
+    #[serde(default)]
+    pub centerline: CenterlineCompare,
+    /// Largura pela linha central (fora de junções e pontas), referência e teste.
+    #[serde(default)]
+    pub centerline_width: [WidthSummary; 2],
 }
 
 /// Mapas intermediarios para gerar as imagens do relatorio.
@@ -179,6 +187,9 @@ pub fn compare_with_artifacts(reference: &impl AsRgb8, test: &impl AsRgb8, opts:
     let hard_ok = fl.mean <= th.flip_mean_hard_max;
     let verdict = Verdict { flip_ok, ssim_ok, delta_e_flat_ok: de_ok, edge_f1_ok: f1_ok, line_width_ok: lw_ok, palette_ok: pal_ok, flip_hard_ok: hard_ok, pass: flip_ok && ssim_ok && de_ok && f1_ok && lw_ok && pal_ok };
 
+    let (cr, ct, cl) = centerline_compare(&*r, &*t, &StegerParams::default(), 3.0);
+    let centerline_width = [cr.width_stats(), ct.width_stats()];
+
     let worst = fl.worst_regions(opts.worst_n, opts.worst_size);
     let report = CompareReport {
         width: w,
@@ -195,6 +206,8 @@ pub fn compare_with_artifacts(reference: &impl AsRgb8, test: &impl AsRgb8, opts:
         ppd: opts.ppd,
         edge_tolerance_px: opts.edge_tolerance_px,
         worst_regions: worst,
+        centerline: cl,
+        centerline_width,
     };
     Ok((report, CompareArtifacts { flip: fl, ref_edges, test_edges, flat_mask: flat }))
 }

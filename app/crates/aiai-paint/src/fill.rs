@@ -36,6 +36,219 @@ pub fn boundary_from_alpha(img: &Image, threshold: f32) -> Vec<bool> {
     img.data.iter().map(|p| p[3] >= threshold).collect()
 }
 
+/// Fronteira das linhas com as junções vedadas (auditoria 4.9h, teste de vedação em V, T, L e 180°):
+/// 1. histerese: a parte clara de uma linha (a ponta afinando pela pressão, abaixo de `threshold`) conta como linha
+///    quando encosta no corpo dela (alfa >= `threshold`), até um alfa de 15% do limiar (mínimo 0,04);
+/// 2. soldagem de pontas (`weld` px, 0 = desligada): cada ponta solta do esqueleto da linha anda para a frente, na
+///    direção do traço (até 20° para os lados), e se encontra outra linha a até `weld` px, a ponta é ligada a ela por um
+///    trecho de linha. Mais junções fechadas e nenhuma camada "Fecho do balde".
+pub fn sealed_line_boundary(img: &Image, threshold: f32, weld: f32) -> Vec<bool> {
+    let (w, h) = (img.width as usize, img.height as usize);
+    let lo = (threshold * 0.15).max(0.04).min(threshold);
+    let mut b: Vec<bool> = img.data.iter().map(|p| p[3] >= threshold).collect();
+    let mut stack: Vec<usize> = (0..w * h).filter(|&i| b[i]).collect();
+    while let Some(i) = stack.pop() {
+        let (x, y) = ((i % w) as i64, (i / w) as i64);
+        for dy in -1..=1i64 {
+            for dx in -1..=1i64 {
+                let (nx, ny) = (x + dx, y + dy);
+                if nx < 0 || ny < 0 || nx >= w as i64 || ny >= h as i64 {
+                    continue;
+                }
+                let j = ny as usize * w + nx as usize;
+                if !b[j] && img.data[j][3] >= lo {
+                    b[j] = true;
+                    stack.push(j);
+                }
+            }
+        }
+    }
+    if weld > 0.0 {
+        weld_endpoints(&mut b, w, h, weld);
+    }
+    b
+}
+
+/// Esqueleto de Zhang-Suen (1 px de largura, 8-conexo) de uma máscara.
+pub fn skeleton(mask: &[bool], w: usize, h: usize) -> Vec<bool> {
+    let mut s = mask.to_vec();
+    let mut alive: Vec<usize> = (0..w * h).filter(|&i| s[i]).collect();
+    let get = |s: &[bool], x: i64, y: i64| x >= 0 && y >= 0 && x < w as i64 && y < h as i64 && s[y as usize * w + x as usize];
+    loop {
+        let mut changed = false;
+        for step in 0..2 {
+            let mut del = Vec::new();
+            for &i in &alive {
+                if !s[i] {
+                    continue;
+                }
+                let (x, y) = ((i % w) as i64, (i / w) as i64);
+                // p2..p9 no sentido horário a partir de cima
+                let n = [
+                    get(&s, x, y - 1),
+                    get(&s, x + 1, y - 1),
+                    get(&s, x + 1, y),
+                    get(&s, x + 1, y + 1),
+                    get(&s, x, y + 1),
+                    get(&s, x - 1, y + 1),
+                    get(&s, x - 1, y),
+                    get(&s, x - 1, y - 1),
+                ];
+                let bcount = n.iter().filter(|v| **v).count();
+                if !(2..=6).contains(&bcount) {
+                    continue;
+                }
+                let a = (0..8).filter(|&k| !n[k] && n[(k + 1) % 8]).count();
+                if a != 1 {
+                    continue;
+                }
+                let (p2, p4, p6, p8) = (n[0], n[2], n[4], n[6]);
+                let ok = if step == 0 { !(p2 && p4 && p6) && !(p4 && p6 && p8) } else { !(p2 && p4 && p8) && !(p2 && p6 && p8) };
+                if ok {
+                    del.push(i);
+                }
+            }
+            for &i in &del {
+                s[i] = false;
+            }
+            changed |= !del.is_empty();
+        }
+        alive.retain(|&i| s[i]);
+        if !changed {
+            break;
+        }
+    }
+    s
+}
+
+/// Liga as pontas soltas do esqueleto à linha mais próxima à frente delas (ver `sealed_line_boundary`).
+pub fn weld_endpoints(b: &mut [bool], w: usize, h: usize, max_dist: f32) {
+    let sk = skeleton(b, w, h);
+    let at = |x: i64, y: i64| x >= 0 && y >= 0 && x < w as i64 && y < h as i64;
+    let neigh = |sk: &[bool], i: usize| -> Vec<usize> {
+        let (x, y) = ((i % w) as i64, (i / w) as i64);
+        let mut v = Vec::new();
+        for dy in -1..=1i64 {
+            for dx in -1..=1i64 {
+                if (dx != 0 || dy != 0) && at(x + dx, y + dy) && sk[(y + dy) as usize * w + (x + dx) as usize] {
+                    v.push((y + dy) as usize * w + (x + dx) as usize);
+                }
+            }
+        }
+        v
+    };
+    // pontas: (posição, direção para a frente)
+    let mut ends: Vec<([f32; 2], [f32; 2])> = Vec::new();
+    for e in 0..w * h {
+        if !sk[e] || neigh(&sk, e).len() != 1 {
+            continue;
+        }
+        // volta pelo esqueleto até 10 px (para na bifurcação) para saber a direção do traço
+        let mut path = vec![e];
+        let mut cur = e;
+        while path.len() < 11 {
+            let next: Vec<usize> = neigh(&sk, cur).into_iter().filter(|j| !path.contains(j)).collect();
+            if next.len() != 1 {
+                break;
+            }
+            cur = next[0];
+            path.push(cur);
+        }
+        if path.len() < 4 {
+            continue;
+        }
+        let (ex, ey) = ((e % w) as f32 + 0.5, (e / w) as f32 + 0.5);
+        let (bx, by) = ((cur % w) as f32 + 0.5, (cur / w) as f32 + 0.5);
+        let (dx, dy) = (ex - bx, ey - by);
+        if dx.hypot(dy) < 1e-3 {
+            continue;
+        }
+        let dl = dx.hypot(dy);
+        ends.push(([ex, ey], [dx / dl, dy / dl]));
+    }
+    let mut segments: Vec<([f32; 2], [f32; 2])> = Vec::new();
+    for (k, &([ex, ey], [dx, dy])) in ends.iter().enumerate() {
+        let base = dy.atan2(dx);
+        let mut best: Option<(f32, [f32; 2])> = None;
+        // ponta com ponta (L, V, 180°): a outra ponta à frente, a até 60° da direção do traço. Quando as duas se olham
+        // (cada uma à frente da outra), o alcance é 50% maior: as duas afinam e somem antes do ponto onde os traços se
+        // tocam, e o buraco é a soma das duas pontas apagadas
+        for (j, &(q, qd)) in ends.iter().enumerate() {
+            if j == k {
+                continue;
+            }
+            let (vx, vy) = (q[0] - ex, q[1] - ey);
+            let d = vx.hypot(vy);
+            if d < 1.0 || d > 2.0 * max_dist {
+                continue;
+            }
+            let cosang = (vx * dx + vy * dy) / d;
+            if cosang < 0.5 {
+                continue;
+            }
+            // na mesma reta, uma de frente para a outra (junção de 180°, a linha continuada por outro traço): o dobro
+            let back = -(vx * qd[0] + vy * qd[1]) / d;
+            let reach = if cosang >= 0.95 && back >= 0.95 {
+                2.0
+            } else if back >= 0.5 {
+                1.5
+            } else {
+                1.0
+            };
+            if d > reach * max_dist {
+                continue;
+            }
+            let cost = d * (1.0 + cosang.acos().to_degrees() / 90.0);
+            if best.is_none_or(|(c, _)| cost < c) {
+                best = Some((cost, q));
+            }
+        }
+        for deg in [0.0f32, -10.0, 10.0, -20.0, 20.0] {
+            let a = base + deg.to_radians();
+            let (ux, uy) = (a.cos(), a.sin());
+            // sai da própria linha (pixels de linha logo à frente da ponta) e procura a próxima linha
+            let mut left = false;
+            let mut t = 0.5f32;
+            while t <= max_dist {
+                let (px, py) = (ex + ux * t, ey + uy * t);
+                if !at(px.floor() as i64, py.floor() as i64) {
+                    break;
+                }
+                let on = b[py.floor() as usize * w + px.floor() as usize];
+                if !on {
+                    left = true;
+                } else if left {
+                    // desvio lateral custa um pouco: entre duas linhas à mesma distância, a que está em frente
+                    let cost = t * (1.0 + deg.abs() / 90.0);
+                    if best.is_none_or(|(c, _)| cost < c) {
+                        best = Some((cost, [px, py]));
+                    }
+                    break;
+                }
+                t += 0.5;
+            }
+        }
+        if let Some((_, hit)) = best {
+            segments.push(([ex, ey], hit));
+        }
+    }
+    for (a, c) in segments {
+        let len = (c[0] - a[0]).hypot(c[1] - a[1]);
+        let n = (len * 3.0).ceil().max(1.0) as usize;
+        for k in 0..=n {
+            let t = k as f32 / n as f32;
+            let (px, py) = (a[0] + (c[0] - a[0]) * t, a[1] + (c[1] - a[1]) * t);
+            // parede de ~2 px: o balde anda em 4 vizinhos e não atravessa
+            for (ox, oy) in [(0.0, 0.0), (0.5, 0.0), (-0.5, 0.0), (0.0, 0.5), (0.0, -0.5)] {
+                let (qx, qy) = ((px + ox).floor() as i64, (py + oy).floor() as i64);
+                if at(qx, qy) {
+                    b[qy as usize * w + qx as usize] = true;
+                }
+            }
+        }
+    }
+}
+
 /// Fronteira por diferença de cor em relação à cor no ponto semente (balde raster "por cor").
 pub fn boundary_from_color(img: &Image, seed: (u32, u32), tolerance: f32) -> Vec<bool> {
     let s = img.get(seed.0, seed.1);
@@ -401,6 +614,53 @@ mod tests {
         let a0 = fill_at(&b, w, h, (50, 50), &FillParams { gap: 0.0, expand: 0, line_threshold: 0.5 }).unwrap().1.data.iter().filter(|&&v| v > 0).count();
         let a2 = fill_at(&b, w, h, (50, 50), &FillParams { gap: 0.0, expand: 2, line_threshold: 0.5 }).unwrap().1.data.iter().filter(|&&v| v > 0).count();
         assert!(a2 > a0 + 200, "expandir 2 px cresce a área: {a0} → {a2}");
+    }
+
+    /// Imagem de linhas (alfa 1) a partir de uma fronteira.
+    fn lines_img(b: &[bool], w: u32, h: u32) -> Image {
+        let mut img = Image::new(w, h);
+        for (px, &on) in img.data.iter_mut().zip(b) {
+            if on {
+                *px = [0.0, 0.0, 0.0, 1.0];
+            }
+        }
+        img
+    }
+
+    #[test]
+    fn weld_closes_facing_ends_but_not_side_by_side_ones() {
+        // anel com buraco de 8 px: as duas pontas se olham e a solda fecha (o fechamento de 3 px sozinho não)
+        let (w, h) = (100usize, 100usize);
+        let img = lines_img(&ring_with_gap(w, h, 8.0), w as u32, h as u32);
+        let p = FillParams { gap: 3.0, expand: 0, line_threshold: 0.5 };
+        let open = label_regions(&boundary_from_alpha(&img, 0.5), w, h, &p);
+        assert_eq!(open.label_at(50, 50), open.label_at(2, 2), "sem solda o buraco de 8 px vaza");
+        let sealed = label_regions(&sealed_line_boundary(&img, 0.5, 12.0), w, h, &p);
+        assert_ne!(sealed.label_at(50, 50), sealed.label_at(2, 2), "a solda fecha o anel");
+        // duas linhas paralelas a 6 px terminando lado a lado: nenhuma ponta está à frente da outra, nada se solda
+        let mut b = vec![false; w * h];
+        for x in 10..60 {
+            b[40 * w + x] = true;
+            b[46 * w + x] = true;
+        }
+        let before = b.iter().filter(|v| **v).count();
+        let after = sealed_line_boundary(&lines_img(&b, w as u32, h as u32), 0.5, 12.0).iter().filter(|v| **v).count();
+        assert_eq!(before, after, "pontas lado a lado não se soldam");
+    }
+
+    #[test]
+    fn hysteresis_keeps_the_faint_tip_connected_to_the_line() {
+        let (w, h) = (40u32, 10u32);
+        let mut img = Image::new(w, h);
+        for x in 0..40u32 {
+            // corpo forte até x = 20, ponta clareando até 0,06; e um ponto claro solto que não encosta na linha
+            let a = if x < 20 { 1.0 } else { 1.0 - (x - 19) as f32 * 0.047 };
+            img.data[(5 * w + x) as usize] = [0.0, 0.0, 0.0, a.max(0.06)];
+        }
+        img.data[(w + 5) as usize] = [0.0, 0.0, 0.0, 0.2];
+        let b = sealed_line_boundary(&img, 0.35, 0.0);
+        assert!((0..40).all(|x| b[5 * 40 + x]), "a ponta clara continua linha");
+        assert!(!b[40 + 5], "o ponto claro solto não vira linha");
     }
 
     #[test]
