@@ -6,6 +6,7 @@ pub mod assist;
 pub mod plugin;
 pub mod rig;
 pub mod anim;
+pub mod inbetween_preview;
 pub mod audio;
 pub mod audio_edit;
 pub mod background;

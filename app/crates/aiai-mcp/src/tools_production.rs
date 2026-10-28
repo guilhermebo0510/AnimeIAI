@@ -71,6 +71,15 @@ Exemplo: {"character":"<id>","head_top":120,"chin":260,"eyes":200,"feet":1010}"#
 const INBETWEEN_DESC: &str = r##"Intercala vetorialmente (estilo CACANi) entre dois desenhos-chave de uma camada VETORIAL: cria `count` cels novos entre os cels de número `key_a` e `key_b` (traços casados por ordem), com tempos por `times` (0..1), `ease` ou a tabela de "metades" (`halves_toward_b`). `first_number` define a numeração; com `start_frame` escreve no timesheet (A, intercalações e B, cada um por `hold` quadros, padrão 2); `fill_layer` (camada de cor ligada) ganha cels de mesmos números. `options` ajusta o casamento. Um passo de undo. Depois pinte com aiai_propagate_fills.
 Exemplo: {"cut":"<corte>","layer":"<linha>","key_a":1,"key_b":2,"count":3,"start_frame":0,"hold":2}"##;
 
+const INBETWEEN_PREVIEW_DESC: &str = r##"Prévia de intercalação de UM quadro (nada é gravado): mostra o desenho que o intercalador faria no quadro `frame` (0-based) entre os dois blocos-chave da camada VETORIAL `layer` (a camada precisa de faixa no timesheet). Sem `frame_a`/`frame_b`, usa os começos de bloco de desenho-chave mais próximos antes e depois; `key_a`/`key_b` conferem os números. `manual_pairs` = [[id do traço em A, id em B], ...] (por Stroke.id; pares por índice não são aceitos; id inexistente, repetido ou par incompatível = erro). Devolve proposal_id, t, pares por id (com `support`: preserve | approximate | refuse), `approximations` (avisos; aceite permitido), `refusals` (bloqueiam o aceite: largura por ponto ≠ 1, canto, alça, perfil diferente, Bézier reamostrado, sentido invertido no caminho direto, transformação de cel, desenho grande demais...), `accept_label` (o alcance escrito) e `acceptable`. Veja a imagem com aiai_render {"with_preview": proposal_id}. Aceite com aiai_inbetween_accept ou descarte com aiai_inbetween_discard. Uma prévia nova substitui a anterior; qualquer mudança no projeto invalida a prévia (peça de novo). A proposta fica presa à sessão que a calculou (app ou headless): aceitar/descartar nunca cai em outra sessão.
+Exemplo: {"cut":"<corte>","layer":"<linha>","frame":5}"##;
+
+const INBETWEEN_ACCEPT_DESC: &str = r##"Aceita a prévia de intercalação `proposal_id` (aiai_inbetween_preview): cria o cel novo (papel intercalação) com exatamente o desenho da prévia, expõe no quadro da prévia e, se o quadro seguinte não tinha entrada própria, grava nele o que já estava exposto (o resto do timesheet não muda). Um passo de desfazer. Falha (sem efeito) se houver recusa, se o projeto mudou desde a prévia, se a camada estiver travada ou se a proposta já foi usada. Devolve revision, cel, number e frames (quadros cujas entradas mudaram).
+Exemplo: {"proposal_id":710331694102529}"##;
+
+const INBETWEEN_DISCARD_DESC: &str = r##"Descarta a prévia de intercalação `proposal_id` (o projeto não muda).
+Exemplo: {"proposal_id":710331694102529}"##;
+
 const PROPAGATE_FILLS_DESC: &str = r##"Propaga o balde de tinta das chaves para as intercalações: lê as regiões pintadas da camada de cor nos quadros `key_frame_a` e `key_frame_b`, casa por cor e proximidade, e pinta cada quadro de `frames` com sementes interpoladas (um único passo de undo). A chave A precisa estar pintada. `gap` (padrão 3) fecha buracos de linha. Confirme com aiai_lint (vazio = tudo pintado) e aiai_render.
 Exemplo: {"cut":"<corte>","fill_layer":"<camada fill>","key_frame_a":0,"key_frame_b":8,"frames":[2,4,6]}"##;
 
@@ -169,6 +178,15 @@ pub fn definitions() -> Vec<Value> {
         json!({ "name": "aiai_character_material", "description": CHARACTER_MATERIAL_DESC, "inputSchema": schema_of::<char_material::CharMaterialRequest>() }),
         json!({ "name": "aiai_consistency", "description": CONSISTENCY_DESC, "inputSchema": schema_of::<character::ConsistencyRequest>() }),
         json!({ "name": "aiai_inbetween", "description": INBETWEEN_DESC, "inputSchema": schema_of::<anim::InbetweenRequest>() }),
+        json!({ "name": "aiai_inbetween_preview", "description": INBETWEEN_PREVIEW_DESC, "inputSchema": schema_of::<aiai_tools::inbetween_preview::InbetweenPreviewRequest>() }),
+        json!({ "name": "aiai_inbetween_accept", "description": INBETWEEN_ACCEPT_DESC, "inputSchema": {
+            "type": "object",
+            "properties": { "proposal_id": { "type": "integer", "minimum": 0 }, "author": { "type": "string" } },
+            "required": ["proposal_id"], "additionalProperties": false } }),
+        json!({ "name": "aiai_inbetween_discard", "description": INBETWEEN_DISCARD_DESC, "inputSchema": {
+            "type": "object",
+            "properties": { "proposal_id": { "type": "integer", "minimum": 0 } },
+            "required": ["proposal_id"], "additionalProperties": false } }),
         json!({ "name": "aiai_propagate_fills", "description": PROPAGATE_FILLS_DESC, "inputSchema": schema_of::<anim::PropagateFillsRequest>() }),
         json!({ "name": "aiai_tts_line", "description": TTS_LINE_DESC, "inputSchema": with_props(schema_of::<audio::TtsLineRequest>(), voicevox) }),
         json!({ "name": "aiai_tts_kokoro", "description": TTS_KOKORO_DESC, "inputSchema": schema_of::<audio::KokoroLineRequest>() }),
@@ -284,6 +302,9 @@ pub fn plan(name: &str, m: &Map<String, Value>) -> Option<Result<Plan, ToolError
         "aiai_character_material" => with_req(&["character"], "CHARACTER_MATERIAL", false),
         "aiai_consistency" => with_req(&["character", "head_top", "chin"], "CONSISTENCY", false),
         "aiai_inbetween" => with_req(&["cut", "layer", "key_a", "key_b", "count"], "INBETWEEN", false),
+        "aiai_inbetween_preview" => with_req(&["cut", "layer", "frame"], "INBETWEEN_PREVIEW", false),
+        "aiai_inbetween_accept" => with_req(&["proposal_id"], "INBETWEEN_ACCEPT", false),
+        "aiai_inbetween_discard" => with_req(&["proposal_id"], "INBETWEEN_DISCARD", false),
         "aiai_propagate_fills" => with_req(&["cut", "fill_layer", "key_frame_a", "key_frame_b", "frames"], "PROPAGATE_FILLS", false),
         "aiai_tts_line" => with_req(&["text"], "TTS_LINE", false),
         "aiai_tts_kokoro" => with_req(&["text"], "TTS_KOKORO", false),

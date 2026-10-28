@@ -28,6 +28,34 @@ impl Clock {
     }
 }
 
+/// De onde veio a ação registrada (R16 REQ-P01…P03). Descreve o caminho da entrada, nunca prova de pessoa: o autor
+/// `"human"` do app não vira "humano" por esta fonte, e ação da interface sem vínculo com um evento injetado fica
+/// `UiPlatformUnattributed` (pode ter sido uma pessoa, outro programa ou um robô de mouse do sistema).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InputSource {
+    /// Evento da plataforma (mouse, teclado, caneta do sistema) sem vínculo com evento injetado.
+    UiPlatformUnattributed,
+    /// Ação disparada por um evento emitido pela fila de entrada da bridge (`INPUT`).
+    BridgeInjected,
+    /// Ferramenta/ação da bridge ou do MCP chamada diretamente (sem passar por evento de interface).
+    DirectToolCall,
+    /// Importador (arquivo de fora entrando no projeto).
+    Import,
+    /// Fontes efetivamente combinadas (gesto com trechos de fontes diferentes; passos de fontes diferentes juntados).
+    Mixed,
+    /// Sem registro (entradas antigas) ou impossível atribuir.
+    #[default]
+    UnknownLegacy,
+}
+
+impl InputSource {
+    /// Junta duas fontes: iguais ficam, diferentes viram `Mixed`.
+    pub fn combine(self, other: InputSource) -> InputSource {
+        if self == other { self } else { InputSource::Mixed }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LogEntry {
     pub seq: u64,
@@ -39,6 +67,9 @@ pub struct LogEntry {
     pub time_ms: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<Command>,
+    /// Fonte da entrada (ausente nas entradas antigas = `UnknownLegacy`).
+    #[serde(default)]
+    pub source: InputSource,
 }
 
 pub struct CoreSession {
@@ -51,6 +82,9 @@ pub struct CoreSession {
     pub clock: Clock,
     /// Autor padrão dos comandos ("human", "agent:claude"...). Cada chamada pode sobrescrever.
     pub author: String,
+    /// Fonte da entrada das próximas ações (o app troca a cada quadro conforme os eventos; a bridge marca as chamadas
+    /// diretas). Vai para o `LogEntry` de cada apply/undo/redo.
+    pub source: InputSource,
     /// Roda `Project::validate` completo depois de cada comando (testes e depuração).
     pub full_validate: bool,
     pub undo_limit: usize,
@@ -66,6 +100,18 @@ pub struct CoreSession {
     lock: Option<crate::lock::ProjectLock>,
     /// Travas dos cortes que esta sessão editou (projeto dividido por corte, auditoria 4.6k).
     cut_locks: std::collections::BTreeMap<crate::Id, crate::lock::ProjectLock>,
+    /// Época do documento: única no processo, muda ao abrir/trocar o projeto (R16 REQ-D02: proposta de outra época
+    /// não vale).
+    document_epoch: u64,
+    /// Estado em memória de outras camadas preso a ESTA sessão (ex.: as propostas de intercalação, R16 REQ-M01): some
+    /// junto com ela e é limpo ao trocar o documento. Nunca é gravado.
+    ext: std::collections::HashMap<std::any::TypeId, Box<dyn std::any::Any + Send + Sync>>,
+}
+
+static NEXT_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn next_epoch() -> u64 {
+    NEXT_EPOCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Coleta os blobs órfãos depois de tantas ações saírem do histórico (sem isso a memória só crescia).
@@ -84,6 +130,7 @@ impl CoreSession {
             ids: IdGen::Uuid7,
             clock: Clock::System,
             author: "human".into(),
+            source: InputSource::UnknownLegacy,
             full_validate: cfg!(test),
             undo_limit: 500,
             wal: None,
@@ -92,7 +139,28 @@ impl CoreSession {
             dropped_since_gc: 0,
             lock: None,
             cut_locks: Default::default(),
+            document_epoch: next_epoch(),
+            ext: Default::default(),
         }
+    }
+
+    /// Época do documento aberto (muda ao abrir/trocar o projeto; única entre sessões do processo).
+    pub fn document_epoch(&self) -> u64 {
+        self.document_epoch
+    }
+
+    /// Estado em memória do tipo `T` preso a esta sessão (criado vazio na primeira vez).
+    pub fn ext_mut<T: std::any::Any + Send + Sync + Default>(&mut self) -> &mut T {
+        self.ext
+            .entry(std::any::TypeId::of::<T>())
+            .or_insert_with(|| Box::new(T::default()))
+            .downcast_mut::<T>()
+            .expect("o tipo da chave é o do valor")
+    }
+
+    /// Lê o estado `T` sem criar.
+    pub fn ext<T: std::any::Any + Send + Sync>(&self) -> Option<&T> {
+        self.ext.get(&std::any::TypeId::of::<T>()).and_then(|b| b.downcast_ref::<T>())
     }
 
     /// Sessão determinística para testes: ids sequenciais, relógio fixo, validação completa.
@@ -291,6 +359,7 @@ impl CoreSession {
             author: author.into(),
             time_ms: self.clock.now_ms(),
             command,
+            source: self.source,
         };
         if let Some(wal) = self.wal.as_mut() {
             wal.append(&entry, &mut self.blobs)?;
@@ -322,9 +391,11 @@ impl CoreSession {
         affected.dedup();
         self.undo.push(Applied { command: command.clone(), inverse, created, affected });
         let entries = self.log.split_off(self.log.len() - n);
+        // passos de fontes diferentes juntados num só = `Mixed` (R16 REQ-P03)
+        let source = entries.iter().map(|e| e.source).reduce(InputSource::combine).unwrap_or_default();
         let (first, last) = (entries.first().cloned(), entries.last().cloned());
         if let (Some(first), Some(last)) = (first, last) {
-            self.log.push(LogEntry { seq: first.seq, revision: last.revision, op: "apply".into(), description: label.to_owned(), author: last.author, time_ms: last.time_ms, command: Some(command) });
+            self.log.push(LogEntry { seq: first.seq, revision: last.revision, op: "apply".into(), description: label.to_owned(), author: last.author, time_ms: last.time_ms, command: Some(command), source });
         }
         true
     }
@@ -367,6 +438,8 @@ impl CoreSession {
         self.redo.clear();
         self.log.clear();
         self.change_counter += 1;
+        self.document_epoch = next_epoch();
+        self.ext.clear();
     }
 
     /// Assume o documento de outra sessão (abrir projeto) com o histórico dela: depois de uma recuperação pelo WAL
@@ -383,6 +456,8 @@ impl CoreSession {
         self.log = other.log;
         self.dropped_since_gc = 0;
         self.change_counter += 1;
+        self.document_epoch = next_epoch();
+        self.ext.clear();
     }
 
     /// Remove blobs que nem o documento nem o histórico referenciam.

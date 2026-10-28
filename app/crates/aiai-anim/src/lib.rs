@@ -98,31 +98,71 @@ fn mean_dist(a: &[P], b: &[P]) -> f32 {
     a.iter().zip(b).map(|(p, q)| ((p.x - q.x).powi(2) + (p.y - q.y).powi(2)).sqrt()).sum::<f32>() / a.len().max(1) as f32
 }
 
-/// Alinha `b` a `a` (mesmo tamanho): inverte e/ou gira ciclicamente (fechados) para minimizar a distância.
-fn align(a: &[P], b: &[P], closed: bool) -> Vec<P> {
-    let mut best = b.to_vec();
-    let mut best_d = mean_dist(a, b);
+/// Escolha do `align`: (invertido, deslocamento cíclico, distância média sem mexer, distância média escolhida).
+fn align_choice(a: &[P], b: &[P], closed: bool) -> (bool, usize, f32, f32) {
+    let identity = mean_dist(a, b);
+    let mut best = (false, 0usize, identity);
+    let n = b.len();
     let rev: Vec<P> = b.iter().rev().copied().collect();
-    let candidates: Vec<Vec<P>> = if closed {
-        let n = b.len();
-        let mut c = Vec::new();
-        for base in [b.to_vec(), rev] {
-            for sh in 0..n {
-                c.push((0..n).map(|i| base[(i + sh) % n]).collect());
+    // mesma ordem de candidatos de sempre (o primeiro estritamente melhor ganha)
+    let bases: Vec<(bool, &[P])> = if closed { vec![(false, b), (true, &rev)] } else { vec![(true, &rev)] };
+    for (reversed, base) in bases {
+        let shifts = if closed { n } else { 1 };
+        for sh in 0..shifts {
+            let c: Vec<P> = (0..n).map(|i| base[(i + sh) % n]).collect();
+            let d = mean_dist(a, &c);
+            if d < best.2 {
+                best = (reversed, sh, d);
             }
         }
-        c
-    } else {
-        vec![rev]
-    };
-    for c in candidates {
-        let d = mean_dist(a, &c);
-        if d < best_d {
-            best_d = d;
-            best = c;
-        }
     }
-    best
+    (best.0, best.1, identity, best.2)
+}
+
+/// Alinha `b` a `a` (mesmo tamanho): inverte e/ou gira ciclicamente (fechados) para minimizar a distância.
+fn align(a: &[P], b: &[P], closed: bool) -> Vec<P> {
+    let (reversed, sh, _, _) = align_choice(a, b, closed);
+    let n = b.len();
+    let base: Vec<P> = if reversed { b.iter().rev().copied().collect() } else { b.to_vec() };
+    (0..n).map(|i| base[(i + sh) % n]).collect()
+}
+
+/// Como o motor trata um par (só leitura; não muda a intercalação), para a prévia avisar o que ele aproxima.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PairPath {
+    /// Caminho direto: mesma contagem de pontos, mesma geometria e mesmo `closed` — os pontos são copiados um a um,
+    /// SEM alinhar o sentido.
+    pub direct: bool,
+    /// Pontos por traço no caminho reamostrado (`2 × max(N_A, N_B, 8)`); no direto, a contagem dos traços.
+    pub samples: usize,
+    /// O que o alinhamento escolhe para B: inverter e/ou deslocar o começo (fechados). No reamostrado é o que o motor
+    /// aplica; no direto é o que ele deixaria de aplicar.
+    pub reversed: bool,
+    pub shift: usize,
+    /// Distância média ponto a ponto sem mexer em B e depois do alinhamento escolhido (px).
+    pub identity_cost: f32,
+    pub aligned_cost: f32,
+}
+
+/// Mesmo cálculo de `inbetween` para decidir o caminho e o alinhamento de um par (A, B).
+pub fn pair_path(sa: &Stroke, sb: &Stroke) -> PairPath {
+    let direct = sa.points.len() == sb.points.len() && sa.geometry == sb.geometry && sa.closed == sb.closed;
+    let (pa, pb, samples) = if direct {
+        let pa: Vec<P> = sa.points.iter().map(|q| P { x: q.x, y: q.y, p: q.pressure }).collect();
+        let pb: Vec<P> = sb.points.iter().map(|q| P { x: q.x, y: q.y, p: q.pressure }).collect();
+        let n = pa.len();
+        (pa, pb, n)
+    } else {
+        let n = resampled_len(sa.points.len(), sb.points.len());
+        (resample(sa, n), resample(sb, n), n)
+    };
+    let (reversed, shift, identity_cost, aligned_cost) = align_choice(&pa, &pb, sa.closed);
+    PairPath { direct, samples, reversed, shift, identity_cost, aligned_cost }
+}
+
+/// Pontos por traço no caminho reamostrado de um par com `na` e `nb` pontos (sem reamostrar nada).
+pub fn resampled_len(na: usize, nb: usize) -> usize {
+    na.max(nb).max(8) * 2
 }
 
 const SHAPE_N: usize = 24;

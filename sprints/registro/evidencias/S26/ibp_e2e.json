@@ -1,0 +1,230 @@
+{
+ "h_preview": {
+  "proposal_id": 710332278071297,
+  "frame_a": 0,
+  "frame_b": 12,
+  "key_a": 1,
+  "key_b": 2,
+  "t": 0.5,
+  "acceptable": true,
+  "accept_label": "Criar desenho A4 no quadro 7 (o quadro 8 continua mostrando A3)",
+  "counts": {
+   "approximations": 0,
+   "candidate_points": 43,
+   "candidate_strokes": 4,
+   "pairs": 4,
+   "refusals": 0,
+   "strokes_a": 4,
+   "strokes_b": 4
+  }
+ },
+ "h_accept_after_discard": "Falha (código -32010): proposta 710332278071297 não encontrada nesta sessão (descartada, ou a sessão foi reaberta)",
+ "h_accept": {
+  "_via": "headless",
+  "affected": [
+   "01a182c7-c709-768d-92ec-d25a650014e2",
+   "01a182c7-c323-72ef-9806-bc03b7f1175e"
+  ],
+  "cel": "01a182c7-c709-768d-92ec-d25a650014e2",
+  "created": [
+   "01a182c7-c709-768d-92ec-d25a650014e2"
+  ],
+  "description": "Intercalar no quadro 7 entre 1 e 2",
+  "frames": [
+   6,
+   7
+  ],
+  "number": 4,
+  "revision": 11
+ },
+ "h_second_accept": "Falha (código -32602): proposta 710332278071298 já usada",
+ "h_log_last": {
+  "description": "Intercalar no quadro 7 entre 1 e 2",
+  "author": "agent:claude",
+  "source": "direct_tool_call"
+ },
+ "h_origin": {
+  "cel_a": "01a182c7-c3fd-7731-b9fd-6a71ab64d5f5",
+  "cel_b": "01a182c7-c46b-7040-b570-6562a59cd5f9",
+  "engine": "6655c0688eb2ebbdcae454df21e090a7f4e0bbfc",
+  "frame": 6,
+  "frame_a": 0,
+  "frame_b": 12,
+  "key_a": 1,
+  "key_b": 2,
+  "mechanism": "inbetween",
+  "options": {
+   "bend": 0.0,
+   "max_cost": 200.0,
+   "motion": "global",
+   "pairs": []
+  },
+  "revision": 10,
+  "source": "direct_tool_call",
+  "strokes_a": [
+   "a_head",
+   "a_eyeL",
+   "a_eyeR",
+   "a_mouth"
+  ],
+  "strokes_b": [
+   "b_head",
+   "b_eyeL",
+   "b_eyeR",
+   "b_mouth"
+  ],
+  "t": 0.5
+ },
+ "h_lost_owner": "Falha (código -32010): proposta 710332278071299 não encontrada nesta sessão (descartada, ou a sessão foi reaberta)",
+ "a_ui_after_bridge_preview": {
+  "frame": 6,
+  "ibp": {
+   "acceptable": true,
+   "approximations": 0,
+   "frame": 6,
+   "frame_a": 0,
+   "frame_b": 12,
+   "manual_pairs": [],
+   "pairs_mode": false,
+   "pick_a": null,
+   "proposal_id": 710332286103553,
+   "refusals": 0,
+   "stale": false
+  }
+ },
+ "a_after_pair_clicks": {
+  "acceptable": false,
+  "approximations": 0,
+  "frame": 6,
+  "frame_a": 0,
+  "frame_b": 12,
+  "manual_pairs": [
+   [
+    "a_eyeL",
+    "b_eyeR"
+   ]
+  ],
+  "pairs_mode": true,
+  "pick_a": null,
+  "proposal_id": 710332286103553,
+  "refusals": 0,
+  "stale": true
+ },
+ "a_stale_accept_error": "[-32602] os pares mudaram: Atualizar antes de aceitar",
+ "a_after_refresh": {
+  "acceptable": true,
+  "approximations": 2,
+  "frame": 6,
+  "frame_a": 0,
+  "frame_b": 12,
+  "manual_pairs": [
+   [
+    "a_eyeL",
+    "b_eyeR"
+   ]
+  ],
+  "pairs_mode": true,
+  "pick_a": null,
+  "proposal_id": 710332286103554,
+  "refusals": 0,
+  "stale": false
+ },
+ "a_after_delete": {
+  "acceptable": false,
+  "approximations": 2,
+  "frame": 6,
+  "frame_a": 0,
+  "frame_b": 12,
+  "manual_pairs": [],
+  "pairs_mode": true,
+  "pick_a": null,
+  "proposal_id": 710332286103554,
+  "refusals": 0,
+  "stale": true
+ },
+ "a_log_last": {
+  "description": "Intercalar no quadro 7 entre 1 e 2",
+  "author": "human",
+  "source": "bridge_injected"
+ },
+ "a_origin": {
+  "cel_a": "01a182c7-ca63-748a-9ee8-7eacef850bd3",
+  "cel_b": "01a182c7-cad4-75ca-90c0-d995505b21c6",
+  "engine": "6655c0688eb2ebbdcae454df21e090a7f4e0bbfc",
+  "frame": 6,
+  "frame_a": 0,
+  "frame_b": 12,
+  "key_a": 1,
+  "key_b": 2,
+  "mechanism": "inbetween",
+  "options": {
+   "bend": 0.0,
+   "max_cost": 200.0,
+   "motion": "global",
+   "pairs": []
+  },
+  "revision": 10,
+  "source": "bridge_injected",
+  "strokes_a": [
+   "a_head",
+   "a_eyeL",
+   "a_eyeR",
+   "a_mouth"
+  ],
+  "strokes_b": [
+   "b_head",
+   "b_eyeL",
+   "b_eyeR",
+   "b_mouth"
+  ],
+  "t": 0.5
+ },
+ "a_bbox_preview": [
+  492,
+  213,
+  717,
+  476
+ ],
+ "a_bbox_accepted": [
+  492,
+  213,
+  717,
+  476
+ ],
+ "a_cells": {
+  "0": {
+   "number": 1,
+   "type": "cel"
+  },
+  "12": {
+   "number": 2,
+   "type": "cel"
+  },
+  "6": {
+   "number": 4,
+   "type": "cel"
+  },
+  "7": {
+   "number": 3,
+   "type": "cel"
+  }
+ },
+ "a_after_key_change": {
+  "ibp": null,
+  "toast": null
+ },
+ "a_again": {
+  "acceptable": true,
+  "approximations": 0,
+  "frame": 3,
+  "frame_a": 0,
+  "frame_b": 12,
+  "manual_pairs": [],
+  "pairs_mode": false,
+  "pick_a": null,
+  "proposal_id": 710332286103557,
+  "refusals": 0,
+  "stale": false
+ },
+ "ok": true
+}

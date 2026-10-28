@@ -67,6 +67,7 @@ pub(crate) fn show_with_header(env: &mut Env, ui: &mut Ui, body: Rect, reserve: 
         env.ed.view.fit(rect, ppp, canvas, MARGIN);
     }
     update_render(env, &ctx, &cut, canvas);
+    super::ibp_ui::tick(env);
     super::anim::onion_frame(env, &ctx, &cut, canvas);
     super::text_tool::frame(env, &ctx);
 
@@ -111,6 +112,8 @@ pub(crate) fn show_with_header(env: &mut Env, ui: &mut Ui, body: Rect, reserve: 
 
     let painter = ui.painter().with_clip_rect(rect);
     paint_canvas(env, &painter, rect, &xf, &cut, canvas, ppp);
+    // prévia de intercalação: barra com Aceitar/Descartar/Atualizar (só com prévia viva neste corte)
+    super::ibp_ui::bar(env, &ctx, rect, &cut);
     // S25: lançador da seleção (some enquanto se desenha) e Delete limpa a seleção
     super::sel_ops::launcher(env, &ctx, &xf, rect);
     super::sel_ops::shortcuts(env, &ctx, rect);
@@ -604,6 +607,10 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
     env.ed.beh.drag_armed = false;
     // Personagens > Consistência: com uma medida armada, o clique só marca a altura (não desenha)
     if button == egui::PointerButton::Primary && !space && !r_held && super::panels::characters::cons_pick(env, xf.to_canvas(pos).y) {
+        return;
+    }
+    // prévia de intercalação com "Corrigir pares": o clique escolhe traços de A e de B (não desenha)
+    if button == egui::PointerButton::Primary && !space && !r_held && super::ibp_ui::pick(env, xf.to_canvas(pos), xf.scale) {
         return;
     }
     // Ctrl+Alt+arrastar: muda o tamanho da ponta (pincel, caneta, borracha) pelo deslocamento horizontal
@@ -1396,6 +1403,12 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
     }
     // mesa de luz: os desenhos vizinhos, tingidos, por baixo das linhas do desenho atual (só visão)
     super::anim::paint_onion(env.ed, painter, sp, cut);
+    // prévia de intercalação (só visão): candidato, chaves finas e ligações dos pares
+    let t_ibp = std::time::Instant::now();
+    super::ibp_ui::paint(env, painter, xf, cut);
+    if super::ibp_ui::current_here(env, cut) {
+        env.ed.ibp.perf.push_paint(t_ibp.elapsed().as_secs_f32() * 1000.0);
+    }
     painter.add(Shape::closed_line(sp.to_vec(), Stroke::new(1.0, t.canvas_frame_stroke)));
 
     // grade de pixels em zoom alto (1 pixel do desenho ≥ 8 pixels físicos)

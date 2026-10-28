@@ -952,6 +952,7 @@ mod tests {
                 author: "human".into(),
                 time_ms: (90 + i) * DAY,
                 command: Some(Command::SetProps { id: Id("a".into()), name: None, data: json!({ "stages": { "layout": STATUS_NAMES[i as usize] } }) }),
+                source: Default::default(),
             })
             .collect();
         idx.sync(&log);

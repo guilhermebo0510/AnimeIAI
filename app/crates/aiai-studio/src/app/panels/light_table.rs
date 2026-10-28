@@ -77,6 +77,10 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
         };
         ui.label(RichText::new(status).size(11.5).color(t.text_dim));
         ui.label(RichText::new(tr("anim.onion.view_only")).size(11.0).color(t.text_dim));
+        // prévia de intercalação do quadro atual (R16): mostra antes de gravar, aceita só pelo botão
+        section(ui, &t, "ibp.title");
+        crate::app::ibp_ui::command_button(env, ui, "light:ibp");
+        ui.label(RichText::new(tr("ibp.command_tip")).size(11.0).color(t.text_dim));
         if let Some(cut) = env.ed.active_cut(env.core) {
             let ph = anim::cut_phase(&env.core.project, &cut);
             ui.label(RichText::new(format!("{}: {}", tr("anim.phase"), tr(anim::phase_key(ph)))).size(11.0).color(t.text_dim));

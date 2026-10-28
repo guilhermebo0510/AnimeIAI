@@ -584,6 +584,32 @@ fn merge_last_makes_one_undo_step() {
     assert!(!s.merge_last(5, "x"), "não junta mais do que existe");
 }
 
+/// R16 REQ-P01/P03: cada entrada do log leva a fonte da sessão naquele momento; juntar passos de fontes diferentes dá
+/// `Mixed`; entrada antiga sem o campo lê como `UnknownLegacy`.
+#[test]
+fn log_entries_carry_input_source_and_merge_mixes() {
+    let mut s = CoreSession::for_tests("fonte");
+    s.source = InputSource::DirectToolCall;
+    let ep = s.apply(Command::CreateNode { id: None, parent: None, index: None, name: "EP".into(), data: NodeKind::Episode(EpisodeData::default()) }).unwrap().created[0].clone();
+    assert_eq!(s.log().last().unwrap().source, InputSource::DirectToolCall);
+    s.source = InputSource::BridgeInjected;
+    let a = s.apply(Command::CreateNode { id: None, parent: Some(ep.clone()), index: None, name: "S".into(), data: NodeKind::Scene(SceneData::default()) }).unwrap().created[0].clone();
+    s.apply(Command::CreateNode { id: None, parent: Some(a), index: None, name: "C".into(), data: NodeKind::Cut(CutData::new(12)) }).unwrap();
+    assert!(s.merge_last(2, "mesmo"));
+    assert_eq!(s.log().last().unwrap().source, InputSource::BridgeInjected, "mesma fonte continua");
+    s.source = InputSource::UiPlatformUnattributed;
+    s.apply(Command::SetProps { id: ep.clone(), name: Some("E".into()), data: json!({}) }).unwrap();
+    assert!(s.merge_last(2, "misto"));
+    assert_eq!(s.log().last().unwrap().source, InputSource::Mixed, "fontes diferentes juntadas = Mixed");
+    s.undo().unwrap();
+    assert_eq!(s.log().last().unwrap().source, InputSource::UiPlatformUnattributed, "desfazer leva a fonte de quem desfez");
+    let mut v = serde_json::to_value(s.log().last().unwrap()).unwrap();
+    assert_eq!(v["source"], "ui_platform_unattributed");
+    v.as_object_mut().unwrap().remove("source");
+    let old: LogEntry = serde_json::from_value(v).unwrap();
+    assert_eq!(old.source, InputSource::UnknownLegacy, "entrada antiga sem o campo");
+}
+
 /// Projeto dividido por corte (auditoria 4.6k): manifesto + um arquivo por corte, regravado só quando muda; abre igual;
 /// desligar a divisão volta ao arquivo único; corte travado por outro processo não aceita edição nem é sobrescrito.
 #[test]

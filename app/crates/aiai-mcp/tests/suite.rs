@@ -552,7 +552,7 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
     assert!(plan("aiai_zzz", json!({})).is_err());
     // o catálogo é uma lista estável de ferramentas, todas com plano
     let defs = tools::definitions();
-    assert_eq!(defs.as_array().unwrap().len(), 93);
+    assert_eq!(defs.as_array().unwrap().len(), 96);
     // todas as ferramentas de produção: descrição com exemplo de uma linha, schema de objeto, plano com a ação certa e frame 0 por padrão
     for t in defs.as_array().unwrap() {
         let n = t["name"].as_str().unwrap();
@@ -582,6 +582,9 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
         ("aiai_character_material", json!({"character": "x"}), "CHARACTER_MATERIAL"),
         ("aiai_consistency", json!({"character": "x", "head_top": 0, "chin": 10}), "CONSISTENCY"),
         ("aiai_inbetween", json!({"cut": "c", "layer": "l", "key_a": 1, "key_b": 2, "count": 1}), "INBETWEEN"),
+        ("aiai_inbetween_preview", json!({"cut": "c", "layer": "l", "frame": 3}), "INBETWEEN_PREVIEW"),
+        ("aiai_inbetween_accept", json!({"proposal_id": 7}), "INBETWEEN_ACCEPT"),
+        ("aiai_inbetween_discard", json!({"proposal_id": 7}), "INBETWEEN_DISCARD"),
         ("aiai_propagate_fills", json!({"cut": "c", "fill_layer": "l", "key_frame_a": 0, "key_frame_b": 4, "frames": [2]}), "PROPAGATE_FILLS"),
         ("aiai_tts_line", json!({"text": "x"}), "TTS_LINE"),
         ("aiai_tts_kokoro", json!({"text": "x"}), "TTS_KOKORO"),

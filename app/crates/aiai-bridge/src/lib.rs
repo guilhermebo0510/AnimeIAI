@@ -46,6 +46,7 @@ pub mod params_check;
 pub mod preprod_tools;
 pub mod preview_tools;
 pub mod production_tools;
+pub mod inbetween_tools;
 pub mod review_tools;
 pub mod satsuei_tools;
 pub mod protocol;

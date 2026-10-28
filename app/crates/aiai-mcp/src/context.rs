@@ -44,6 +44,24 @@ pub struct Ctx {
     /// `--project`/`AIAI_HEADLESS_PROJECT` dado: as ações de documento rodam em processo mesmo com o app aberto.
     pub force_headless: bool,
     pub sandbox: Sandbox,
+    /// Quem calculou cada prévia de intercalação (R16 REQ-M01): aceitar, descartar e renderizar com a prévia vão só
+    /// para essa instância, sem cair em outra sessão.
+    pub preview_owner: std::collections::HashMap<u64, Owner>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Owner {
+    App,
+    Headless,
+}
+
+/// A proposta citada por estes parâmetros, quando a ação precisa da sessão que a calculou.
+fn preview_ref(action: &str, params: &Value) -> Option<u64> {
+    match action {
+        "INBETWEEN_ACCEPT" | "INBETWEEN_DISCARD" => params.get("proposal_id").and_then(Value::as_u64),
+        "RENDER" => params.get("with_preview").and_then(Value::as_u64),
+        _ => None,
+    }
 }
 
 impl Ctx {
@@ -56,7 +74,7 @@ impl Ctx {
     }
 
     pub fn new(client: BridgeClient, sandbox: Sandbox, project: Option<PathBuf>) -> Ctx {
-        Ctx { client, force_headless: project.is_some(), headless: Headless::new(sandbox.clone(), project), sandbox }
+        Ctx { client, force_headless: project.is_some(), headless: Headless::new(sandbox.clone(), project), sandbox, preview_owner: Default::default() }
     }
 
     /// Valida os caminhos de gravação e de leitura dos parâmetros ANTES de sair do processo e os troca pela forma absoluta.
@@ -110,10 +128,21 @@ impl Ctx {
             params = json!({});
         }
         self.sanitize(action, &mut params)?;
-        if self.force_headless && Headless::handles(action) {
-            return self.run_headless(action, &params, None);
+        if let Some(id) = preview_ref(action, &params) {
+            return self.invoke_owned(action, params, timeout, id);
         }
-        match self.client.call(action, params.clone(), timeout) {
+        if self.force_headless && Headless::handles(action) {
+            let r = self.run_headless(action, &params, None);
+            self.note_preview(action, &r, Owner::Headless);
+            return r;
+        }
+        let via_app = self.client.call(action, params.clone(), timeout);
+        if action == "INBETWEEN_PREVIEW" {
+            if let Ok(v) = &via_app {
+                self.note_preview(action, &Ok(v.clone()), Owner::App);
+            }
+        }
+        let r = match via_app {
             Ok(v) => Ok(v),
             Err(CallError::Unreachable(why)) => {
                 if Headless::handles(action) {
@@ -124,6 +153,40 @@ impl Ctx {
             }
             Err(CallError::Remote { code, message }) => Err(ToolError::new(code.unwrap_or(-32000), message)),
             Err(CallError::Protocol(m)) => Err(ToolError::new(-32000, m)),
+        };
+        if r.as_ref().is_ok_and(|v| v.get("_via").and_then(Value::as_str) == Some("headless")) {
+            self.note_preview(action, &r, Owner::Headless);
+        }
+        r
+    }
+
+    fn note_preview(&mut self, action: &str, r: &Result<Value, ToolError>, owner: Owner) {
+        if action != "INBETWEEN_PREVIEW" {
+            return;
+        }
+        if let Some(id) = r.as_ref().ok().and_then(|v| v.get("proposal_id")).and_then(Value::as_u64) {
+            if self.preview_owner.len() > 256 {
+                self.preview_owner.clear();
+            }
+            self.preview_owner.insert(id, owner);
+        }
+    }
+
+    /// Ação sobre uma prévia: só na instância dona (a que calculou; desconhecida = o app, onde a interface pede
+    /// prévias). Dono fora do ar = erro explícito, nunca outra sessão.
+    fn invoke_owned(&mut self, action: &str, params: Value, timeout: Option<Duration>, id: u64) -> Result<Value, ToolError> {
+        let owner = self.preview_owner.get(&id).copied().unwrap_or(if self.force_headless { Owner::Headless } else { Owner::App });
+        match owner {
+            Owner::Headless => self.run_headless(action, &params, None),
+            Owner::App => match self.client.call(action, params, timeout) {
+                Ok(v) => Ok(v),
+                Err(CallError::Unreachable(why)) => Err(ToolError::new(
+                    -32000,
+                    format!("a prévia {id} é do app, que não responde ({why}); ela não existe em outra sessão: abra o app ou peça uma prévia nova"),
+                )),
+                Err(CallError::Remote { code, message }) => Err(ToolError::new(code.unwrap_or(-32000), message)),
+                Err(CallError::Protocol(m)) => Err(ToolError::new(-32000, m)),
+            },
         }
     }
 

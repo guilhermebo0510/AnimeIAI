@@ -123,7 +123,10 @@ impl StudioApp {
             "SCREENSHOT" => self.bridge_screenshot(ctx, r),
             "INPUT" => self.bridge_input(ctx, r),
             _ => {
+                // chamada direta da bridge/MCP: as ações gravadas por ela são `DirectToolCall`, e a fonte do quadro volta depois
+                let prev = std::mem::replace(&mut self.core.source, aiai_core::InputSource::DirectToolCall);
                 let res = self.bridge_exec(ctx, &r.action.clone(), &r.params.clone());
+                self.core.source = prev;
                 r.respond(res);
             }
         }

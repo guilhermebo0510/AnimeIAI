@@ -46,7 +46,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 pub const PRODUCTION_ACTIONS: &[&str] = &[
-    "SKY", "PATTERN_FILL", "TEXT", "TEXT_LAYER", "LAYER_MERGE", "LINES", "GAG_BG", "ANIME_FX", "COLORIZE_HINTS", "RIG", "PLUGIN_LIST", "PLUGIN_FILTER", "PARTICLES", "GUIDE3D", "PERSPECTIVE", "MODEL_SHEET", "CHARACTER_MATERIAL", "CONSISTENCY", "INBETWEEN", "PROPAGATE_FILLS",
+    "SKY", "PATTERN_FILL", "TEXT", "TEXT_LAYER", "LAYER_MERGE", "LINES", "GAG_BG", "ANIME_FX", "COLORIZE_HINTS", "RIG", "PLUGIN_LIST", "PLUGIN_FILTER", "PARTICLES", "GUIDE3D", "PERSPECTIVE", "MODEL_SHEET", "CHARACTER_MATERIAL", "CONSISTENCY", "INBETWEEN", "INBETWEEN_PREVIEW", "INBETWEEN_ACCEPT", "INBETWEEN_DISCARD", "PROPAGATE_FILLS",
     "TTS_LINE", "TTS_KOKORO", "VOICE_PROFILE", "LIPSYNC", "SFX", "BGM", "IMPORT_AUDIO", "IMPORT_IMAGE", "IMPORT_LAYERS", "EXPORT_PSD", "EXPORT_XDTS", "EXPORT_SVG", "EXPORT_OTIO", "MIX_CUT", "LOUDNESS", "COMPARE", "PROBE_COLOR", "MEASURE_LINE", "MEASURE_EDGE", "FILL_SHAPE", "EDIT_SET", "EXPORT_VIDEO", "GRADIENT_PAINT",
 ];
 
@@ -54,7 +54,7 @@ pub const PRODUCTION_ACTIONS: &[&str] = &[
 pub fn is_mutating(action: &str) -> bool {
     matches!(
         action,
-        "SKY" | "PATTERN_FILL" | "TEXT" | "TEXT_LAYER" | "LAYER_MERGE" | "LINES" | "GAG_BG" | "ANIME_FX" | "COLORIZE_HINTS" | "RIG" | "PLUGIN_FILTER" | "PARTICLES" | "GUIDE3D" | "PERSPECTIVE" | "MODEL_SHEET" | "CHARACTER_MATERIAL" | "INBETWEEN" | "PROPAGATE_FILLS" | "TTS_LINE" | "TTS_KOKORO" | "VOICE_PROFILE" | "LIPSYNC" | "SFX" | "BGM" | "IMPORT_AUDIO" | "IMPORT_IMAGE" | "IMPORT_LAYERS" | "FILL_SHAPE" | "EDIT_SET" | "GRADIENT_PAINT"
+        "SKY" | "PATTERN_FILL" | "TEXT" | "TEXT_LAYER" | "LAYER_MERGE" | "LINES" | "GAG_BG" | "ANIME_FX" | "COLORIZE_HINTS" | "RIG" | "PLUGIN_FILTER" | "PARTICLES" | "GUIDE3D" | "PERSPECTIVE" | "MODEL_SHEET" | "CHARACTER_MATERIAL" | "INBETWEEN" | "INBETWEEN_ACCEPT" | "PROPAGATE_FILLS" | "TTS_LINE" | "TTS_KOKORO" | "VOICE_PROFILE" | "LIPSYNC" | "SFX" | "BGM" | "IMPORT_AUDIO" | "IMPORT_IMAGE" | "IMPORT_LAYERS" | "FILL_SHAPE" | "EDIT_SET" | "GRADIENT_PAINT"
     )
 }
 
@@ -185,6 +185,7 @@ pub fn handle(session: &mut CoreSession, action: &str, params: &Value) -> Result
             let rep = consistency(&session.project, &r).map_err(tool_error)?;
             to_json(&rep)
         }
+        "INBETWEEN_PREVIEW" | "INBETWEEN_ACCEPT" | "INBETWEEN_DISCARD" => crate::inbetween_tools::handle(session, action, params),
         "INBETWEEN" => {
             let r: InbetweenRequest = request(params, action)?;
             let cmd = inbetween_command(&session.project, &mut session.ids, &r).map_err(tool_error)?;

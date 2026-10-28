@@ -745,6 +745,13 @@ impl StudioApp {
     /// Arquivo solto na janela ou escolhido em Importar: imagem vira camada de referência no corte ativo; WAV vira
     /// clipe no cabeçote (trilha SE).
     pub(crate) fn import_file(&mut self, path: &Path) {
+        // o que o importador grava é `Import` no log (R16 REQ-P03), não a fonte do clique que abriu o arquivo
+        let prev = std::mem::replace(&mut self.core.source, aiai_core::InputSource::Import);
+        self.import_file_inner(path);
+        self.core.source = prev;
+    }
+
+    fn import_file_inner(&mut self, path: &Path) {
         let Some(cut) = self.ed.active_cut(&self.core) else {
             self.notice(tr("err.no_cut").to_owned());
             return;

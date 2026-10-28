@@ -300,10 +300,23 @@ fn parse_background(s: &str) -> Result<[f32; 3], BridgeError> {
 fn render(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeError> {
     let p = obj(params)?;
     // `range` e `backend` são aceitos só para dar o erro explicativo abaixo
-    let keys = ["cut", "frame", "layers", "background", "include_guides", "include_reference", "camera", "layer_motion", "size", "out", "inline", "range", "backend"];
+    let keys = ["cut", "frame", "layers", "background", "include_guides", "include_reference", "camera", "layer_motion", "size", "out", "inline", "range", "backend", "with_preview"];
     check_keys(params, "RENDER", &keys)?;
-    let cut = opt_str(&p, "cut")?.map(Id::from).ok_or_else(|| BridgeError::invalid_params("RENDER exige 'cut' (id do corte)"))?;
-    let frame = opt_u64(&p, "frame")?.unwrap_or(0) as u32;
+    // prévia de intercalação por cima (R16 REQ-M03): o corte e o quadro são os da proposta, canvas sem câmera
+    let preview = match opt_u64(&p, "with_preview")? {
+        Some(id) => Some(crate::inbetween_tools::proposal_for_render(session, id)?),
+        None => None,
+    };
+    let cut = match (&preview, opt_str(&p, "cut")?) {
+        (Some(pr), Some(c)) if c != pr.cut.0 => return Err(BridgeError::invalid_params(format!("RENDER with_preview: a prévia é do corte {}, não {c}", pr.cut))),
+        (Some(pr), _) => pr.cut.clone(),
+        (None, c) => c.map(Id::from).ok_or_else(|| BridgeError::invalid_params("RENDER exige 'cut' (id do corte)"))?,
+    };
+    let frame = match (&preview, opt_u64(&p, "frame")?) {
+        (Some(pr), Some(f)) if f as u32 != pr.frame => return Err(BridgeError::invalid_params(format!("RENDER with_preview: a prévia é do quadro {}, não {f}", pr.frame))),
+        (Some(pr), _) => pr.frame,
+        (None, f) => f.unwrap_or(0) as u32,
+    };
     if p.get("range").is_some_and(|v| !v.is_null()) {
         return Err(BridgeError::failed("RENDER: 'range' não é suportado; para vários quadros numa imagem use RENDER_SHEET (aiai_render_sheet)"));
     }
@@ -326,10 +339,16 @@ fn render(session: &mut CoreSession, params: &Value) -> Result<Value, BridgeErro
         include_reference: opt_bool(&p, "include_reference")?.unwrap_or(false),
         only_layers,
         background: opt_str(&p, "background")?.map(parse_background).transpose()?,
-        camera: opt_bool(&p, "camera")?.unwrap_or(true),
-        layer_motion: opt_bool(&p, "layer_motion")?.unwrap_or(true),
+        camera: preview.is_none() && opt_bool(&p, "camera")?.unwrap_or(true),
+        layer_motion: preview.is_some() || opt_bool(&p, "layer_motion")?.unwrap_or(true),
     };
-    let out = render_frame(&session.project, &session.blobs, &cut, frame, &opts).map_err(|e| BridgeError::invalid_params(e.to_string()))?;
+    let out = match &preview {
+        Some(pr) => {
+            let (image, warnings) = crate::inbetween_tools::render_with_preview(&session.project, &session.blobs, pr, &opts)?;
+            aiai_render::RenderOutput { image, warnings }
+        }
+        None => render_frame(&session.project, &session.blobs, &cut, frame, &opts).map_err(|e| BridgeError::invalid_params(e.to_string()))?,
+    };
     let (mut width, mut height) = (out.image.width, out.image.height);
     let mut png = out.image.encode_png().map_err(|e| BridgeError::failed(format!("PNG: {e}")))?;
     if let Some(size) = p.get("size").filter(|v| !v.is_null()) {

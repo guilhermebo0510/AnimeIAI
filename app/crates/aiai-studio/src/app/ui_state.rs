@@ -241,6 +241,11 @@ impl StudioApp {
         let ed = &self.ed;
         let p = &self.core.project;
         let ppp = ctx.pixels_per_point();
+        // prévia de intercalação viva (R16): o que a barra mostra
+        let ibp_state = aiai_tools::inbetween_preview::current(&self.core).map(|p| {
+            json!({ "proposal_id": p.id, "frame": p.frame, "frame_a": p.frame_a, "frame_b": p.frame_b, "stale": p.stale, "acceptable": p.acceptable().is_ok(),
+                    "refusals": p.refusals.len(), "approximations": p.approximations.len(), "manual_pairs": p.request.manual_pairs, "pairs_mode": ed.ibp.pairs_mode, "pick_a": ed.ibp.pick_a })
+        });
         let canvas = ed.canvas_rect.map(|r| {
             let xf = ed.view.xf(r, ppp);
             let size = ed.cut.as_ref().map(|c| cmds::canvas_size(p, c)).unwrap_or((0, 0));
@@ -303,6 +308,7 @@ impl StudioApp {
             "tool_options": json!({ "pen_width": o.pen_width, "brush_size": o.brush_size, "brush_opacity": o.brush_opacity, "eraser_size": o.eraser_size, "eraser_hardness": o.eraser_hardness, "eraser_opacity": o.eraser_opacity, "eraser_flow": o.eraser_flow, "eraser_tip": format!("{:?}", o.eraser_tip), "eraser_use_brush": o.eraser_use_brush, "fill_gap": o.fill_gap, "fill_expand": o.fill_expand, "fill_close_leftovers": o.fill_close_leftovers }),
             "tool_options_s25": json!({ "brush_no_overflow": o.brush_no_overflow, "pen_weld": o.pen_weld, "pen_quickshape": o.pen_quickshape, "pen_ghost": o.pen_ghost, "pen_simplify": o.pen_simplify, "pen_taper_in": o.pen_taper_in, "pen_taper_out": o.pen_taper_out, "pen_width": o.pen_width, "pen_tip": o.pen_tip }),
             "timeline": { "cell_w": ed.tl_cell_w, "scroll": [round(ed.tl_scroll.x), round(ed.tl_scroll.y)], "header_w": ed.anim.tl.header_w, "ruler_h": ed.anim.tl.ruler_h, "row_h": ed.anim.tl.row_h, "density": if ed.anim.density(self.ws) == super::anim::Density::Compact { "compact" } else { "normal" } },
+            "ibp": ibp_state,
             "anim": { "onion": ed.anim.onion.on, "onion_visible": ed.anim.onion_visible(), "onion_renders": ed.anim.onion_renders, "phase": ed.cut.as_ref().map(|c| if super::anim::cut_phase(&self.core.project, c) == aiai_core::CutPhase::Douga { "douga" } else { "genga" }), "layout_variant": format!("{:?}", self.layouts.variant(crate::workspace::WorkspaceId::Animacao)) },
             "render": render,
             "modeling": super::modeling::state_json(&ed.modeling),
@@ -331,6 +337,7 @@ impl StudioApp {
     /// preset: vira a cópia do usuário, como mexer nas configurações avançadas)} (pincel da biblioteca em uso; um do grupo
     /// borracha vira também a ponta da ferramenta Borracha).
     /// dock {op: list|maximize|restore|detach|redock|redock_all, panel?, group?} (painel maximizado e janelas soltas).
+    /// perf_samples {op: start|stop|read}: amostras brutas por quadro (CPU da interface e desenho da prévia de intercalação)
     /// modeling_view {layout?: single|split_v|split_h|quad, slot?, view?: perspective|ortho|front|back|right|left|top|bottom}
     /// (multivista da Modelagem).
     /// uv {edit?: bool, select_mode?: vertex|edge|face, select?: all|none|tree_seams, op?: mark_seam|unwrap|pack|…}
@@ -368,6 +375,7 @@ impl StudioApp {
             "sculpt" => Some(&["mode", "brush", "radius", "strength", "invert", "paths", "op", "symmetry"]),
             "uv" => Some(&["edit", "select", "op", "select_mode"]),
             "normals" => Some(&["op", "factor", "source"]),
+            "perf_samples" => Some(&["op"]),
             _ => None,
         };
         if let Some(keys) = keys {
@@ -669,6 +677,20 @@ impl StudioApp {
                     "status": ms.sculpt.status,
                     "error": ms.sculpt.error,
                 })
+            }
+            "perf_samples" => {
+                // E1 (R16 §11): start limpa e começa a gravar; stop para; read devolve as amostras brutas (ms por quadro)
+                let perf = &mut self.ed.ibp.perf;
+                match text(&m, &["op"]).unwrap_or("read") {
+                    "start" => {
+                        *perf = Default::default();
+                        perf.on = true;
+                    }
+                    "stop" => perf.on = false,
+                    "read" => {}
+                    other => return Err(BridgeError::invalid_params(format!("perf_samples: op '{other}' (start|stop|read)"))),
+                }
+                json!({ "recording": perf.on, "ui_ms": perf.ui_ms, "ibp_paint_ms": perf.paint_ms })
             }
             "modeling_view" => {
                 // multivista da Modelagem: arranjo (single | split_v | split_h | quad) e o tipo de uma vista

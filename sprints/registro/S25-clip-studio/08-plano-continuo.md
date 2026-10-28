@@ -66,6 +66,11 @@ Auditoria 2: as 8 propostas estão feitas; relidos os `AUDITORIA_V2*.md` (28/10)
 
 ## 6. Por último: pasta `ferramenta de Ia`
 
-- [ ] Só depois de 1 a 5: ler toda a discussão (Claude, ChatGPT, Gemini) e implementar a ferramenta (experimental)
+- [x] Só depois de 1 a 5: ler toda a discussão (Claude, ChatGPT, Gemini) e implementar a ferramenta (experimental) —
+  a discussão fechou no R16 (MVP-0: prévia de intercalação de um quadro, aceito pelos três revisores); implementado na
+  ordem do §13: manifesto da base, origem da entrada no log, prévia (tabela de suporte, limites, pares por id), aceite
+  com registro no cel, bridge/MCP com dono da proposta, interface (sobreposição, barra, corrigir pares) —
+  `sprints/registro/S26-intercalacao/README.md`. Fica com o dono: P-3 (limites e orçamento), decisão síncrono × worker
+  com os números do E1 e o teste com pessoa (§11)
 
 Ao terminar tudo: criar `sprints/.overnight-done`.

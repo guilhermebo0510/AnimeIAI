@@ -204,9 +204,9 @@ Só grava em pastas permitidas (AIAI_MCP_ALLOWED_DIRS; padrão producoes/, calib
                     "camera": { "type": "boolean", "description": "Padrão true. false = canvas inteiro do corte (coordenadas de canvas, sem câmera/multiplano)." },
                     "size": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "minItems": 2, "maxItems": 2, "description": "[largura, altura] do PNG de saída." },
                     "out": { "type": "string", "description": "Destino .png (dentro das pastas permitidas)." },
-                    "inline": { "type": "boolean", "description": "Devolve a imagem MCP mesmo com `out`." }
+                    "inline": { "type": "boolean", "description": "Devolve a imagem MCP mesmo com `out`." },
+                    "with_preview": { "type": "integer", "minimum": 0, "description": "proposal_id de aiai_inbetween_preview: o quadro da prévia (canvas sem câmera) com o desenho proposto por cima, na cor da prévia. Nada é gravado; `cut`/`frame` são os da proposta." }
                 },
-                "required": ["cut"],
                 "additionalProperties": false
             }
         },
@@ -464,7 +464,9 @@ pub fn plan(name: &str, args: &Value) -> Result<Plan, ToolError> {
             simple(action, pick(&m, &["path", "name", "settings", "overwrite"]))
         }
         "aiai_render" => {
-            require(&m, "cut", "id do corte")?;
+            if m.get("with_preview").is_none_or(Value::is_null) {
+                require(&m, "cut", "id do corte")?;
+            }
             simple("RENDER", Value::Object(m))
         }
         "aiai_draw_curves" => {

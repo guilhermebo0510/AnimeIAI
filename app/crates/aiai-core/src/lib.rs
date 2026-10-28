@@ -31,7 +31,7 @@ pub use keys::{Ease, Key, KeyInterp, KeyTracks};
 pub use model::*;
 pub use paint::{Gradient, GradientExtend, GradientShape, GradientSpace, GradientStop, NamedGradient, Paint, ResolvedGradient};
 pub use query::{Query, QueryResult};
-pub use session::{Clock, CoreSession, LogEntry};
+pub use session::{Clock, CoreSession, InputSource, LogEntry};
 pub use stroke::*;
 pub use xsheet::*;
 

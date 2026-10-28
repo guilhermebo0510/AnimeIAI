@@ -28,6 +28,7 @@ mod editor;
 mod gpu_evict;
 mod gpu_owners;
 mod gradient_tool;
+mod ibp_ui;
 mod input_queue;
 mod layer_merge;
 mod layer_thumbs;
@@ -1380,6 +1381,8 @@ impl StudioApp {
 impl eframe::App for StudioApp {
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         self.input.next_events(raw_input);
+        // as ações da interface deste quadro levam a fonte dos eventos que as dispararam (R16 REQ-P03)
+        self.core.source = self.input.frame_source();
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
@@ -1399,7 +1402,10 @@ impl eframe::App for StudioApp {
         if let Some(reason) = crate::gpu_mem::device_lost() {
             self.gpu_lost_exit(&reason);
         }
+        let t0 = Instant::now();
         self.frame(ui);
+        // E1 da prévia de intercalação: CPU de montar o quadro, amostra bruta (só gravando)
+        self.ed.ibp.perf.push_ui(t0.elapsed().as_secs_f32() * 1000.0);
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {

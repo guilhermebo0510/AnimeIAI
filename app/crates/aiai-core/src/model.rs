@@ -734,6 +734,37 @@ pub struct CelData {
     /// Transformação da imagem/cel: [tx, ty, escala, rotação em graus].
     #[serde(default = "identity_xform")]
     pub transform: [f32; 4],
+    /// De onde veio este desenho quando é uma intercalação aceita pela prévia (R16 REQ-P04). Ausente = sem registro
+    /// (`UnknownLegacy`): desenhos antigos, feitos à mão ou pelo intercalador em lote.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inbetween_origin: Option<InbetweenOrigin>,
+}
+
+/// Registro persistente da intercalação aceita (R16 REQ-P04): vai junto com o conteúdo do cel (desfazer/refazer,
+/// cópias). Não prova quem desenhou: `source` é o caminho da entrada do aceite.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct InbetweenOrigin {
+    /// Fonte da entrada do aceite.
+    pub source: crate::session::InputSource,
+    /// Mecanismo que gerou os traços ("inbetween" = `aiai_anim::inbetween`).
+    pub mechanism: String,
+    /// Versão do motor: commit-base do código que gerou o candidato.
+    pub engine: String,
+    /// Opções do motor usadas (`InbetweenOptions`, já com os pares manuais convertidos).
+    pub options: serde_json::Value,
+    pub key_a: u32,
+    pub key_b: u32,
+    pub cel_a: Id,
+    pub cel_b: Id,
+    /// Traços fonte de A e de B (ids, na ordem dos cels).
+    pub strokes_a: Vec<Id>,
+    pub strokes_b: Vec<Id>,
+    pub frame_a: u32,
+    pub frame_b: u32,
+    pub frame: u32,
+    pub t: f32,
+    /// Revisão do projeto em que a prévia foi feita.
+    pub revision: u64,
 }
 
 fn empty_id() -> Id {
@@ -755,6 +786,7 @@ impl CelData {
             text: String::new(),
             image: None,
             transform: identity_xform(),
+            inbetween_origin: None,
         }
     }
 

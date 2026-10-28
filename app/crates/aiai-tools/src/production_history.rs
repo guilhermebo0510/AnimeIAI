@@ -264,7 +264,7 @@ mod tests {
     use serde_json::json;
 
     fn entry(seq: u64, revision: u64, t: u64, author: &str, command: Command) -> LogEntry {
-        LogEntry { seq, revision, op: "apply".into(), description: String::new(), author: author.into(), time_ms: t, command: Some(command) }
+        LogEntry { seq, revision, op: "apply".into(), description: String::new(), author: author.into(), time_ms: t, command: Some(command), source: Default::default() }
     }
 
     fn set(cut: &str, stage: &str, status: Value) -> Command {
@@ -301,7 +301,7 @@ mod tests {
                 Command::Batch { commands: vec![set("c1", "genga", json!("approved")), set("c2", "douga", json!("in_progress"))], label: None },
             ),
             // desfazer o lote: o inverso volta o estado (null = não iniciado)
-            LogEntry { seq: 5, revision: 6, op: "undo".into(), description: String::new(), author: "human".into(), time_ms: 5000, command: Some(set("c1", "genga", json!("review"))) },
+            LogEntry { seq: 5, revision: 6, op: "undo".into(), description: String::new(), author: "human".into(), time_ms: 5000, command: Some(set("c1", "genga", json!("review"))), source: Default::default() },
             entry(6, 7, 6000, "human", set("c1", "layout", Value::Null)),
         ];
         let mut idx = HistoryIndex::default();

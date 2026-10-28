@@ -264,5 +264,7 @@ pub fn is_project_dir(dir: &Path) -> bool {
 pub fn empty_session() -> CoreSession {
     let mut s = CoreSession::new(Project::new("sem-titulo"));
     s.author = DEFAULT_AUTHOR.into();
+    // tudo o que o headless grava vem de chamada direta de ferramenta (R16 REQ-P03)
+    s.source = aiai_core::InputSource::DirectToolCall;
     s
 }

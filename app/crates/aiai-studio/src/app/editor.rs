@@ -1168,6 +1168,8 @@ pub(crate) struct Editor {
     pub back_to_board: Option<NodeId>,
     /// Animação: mesa de luz, densidade da linha do tempo, cels-chave destravados no douga, Cena e Referências.
     pub anim: super::anim::AnimState,
+    /// Prévia de intercalação de um quadro (R16): o estado da tela (a proposta mora na sessão).
+    pub ibp: super::ibp_ui::IbpUi,
     /// Réguas: mostrar, encaixe geral, tipo da próxima, camada de guia das réguas e a prévia do arrasto.
     pub rulers: super::rulers::RulerState,
     /// Camada 3D: modo do gizmo, arrasto em curso e prévia reduzida.
@@ -1190,6 +1192,7 @@ impl Default for Editor {
         Editor {
             back_to_board: None,
             anim: Default::default(),
+            ibp: Default::default(),
             rulers: Default::default(),
             m3d: Default::default(),
             modeling: Default::default(),

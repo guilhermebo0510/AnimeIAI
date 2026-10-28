@@ -57,11 +57,86 @@ pub(crate) struct InputQueue {
     mods: Modifiers,
     /// Quando a caneta encostou (o `t_ms` dos eventos seguintes conta daqui).
     pen_t0: Option<std::time::Instant>,
+    /// Atribuição da entrada deste quadro (R16 REQ-P03).
+    attr: Attribution,
+}
+
+/// Quem emitiu os eventos que DISPARAM ação neste quadro (botão do ponteiro, roda, tecla, texto, toque que começa ou
+/// termina). Movimento não dispara nada: clique de verdade com movimento injetado no mesmo quadro não é da bridge.
+/// O gesto (botão apertado até soltar) junta as fontes de todos os quadros dele: apertar injetado e soltar de verdade
+/// = `Mixed`.
+#[derive(Default, Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Attribution {
+    injected: bool,
+    platform: bool,
+    /// Gesto em andamento (ou que terminou neste quadro): (injetado, plataforma).
+    gesture: Option<(bool, bool)>,
+    gesture_open: bool,
+}
+
+fn is_trigger(e: &Event) -> bool {
+    matches!(
+        e,
+        Event::PointerButton { .. }
+            | Event::MouseWheel { .. }
+            | Event::Key { .. }
+            | Event::Text(_)
+            | Event::Paste(_)
+            | Event::Copy
+            | Event::Cut
+            | Event::Touch { phase: TouchPhase::Start | TouchPhase::End | TouchPhase::Cancel, .. }
+    )
+}
+
+impl Attribution {
+    /// Abre um quadro novo: eventos da plataforma (os que sobraram depois do filtro) e os injetados.
+    fn frame(&mut self, platform: &[Event], injected: &[Event]) {
+        self.injected = injected.iter().any(is_trigger);
+        self.platform = platform.iter().any(is_trigger);
+        if !self.gesture_open {
+            self.gesture = None;
+        }
+        for (evs, inj) in [(platform, false), (injected, true)] {
+            for e in evs {
+                if let Event::PointerButton { pressed, .. } = e {
+                    let g = self.gesture.get_or_insert((false, false));
+                    if inj { g.0 = true } else { g.1 = true }
+                    self.gesture_open = *pressed;
+                }
+            }
+        }
+        if self.gesture_open {
+            if let Some(g) = self.gesture.as_mut() {
+                g.0 |= self.injected;
+                g.1 |= self.platform;
+            }
+        }
+    }
+
+    /// Fonte das ações deste quadro.
+    pub(crate) fn source(&self) -> aiai_core::InputSource {
+        use aiai_core::InputSource as S;
+        if let Some((gi, gp)) = self.gesture {
+            if gi && gp {
+                return S::Mixed;
+            }
+            if gi && !self.platform {
+                return S::BridgeInjected;
+            }
+            return S::UiPlatformUnattributed;
+        }
+        if self.injected && !self.platform { S::BridgeInjected } else { S::UiPlatformUnattributed }
+    }
 }
 
 impl InputQueue {
     pub(crate) fn pending(&self) -> usize {
         self.steps.len() + self.wait as usize
+    }
+
+    /// Fonte das ações deste quadro (vai para `CoreSession::source` antes da interface rodar).
+    pub(crate) fn frame_source(&self) -> aiai_core::InputSource {
+        self.attr.source()
     }
 
     /// Enfileira passos; recusa se a fila ficaria grande demais.
@@ -82,6 +157,7 @@ impl InputQueue {
         }
         if self.wait > 0 {
             self.wait -= 1;
+            self.attr.frame(&raw.events, &[]);
             return;
         }
         let before = raw.events.len();
@@ -118,6 +194,7 @@ impl InputQueue {
             }
             break;
         }
+        self.attr.frame(&raw.events[..before], &raw.events[before..]);
         if raw.events.len() > before {
             self.injected_frames += 1;
             // o estado de modificadores acompanha o que os eventos injetados declaram (o egui 0.36 lê `ModifiersChanged`)
@@ -303,6 +380,41 @@ mod tests {
         }
         all.retain(|f| !f.is_empty());
         all
+    }
+
+    /// Fonte de cada quadro (R16 AT-15): `real` = eventos da plataforma que entram antes da fila em cada quadro.
+    fn sources(events: Value, real: &[(usize, Event)]) -> Vec<aiai_core::InputSource> {
+        let mut q = InputQueue::default();
+        q.push(parse(events.as_array().unwrap()).unwrap()).unwrap();
+        let mut out = Vec::new();
+        for k in 0..8 {
+            let mut raw = egui::RawInput::default();
+            raw.events.extend(real.iter().filter(|(f, _)| *f == k).map(|(_, e)| e.clone()));
+            q.next_events(&mut raw);
+            out.push(q.frame_source());
+        }
+        out
+    }
+
+    #[test]
+    fn frame_source_links_actions_to_the_events_that_fired_them() {
+        use aiai_core::InputSource as S;
+        let click = json!([{"kind":"mouse_move","x":10,"y":20},{"kind":"mouse_down","x":10,"y":20},{"kind":"mouse_up","x":10,"y":20}]);
+        // clique injetado: o quadro do soltar (onde o botão dispara) é da bridge
+        let s = sources(click.clone(), &[]);
+        assert_eq!((s[1], s[2]), (S::BridgeInjected, S::BridgeInjected), "{s:?}");
+        // sem injeção: plataforma, nunca "humano"
+        let press = |pressed| Event::PointerButton { pos: Pos2::new(5.0, 5.0), button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE };
+        let s = sources(json!([{"kind":"wait","frames":1}]), &[(2, press(true)), (3, press(false))]);
+        assert_eq!((s[2], s[3]), (S::UiPlatformUnattributed, S::UiPlatformUnattributed), "{s:?}");
+        // tecla de verdade com movimento injetado no mesmo quadro: não é da bridge
+        let key = Event::Key { key: egui::Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE };
+        let s = sources(json!([{"kind":"mouse_move","x":1,"y":1}]), &[(0, key)]);
+        assert_eq!(s[0], S::UiPlatformUnattributed, "{s:?}");
+        // gesto que começa injetado e termina na plataforma: misto
+        let s = sources(json!([{"kind":"mouse_move","x":10,"y":20},{"kind":"mouse_down","x":10,"y":20}]), &[(3, press(false))]);
+        assert_eq!(s[1], S::BridgeInjected, "{s:?}");
+        assert_eq!(s[3], S::Mixed, "{s:?}");
     }
 
     #[test]
