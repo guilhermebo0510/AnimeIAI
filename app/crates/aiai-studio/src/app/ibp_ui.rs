@@ -2,18 +2,21 @@
 //! MCP usa: uma prévia pedida pelo agente aparece aqui também (modo diretor), e aceitar por aqui passa pelas mesmas
 //! barreiras. Só visão até o Aceitar: nada entra no projeto, no render nem na exportação.
 //!
-//! * Sobreposição: o candidato na cor da prévia, as chaves A e B finas e uma linha entre os centros de cada par, tudo
-//!   projetado como o cel aceito vai aparecer (movimento da camada no quadro, transformação identidade).
-//! * Barra: Aceitar (com o alcance escrito; desligado com recusa, prévia desatualizada ou camada travada, sempre com o
-//!   motivo), Descartar, Atualizar, Corrigir pares e a lista de avisos/recusas. Sem atalho de teclado.
-//! * Corrigir pares: clique num traço de A e depois num de B; clique num par manual e Delete desfaz.
+//! * Sobreposição (só no quadro da proposta): o quadro esmaecido, as chaves A (vermelho) e B (verde) finas, o candidato
+//!   na cor da prévia e uma linha entre os traços de cada correspondência, tudo projetado como o cel aceito vai aparecer
+//!   (movimento da camada no quadro, transformação identidade).
+//! * Barra: Aceitar (com o alcance escrito; desligado com o motivo), Atualizar, Corrigir pares, opções do motor,
+//!   Descartar, e a lista inteira de recusas/avisos (clique localiza o traço). Sem atalho de teclado.
+//! * Corrigir pares: clique num traço de A e depois num de B; clique no traço de A de um par manual e Delete desfaz.
+//!   A tela mostra na hora o par novo (tracejado) e apaga a ligação que ele substitui.
 
 use super::commands as cmds;
 use super::editor::Xf;
 use super::ui_kit::Env;
 use crate::i18n::tr;
+use aiai_anim::MotionMode;
 use aiai_core::{Id, LayerType, NodeKind, Stroke};
-use aiai_tools::inbetween_preview::{self as ibp, InbetweenPreviewRequest, InbetweenProposal, Support};
+use aiai_tools::inbetween_preview::{self as ibp, InbetweenPreviewRequest, InbetweenProposal, Notice, PairKind, Support};
 use egui::{Color32, Pos2, Rect, RichText, Vec2};
 
 /// Cor da prévia (a mesma do render com prévia da bridge; diferente do vermelho/verde da mesa de luz).
@@ -22,9 +25,11 @@ const KEY_A: Color32 = Color32::from_rgba_premultiplied(150, 40, 34, 150);
 const KEY_B: Color32 = Color32::from_rgba_premultiplied(24, 112, 50, 150);
 const REFUSE: Color32 = Color32::from_rgb(230, 60, 50);
 const APPROX: Color32 = Color32::from_rgb(222, 160, 40);
+const FOUND: Color32 = Color32::from_rgb(255, 200, 0);
+/// Amostras somadas que a sobreposição monta (acima disso, os traços entram pelos pontos de controle; CX10 C10-02).
+const OVERLAY_BUDGET: usize = 300_000;
 
 /// Estado da interface da prévia (o que é só da tela; a proposta fica na sessão).
-#[derive(Default)]
 pub(crate) struct IbpUi {
     /// Cliques no canvas corrigem pares em vez de desenhar.
     pub pairs_mode: bool,
@@ -34,12 +39,32 @@ pub(crate) struct IbpUi {
     pub selected: Option<(Id, Id)>,
     /// Lista de avisos aberta.
     pub show_notes: bool,
+    /// Opções do motor abertas na barra.
+    pub show_options: bool,
+    /// Esmaecer o quadro por baixo da prévia (o desenho exposto hoje não compete com a proposta, A6-06).
+    pub veil: bool,
+    /// Traços apontados por um aviso clicado (destacados no canvas).
+    pub highlight: Option<(Option<Id>, Option<Id>)>,
     /// Última proposta vista: uma prévia nova pedida pelo MCP leva a tela ao quadro dela (modo diretor).
     pub seen: Option<u64>,
     /// E1 (R16 §11): amostras brutas por quadro, só enquanto gravando (`UI_ACTION perf_samples`).
     pub perf: Perf,
     /// Geometria da proposta viva, amostrada uma vez.
     pub geom: Option<Geom>,
+}
+
+impl Default for IbpUi {
+    fn default() -> Self {
+        IbpUi { pairs_mode: false, pick_a: None, selected: None, show_notes: false, show_options: false, veil: true, highlight: None, seen: None, perf: Perf::default(), geom: None }
+    }
+}
+
+impl IbpUi {
+    /// Volta ao estado sem prévia, guardando o que é preferência ou medida.
+    fn reset(&mut self) {
+        let (perf, veil, seen) = (std::mem::take(&mut self.perf), self.veil, self.seen);
+        *self = IbpUi { perf, veil, seen, ..Default::default() };
+    }
 }
 
 /// Amostras brutas de tempo (ms) por quadro: a interface inteira (CPU de montar o quadro) e o desenho da prévia.
@@ -70,22 +95,29 @@ impl Perf {
 pub(crate) fn request_here(env: &mut Env) -> Result<InbetweenPreviewRequest, String> {
     let cut = env.ed.active_cut(env.core).ok_or_else(|| tr("err.no_cut").to_owned())?;
     let layer = env.ed.active_layer(env.core).ok_or_else(|| tr("ibp.need_layer").to_owned())?;
-    if !cmds::layer_data(&env.core.project, &layer).is_some_and(|l| l.kind == LayerType::Vector) {
+    request_at(env, &cut, &layer, env.ed.frame)
+}
+
+/// Pedido para uma célula (camada e quadro): o motivo quando não dá.
+pub(crate) fn request_at(env: &Env, cut: &Id, layer: &Id, frame: u32) -> Result<InbetweenPreviewRequest, String> {
+    if !cmds::layer_data(&env.core.project, layer).is_some_and(|l| l.kind == LayerType::Vector) {
         return Err(tr("ibp.need_vector").to_owned());
     }
-    let req = InbetweenPreviewRequest::new(cut, layer, env.ed.frame);
+    let req = InbetweenPreviewRequest::new(cut.clone(), layer.clone(), frame);
     ibp::resolve_frames(&env.core.project, &req).map_err(|e| e.to_string())?;
     Ok(req)
 }
 
-/// Pede a prévia (substitui a anterior).
+/// Pede a prévia (substitui a anterior); a tela vai ao quadro e à camada dela.
 pub(crate) fn request_preview(env: &mut Env, req: &InbetweenPreviewRequest) {
     env.ed.ibp.pick_a = None;
     env.ed.ibp.selected = None;
-    // a prévia aparece no quadro dela
+    env.ed.ibp.highlight = None;
     env.ed.frame = req.frame;
+    env.ed.layer = Some(req.layer.clone());
     match ibp::preview(env.core, req) {
         Ok(p) => {
+            env.ed.ibp.seen = Some(p.id);
             let msg = if p.refusals.is_empty() { format!("{} ({} {})", tr("ibp.ready"), p.approximations.len(), tr("ibp.warnings")) } else { format!("{}: {} {}", tr("ibp.ready"), p.refusals.len(), tr("ibp.refusals")) };
             env.ed.notify(msg);
         }
@@ -93,8 +125,7 @@ pub(crate) fn request_preview(env: &mut Env, req: &InbetweenPreviewRequest) {
     }
 }
 
-/// Proposta viva no corte mostrado.
-/// (cópia leve: sem candidato nem pares; o aceite usa a proposta guardada na sessão)
+/// Proposta viva no corte mostrado (cópia leve: sem candidato nem pares; o aceite usa a proposta guardada na sessão).
 fn current_for(env: &Env, cut: &Id) -> Option<InbetweenProposal> {
     ibp::current(env.core).filter(|p| &p.cut == cut).map(InbetweenProposal::light)
 }
@@ -104,7 +135,8 @@ pub(crate) fn current_here(env: &Env, cut: &Id) -> bool {
     ibp::current(env.core).is_some_and(|p| &p.cut == cut)
 }
 
-/// Uma vez por quadro: o projeto mudou depois da prévia → ela some com o motivo (sem recalcular).
+/// Uma vez por quadro: o projeto mudou depois da prévia → ela some com o motivo (sem recalcular). Uma prévia nova vinda
+/// do MCP leva a tela ao quadro e à camada dela.
 pub(crate) fn tick(env: &mut Env) {
     if let Some(why) = ibp::invalidate_if_changed(env.core) {
         env.ed.ibp.pairs_mode = false;
@@ -112,11 +144,12 @@ pub(crate) fn tick(env: &mut Env) {
         env.ed.notify(format!("{}: {why}", tr("ibp.invalidated")));
     }
     let cut = env.ed.active_cut(env.core);
-    if let Some((id, frame, pcut)) = ibp::current(env.core).map(|p| (p.id, p.frame, p.cut.clone())) {
+    if let Some((id, frame, pcut, layer)) = ibp::current(env.core).map(|p| (p.id, p.frame, p.cut.clone(), p.layer.clone())) {
         if env.ed.ibp.seen != Some(id) {
             env.ed.ibp.seen = Some(id);
-            if cut.as_ref() == Some(&pcut) && env.ed.frame != frame {
+            if cut.as_ref() == Some(&pcut) {
                 env.ed.frame = frame;
+                env.ed.layer = Some(layer);
             }
         }
     }
@@ -140,15 +173,55 @@ fn to_canvas(a: &aiai_paint::Affine, x: f32, y: f32) -> Vec2 {
     Vec2::new(cx, cy)
 }
 
+/// Traço de uma chave na sobreposição: pontos no canvas e centro (média dos pontos de controle, a mesma conta da
+/// proposta: a ponta da ligação não salta ao Atualizar).
+pub(crate) struct GLine {
+    id: Id,
+    pts: Vec<Vec2>,
+    center: Vec2,
+}
+
+/// Ligação de uma correspondência calculada.
+struct Link {
+    a: Option<Id>,
+    b: Option<Id>,
+    ca: Vec2,
+    cb: Vec2,
+    support: Support,
+    manual: bool,
+    kind: PairKind,
+}
+
 /// Geometria da prévia já amostrada e levada ao canvas: não muda enquanto a proposta vive (qualquer mudança no projeto
 /// derruba a proposta), então é feita uma vez por proposta em vez de a cada quadro (E1: reamostrar 380 curvas por quadro
-/// custava ~11 ms no desenho no limite).
+/// custava ~11 ms no desenho no limite). Com orçamento de amostras: traço que passaria dele entra pelos pontos de controle.
 pub(crate) struct Geom {
     id: u64,
-    a: Vec<(Id, Vec<Vec2>)>,
-    b: Vec<(Id, Vec<Vec2>)>,
+    a: Vec<GLine>,
+    b: Vec<GLine>,
     cand: Vec<(Vec<Vec2>, Vec<f32>)>,
-    links: Vec<(Vec2, Vec2, Support, bool)>,
+    links: Vec<Link>,
+}
+
+/// Amostras de um traço no canvas dentro do orçamento (senão os pontos de controle, no máximo 2 000).
+fn sampled(s: &Stroke, a: &aiai_paint::Affine, k: f32, budget: &mut usize) -> (Vec<Vec2>, Vec<f32>) {
+    let est = ibp::polyline_len(s).min(1e9) as usize + s.points.len();
+    if est <= *budget {
+        *budget -= est;
+        let sm = aiai_paint::sample_stroke(s);
+        (sm.iter().map(|q| to_canvas(a, q.x, q.y)).collect(), sm.iter().map(|q| q.r * k).collect())
+    } else {
+        let step = (s.points.len() / 2_000).max(1);
+        let pts: Vec<Vec2> = s.points.iter().step_by(step).map(|q| to_canvas(a, q.x, q.y)).collect();
+        let r = vec![s.width * 0.5 * k; pts.len()];
+        (pts, r)
+    }
+}
+
+fn cel_center(s: &Stroke, a: &aiai_paint::Affine) -> Vec2 {
+    let n = s.points.len().max(1) as f32;
+    let (x, y) = s.points.iter().fold((0.0, 0.0), |acc, q| (acc.0 + q.x, acc.1 + q.y));
+    to_canvas(a, x / n, y / n)
 }
 
 /// Monta (ou reaproveita) a geometria da proposta viva neste corte.
@@ -163,31 +236,24 @@ fn ensure_geom(env: &mut Env, cut: &Id) -> bool {
     let project = &env.core.project;
     let Some(a) = placement_of(project, p) else { return false };
     let k = scale_of(&a);
-    let line = |s: &Stroke| -> Vec<Vec2> { aiai_paint::sample_stroke(s).iter().map(|q| to_canvas(&a, q.x, q.y)).collect() };
-    let cel = |id: &Id| -> Vec<(Id, Vec<Vec2>)> {
+    let mut budget = OVERLAY_BUDGET;
+    let mut cel = |id: &Id| -> Vec<GLine> {
         match project.node(id).map(|n| &n.data) {
-            Some(NodeKind::Cel(c)) => c.strokes.iter().map(|s| (s.id.clone(), line(s))).collect(),
+            Some(NodeKind::Cel(c)) => c.strokes.iter().map(|s| GLine { id: s.id.clone(), pts: sampled(s, &a, k, &mut budget).0, center: cel_center(s, &a) }).collect(),
             _ => Vec::new(),
         }
     };
-    let cand = p
-        .candidate
-        .iter()
-        .map(|s| {
-            let sm = aiai_paint::sample_stroke(s);
-            (sm.iter().map(|q| to_canvas(&a, q.x, q.y)).collect(), sm.iter().map(|q| q.r * k).collect())
-        })
-        .collect();
+    let (ga, gb) = (cel(&p.cel_a), cel(&p.cel_b));
+    let cand = p.candidate.iter().map(|s| sampled(s, &a, k, &mut budget)).collect();
     let links = p
         .pairs
         .iter()
         .filter_map(|pv| match (pv.a_center, pv.b_center) {
-            (Some(ca), Some(cb)) => Some((to_canvas(&a, ca[0], ca[1]), to_canvas(&a, cb[0], cb[1]), pv.support, pv.manual)),
+            (Some(ca), Some(cb)) => Some(Link { a: pv.a.clone(), b: pv.b.clone(), ca: to_canvas(&a, ca[0], ca[1]), cb: to_canvas(&a, cb[0], cb[1]), support: pv.support, manual: pv.manual, kind: pv.kind }),
             _ => None,
         })
         .collect();
-    let g = Geom { id: p.id, a: cel(&p.cel_a), b: cel(&p.cel_b), cand, links };
-    env.ed.ibp.geom = Some(g);
+    env.ed.ibp.geom = Some(Geom { id: p.id, a: ga, b: gb, cand, links });
     true
 }
 
@@ -231,30 +297,50 @@ fn mesh_line(mesh: &mut egui::Mesh, sp: &[Pos2], sr: &[f32], color: Color32) {
     }
 }
 
-/// Desenha a prévia por cima do canvas (só visão).
+/// A ligação calculada ainda vale com os pares manuais pendentes? (antes de Atualizar: um par novo substitui a ligação
+/// dos dois traços dele; um par manual solto deixa de valer)
+fn link_superseded(l: &Link, pending: &[(Id, Id)]) -> bool {
+    if l.kind != PairKind::Pair {
+        return false;
+    }
+    let (Some(a), Some(b)) = (&l.a, &l.b) else { return false };
+    let mine = pending.iter().any(|(x, y)| x == a && y == b);
+    let touched = pending.iter().any(|(x, y)| x == a || y == b);
+    (touched && !mine) || (l.manual && !mine)
+}
+
+/// Desenha a prévia por cima do canvas (só visão, só no quadro dela).
 pub(crate) fn paint(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &Id) {
-    let Some((frame, stale)) = ibp::current(env.core).filter(|p| &p.cut == cut).map(|p| (p.frame, p.stale)) else {
+    let Some((frame, stale, pending)) = ibp::current(env.core).filter(|p| &p.cut == cut).map(|p| (p.frame, p.stale, p.request.manual_pairs.clone())) else {
         env.ed.ibp.geom = None;
         return;
     };
     if frame != env.ed.frame || !ensure_geom(env, cut) {
         return;
     }
+    let (cw, ch) = cmds::canvas_size(&env.core.project, cut);
     let ui = &env.ed.ibp;
     let Some(g) = ui.geom.as_ref() else { return };
-    // as chaves, finas, para ver e escolher os pares
+    // o quadro de hoje esmaecido: o desenho exposto não compete com a proposta
+    if ui.veil {
+        let quad: Vec<Pos2> = [Vec2::new(0.0, 0.0), Vec2::new(cw as f32, 0.0), Vec2::new(cw as f32, ch as f32), Vec2::new(0.0, ch as f32)].iter().map(|v| xf.to_screen(*v)).collect();
+        painter.add(egui::Shape::convex_polygon(quad, Color32::from_rgba_unmultiplied(250, 250, 250, 170), egui::Stroke::NONE));
+    }
+    let hl = ui.highlight.clone().unwrap_or((None, None));
     let thin = |pts: &[Vec2], color: Color32, w: f32| {
         if pts.len() >= 2 {
             painter.add(egui::Shape::line(pts.iter().map(|q| xf.to_screen(*q)).collect(), egui::Stroke::new(w, color)));
         }
     };
-    for (id, pts) in &g.a {
-        let picked = ui.pick_a.as_ref() == Some(id) || ui.selected.as_ref().is_some_and(|x| &x.0 == id);
-        thin(pts, if picked { Color32::from_rgb(255, 120, 60) } else { KEY_A }, if picked { 3.0 } else { 1.2 });
+    for l in &g.a {
+        let picked = ui.pick_a.as_ref() == Some(&l.id) || ui.selected.as_ref().is_some_and(|x| x.0 == l.id);
+        let found = hl.0.as_ref() == Some(&l.id);
+        thin(&l.pts, if found { FOUND } else if picked { Color32::from_rgb(255, 120, 60) } else { KEY_A }, if picked || found { 3.0 } else { 1.2 });
     }
-    for (id, pts) in &g.b {
-        let picked = ui.selected.as_ref().is_some_and(|x| &x.1 == id);
-        thin(pts, if picked { Color32::from_rgb(60, 220, 120) } else { KEY_B }, if picked { 3.0 } else { 1.2 });
+    for l in &g.b {
+        let picked = ui.selected.as_ref().is_some_and(|x| x.1 == l.id);
+        let found = hl.1.as_ref() == Some(&l.id);
+        thin(&l.pts, if found { FOUND } else if picked { Color32::from_rgb(60, 220, 120) } else { KEY_B }, if picked || found { 3.0 } else { 1.2 });
     }
     // o candidato como a linha vai ficar (largura do traço), numa malha só
     let color = if stale { PREVIEW.gamma_multiply(0.45) } else { PREVIEW };
@@ -265,33 +351,55 @@ pub(crate) fn paint(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &Id) {
         mesh_line(&mut mesh, &sp, &sr, color);
     }
     painter.add(egui::Shape::mesh(mesh));
-    // ligações dos pares
-    for (ca, cb, support, manual) in &g.links {
-        let (sa, sb) = (xf.to_screen(*ca), xf.to_screen(*cb));
-        let c = match support {
+    // ligações calculadas (a que um par pendente substitui fica apagada, tracejada)
+    for l in &g.links {
+        let (sa, sb) = (xf.to_screen(l.ca), xf.to_screen(l.cb));
+        let c = match l.support {
             Support::Refuse => REFUSE,
             Support::Approximate => APPROX,
             Support::Preserve => Color32::from_gray(200),
         };
-        painter.line_segment([sa, sb], egui::Stroke::new(if *manual { 2.2 } else { 1.0 }, c));
+        if stale && link_superseded(l, &pending) {
+            painter.extend(egui::Shape::dashed_line(&[sa, sb], egui::Stroke::new(1.0, c.gamma_multiply(0.35)), 3.0, 4.0));
+            continue;
+        }
+        if l.kind == PairKind::GroupMorph {
+            painter.extend(egui::Shape::dotted_line(&[sa, sb], c, 6.0, 1.3));
+        } else {
+            painter.line_segment([sa, sb], egui::Stroke::new(if l.manual { 2.2 } else { 1.0 }, c));
+        }
         painter.circle_filled(sa, 2.5, c);
         painter.circle_stroke(sb, 3.0, egui::Stroke::new(1.0, c));
+    }
+    // pares manuais ainda não calculados: tracejado grosso, para ver o que acabou de ser escolhido
+    if stale {
+        let center = |lines: &[GLine], id: &Id| lines.iter().find(|l| &l.id == id).map(|l| l.center);
+        for (ia, ib) in &pending {
+            if let (Some(ca), Some(cb)) = (center(&g.a, ia), center(&g.b, ib)) {
+                let (sa, sb) = (xf.to_screen(ca), xf.to_screen(cb));
+                let sel = ui.selected.as_ref() == Some(&(ia.clone(), ib.clone()));
+                painter.extend(egui::Shape::dashed_line(&[sa, sb], egui::Stroke::new(if sel { 3.5 } else { 2.5 }, PREVIEW), 7.0, 5.0));
+                painter.circle_filled(sa, 4.0, PREVIEW);
+                painter.circle_filled(sb, 4.0, PREVIEW);
+            }
+        }
     }
 }
 
 /// Traço mais perto de `q` (canvas) dentro de `tol`.
-fn nearest_in(lines: &[(Id, Vec<Vec2>)], q: Vec2, tol: f32) -> Option<Id> {
+fn nearest_in(lines: &[GLine], q: Vec2, tol: f32) -> Option<Id> {
     lines
         .iter()
-        .filter(|(id, _)| !id.0.is_empty())
-        .map(|(id, pts)| (pts.iter().map(|p| (*p - q).length()).fold(f32::INFINITY, f32::min), id))
+        .filter(|l| !l.id.0.is_empty())
+        .map(|l| (l.pts.iter().map(|p| (*p - q).length()).fold(f32::INFINITY, f32::min), &l.id))
         .filter(|(d, _)| *d <= tol)
         .min_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal))
         .map(|x| x.1.clone())
 }
 
-/// Clique no canvas com "Corrigir pares" ligado: A e depois B = par manual; clique num traço de A que já tem par manual
-/// escolhe o par (Delete desfaz). `true` = o clique foi da prévia (não desenha).
+/// Clique no canvas com "Corrigir pares" ligado, no quadro da prévia: A e depois B = par manual; clique num traço de A
+/// que já tem par manual escolhe o par (Delete desfaz). `true` = o clique foi da prévia (não desenha). Fora do quadro da
+/// prévia nada é interceptado (não se escolhe o que não está à mostra, CX10 C10-04 / A6-04).
 pub(crate) fn pick(env: &mut Env, canvas_pos: Vec2, scale: f32) -> bool {
     if !env.ed.ibp.pairs_mode {
         return false;
@@ -301,8 +409,8 @@ pub(crate) fn pick(env: &mut Env, canvas_pos: Vec2, scale: f32) -> bool {
         env.ed.ibp.pairs_mode = false;
         return false;
     };
-    if !ensure_geom(env, &cut) {
-        return true;
+    if p.frame != env.ed.frame || !ensure_geom(env, &cut) {
+        return false;
     }
     let tol = 12.0 / scale.max(1e-3);
     let (near_a, near_b) = {
@@ -346,15 +454,6 @@ fn remove_selected(env: &mut Env, p: &InbetweenProposal) {
     }
 }
 
-fn notice_rows(ui: &mut egui::Ui, items: &[ibp::Notice], color: Color32, max: usize) {
-    for n in items.iter().take(max) {
-        ui.label(RichText::new(format!("• {}", n.text)).size(11.0).color(color));
-    }
-    if items.len() > max {
-        ui.label(RichText::new(format!("… +{}", items.len() - max)).size(11.0).color(color));
-    }
-}
-
 /// Folga da barra até o pé do canvas (a leitura de coordenadas fica à mostra).
 const BAR_GAP: f32 = 34.0;
 
@@ -389,13 +488,38 @@ fn dropped_bar(env: &mut Env, ctx: &egui::Context, rect: Rect, cut: &Id) {
         });
     env.note("ibp:dropped", area.response.rect);
     match act {
-        Some("again") => {
-            // mesmo quadro e mesmas opções; os pares manuais voltam só se os traços ainda existem (senão o erro diz)
-            request_preview(env, &req);
-        }
+        // mesmo quadro e mesmas opções; os pares manuais voltam só se os traços ainda existem (senão o erro diz)
+        Some("again") => request_preview(env, &req),
         Some("close") => ibp::clear_invalidated(env.core),
         _ => {}
     }
+}
+
+/// Lista inteira de recusas, avisos e observações (virtualizada); clicar numa linha destaca os traços dela (C10-05).
+fn notices_list(env: &mut Env, ui: &mut egui::Ui, p: &InbetweenProposal) {
+    let t = env.t;
+    let rows: Vec<(Color32, &Notice)> = p
+        .refusals
+        .iter()
+        .map(|n| (REFUSE, n))
+        .chain(p.approximations.iter().map(|n| (APPROX, n)))
+        .chain(p.notes.iter().map(|n| (t.text_dim, n)))
+        .collect();
+    let h = 16.0;
+    egui::ScrollArea::vertical().id_salt("ibp_notes").max_height(150.0).auto_shrink([false, true]).show_rows(ui, h, rows.len(), |ui, range| {
+        for i in range {
+            let (c, n) = rows[i];
+            let target = (n.stroke_a.clone(), n.stroke_b.clone());
+            let on = env.ed.ibp.highlight.as_ref() == Some(&target);
+            let r = ui.selectable_label(on, RichText::new(format!("• {}", n.text)).size(11.0).color(c)).on_hover_text(tr("ibp.locate_tip"));
+            if i < 3 {
+                env.note(format!("ibp:notice.{i}"), r.rect);
+            }
+            if r.clicked() {
+                env.ed.ibp.highlight = if on || (target.0.is_none() && target.1.is_none()) { None } else { Some(target) };
+            }
+        }
+    });
 }
 
 /// Barra da prévia no rodapé do canvas (some sem prévia).
@@ -407,16 +531,19 @@ pub(crate) fn bar(env: &mut Env, ctx: &egui::Context, rect: Rect, cut: &Id) {
     };
     let t = env.t;
     let layer_name = env.core.project.node(&full.layer).map(|n| n.name.clone()).unwrap_or_default();
-    let locked = cmds::layer_data(&env.core.project, &full.layer).is_some_and(|l| l.locked);
-    let blocked: Option<String> = match full.acceptable() {
-        Err(e) => Some(e),
-        Ok(()) if locked => Some(tr("ibp.locked").to_owned()),
-        Ok(()) => None,
-    };
+    // a mesma regra do MCP e do aceite (trava da camada ou de uma pasta acima, recusa, desatualizada)
+    let blocked = ibp::blocked_reason(&env.core.project, full);
     let label = ibp::accept_scope(&env.core.project, full).map(|s| s.button_text(&layer_name)).unwrap_or_else(|e| e.to_string());
     let p = full.light();
+    let on_frame = p.frame == env.ed.frame;
+    if !on_frame {
+        // fora do quadro da prévia não se corrige par (o que não está à mostra não é escolhido)
+        env.ed.ibp.pairs_mode = false;
+        env.ed.ibp.pick_a = None;
+    }
+    let (mut motion, mut bend, mut max_cost) = (p.request.motion, p.request.bend, p.request.max_cost);
     let mut act: Option<&'static str> = None;
-    let w = (rect.width() - 24.0).clamp(240.0, 760.0);
+    let w = (rect.width() - 24.0).clamp(240.0, 820.0);
     let area = egui::Area::new(egui::Id::new("ibp_bar"))
         .order(egui::Order::Foreground)
         .fixed_pos(egui::pos2(rect.center().x - w / 2.0, rect.bottom() - BAR_GAP))
@@ -431,6 +558,14 @@ pub(crate) fn bar(env: &mut Env, ctx: &egui::Context, rect: Rect, cut: &Id) {
                             .size(11.5)
                             .color(t.text_dim),
                     );
+                    if !on_frame {
+                        ui.label(RichText::new(format!("· {} {}", tr("ibp.off_frame"), env.ed.frame + 1)).size(11.5).color(APPROX));
+                        let r = ui.button(format!("{} {}", tr("ibp.go_frame"), p.frame + 1));
+                        env.note("ibp:go", r.rect);
+                        if r.clicked() {
+                            act = Some("go");
+                        }
+                    }
                 });
                 ui.horizontal_wrapped(|ui| {
                     let r = ui.add_enabled(blocked.is_none(), egui::Button::new(RichText::new(&label).strong()));
@@ -447,17 +582,42 @@ pub(crate) fn bar(env: &mut Env, ctx: &egui::Context, rect: Rect, cut: &Id) {
                     if r.clicked() {
                         act = Some("refresh");
                     }
-                    let r = ui.selectable_label(env.ed.ibp.pairs_mode, tr("ibp.pairs")).on_hover_text(tr("ibp.pairs_tip"));
+                    let r = ui.add_enabled(on_frame, egui::Button::selectable(env.ed.ibp.pairs_mode, tr("ibp.pairs"))).on_hover_text(tr("ibp.pairs_tip"));
                     env.note("ibp:pairs", r.rect);
                     if r.clicked() {
                         act = Some("pairs");
                     }
+                    let r = ui.selectable_label(env.ed.ibp.show_options, tr("ibp.options")).on_hover_text(tr("ibp.options_tip"));
+                    env.note("ibp:options", r.rect);
+                    if r.clicked() {
+                        env.ed.ibp.show_options = !env.ed.ibp.show_options;
+                    }
+                    let r = ui.checkbox(&mut env.ed.ibp.veil, tr("ibp.veil")).on_hover_text(tr("ibp.veil_tip"));
+                    env.note("ibp:veil", r.rect);
                     let r = ui.button(tr("ibp.discard"));
                     env.note("ibp:discard", r.rect);
                     if r.clicked() {
                         act = Some("discard");
                     }
                 });
+                if env.ed.ibp.show_options {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new(tr("ibp.motion")).size(11.5));
+                        for (m, k, name) in [(MotionMode::Global, "ibp.motion.global", "global"), (MotionMode::PerStroke, "ibp.motion.per_stroke", "per_stroke"), (MotionMode::Linear, "ibp.motion.linear", "linear")] {
+                            let r = ui.selectable_label(motion == m, tr(k));
+                            env.note(format!("ibp:motion.{name}"), r.rect);
+                            if r.clicked() {
+                                motion = m;
+                            }
+                        }
+                        ui.label(RichText::new(tr("ibp.bend")).size(11.5));
+                        let r = ui.add(egui::Slider::new(&mut bend, -1.0..=1.0).step_by(0.05).max_decimals(2)).on_hover_text(tr("ibp.bend_tip"));
+                        env.note("ibp:bend", r.rect);
+                        ui.label(RichText::new(tr("ibp.max_cost")).size(11.5));
+                        let r = ui.add(egui::DragValue::new(&mut max_cost).range(5.0..=2000.0).speed(2.0).suffix(" px")).on_hover_text(tr("ibp.max_cost_tip"));
+                        env.note("ibp:max_cost", r.rect);
+                    });
+                }
                 if let Some(why) = &blocked {
                     ui.label(RichText::new(why).size(11.0).color(if p.refusals.is_empty() { APPROX } else { REFUSE }));
                 }
@@ -470,35 +630,45 @@ pub(crate) fn bar(env: &mut Env, ctx: &egui::Context, rect: Rect, cut: &Id) {
                         env.ed.ibp.show_notes = !env.ed.ibp.show_notes;
                     }
                     if env.ed.ibp.show_notes || nr > 0 {
-                        egui::ScrollArea::vertical().id_salt("ibp_notes").max_height(120.0).show(ui, |ui| {
-                            notice_rows(ui, &p.refusals, REFUSE, 12);
-                            if env.ed.ibp.show_notes {
-                                notice_rows(ui, &p.approximations, APPROX, 12);
-                                notice_rows(ui, &p.notes, t.text_dim, 6);
-                            }
-                        });
+                        notices_list(env, ui, &p);
                     }
                 }
                 if env.ed.ibp.pairs_mode {
                     let msg = if env.ed.ibp.pick_a.is_some() { tr("ibp.pick_b") } else { tr("ibp.pick_a") };
-                    ui.label(RichText::new(msg).size(11.0).color(t.text_dim));
+                    ui.label(RichText::new(format!("{msg} · {}", tr("ibp.delete_hint"))).size(11.0).color(t.text_dim));
                 }
             });
         });
     env.note("ibp:bar", area.response.rect);
-    if env.ed.ibp.pairs_mode && env.ed.ibp.selected.is_some() && ctx.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
+    if (motion, bend, max_cost) != (p.request.motion, p.request.bend, p.request.max_cost) {
+        if let Err(e) = ibp::set_options(env.core, p.id, motion, bend, max_cost) {
+            env.ed.notify(e.to_string());
+        }
+    }
+    // consome a tecla: senão o Delete da seleção do canvas (que roda depois) apagaria o conteúdo selecionado
+    if env.ed.ibp.pairs_mode
+        && env.ed.ibp.selected.is_some()
+        && !ctx.egui_wants_keyboard_input()
+        && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete) || i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace))
+    {
         remove_selected(env, &p);
     }
     match act {
-        Some("accept") => match ibp::accept(env.core, p.id, super::doc::AUTHOR) {
-            Ok(a) => {
-                let perf = std::mem::take(&mut env.ed.ibp.perf);
-                env.ed.ibp = IbpUi { perf, ..Default::default() };
-                env.ed.notify(a.outcome.description);
+        Some("accept") => {
+            // o aceite é um clique: grava a fonte do gesto do ponteiro, não a do quadro inteiro (CX10 C10-01)
+            let prev = std::mem::replace(&mut env.core.source, env.ed.input_src.0);
+            let r = ibp::accept(env.core, p.id, super::doc::AUTHOR);
+            env.core.source = prev;
+            match r {
+                Ok(a) => {
+                    env.ed.ibp.reset();
+                    env.ed.notify(a.outcome.description);
+                }
+                Err(e) => env.ed.notify(e.to_string()),
             }
-            Err(e) => env.ed.notify(e.to_string()),
-        },
+        }
         Some("refresh") => {
+            env.ed.ibp.highlight = None;
             if let Err(e) = ibp::refresh(env.core, p.id) {
                 env.ed.notify(e.to_string());
             }
@@ -507,10 +677,13 @@ pub(crate) fn bar(env: &mut Env, ctx: &egui::Context, rect: Rect, cut: &Id) {
             env.ed.ibp.pairs_mode = !env.ed.ibp.pairs_mode;
             env.ed.ibp.pick_a = None;
         }
+        Some("go") => {
+            env.ed.frame = p.frame;
+            env.ed.layer = Some(p.layer.clone());
+        }
         Some("discard") => {
             let _ = ibp::discard(env.core, p.id);
-            let perf = std::mem::take(&mut env.ed.ibp.perf);
-            env.ed.ibp = IbpUi { perf, ..Default::default() };
+            env.ed.ibp.reset();
         }
         _ => {}
     }
@@ -522,17 +695,7 @@ pub(crate) fn command_button(env: &mut Env, ui: &mut egui::Ui, name: &str) -> bo
     command_for(env, ui, name, here)
 }
 
-/// Pedido para uma célula da linha do tempo (camada e quadro clicados).
-pub(crate) fn request_at(env: &Env, cut: &Id, layer: &Id, frame: u32) -> Result<InbetweenPreviewRequest, String> {
-    if !cmds::layer_data(&env.core.project, layer).is_some_and(|l| l.kind == LayerType::Vector) {
-        return Err(tr("ibp.need_vector").to_owned());
-    }
-    let req = InbetweenPreviewRequest::new(cut.clone(), layer.clone(), frame);
-    ibp::resolve_frames(&env.core.project, &req).map_err(|e| e.to_string())?;
-    Ok(req)
-}
-
-/// Botão do comando: ligado só entre dois blocos-chave da camada (senão mostra o motivo).
+/// Botão do comando: ligado só entre dois blocos-chave da camada (senão desligado, com o motivo na dica).
 pub(crate) fn command_for(env: &mut Env, ui: &mut egui::Ui, name: &str, here: Result<InbetweenPreviewRequest, String>) -> bool {
     let r = ui.add_enabled(here.is_ok(), egui::Button::new(tr("ibp.command")));
     let r = match &here {

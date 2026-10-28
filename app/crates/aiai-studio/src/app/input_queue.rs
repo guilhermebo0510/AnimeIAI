@@ -67,32 +67,34 @@ pub(crate) struct InputQueue {
 /// = `Mixed`.
 #[derive(Default, Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Attribution {
-    injected: bool,
-    platform: bool,
-    /// Gesto em andamento (ou que terminou neste quadro): (injetado, plataforma).
+    /// Eventos de ponteiro que disparam ação neste quadro (botão, roda, toque que começa/termina): (injetado, plataforma).
+    pointer: (bool, bool),
+    /// Teclado neste quadro (tecla, texto, colar/copiar/recortar): (injetado, plataforma).
+    keys: (bool, bool),
+    /// Gesto do ponteiro em andamento (ou que terminou neste quadro): (injetado, plataforma) dos BOTÕES dele. Só eventos
+    /// de ponteiro entram: uma tecla no meio do gesto não muda a origem do clique (CX10 C10-01).
     gesture: Option<(bool, bool)>,
     gesture_open: bool,
 }
 
-fn is_trigger(e: &Event) -> bool {
-    matches!(
-        e,
-        Event::PointerButton { .. }
-            | Event::MouseWheel { .. }
-            | Event::Key { .. }
-            | Event::Text(_)
-            | Event::Paste(_)
-            | Event::Copy
-            | Event::Cut
-            | Event::Touch { phase: TouchPhase::Start | TouchPhase::End | TouchPhase::Cancel, .. }
-    )
+fn is_pointer_trigger(e: &Event) -> bool {
+    matches!(e, Event::PointerButton { .. } | Event::MouseWheel { .. } | Event::Touch { phase: TouchPhase::Start | TouchPhase::End | TouchPhase::Cancel, .. })
+}
+
+fn is_key_trigger(e: &Event) -> bool {
+    matches!(e, Event::Key { .. } | Event::Text(_) | Event::Paste(_) | Event::Copy | Event::Cut)
+}
+
+fn one(flags: (bool, bool)) -> aiai_core::InputSource {
+    use aiai_core::InputSource as S;
+    if flags.0 && !flags.1 { S::BridgeInjected } else { S::UiPlatformUnattributed }
 }
 
 impl Attribution {
     /// Abre um quadro novo: eventos da plataforma (os que sobraram depois do filtro) e os injetados.
     fn frame(&mut self, platform: &[Event], injected: &[Event]) {
-        self.injected = injected.iter().any(is_trigger);
-        self.platform = platform.iter().any(is_trigger);
+        self.pointer = (injected.iter().any(is_pointer_trigger), platform.iter().any(is_pointer_trigger));
+        self.keys = (injected.iter().any(is_key_trigger), platform.iter().any(is_key_trigger));
         if !self.gesture_open {
             self.gesture = None;
         }
@@ -105,27 +107,35 @@ impl Attribution {
                 }
             }
         }
-        if self.gesture_open {
-            if let Some(g) = self.gesture.as_mut() {
-                g.0 |= self.injected;
-                g.1 |= self.platform;
-            }
+    }
+
+    /// Fonte de uma ação disparada pelo ponteiro (clique, arrasto): a dos botões do gesto; apertar injetado e soltar
+    /// na plataforma = `Mixed`.
+    pub(crate) fn pointer_source(&self) -> aiai_core::InputSource {
+        match self.gesture {
+            Some((true, true)) => aiai_core::InputSource::Mixed,
+            Some(g) => one(g),
+            None => one(self.pointer),
         }
     }
 
-    /// Fonte das ações deste quadro.
+    /// Fonte de uma ação disparada pelo teclado.
+    pub(crate) fn key_source(&self) -> aiai_core::InputSource {
+        one(self.keys)
+    }
+
+    /// Fonte das ações deste quadro quando não se sabe se vieram do ponteiro ou do teclado: a do único tipo de entrada
+    /// que disparou algo; os dois com fontes diferentes = desconhecida (nunca "humano", nunca chute).
     pub(crate) fn source(&self) -> aiai_core::InputSource {
-        use aiai_core::InputSource as S;
-        if let Some((gi, gp)) = self.gesture {
-            if gi && gp {
-                return S::Mixed;
-            }
-            if gi && !self.platform {
-                return S::BridgeInjected;
-            }
-            return S::UiPlatformUnattributed;
+        let ptr = self.gesture.is_some() || self.pointer.0 || self.pointer.1;
+        let key = self.keys.0 || self.keys.1;
+        match (ptr, key) {
+            (true, false) => self.pointer_source(),
+            (false, true) => self.key_source(),
+            (false, false) => aiai_core::InputSource::UiPlatformUnattributed,
+            (true, true) if self.pointer_source() == self.key_source() => self.key_source(),
+            (true, true) => aiai_core::InputSource::UnknownLegacy,
         }
-        if self.injected && !self.platform { S::BridgeInjected } else { S::UiPlatformUnattributed }
     }
 }
 
@@ -137,6 +147,16 @@ impl InputQueue {
     /// Fonte das ações deste quadro (vai para `CoreSession::source` antes da interface rodar).
     pub(crate) fn frame_source(&self) -> aiai_core::InputSource {
         self.attr.source()
+    }
+
+    /// Fonte de uma ação disparada por clique/arrasto neste quadro (o botão da barra usa esta).
+    pub(crate) fn pointer_source(&self) -> aiai_core::InputSource {
+        self.attr.pointer_source()
+    }
+
+    /// Fonte de uma ação disparada pelo teclado neste quadro.
+    pub(crate) fn key_source(&self) -> aiai_core::InputSource {
+        self.attr.key_source()
     }
 
     /// Enfileira passos; recusa se a fila ficaria grande demais.
@@ -411,6 +431,20 @@ mod tests {
         let key = Event::Key { key: egui::Key::Enter, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE };
         let s = sources(json!([{"kind":"mouse_move","x":1,"y":1}]), &[(0, key)]);
         assert_eq!(s[0], S::UiPlatformUnattributed, "{s:?}");
+        // CX10 C10-01: clique injetado com uma tecla de verdade no quadro do soltar: o clique continua da bridge
+        let key2 = Event::Key { key: egui::Key::A, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::NONE };
+        let mut q = InputQueue::default();
+        q.push(parse(click.as_array().unwrap()).unwrap()).unwrap();
+        let mut last = None;
+        for k in 0..3 {
+            let mut raw = egui::RawInput::default();
+            if k == 2 {
+                raw.events.push(key2.clone());
+            }
+            q.next_events(&mut raw);
+            last = Some((q.pointer_source(), q.key_source(), q.frame_source()));
+        }
+        assert_eq!(last, Some((S::BridgeInjected, S::UiPlatformUnattributed, S::UnknownLegacy)), "clique da bridge; tecla da plataforma; o quadro sozinho não diz");
         // gesto que começa injetado e termina na plataforma: misto
         let s = sources(json!([{"kind":"mouse_move","x":10,"y":20},{"kind":"mouse_down","x":10,"y":20}]), &[(3, press(false))]);
         assert_eq!(s[1], S::BridgeInjected, "{s:?}");

@@ -42,7 +42,7 @@ def heavy_keys(n_strokes, pts_per):
     return a, b
 
 
-def build_heavy(dst, n_strokes=190, pts_per=50):
+def build_heavy(dst, n_strokes=190, pts_per=50, keys=None):
     if os.path.exists(dst):
         shutil.rmtree(dst)
     d = Drive(dst, exe=e2e.MCP)
@@ -51,12 +51,32 @@ def build_heavy(dst, n_strokes=190, pts_per=50):
     sc = d.create("S", {"type": "scene"}, ep)
     cut = d.create("C001", {"type": "cut", "duration": 24}, sc)
     layer = d.create("A", {"type": "layer", "kind": "vector"}, cut)
-    a, b = heavy_keys(n_strokes, pts_per)
+    a, b = keys if keys else heavy_keys(n_strokes, pts_per)
     d.create("A1", {"type": "cel", "number": 1, "role": "key", "strokes": a}, layer)
     d.create("A2", {"type": "cel", "number": 2, "role": "key", "strokes": b}, layer)
     d.apply({"kind": "add_track", "cut": cut, "track": {"id": "trk-a", "name": "A", "kind": "drawing", "layer": layer, "cells": {}}})
     d.apply({"kind": "set_cells", "cut": cut, "track": "trk-a", "cells": [{"frame": 0, "cell": {"type": "cel", "number": 1}}, {"frame": 12, "cell": {"type": "cel", "number": 2}}]})
     return cut, layer
+
+
+def adversarial_keys():
+    """Caso "real" (A6-02): A com 150 abertos de 40 pontos e 30 fechados de 60; B com 149 abertos de 43 e 30 fechados
+    de 64, deslocados — estrutura diferente, então o motor casa por custo e reamostra/alinha cada par."""
+    a, b = [], []
+    for i in range(150):
+        cx, cy = 160 + (i % 15) * 64, 90 + (i // 15) * 44
+        a.append(e2e.stroke(f"a{i}", [(cx + 30 * k / 39, cy + 8 * math.sin(k / 39 * 6.28)) for k in range(40)], width=2.0))
+        if i < 149:
+            b.append(e2e.stroke(f"b{i}", [(cx + 50 + 30 * k / 42, cy + 12 + 8 * math.sin(k / 42 * 6.28)) for k in range(43)], width=2.0))
+    for i in range(30):
+        cx, cy = 200 + (i % 10) * 90, 560 + (i // 10) * 50
+        a.append(e2e.stroke(f"ac{i}", [(cx + 14 * math.cos(k / 60 * 6.283), cy + 14 * math.sin(k / 60 * 6.283)) for k in range(60)], closed=True, width=2.0))
+        b.append(e2e.stroke(f"bc{i}", [(cx + 50 + 15 * math.cos(k / 64 * 6.283), cy + 12 + 15 * math.sin(k / 64 * 6.283)) for k in range(64)], closed=True, width=2.0))
+    return a, b
+
+
+def build_adversarial(dst):
+    return build_heavy(dst, keys=adversarial_keys())
 
 
 def replay(frames):
@@ -142,10 +162,11 @@ def main():
         out["meta"]["hw_error"] = str(e)
     run_case("normal", exe, e2e.build, 6, a.frames, a.reps, out)
     run_case("limite", exe, build_heavy, 6, a.frames, a.reps, out)
+    run_case("realista", exe, build_adversarial, 6, a.frames, a.reps, out)
     with open(os.path.join(EVID, "e1.json"), "w", encoding="utf-8") as f:
         json.dump(out, f)
     res = {"meta": out["meta"]}
-    for name in ("normal", "limite"):
+    for name in ("normal", "limite", "realista"):
         c = out[name]
         res[name] = {"counts": c["counts"], "compute_ms": summary(c["compute_ms"])}
         for cond, runs in c["conditions"].items():

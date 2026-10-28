@@ -404,3 +404,104 @@ fn key_change_and_document_swap_invalidate() {
     let e = ibp::inbetween_frame_command(&locked, &mut f.s.ids, &p, InputSource::DirectToolCall).unwrap_err().to_string();
     assert!(e.contains("travada"), "{e}");
 }
+
+// ---------------------------------------------------------------------------------------------- rodada 7 (A06, CX10)
+
+#[test]
+fn huge_coordinates_are_refused_before_any_expansion() {
+    // C10-02: dois pontos a 1 000 000 px passavam pelas contagens e geravam milhões de amostras na sobreposição
+    let far = st("f", &[[0.0, 0.0], [1_000_000.0, 0.0]], false);
+    let mut f = fixture(&[(1, CelRole::Key, vec![far.clone()]), (2, CelRole::Key, vec![shift(&far, 5.0, 0.0, "g")])], &[(0, 1), (8, 2)]);
+    let t0 = std::time::Instant::now();
+    let p = ibp::preview(&mut f.s, &req(&f.cut, &f.layer, 4)).unwrap();
+    assert!(codes(&p.refusals).contains(&NoticeCode::TooLarge), "{:?}", p.refusals);
+    assert!(p.refusals[0].text.contains("px de traço"), "{}", p.refusals[0].text);
+    assert!(p.candidate.is_empty());
+    assert!(t0.elapsed().as_millis() < 500);
+}
+
+#[test]
+fn summed_alignment_work_is_bounded() {
+    // A6-02: muitos pares fechados grandes, cada um abaixo do limite por par, passavam juntos
+    let a: Vec<Stroke> = (0..12).map(|i| circle(&format!("a{i}"), 100.0 + 40.0 * i as f32, 200.0, 15.0, 400, 0)).collect();
+    let b: Vec<Stroke> = (0..12).map(|i| circle(&format!("b{i}"), 110.0 + 40.0 * i as f32, 200.0, 15.0, 410, 0)).collect();
+    let mut f = fixture(&[(1, CelRole::Key, a), (2, CelRole::Key, b)], &[(0, 1), (8, 2)]);
+    let t0 = std::time::Instant::now();
+    let p = ibp::preview(&mut f.s, &req(&f.cut, &f.layer, 4)).unwrap();
+    assert!(codes(&p.refusals).contains(&NoticeCode::TooLarge), "{:?}", codes(&p.refusals));
+    assert!(t0.elapsed().as_millis() < 3000, "{:?}", t0.elapsed());
+}
+
+#[test]
+fn group_one_to_many_uses_the_same_support_table() {
+    // C10-03 / A6-05: o traço que nasce do par do grupo passa pelas mesmas recusas dos pares
+    let mut a1 = st("a1", &[[100.0, 100.0], [140.0, 90.0], [180.0, 100.0]], false);
+    a1.group = "g".into();
+    let mut b1 = shift(&a1, 50.0, 0.0, "b1");
+    b1.group = "g".into();
+    let mut b2 = shift(&a1, 50.0, 40.0, "b2");
+    b2.group = "g".into();
+    b2.profile = WidthProfile(vec![[0.0, 1.0], [1.0, 0.2]]);
+    let mut f = fixture(&[(1, CelRole::Key, vec![a1]), (2, CelRole::Key, vec![b1, b2])], &[(0, 1), (8, 2)]);
+    let p = ibp::preview(&mut f.s, &req(&f.cut, &f.layer, 4)).unwrap();
+    assert!(codes(&p.refusals).contains(&NoticeCode::ProfileDiffers), "{:?}", p.refusals);
+    let morph = p.pairs.iter().find(|x| x.kind == ibp::PairKind::GroupMorph).expect("1 para N");
+    assert_eq!((morph.a.as_ref().map(|i| i.0.as_str()), morph.b.as_ref().map(|i| i.0.as_str())), (Some("a1"), Some("b2")), "a ligação mostra de onde nasce");
+    assert_eq!(morph.keeps.as_ref().map(|i| i.0.as_str()), Some("b2"));
+}
+
+#[test]
+fn breakdowns_bound_the_gap_and_key_frames_are_protected() {
+    // A6-06: breakdown é fronteira; o quadro de uma chave não vira intercalação; substituir um desenho é dito no botão
+    let l = st("l", &[[100.0, 100.0], [180.0, 100.0]], false);
+    let mut f = fixture(
+        &[(1, CelRole::Key, vec![l.clone()]), (2, CelRole::Breakdown, vec![shift(&l, 30.0, 0.0, "m")]), (3, CelRole::Key, vec![shift(&l, 60.0, 0.0, "n")]), (4, CelRole::Inbetween, vec![shift(&l, 10.0, 0.0, "o")])],
+        &[(0, 1), (2, 4), (6, 2), (12, 3)],
+    );
+    let p = ibp::preview(&mut f.s, &req(&f.cut, &f.layer, 2)).unwrap();
+    assert_eq!((p.frame_a, p.frame_b, p.key_b), (0, 6, 2), "o breakdown no quadro 7 fecha o vão");
+    let scope = ibp::accept_scope(&f.s.project, &p).unwrap();
+    assert_eq!(scope.button_text("A"), "Criar desenho A5 no quadro 3 no lugar de A4 (o quadro 4 continua mostrando A4)");
+    let mut r = req(&f.cut, &f.layer, 6);
+    r.frame_a = Some(0);
+    r.frame_b = Some(12);
+    let e = ibp::preview(&mut f.s, &r).unwrap_err().to_string();
+    assert!(e.contains("não substitui chave nem breakdown"), "{e}");
+}
+
+#[test]
+fn locked_layer_or_locked_parent_folder_blocks_with_the_same_reason_everywhere() {
+    // A6-03 / C10-07: uma regra só; a trava da pasta acima também vale
+    let mut f = two_keys();
+    let p = ibp::preview(&mut f.s, &req(&f.cut, &f.layer, 4)).unwrap();
+    assert_eq!(ibp::blocked_reason(&f.s.project, &p), None);
+    let mut locked = f.s.project.clone();
+    if let Some(NodeKind::Layer(l)) = locked.nodes.get_mut(&f.layer).map(|n| &mut n.data) {
+        l.locked = true;
+    }
+    assert!(ibp::blocked_reason(&locked, &p).is_some_and(|w| w.contains("camada está travada")));
+    // pasta travada acima da camada
+    let folder = Id::from("pasta");
+    let mut in_folder = f.s.project.clone();
+    let mut fd = LayerData::new(LayerType::Group);
+    fd.locked = true;
+    in_folder.nodes.insert(folder.clone(), Node { id: folder.clone(), name: "Pasta".into(), parent: Some(f.cut.clone()), children: vec![f.layer.clone()], data: NodeKind::Layer(fd), provenance: Default::default() });
+    in_folder.nodes.get_mut(&f.layer).unwrap().parent = Some(folder.clone());
+    let why = ibp::blocked_reason(&in_folder, &p).unwrap_or_default();
+    assert!(why.contains("pasta \"Pasta\" está travada"), "{why}");
+    let e = ibp::inbetween_frame_command(&in_folder, &mut f.s.ids, &p, InputSource::DirectToolCall).unwrap_err().to_string();
+    assert!(e.contains("travada"), "{e}");
+}
+
+#[test]
+fn engine_options_make_the_proposal_stale_until_refresh() {
+    // A6-08
+    let mut f = two_keys();
+    let p = ibp::preview(&mut f.s, &req(&f.cut, &f.layer, 4)).unwrap();
+    ibp::set_options(&mut f.s, p.id, MotionMode::Linear, 0.3, 150.0).unwrap();
+    assert!(ibp::current(&f.s).unwrap().stale);
+    assert!(ibp::accept(&mut f.s, p.id, "a").is_err());
+    let q = ibp::refresh(&mut f.s, p.id).unwrap();
+    assert_eq!((q.options.motion, q.options.bend, q.options.max_cost), (MotionMode::Linear, 0.3, 150.0));
+    assert!(ibp::set_options(&mut f.s, q.id, MotionMode::Global, f32::NAN, 1.0).is_err());
+}

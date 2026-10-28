@@ -55,6 +55,13 @@ fn arc(id: &str, n: usize, closed: bool) -> Stroke {
     st(id, &p, closed)
 }
 
+fn grp(s: &Stroke, g: &str, id: &str) -> Stroke {
+    let mut x = s.clone();
+    x.group = g.into();
+    x.id = Id::from(id);
+    x
+}
+
 struct Case {
     name: &'static str,
     a: Vec<Stroke>,
@@ -80,15 +87,16 @@ fn session(case: &Case) -> (CoreSession, Id, Id) {
 }
 
 /// Atributos da saída que mudaram sem aviso que os declare (perda silenciosa).
-fn silent_losses(p: &ibp::InbetweenProposal, a: &[Stroke], out: &[Stroke]) -> Vec<String> {
+fn silent_losses(p: &ibp::InbetweenProposal, a: &[Stroke], b: &[Stroke], out: &[Stroke]) -> Vec<String> {
     let has = |c: NoticeCode| p.approximations.iter().chain(&p.refusals).chain(&p.notes).any(|n| n.code == c);
     let mut lost = Vec::new();
-    // a ordem da saída segue os pares (A primeiro); casa cada saída com o traço de A do par
-    let mut k = 0;
+    // cada correspondência diz qual traço da saída gerou e de qual traço herda os atributos (nada de contador implícito)
     for pv in &p.pairs {
-        let Some(s) = out.get(k) else { break };
-        k += 1;
-        let Some(src) = pv.a.as_ref().and_then(|id| a.iter().find(|x| &x.id == id)) else { continue };
+        let Some(s) = pv.candidate.and_then(|k| out.get(k)) else { continue };
+        let Some(src) = pv.keeps.as_ref().and_then(|id| a.iter().chain(b).find(|x| &x.id == id)) else {
+            lost.push("correspondência sem traço de origem".into());
+            continue;
+        };
         if s.tip != src.tip && !has(NoticeCode::TipDiffers) {
             lost.push(format!("{}: ponta", src.id));
         }
@@ -103,6 +111,9 @@ fn silent_losses(p: &ibp::InbetweenProposal, a: &[Stroke], out: &[Stroke]) -> Ve
         }
         if s.tension != src.tension && !has(NoticeCode::TensionDiffers) {
             lost.push(format!("{}: tensão", src.id));
+        }
+        if (s.color != src.color || (s.opacity - src.opacity).abs() > 1e-4) && pv.kind == ibp::PairKind::GroupMorph && !has(NoticeCode::KeepsColor) {
+            lost.push(format!("{}: cor/opacidade", src.id));
         }
         if s.geometry != src.geometry && !has(NoticeCode::Resampled) && !has(NoticeCode::GroupMorph) && !has(NoticeCode::Unmatched) {
             lost.push(format!("{}: geometria {:?}→{:?}", src.id, src.geometry, s.geometry));
@@ -136,6 +147,9 @@ fn e3_preview_and_accept_keep_the_declared_support() {
         Case { name: "cores de paleta diferentes", a: vec![{ let mut x = open.clone(); x.color = ColorRef::Palette { palette: Id::from("pal"), color: Id::from("ca") }; x }], b: vec![{ let mut x = moved(&open, 60.0, "c2"); x.color = ColorRef::Palette { palette: Id::from("pal"), color: Id::from("cb") }; x }] },
         Case { name: "ponta quadrada igual", a: vec![{ let mut x = open.clone(); x.tip = VectorTip::Square; x }], b: vec![{ let mut x = moved(&open, 60.0, "q2"); x.tip = VectorTip::Square; x }] },
         Case { name: "pontas diferentes", a: vec![open.clone()], b: vec![{ let mut x = moved(&open, 60.0, "t2"); x.tip = VectorTip::Marker; x }] },
+        Case { name: "grupo 1 para N, mesmos atributos", a: vec![grp(&open, "g", "g1")], b: vec![grp(&moved(&open, 60.0, "x"), "g", "g2"), grp(&{ let mut x = moved(&open, 60.0, "y"); for q in &mut x.points { q.y += 30.0; } x }, "g", "g3")] },
+        Case { name: "grupo 1 para N, cor e ponta diferentes no traço novo", a: vec![grp(&open, "g", "h1")], b: vec![grp(&moved(&open, 60.0, "x"), "g", "h2"), { let mut x = grp(&moved(&open, 60.0, "y"), "g", "h3"); for q in &mut x.points { q.y += 30.0; } x.color = ColorRef::Direct { rgba: Rgba([0.9, 0.2, 0.2, 1.0]) }; x.tip = VectorTip::Marker; x }] },
+        Case { name: "grupo 1 para N, fechado com aberto", a: vec![grp(&ring, "g", "k1")], b: vec![grp(&moved(&ring, 60.0, "x"), "g", "k2"), grp(&moved(&open, 90.0, "y"), "g", "k3")] },
         Case { name: "traço sem par (some)", a: vec![open.clone(), st("solo", &[[400.0, 300.0], [450.0, 300.0], [500.0, 310.0]], false)], b: vec![moved(&open, 60.0, "u2")] },
     ];
     // paleta só existe para os casos que a usam
@@ -174,7 +188,7 @@ fn e3_preview_and_accept_keep_the_declared_support() {
             let same_strokes = saved.len() == cand.len() && saved.iter().zip(&cand).all(|(x, y)| x.points == y.points && x.width == y.width && x.color == y.color && x.profile == y.profile && x.tip == y.tip && x.geometry == y.geometry);
             let acc_px = layer_png(&s, &cut, &layer, 4);
             let diff = prev_px.iter().zip(&acc_px).filter(|(a, b)| a.iter().zip(b.iter()).any(|(u, v)| (u - v).abs() > 1e-4)).count();
-            let lost = silent_losses(&p, &case.a, &saved);
+            let lost = silent_losses(&p, &case.a, &case.b, &saved);
             verdict = format!("aceito; traços = candidato: {}; pixels diferentes prévia × aceito: {diff}; perda silenciosa: {}", if same_strokes { "sim" } else { "NÃO" }, if lost.is_empty() { "nenhuma".to_owned() } else { lost.join(", ") });
             if !same_strokes || diff != 0 || !lost.is_empty() {
                 failures.push(format!("{}: {verdict}", case.name));

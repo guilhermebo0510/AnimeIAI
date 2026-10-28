@@ -584,6 +584,46 @@ fn merge_last_makes_one_undo_step() {
     assert!(!s.merge_last(5, "x"), "não junta mais do que existe");
 }
 
+/// Rodada 7 (CX10 C10-06): falha ao gravar o diário não deixa comando aplicado sem passo de desfazer — o comando volta,
+/// a revisão e o histórico ficam como antes e o diário não guarda linha parcial (reabrir dá o mesmo projeto).
+#[test]
+fn wal_failure_rolls_the_command_back() {
+    let dir = std::env::temp_dir().join(format!("aiai-walfail-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut s = CoreSession::for_tests("walfail");
+    let (_ep, _cut, _layer, cel) = build_basic(&mut s);
+    persist::save(&mut s, &dir).unwrap();
+    s.apply(Command::SetProps { id: cel.clone(), name: Some("antes".into()), data: json!({}) }).unwrap();
+    let (rev, hist, log) = (s.project.revision, s.history().0.len(), s.log().len());
+    // conteúdo sem a proveniência (metadado de auditoria que o inverso regrava)
+    let content = |p: &Project| {
+        let mut v = serde_json::to_value(p).unwrap();
+        for n in v["nodes"].as_object_mut().unwrap().values_mut() {
+            n.as_object_mut().unwrap().remove("provenance");
+        }
+        v.to_string()
+    };
+    let snap = content(&s.project);
+    s.wal_mut().unwrap().fail_next_append_for_tests();
+    let e = s.apply(Command::SetProps { id: cel.clone(), name: Some("depois".into()), data: json!({}) });
+    assert!(e.is_err());
+    assert_eq!(content(&s.project), snap, "o comando voltou");
+    assert_eq!((s.project.revision, s.history().0.len(), s.log().len()), (rev, hist, log));
+    // undo com o diário falhando também volta
+    s.wal_mut().unwrap().fail_next_append_for_tests();
+    assert!(s.undo().is_err());
+    assert_eq!(content(&s.project), snap);
+    assert_eq!(s.history().0.len(), hist, "o passo continua desfazível");
+    // o próximo comando grava normalmente e a recuperação pelo diário dá o mesmo estado, sem linha cortada
+    s.apply(Command::SetProps { id: cel.clone(), name: Some("ok".into()), data: json!({}) }).unwrap();
+    let want = serde_json::to_string(&s.project.nodes.get(&cel).unwrap().name).unwrap();
+    drop(s);
+    let (re, rep) = persist::open(&dir).unwrap();
+    assert_eq!(rep.wal_truncated_at, None, "nenhuma linha parcial no diário");
+    assert_eq!(serde_json::to_string(&re.project.nodes.get(&cel).unwrap().name).unwrap(), want);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// R16 REQ-P01/P03: cada entrada do log leva a fonte da sessão naquele momento; juntar passos de fontes diferentes dá
 /// `Mixed`; entrada antiga sem o campo lê como `UnknownLegacy`.
 #[test]

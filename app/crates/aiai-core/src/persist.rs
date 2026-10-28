@@ -922,6 +922,8 @@ enum WalLine {
 pub struct Wal {
     dir: PathBuf,
     file: std::fs::File,
+    /// Testes: a próxima entrada falha depois de escrever parte da linha (prova o desfazer da linha parcial).
+    fail_next: bool,
 }
 
 impl Wal {
@@ -930,15 +932,22 @@ impl Wal {
         let mut file = retry_io(|| std::fs::File::create(&path))?;
         writeln!(file, "{}", serde_json::to_string(&WalLine::Header { wal_base_revision: base_revision })?)?;
         file.sync_data()?;
-        Ok(Wal { dir: dir.to_path_buf(), file })
+        Ok(Wal { dir: dir.to_path_buf(), file, fail_next: false })
+    }
+
+    /// Testes de atomicidade: faz a próxima `append` falhar no meio da linha.
+    #[doc(hidden)]
+    pub fn fail_next_append_for_tests(&mut self) {
+        self.fail_next = true;
     }
 
     fn open_append(dir: &Path, keep_existing: bool, base_revision: u64) -> CoreResult<Self> {
         if !keep_existing || !dir.join(WAL_FILE).exists() {
             return Wal::create(dir, base_revision);
         }
-        let file = retry_io(|| std::fs::OpenOptions::new().append(true).open(dir.join(WAL_FILE)))?;
-        Ok(Wal { dir: dir.to_path_buf(), file })
+        // escrita (não `append`): o desfazer de uma linha parcial precisa de `set_len`
+        let file = retry_io(|| std::fs::OpenOptions::new().read(true).write(true).open(dir.join(WAL_FILE)))?;
+        Ok(Wal { dir: dir.to_path_buf(), file, fail_next: false })
     }
 
     /// Grava os blobs novos (para a recuperação ter o conteúdo) e depois a entrada. Os blobs vão com `sync` (arquivo e
@@ -960,10 +969,30 @@ impl Wal {
         }
         for (h, _) in &items {
             blobs.mark_on_disk(h.clone());
-            writeln!(self.file, "{}", serde_json::to_string(&WalLine::Blob { hash: h.0.clone() })?)?;
         }
-        writeln!(self.file, "{}", serde_json::to_string(&WalLine::Entry(entry.clone()))?)?;
-        self.file.sync_data()?;
+        // linhas do passo inteiras ou nenhuma: se a escrita ou o sync falham, o diário volta ao tamanho de antes (a sessão
+        // desfaz o comando em memória; uma linha que sobrasse seria reaplicada na recuperação)
+        use std::io::Seek;
+        let start = self.file.seek(std::io::SeekFrom::End(0))?;
+        let mut text = String::new();
+        for (h, _) in &items {
+            text.push_str(&serde_json::to_string(&WalLine::Blob { hash: h.0.clone() })?);
+            text.push('\n');
+        }
+        text.push_str(&serde_json::to_string(&WalLine::Entry(entry.clone()))?);
+        text.push('\n');
+        let fail = std::mem::take(&mut self.fail_next);
+        let written: std::io::Result<()> = if fail {
+            self.file.write_all(&text.as_bytes()[..text.len() / 2]).and_then(|_| Err(std::io::Error::other("falha simulada no diário")))
+        } else {
+            self.file.write_all(text.as_bytes()).and_then(|_| self.file.sync_data())
+        };
+        if let Err(e) = written {
+            let _ = self.file.set_len(start);
+            let _ = self.file.seek(std::io::SeekFrom::End(0));
+            let _ = self.file.sync_data();
+            return Err(e.into());
+        }
         Ok(())
     }
 }

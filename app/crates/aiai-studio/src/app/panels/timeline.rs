@@ -463,14 +463,12 @@ fn grid(env: &mut Env, ui: &mut Ui, area: Rect, cut: &NodeId, cd: &CutData, comp
                 ui.close();
             }
         }
-        // prévia de intercalação neste quadro (R16): ligada só entre dois blocos-chave da camada
+        // prévia de intercalação neste quadro (R16): sempre no menu; desligada fora de um vão entre chaves, com o motivo
         {
             let here = crate::app::ibp_ui::request_at(env, cut, &lid, f);
-            if here.is_ok() {
-                ui.separator();
-                if crate::app::ibp_ui::command_for(env, ui, "timeline:ctx.ibp", here) {
-                    ui.close();
-                }
+            ui.separator();
+            if crate::app::ibp_ui::command_for(env, ui, "timeline:ctx.ibp", here) {
+                ui.close();
             }
         }
         // papel do cel exposto nesta célula (chave, breakdown, intercalação) e a trava do douga

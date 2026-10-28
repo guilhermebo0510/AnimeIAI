@@ -20,7 +20,8 @@ pub const PREVIEW_RGB: [f32; 3] = [0.88, 0.25, 0.98];
 pub fn proposal_json(p: &Project, prop: &InbetweenProposal) -> Value {
     let scope = ibp::accept_scope(p, prop).ok();
     let layer_name = p.node(&prop.layer).map(|n| n.name.clone()).unwrap_or_default();
-    let blocked = prop.acceptable().err();
+    // a mesma regra da interface e do aceite (inclui camada ou pasta travada)
+    let blocked = ibp::blocked_reason(p, prop);
     json!({
         "proposal_id": prop.id,
         "generation": prop.generation,

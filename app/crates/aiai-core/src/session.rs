@@ -285,7 +285,15 @@ impl CoreSession {
         self.change_counter += 1;
         let description = applied.command.description();
         let outcome = Outcome { revision, description: description.clone(), created: applied.created.clone(), affected: applied.affected.clone() };
-        self.record("apply", &description, author, Some(applied.command.clone()))?;
+        if let Err(e) = self.record("apply", &description, author, Some(applied.command.clone())) {
+            // sem diário não há passo: o comando volta e a revisão também (nada aplicado sem o seu desfazer). A
+            // proveniência dos nós mexidos fica com a revisão anterior (o metadado de auditoria não é guardado antes)
+            let ctx = ApplyCtx { blobs: &self.blobs, author, revision: revision - 1 };
+            applied.inverse.apply(&mut self.project, &ctx).expect("inverso deve restaurar");
+            self.project.revision = revision - 1;
+            self.change_counter += 1;
+            return Err(e);
+        }
         self.undo.push(applied);
         self.blobs.tick();
         // `while`: baixar o limite nas Preferências esvazia o excesso na próxima ação, não uma entrada por vez
@@ -319,7 +327,14 @@ impl CoreSession {
         self.change_counter += 1;
         let description = format!("Desfazer: {}", a.command.description());
         let outcome = Outcome { revision, description: description.clone(), created: r.created.clone(), affected: r.affected.clone() };
-        self.record("undo", &description, &author, Some(a.inverse.clone()))?;
+        if let Err(e) = self.record("undo", &description, &author, Some(a.inverse.clone())) {
+            let ctx = ApplyCtx { blobs: &self.blobs, author: &author, revision: revision - 1 };
+            r.inverse.apply(&mut self.project, &ctx).expect("refazer deve restaurar");
+            self.project.revision = revision - 1;
+            self.change_counter += 1;
+            self.undo.push(a);
+            return Err(e);
+        }
         self.redo.push(Applied { command: r.inverse, inverse: a.inverse, created: a.created, affected: r.affected });
         // desfazer num corte também é editar o corte (projeto dividido): a gravação seguinte regrava o arquivo dele
         let _ = self.claim_cuts_for(&outcome.affected);
@@ -344,7 +359,14 @@ impl CoreSession {
         self.change_counter += 1;
         let description = format!("Refazer: {}", a.command.description());
         let outcome = Outcome { revision, description: description.clone(), created: r.created.clone(), affected: r.affected.clone() };
-        self.record("redo", &description, &author, Some(a.command.clone()))?;
+        if let Err(e) = self.record("redo", &description, &author, Some(a.command.clone())) {
+            let ctx = ApplyCtx { blobs: &self.blobs, author: &author, revision: revision - 1 };
+            r.inverse.apply(&mut self.project, &ctx).expect("desfazer deve restaurar");
+            self.project.revision = revision - 1;
+            self.change_counter += 1;
+            self.redo.push(a);
+            return Err(e);
+        }
         self.undo.push(r);
         let _ = self.claim_cuts_for(&outcome.affected);
         Ok(outcome)

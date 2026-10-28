@@ -243,7 +243,7 @@ impl StudioApp {
         let ppp = ctx.pixels_per_point();
         // prévia de intercalação viva (R16): o que a barra mostra
         let ibp_state = aiai_tools::inbetween_preview::current(&self.core).map(|p| {
-            json!({ "proposal_id": p.id, "frame": p.frame, "frame_a": p.frame_a, "frame_b": p.frame_b, "stale": p.stale, "acceptable": p.acceptable().is_ok(),
+            json!({ "proposal_id": p.id, "frame": p.frame, "frame_a": p.frame_a, "frame_b": p.frame_b, "stale": p.stale, "acceptable": aiai_tools::inbetween_preview::blocked_reason(&self.core.project, p).is_none(), "blocked_reason": aiai_tools::inbetween_preview::blocked_reason(&self.core.project, p),
                     "refusals": p.refusals.len(), "approximations": p.approximations.len(), "manual_pairs": p.request.manual_pairs, "pairs_mode": ed.ibp.pairs_mode, "pick_a": ed.ibp.pick_a })
         });
         let canvas = ed.canvas_rect.map(|r| {

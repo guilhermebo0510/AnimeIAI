@@ -160,6 +160,15 @@ pub fn pair_path(sa: &Stroke, sb: &Stroke) -> PairPath {
     PairPath { direct, samples, reversed, shift, identity_cost, aligned_cost }
 }
 
+/// Como o 1 para N do grupo (`morph` em [`inbetween_pairs`]) trata o par (de, para): sempre reamostrado, alinhado como
+/// fechado só se os dois forem fechados. Só leitura.
+pub fn morph_path(from: &Stroke, to: &Stroke) -> PairPath {
+    let n = resampled_len(from.points.len(), to.points.len());
+    let (pa, pb) = (resample(from, n), resample(to, n));
+    let (reversed, shift, identity_cost, aligned_cost) = align_choice(&pa, &pb, from.closed && to.closed);
+    PairPath { direct: false, samples: n, reversed, shift, identity_cost, aligned_cost }
+}
+
 /// Pontos por traço no caminho reamostrado de um par com `na` e `nb` pontos (sem reamostrar nada).
 pub fn resampled_len(na: usize, nb: usize) -> usize {
     na.max(nb).max(8) * 2
@@ -170,6 +179,32 @@ const SHAPE_N: usize = 24;
 /// Os dois traços podem casar: mesmo grupo de intercalação, ou um deles sem grupo.
 fn same_group(x: &Stroke, y: &Stroke) -> bool {
     x.group.is_empty() || y.group.is_empty() || x.group == y.group
+}
+
+/// Trabalho (distâncias ponto a ponto) que [`correspond`] faria com estes traços, sem fazer nada: para limitar antes.
+/// Zero quando a estrutura é a mesma (casa por ordem).
+pub fn correspond_work(a: &[Stroke], b: &[Stroke]) -> u64 {
+    let same_structure = a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.points.len() == y.points.len() && x.closed == y.closed && x.group == y.group);
+    if same_structure {
+        return 0;
+    }
+    let n = SHAPE_N as u64;
+    let mut w = 0u64;
+    for x in a {
+        for y in b {
+            if x.closed != y.closed || !same_group(x, y) {
+                continue;
+            }
+            w += if x.closed { n + 2 * n * n } else { 2 * n };
+        }
+    }
+    w
+}
+
+/// Trabalho do alinhamento de um par com `n` pontos por traço (fechado: `n` deslocamentos × 2 sentidos × `n`).
+pub fn align_work(n: usize, closed: bool) -> u64 {
+    let n = n as u64;
+    if closed { 2 * n * n + n } else { 2 * n }
 }
 
 /// Correspondência automática entre os traços de A e B.
@@ -397,6 +432,12 @@ fn unmatched(s: &Stroke, to_a: impl Fn(P) -> P, t: f32, rigid: Option<(f32, f32,
 /// Desenho intercalado no tempo `t` (0 = A, 1 = B).
 pub fn inbetween(a: &[Stroke], b: &[Stroke], t: f32, opts: &InbetweenOptions) -> Vec<Stroke> {
     let pairs = correspond(a, b, opts);
+    inbetween_pairs(a, b, t, opts, &pairs).into_iter().flatten().collect()
+}
+
+/// Como [`inbetween`], com os pares já calculados (`correspond` com as mesmas opções) e a saída de cada par na posição
+/// dele (`None` = o par não desenha nada neste `t`, como um traço sem par que ainda não apareceu). Mesmo resultado.
+pub fn inbetween_pairs(a: &[Stroke], b: &[Stroke], t: f32, opts: &InbetweenOptions, pairs: &[Pair]) -> Vec<Option<Stroke>> {
     // pontos reamostrados e alinhados de cada par
     struct Prep<'s> {
         sa: &'s Stroke,
@@ -406,7 +447,7 @@ pub fn inbetween(a: &[Stroke], b: &[Stroke], t: f32, opts: &InbetweenOptions) ->
         direct: bool,
     }
     let mut preps: Vec<Option<Prep>> = Vec::new();
-    for &(ia, ib) in &pairs {
+    for &(ia, ib) in pairs {
         match (ia, ib) {
             (Some(i), Some(j)) => {
                 let (sa, sb) = (&a[i], &b[j]);
@@ -462,19 +503,19 @@ pub fn inbetween(a: &[Stroke], b: &[Stroke], t: f32, opts: &InbetweenOptions) ->
         s.width = from.width + (to.width - from.width) * t;
         s
     };
-    let mut out = Vec::new();
+    let mut out: Vec<Option<Stroke>> = vec![None; pairs.len()];
     for (k, &(ia, ib)) in pairs.iter().enumerate() {
         match (&preps[k], ia, ib) {
             (None, Some(i), None) if t > 0.0 && partner_in(&a[i].group).is_some() => {
                 let (_, pj) = partner_in(&a[i].group).expect("par");
                 if t < 1.0 {
-                    out.push(morph(&a[i], &b[pj], &a[i]));
+                    out[k] = Some(morph(&a[i], &b[pj], &a[i]));
                 }
             }
             (None, None, Some(j)) if t < 1.0 && partner_in(&b[j].group).is_some() => {
                 let (pi, _) = partner_in(&b[j].group).expect("par");
                 if t > 0.0 {
-                    out.push(morph(&a[pi], &b[j], &b[j]));
+                    out[k] = Some(morph(&a[pi], &b[j], &b[j]));
                 }
             }
             (Some(pr), _, _) => {
@@ -493,23 +534,23 @@ pub fn inbetween(a: &[Stroke], b: &[Stroke], t: f32, opts: &InbetweenOptions) ->
                 s.width = pr.sa.width + (pr.sb.width - pr.sa.width) * t;
                 s.opacity = pr.sa.opacity + (pr.sb.opacity - pr.sa.opacity) * t;
                 s.color = lerp_color(&pr.sa.color, &pr.sb.color, t);
-                out.push(s);
+                out[k] = Some(s);
             }
             // sem par: o de A se apaga do fim para o começo; o de B se desenha (começa na pose de A, chega na de B)
             (None, Some(i), None) => {
                 if t <= 0.0 {
                     let mut s = a[i].clone();
                     s.id = Id(String::new());
-                    out.push(s);
+                    out[k] = Some(s);
                 } else if let Some(s) = unmatched(&a[i], |p| p, t, global, opts.bend, 1.0 - t) {
-                    out.push(s);
+                    out[k] = Some(s);
                 }
             }
             (None, None, Some(j)) => {
                 if t >= 1.0 {
                     let mut s = b[j].clone();
                     s.id = Id(String::new());
-                    out.push(s);
+                    out[k] = Some(s);
                 } else {
                     let inv = global.map(|(ang, sc, ca, cb)| {
                         let (s1, c1) = (-ang).sin_cos();
@@ -523,7 +564,7 @@ pub fn inbetween(a: &[Stroke], b: &[Stroke], t: f32, opts: &InbetweenOptions) ->
                         None => unmatched(&b[j], |p| p, t, None, opts.bend, t),
                     };
                     if let Some(s) = st {
-                        out.push(s);
+                        out[k] = Some(s);
                     }
                 }
             }

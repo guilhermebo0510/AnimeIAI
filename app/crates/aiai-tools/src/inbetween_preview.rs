@@ -9,7 +9,7 @@
 //! * [`inbetween_frame_command`] monta o comando do aceite a partir do candidato guardado (não recalcula).
 
 use crate::context::*;
-use aiai_anim::{InbetweenOptions, MotionMode, correspond, inbetween, pair_path, resampled_len};
+use aiai_anim::{InbetweenOptions, MotionMode, align_work, correspond, correspond_work, inbetween_pairs, morph_path, pair_path, resampled_len};
 use aiai_core::command::CellEdit;
 use aiai_core::*;
 use schemars::JsonSchema;
@@ -26,6 +26,12 @@ pub const MAX_POINTS_TOTAL: usize = 20_000;
 pub const MAX_PAIR_SAMPLES: usize = 1_000;
 /// Pontos somados da saída (candidato e sobreposição).
 pub const MAX_OUTPUT_POINTS: usize = 60_000;
+/// Comprimento de traço somado nas duas chaves (e na saída), em px: a sobreposição e o render amostram ~1 ponto por px
+/// (CX10 C10-02: dois pontos a 1 000 000 px de distância passavam pelas contagens e geravam milhões de amostras).
+pub const MAX_DRAW_LENGTH: f32 = 400_000.0;
+/// Trabalho de alinhamento somado na proposta (casar os traços + cada par fechado ~2n², a prévia e o motor), em
+/// comparações ponto a ponto (A6-02: o limite por par sozinho deixava passar muitos pares fechados grandes).
+pub const MAX_ALIGN_WORK: u64 = 20_000_000;
 
 /// Caminho direto com sentido ou começo diferentes: recusa quando alinhar reduziria a distância média a menos da
 /// metade e em mais de 1 px (abaixo disso é ruído de um desenho quase simétrico).
@@ -103,6 +109,7 @@ pub enum NoticeCode {
     ColorSwitch,
     Unmatched,
     GroupMorph,
+    KeepsColor,
     // preserva, com observação sobre a prévia
     TipPreviewSimplified,
     // recusa (bloqueia o aceite)
@@ -126,7 +133,7 @@ impl NoticeCode {
     pub fn support(self) -> Support {
         use NoticeCode::*;
         match self {
-            Resampled | BezierDirect | TensionDiffers | TipDiffers | ColorSwitch | Unmatched | GroupMorph => Support::Approximate,
+            Resampled | BezierDirect | TensionDiffers | TipDiffers | ColorSwitch | Unmatched | GroupMorph | KeepsColor => Support::Approximate,
             TipPreviewSimplified => Support::Preserve,
             _ => Support::Refuse,
         }
@@ -153,6 +160,20 @@ pub struct PairView {
     /// Caminho direto do motor (pontos copiados um a um).
     pub direct: bool,
     pub support: Support,
+    /// Par, 1 para N do grupo (`a`/`b` = os dois traços que o motor interpola) ou traço sem par.
+    pub kind: PairKind,
+    /// Índice do traço que esta correspondência gera no candidato (`None` = não desenha neste quadro ou há recusa).
+    pub candidate: Option<usize>,
+    /// De qual traço a saída herda os atributos (ponta, perfil, cor no 1 para N...): o de A num par, o sem par nos demais.
+    pub keeps: Option<Id>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PairKind {
+    Pair,
+    GroupMorph,
+    Unmatched,
 }
 
 /// Proposta (R16 REQ-D01): só em memória, nunca gravada no projeto.
@@ -303,15 +324,15 @@ fn resolve_keys(p: &Project, cut: &CutData, req: &InbetweenPreviewRequest) -> To
                         c.sort_by_key(|s| if before { u32::MAX - s.0 } else { s.0 });
                         c.first().copied()
                     }
-                    // o bloco-chave mais próximo
+                    // o bloco-chave (chave ou breakdown, A6-06) mais próximo
                     None => {
-                        let mut c: Vec<_> = starts.iter().filter(side_ok).filter(|s| s.3 == CelRole::Key).collect();
+                        let mut c: Vec<_> = starts.iter().filter(side_ok).filter(|s| is_boundary(s.3)).collect();
                         c.sort_by_key(|s| if before { u32::MAX - s.0 } else { s.0 });
                         c.first().copied()
                     }
                 };
                 let s = found.ok_or_else(|| {
-                    ToolError::Invalid(format!("sem desenho-chave {} do quadro {} nesta camada (chave {side})", if before { "antes" } else { "depois" }, req.frame))
+                    ToolError::Invalid(format!("sem chave ou breakdown {} do quadro {} nesta camada (chave {side})", if before { "antes" } else { "depois" }, req.frame + 1))
                 })?;
                 Ok((s.0, s.1, s.2.clone()))
             }
@@ -325,7 +346,24 @@ fn resolve_keys(p: &Project, cut: &CutData, req: &InbetweenPreviewRequest) -> To
     if b.0 >= cut.duration {
         return Err(ToolError::Invalid(format!("a chave B ({}) passa da duração do corte ({})", b.0, cut.duration)));
     }
+    // o quadro alvo não pode ser o começo de uma chave ou breakdown (a prévia substituiria um desenho-chave na folha)
+    if let Some(s) = starts.iter().find(|s| s.0 == req.frame && is_boundary(s.3)) {
+        return Err(ToolError::Invalid(format!("o quadro {} começa o desenho {} ({}); a prévia não substitui chave nem breakdown", req.frame + 1, s.1, role_name(s.3))));
+    }
     Ok((a, b))
+}
+
+/// Chave e breakdown delimitam o vão da intercalação.
+fn is_boundary(r: CelRole) -> bool {
+    matches!(r, CelRole::Key | CelRole::Breakdown)
+}
+
+fn role_name(r: CelRole) -> &'static str {
+    match r {
+        CelRole::Key => "chave",
+        CelRole::Breakdown => "breakdown",
+        CelRole::Inbetween => "intercalação",
+    }
 }
 
 /// As chaves que a prévia usaria (quadro A, desenho A, quadro B, desenho B), sem calcular nada: para ligar ou não o
@@ -473,15 +511,23 @@ pub fn inbetween_preview(p: &Project, env: ProposalEnvelope, req: &InbetweenPrev
     if ca.transform != ident || cb.transform != ident {
         prop.refusals.push(notice(NoticeCode::CelTransform, None, None, "uma das chaves tem transformação de cel (a intercalação ignora o transform): desfaça a transformação ou desenhe no lugar"));
     }
-    // limites antes do motor
+    // limites antes do motor: contagens, comprimento desenhado (amostras da sobreposição e do render) e trabalho de
+    // alinhamento somado (a correspondência e cada par fechado custam ~n²)
     let pts_total: usize = a.iter().chain(b).map(|s| s.points.len()).sum();
+    let draw_len: f32 = a.iter().chain(b).map(polyline_len).sum();
+    let mut too_large: Option<String> = None;
     if a.len() > MAX_STROKES_PER_KEY || b.len() > MAX_STROKES_PER_KEY || pts_total > MAX_POINTS_TOTAL {
-        prop.refusals.push(notice(
-            NoticeCode::TooLarge,
-            None,
-            None,
-            format!("desenho grande demais para a prévia ({} e {} traços, {} pontos; limite {} traços por chave e {} pontos)", a.len(), b.len(), pts_total, MAX_STROKES_PER_KEY, MAX_POINTS_TOTAL),
-        ));
+        too_large = Some(format!("{} e {} traços, {} pontos; limite {} traços por chave e {} pontos", a.len(), b.len(), pts_total, MAX_STROKES_PER_KEY, MAX_POINTS_TOTAL));
+    } else if !(draw_len.is_finite() && draw_len <= MAX_DRAW_LENGTH) {
+        too_large = Some(format!("{:.0} px de traço somados nas duas chaves; limite {:.0} px", draw_len, MAX_DRAW_LENGTH));
+    } else {
+        let w = correspond_work(a, b);
+        if w > MAX_ALIGN_WORK {
+            too_large = Some(format!("casar os traços custaria {w} comparações; limite {MAX_ALIGN_WORK}"));
+        }
+    }
+    if let Some(why) = too_large {
+        prop.refusals.push(notice(NoticeCode::TooLarge, None, None, format!("desenho grande demais para a prévia ({why})")));
         return Ok(prop);
     }
     // 4. entrada
@@ -491,21 +537,28 @@ pub fn inbetween_preview(p: &Project, env: ProposalEnvelope, req: &InbetweenPrev
     for (i, s) in b.iter().enumerate() {
         classify_input(s, "B", i, &mut prop.refusals);
     }
-    // 5. pares (os mesmos do motor) e classificação de cada par
+    // 5. pares (os mesmos do motor, calculados uma vez) e classificação de cada correspondência efetiva
     let pairs = correspond(a, b, &options);
     let mut out_points = 0usize;
+    let mut work = correspond_work(a, b);
     for &(ia, ib) in &pairs {
         let manual_pair = matches!((ia, ib), (Some(i), Some(j)) if manual.contains(&(i, j)));
-        let (sa, sb) = (ia.map(|i| &a[i]), ib.map(|j| &b[j]));
         let mut notes: Vec<Notice> = Vec::new();
         let mut direct = false;
+        let mut kind = PairKind::Pair;
+        let mut keeps: Option<&Stroke> = ia.map(|i| &a[i]).or(ib.map(|j| &b[j]));
+        // os dois traços que o motor interpola nesta correspondência (no 1 para N, o par do grupo)
+        let mut link: (Option<&Stroke>, Option<&Stroke>) = (ia.map(|i| &a[i]), ib.map(|j| &b[j]));
         match (ia, ib) {
             (Some(i), Some(j)) => {
                 let (sa, sb) = (&a[i], &b[j]);
-                let pa = (sa.points.len() == sb.points.len() && sa.geometry == sb.geometry && sa.closed == sb.closed).then_some(sa.points.len());
-                let n = pa.unwrap_or_else(|| resampled_len(sa.points.len(), sb.points.len()));
-                if n > MAX_PAIR_SAMPLES {
-                    notes.push(notice(NoticeCode::TooLarge, Some(sa), Some(sb), format!("{} × {}: {n} pontos por traço no par (limite {MAX_PAIR_SAMPLES}); desenho grande demais para a prévia", label(sa, "A", i), label(sb, "B", j))));
+                let (la, lb) = (label(sa, "A", i), label(sb, "B", j));
+                let is_direct = sa.points.len() == sb.points.len() && sa.geometry == sb.geometry && sa.closed == sb.closed;
+                let n = if is_direct { sa.points.len() } else { resampled_len(sa.points.len(), sb.points.len()) };
+                // a prévia alinha uma vez para classificar e o motor de novo para gerar
+                work += 2 * align_work(n, sa.closed);
+                if n > MAX_PAIR_SAMPLES || work > MAX_ALIGN_WORK {
+                    notes.push(notice(NoticeCode::TooLarge, Some(sa), Some(sb), format!("{la} × {lb}: {n} pontos por traço; o alinhamento somado passa do limite da prévia ({MAX_PAIR_SAMPLES} por par, {MAX_ALIGN_WORK} no total)")));
                 } else {
                     let path = pair_path(sa, sb);
                     direct = path.direct;
@@ -514,74 +567,65 @@ pub fn inbetween_preview(p: &Project, env: ProposalEnvelope, req: &InbetweenPrev
                     let bezier = sa.geometry == StrokeGeometry::Bezier || sb.geometry == StrokeGeometry::Bezier;
                     if path.direct {
                         if realigned && path.aligned_cost < path.identity_cost * SENSE_RATIO && path.identity_cost - path.aligned_cost > SENSE_MIN_PX {
-                            notes.push(notice(NoticeCode::SenseMismatch, Some(sa), Some(sb), format!("{} × {}: sentido diferente entre A e B", label(sa, "A", i), label(sb, "B", j))));
+                            notes.push(notice(NoticeCode::SenseMismatch, Some(sa), Some(sb), format!("{la} × {lb}: sentido diferente entre A e B")));
                         }
                         if bezier {
-                            notes.push(notice(NoticeCode::BezierDirect, Some(sa), Some(sb), format!("{} × {}: interpolação aproximada dos controles (Bézier)", label(sa, "A", i), label(sb, "B", j))));
+                            notes.push(notice(NoticeCode::BezierDirect, Some(sa), Some(sb), format!("{la} × {lb}: interpolação aproximada dos controles (Bézier)")));
                         }
                     } else if bezier {
-                        notes.push(notice(NoticeCode::BezierResampled, Some(sa), Some(sb), format!("{} × {}: Bézier com contagens diferentes (a reamostragem trata os controles como curva)", label(sa, "A", i), label(sb, "B", j))));
+                        notes.push(notice(NoticeCode::BezierResampled, Some(sa), Some(sb), format!("{la} × {lb}: Bézier com contagens diferentes (a reamostragem trata os controles como curva)")));
                     } else {
-                        notes.push(notice(NoticeCode::Resampled, Some(sa), Some(sb), format!("{} × {}: pontos reamostrados ({n} por traço); o traço vira spline", label(sa, "A", i), label(sb, "B", j))));
+                        notes.push(notice(NoticeCode::Resampled, Some(sa), Some(sb), format!("{la} × {lb}: pontos reamostrados ({n} por traço); o traço vira spline")));
                     }
-                    if sa.profile != sb.profile {
-                        notes.push(notice(NoticeCode::ProfileDiffers, Some(sa), Some(sb), format!("{} × {}: perfis de largura diferentes", label(sa, "A", i), label(sb, "B", j))));
-                    } else if !sa.profile.0.is_empty() && realigned {
-                        notes.push(notice(NoticeCode::ProfileReparametrized, Some(sa), Some(sb), format!("{} × {}: o perfil de largura não acompanha a inversão/deslocamento do começo", label(sa, "A", i), label(sb, "B", j))));
-                    }
+                    profile_checks(sa, sb, realigned, &la, &lb, &mut notes);
                 }
-                if sa.closed != sb.closed {
-                    notes.push(notice(NoticeCode::ClosedMismatch, Some(sa), Some(sb), format!("{} × {}: um fechado e um aberto", label(sa, "A", i), label(sb, "B", j))));
-                }
-                if sa.aliased != sb.aliased {
-                    notes.push(notice(NoticeCode::AliasedMismatch, Some(sa), Some(sb), format!("{} × {}: antisserrilhado diferente", label(sa, "A", i), label(sb, "B", j))));
-                }
-                if sa.color_trace != sb.color_trace {
-                    notes.push(notice(NoticeCode::ColorTraceMismatch, Some(sa), Some(sb), format!("{} × {}: só um é linha de cor", label(sa, "A", i), label(sb, "B", j))));
-                }
-                if (sa.tension - sb.tension).abs() > 1e-4 {
-                    notes.push(notice(NoticeCode::TensionDiffers, Some(sa), Some(sb), format!("{} × {}: tensões diferentes (usa a de A)", label(sa, "A", i), label(sb, "B", j))));
-                }
-                if sa.tip != sb.tip {
-                    notes.push(notice(NoticeCode::TipDiffers, Some(sa), Some(sb), format!("{} × {}: pontas diferentes (usa a de A)", label(sa, "A", i), label(sb, "B", j))));
-                } else if matches!(sa.tip, VectorTip::Square | VectorTip::Genga) {
-                    notes.push(notice(NoticeCode::TipPreviewSimplified, Some(sa), Some(sb), format!("{} × {}: prévia simplificada: acabamento da ponta/textura não representado", label(sa, "A", i), label(sb, "B", j))));
-                }
-                if sa.color != sb.color && !(matches!(sa.color, ColorRef::Direct { .. }) && matches!(sb.color, ColorRef::Direct { .. })) {
-                    notes.push(notice(NoticeCode::ColorSwitch, Some(sa), Some(sb), format!("{} × {}: cores de paleta diferentes: troca na metade (t = 0,5)", label(sa, "A", i), label(sb, "B", j))));
-                }
+                attribute_checks(sa, sb, &la, &lb, false, &mut notes);
             }
             (Some(i), None) | (None, Some(i)) => {
                 let side_a = ia.is_some();
                 let s = if side_a { &a[i] } else { &b[i] };
                 let (na, nb) = if side_a { (Some(s), None) } else { (None, Some(s)) };
-                let lb = label(s, if side_a { "A" } else { "B" }, i);
+                let ls = label(s, if side_a { "A" } else { "B" }, i);
                 match group_partner(a, b, &pairs, &s.group) {
                     Some((pi, pj)) => {
+                        // 1 para N: o motor interpola `from` → `to` e guarda os atributos de `s` (o traço sem par)
+                        kind = PairKind::GroupMorph;
+                        keeps = Some(s);
                         let other = if side_a { &b[pj] } else { &a[pi] };
-                        let n = resampled_len(s.points.len(), other.points.len());
-                        if n > MAX_PAIR_SAMPLES {
-                            notes.push(notice(NoticeCode::TooLarge, na, nb, format!("{lb}: {n} pontos por traço no grupo (limite {MAX_PAIR_SAMPLES})")));
+                        let lo = if side_a { label(other, "B", pj) } else { label(other, "A", pi) };
+                        let (from, to) = if side_a { (s, other) } else { (other, s) };
+                        link = if side_a { (Some(s), Some(other)) } else { (Some(other), Some(s)) };
+                        let n = resampled_len(from.points.len(), to.points.len());
+                        work += align_work(n, from.closed && to.closed);
+                        if n > MAX_PAIR_SAMPLES || work > MAX_ALIGN_WORK {
+                            notes.push(notice(NoticeCode::TooLarge, na, nb, format!("{ls}: {n} pontos por traço no grupo; o alinhamento somado passa do limite da prévia")));
                         } else if s.geometry == StrokeGeometry::Bezier || other.geometry == StrokeGeometry::Bezier {
-                            notes.push(notice(NoticeCode::BezierResampled, na, nb, format!("{lb}: Bézier no grupo 1 para N (vira reamostragem)")));
+                            notes.push(notice(NoticeCode::BezierResampled, na, nb, format!("{ls}: Bézier no grupo 1 para N (vira reamostragem)")));
                         } else {
                             out_points += n;
-                            notes.push(notice(NoticeCode::GroupMorph, na, nb, format!("{lb}: sem par; nasce do par do grupo \"{}\" (reamostrado, vira spline)", s.group)));
+                            let path = morph_path(from, to);
+                            notes.push(notice(NoticeCode::GroupMorph, na, nb, format!("{ls}: sem par; nasce de {lo}, do grupo \"{}\" (reamostrado, vira spline)", s.group)));
+                            let (la, lb) = if side_a { (ls.clone(), lo.clone()) } else { (lo.clone(), ls.clone()) };
+                            profile_checks(from, to, path.reversed || path.shift != 0, &la, &lb, &mut notes);
+                            attribute_checks(from, to, &la, &lb, true, &mut notes);
                         }
                     }
                     None if s.geometry == StrokeGeometry::Bezier => {
-                        notes.push(notice(NoticeCode::BezierUnmatched, na, nb, format!("{lb}: Bézier sem par (viraria polilinha)")));
+                        kind = PairKind::Unmatched;
+                        notes.push(notice(NoticeCode::BezierUnmatched, na, nb, format!("{ls}: Bézier sem par (viraria polilinha)")));
                     }
                     None => {
+                        kind = PairKind::Unmatched;
                         out_points += s.points.len();
-                        notes.push(notice(NoticeCode::Unmatched, na, nb, format!("{lb}: sem par: aparece/some aos poucos; durante o desenho fica aberto e um fragmento curto pode sumir")));
+                        notes.push(notice(NoticeCode::Unmatched, na, nb, format!("{ls}: sem par: aparece/some aos poucos; durante o desenho fica aberto e um fragmento curto pode sumir")));
                     }
                 }
             }
             (None, None) => {}
         }
-        // recusa de entrada de um dos traços (largura por ponto, canto, alça) também recusa o par
-        let input_refused = prop.refusals.iter().any(|n| (n.stroke_a.is_some() && n.stroke_a.as_ref() == sa.map(|s| &s.id)) || (n.stroke_b.is_some() && n.stroke_b.as_ref() == sb.map(|s| &s.id)));
+        // recusa de entrada de um dos traços (largura por ponto, canto, alça) também recusa a correspondência
+        let ids = [link.0.map(|s| &s.id), link.1.map(|s| &s.id)];
+        let input_refused = prop.refusals.iter().any(|n| (n.stroke_a.is_some() && n.stroke_a.as_ref() == ids[0]) || (n.stroke_b.is_some() && n.stroke_b.as_ref() == ids[1]));
         let support = if input_refused || notes.iter().any(|n| n.code.support() == Support::Refuse) {
             Support::Refuse
         } else if notes.iter().any(|n| n.code.support() == Support::Approximate) {
@@ -589,7 +633,18 @@ pub fn inbetween_preview(p: &Project, env: ProposalEnvelope, req: &InbetweenPrev
         } else {
             Support::Preserve
         };
-        prop.pairs.push(PairView { a: sa.map(|s| s.id.clone()), b: sb.map(|s| s.id.clone()), a_center: sa.and_then(center), b_center: sb.and_then(center), manual: manual_pair, direct, support });
+        prop.pairs.push(PairView {
+            a: link.0.map(|s| s.id.clone()),
+            b: link.1.map(|s| s.id.clone()),
+            a_center: link.0.and_then(center),
+            b_center: link.1.and_then(center),
+            manual: manual_pair,
+            direct,
+            support,
+            kind,
+            candidate: None,
+            keeps: keeps.map(|s| s.id.clone()),
+        });
         for n in notes {
             match n.code.support() {
                 Support::Refuse => prop.refusals.push(n),
@@ -601,25 +656,84 @@ pub fn inbetween_preview(p: &Project, env: ProposalEnvelope, req: &InbetweenPrev
     if out_points > MAX_OUTPUT_POINTS {
         prop.refusals.push(notice(NoticeCode::TooLarge, None, None, format!("desenho grande demais para a prévia ({out_points} pontos na saída; limite {MAX_OUTPUT_POINTS})")));
     }
-    // 6. candidato, só sem recusa
+    // 6. candidato, só sem recusa (com os pares já calculados: o motor não casa de novo)
     if !prop.refusals.is_empty() {
         return Ok(prop);
     }
-    let candidate = inbetween(a, b, t, &options);
-    // 7. saída válida e finita
+    let per_pair = inbetween_pairs(a, b, t, &options, &pairs);
+    let mut candidate = Vec::new();
+    for (k, s) in per_pair.into_iter().enumerate() {
+        if let Some(s) = s {
+            prop.pairs[k].candidate = Some(candidate.len());
+            candidate.push(s);
+        }
+    }
+    // 7. saída válida, finita e dentro do comprimento desenhável
     for (k, s) in candidate.iter().enumerate() {
         let finite = s.width.is_finite() && s.opacity.is_finite() && s.points.iter().all(|q| q.x.is_finite() && q.y.is_finite() && q.pressure.is_finite());
         if let Err(e) = s.validate().and_then(|_| if finite { Ok(()) } else { Err("valor não finito".into()) }) {
             prop.refusals.push(notice(NoticeCode::InvalidOutput, None, None, format!("traço {k} da saída inválido: {e}")));
         }
     }
+    let out_len: f32 = candidate.iter().map(polyline_len).sum();
+    if !(out_len.is_finite() && out_len <= MAX_DRAW_LENGTH) {
+        prop.refusals.push(notice(NoticeCode::TooLarge, None, None, format!("desenho grande demais para a prévia ({out_len:.0} px de traço na saída)")));
+    }
     if candidate.is_empty() {
         prop.refusals.push(notice(NoticeCode::InvalidOutput, None, None, "o motor não gerou nenhum traço"));
     }
     if prop.refusals.is_empty() {
         prop.candidate = candidate;
+    } else {
+        for pv in &mut prop.pairs {
+            pv.candidate = None;
+        }
     }
     Ok(prop)
+}
+
+/// Comprimento da poligonal dos pontos de controle (a curva desenhada tem a mesma ordem de grandeza: ~1 amostra por px).
+pub fn polyline_len(s: &Stroke) -> f32 {
+    s.points.windows(2).map(|w| ((w[1].x - w[0].x).powi(2) + (w[1].y - w[0].y).powi(2)).sqrt()).sum()
+}
+
+/// Perfil de largura: diferente recusa; igual e com o começo invertido/deslocado também (o perfil segue o parâmetro).
+fn profile_checks(sa: &Stroke, sb: &Stroke, realigned: bool, la: &str, lb: &str, notes: &mut Vec<Notice>) {
+    if sa.profile != sb.profile {
+        notes.push(notice(NoticeCode::ProfileDiffers, Some(sa), Some(sb), format!("{la} × {lb}: perfis de largura diferentes")));
+    } else if !sa.profile.0.is_empty() && realigned {
+        notes.push(notice(NoticeCode::ProfileReparametrized, Some(sa), Some(sb), format!("{la} × {lb}: o perfil de largura não acompanha a inversão/deslocamento do começo")));
+    }
+}
+
+/// Atributos do traço que o motor não interpola (R16 §5). No 1 para N (`morph`), cor e opacidade ficam as do traço sem
+/// par, sem interpolar: aviso.
+fn attribute_checks(sa: &Stroke, sb: &Stroke, la: &str, lb: &str, morph: bool, notes: &mut Vec<Notice>) {
+    if sa.closed != sb.closed {
+        notes.push(notice(NoticeCode::ClosedMismatch, Some(sa), Some(sb), format!("{la} × {lb}: um fechado e um aberto")));
+    }
+    if sa.aliased != sb.aliased {
+        notes.push(notice(NoticeCode::AliasedMismatch, Some(sa), Some(sb), format!("{la} × {lb}: antisserrilhado diferente")));
+    }
+    if sa.color_trace != sb.color_trace {
+        notes.push(notice(NoticeCode::ColorTraceMismatch, Some(sa), Some(sb), format!("{la} × {lb}: só um é linha de cor")));
+    }
+    let who = if morph { "a do traço sem par" } else { "a de A" };
+    if (sa.tension - sb.tension).abs() > 1e-4 {
+        notes.push(notice(NoticeCode::TensionDiffers, Some(sa), Some(sb), format!("{la} × {lb}: tensões diferentes (usa {who})")));
+    }
+    if sa.tip != sb.tip {
+        notes.push(notice(NoticeCode::TipDiffers, Some(sa), Some(sb), format!("{la} × {lb}: pontas diferentes (usa {who})")));
+    } else if matches!(sa.tip, VectorTip::Square | VectorTip::Genga) {
+        notes.push(notice(NoticeCode::TipPreviewSimplified, Some(sa), Some(sb), format!("{la} × {lb}: prévia simplificada: acabamento da ponta/textura não representado")));
+    }
+    if morph {
+        if sa.color != sb.color || (sa.opacity - sb.opacity).abs() > 1e-4 {
+            notes.push(notice(NoticeCode::KeepsColor, Some(sa), Some(sb), format!("{la} × {lb}: cor/opacidade não interpoladas no 1 para N (usa {who})")));
+        }
+    } else if sa.color != sb.color && !(matches!(sa.color, ColorRef::Direct { .. }) && matches!(sb.color, ColorRef::Direct { .. })) {
+        notes.push(notice(NoticeCode::ColorSwitch, Some(sa), Some(sb), format!("{la} × {lb}: cores de paleta diferentes: troca na metade (t = 0,5)")));
+    }
 }
 
 // ---------------------------------------------------------------------------------------------- aceite (REQ-A01…A05)
@@ -631,11 +745,20 @@ pub struct AcceptScope {
     pub frame: u32,
     /// `frame + 1` ganha uma entrada que mantém o que já estava lá (`None` = nada a gravar).
     pub restore_next: Option<(u32, CellRef)>,
+    /// O quadro alvo já começava outro desenho (entrada explícita na folha): ele sai dali.
+    pub replaces: Option<CellRef>,
 }
 
 impl AcceptScope {
     pub fn button_text(&self, layer_name: &str) -> String {
         let mut s = format!("Criar desenho {layer_name}{} no quadro {}", self.number, self.frame + 1);
+        if let Some(c) = self.replaces {
+            let what = match c {
+                CellRef::Cel { number } => format!("{layer_name}{number}"),
+                CellRef::Empty => "o vazio".into(),
+            };
+            s.push_str(&format!(" no lugar de {what}"));
+        }
         if let Some((f, c)) = self.restore_next {
             let what = match c {
                 CellRef::Cel { number } => format!("{layer_name}{number}"),
@@ -660,10 +783,36 @@ pub fn accept_scope(p: &Project, prop: &InbetweenProposal) -> ToolResult<AcceptS
         .unwrap_or(1);
     let next = prop.frame + 1;
     let restore_next = (next < cut.duration && !track.cells.contains_key(&next)).then(|| (next, track.exposed_at(next).unwrap_or(CellRef::Empty)));
-    Ok(AcceptScope { number, frame: prop.frame, restore_next })
+    let replaces = track.cells.get(&prop.frame).copied();
+    Ok(AcceptScope { number, frame: prop.frame, restore_next, replaces })
 }
 
 /// Precondições do aceite que dependem do projeto (R16 REQ-A02; época, revisão, geração e consumo são do [`ProposalStore`]).
+/// A camada ou uma pasta acima dela está travada? (a mesma trava efetiva do resto do editor, A6-03)
+pub fn layer_locked_effective(p: &Project, layer: &Id) -> Option<String> {
+    let mut cur = Some(layer.clone());
+    while let Some(id) = cur {
+        let n = p.node(&id)?;
+        match &n.data {
+            NodeKind::Layer(l) if l.locked => {
+                return Some(if &id == layer { "a camada está travada: destrave para aceitar".into() } else { format!("a pasta \"{}\" está travada: destrave para aceitar", n.name) });
+            }
+            NodeKind::Layer(_) => cur = n.parent.clone(),
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// Por que esta proposta não pode ser aceita agora, ou `None`: a MESMA regra para a interface, o estado da interface,
+/// o MCP e o aceite (CX10 C10-07, A6-03).
+pub fn blocked_reason(p: &Project, prop: &InbetweenProposal) -> Option<String> {
+    if let Err(e) = prop.acceptable() {
+        return Some(e);
+    }
+    check_project(p, prop).err().map(|e| e.to_string())
+}
+
 fn check_project(p: &Project, prop: &InbetweenProposal) -> ToolResult<()> {
     prop.acceptable().map_err(ToolError::Invalid)?;
     let cut = cut_data(p, &prop.cut)?;
@@ -671,8 +820,8 @@ fn check_project(p: &Project, prop: &InbetweenProposal) -> ToolResult<()> {
     if ld.kind != LayerType::Vector {
         return Err(ToolError::Invalid("a camada não é mais vetorial".into()));
     }
-    if ld.locked {
-        return Err(ToolError::Invalid("a camada está travada: destrave para aceitar".into()));
+    if let Some(why) = layer_locked_effective(p, &prop.layer) {
+        return Err(ToolError::Invalid(why));
     }
     if cut.xsheet.track_for_layer(&prop.layer).is_none() {
         return Err(ToolError::Invalid("configure o timesheet desta camada".into()));
@@ -826,6 +975,23 @@ pub fn set_manual_pairs(s: &mut CoreSession, id: ProposalId, pairs: Vec<(Id, Id)
     let prop = store.current.as_mut().expect("conferida");
     prop.request.manual_pairs = pairs;
     prop.stale = true;
+    Ok(())
+}
+
+/// Muda as opções do motor (movimento, arco, custo máximo) da proposta atual: desatualizada até [`refresh`] (A6-08).
+pub fn set_options(s: &mut CoreSession, id: ProposalId, motion: MotionMode, bend: f32, max_cost: f32) -> ToolResult<()> {
+    if !(bend.is_finite() && (-2.0..=2.0).contains(&bend) && max_cost.is_finite() && max_cost >= 0.0) {
+        return Err(ToolError::Invalid("bend entre -2 e 2 e max_cost ≥ 0".into()));
+    }
+    current_checked(s, id)?;
+    let store = s.ext_mut::<ProposalStore>();
+    let prop = store.current.as_mut().expect("conferida");
+    if (prop.request.motion, prop.request.bend, prop.request.max_cost) != (motion, bend, max_cost) {
+        prop.request.motion = motion;
+        prop.request.bend = bend;
+        prop.request.max_cost = max_cost;
+        prop.stale = true;
+    }
     Ok(())
 }
 
