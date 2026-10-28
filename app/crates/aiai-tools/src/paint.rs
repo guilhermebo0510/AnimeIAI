@@ -400,9 +400,11 @@ pub fn lock_alpha_region(r: &mut PaintedRegion) {
 /// Preset com a máscara da ponta de imagem carregada do blob (o motor não lê blobs).
 pub fn load_tip_mask(blobs: &BlobStore, preset: &BrushPreset) -> ToolResult<BrushPreset> {
     let mut preset = preset.clone();
-    if let BrushTip::Image { blob, mask } = &mut preset.tip {
-        let b = blobs.get(blob).ok_or_else(|| ToolError::NotFound(format!("máscara da ponta {blob}")))?;
-        *mask = Some(Mask::decode(&b).map_err(ToolError::Invalid)?);
+    for tip in std::iter::once(&mut preset.tip).chain(preset.extra_tips.iter_mut()) {
+        if let BrushTip::Image { blob, mask } = tip {
+            let b = blobs.get(blob).ok_or_else(|| ToolError::NotFound(format!("máscara da ponta {blob}")))?;
+            *mask = Some(Mask::decode(&b).map_err(ToolError::Invalid)?);
+        }
     }
     if let Some(t) = &mut preset.texture {
         if let (Some(h), None) = (&t.image, &t.image_mask) {

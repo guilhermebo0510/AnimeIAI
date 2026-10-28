@@ -84,6 +84,7 @@ pub(crate) const PARAMS: &[Param] = &[
     prm("tip_shape", "tprop.tip_shape", Cat::Shape),
     prm("follow", "tprop.follow", Cat::Shape),
     prm("two_tone", "tprop.two_tone", Cat::Shape),
+    prm("extra_tips", "tprop.extra_tips", Cat::Shape),
     prm("hardness", "tprop.hardness", Cat::Tip),
     prm("thickness", "tprop.thickness", Cat::Tip),
     prm("angle", "tprop.angle", Cat::Tip),
@@ -116,6 +117,7 @@ pub(crate) fn applies(p: &BrushPreset, key: &str) -> bool {
     match key {
         "hardness" | "thickness" | "angle" | "edge" => round,
         "aspect" | "two_tone" => shape,
+        "extra_tips" => !matches!(p.tip, BrushTip::Image { .. }),
         "texture_depth" | "texture_scale" => p.texture.is_some(),
         _ => true,
     }
@@ -182,6 +184,7 @@ pub(crate) fn param_ui(ui: &mut Ui, e: &mut Edit, key: &str) -> bool {
         }),
         "aa" => labeled(ui, e, prm.label, |ui, e| aa_icons(ui, e)),
         "tip_shape" => labeled(ui, e, prm.label, |ui, e| tip_combo(ui, e)),
+        "extra_tips" => labeled(ui, e, prm.label, |ui, e| extra_tips_ui(ui, e)),
         "follow" => labeled(ui, e, prm.label, |ui, e| {
             ui.checkbox(&mut e.p.follow_direction, "").on_hover_text(tr("tprop.follow.tip"));
         }),
@@ -595,23 +598,52 @@ fn aa_icons(ui: &mut Ui, e: &mut Edit) {
     }
 }
 
+/// Várias pontas (Multi-Tip, auditoria 4.9d): cada forma ligada entra na roda de pontas do carimbo, com a de cima.
+fn extra_tips_ui(ui: &mut Ui, e: &mut Edit) {
+    ui.vertical(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(3.0, 3.0);
+            for (s, k) in TIP_SHAPES {
+                let has = e.p.extra_tips.iter().any(|t| matches!(t, BrushTip::Shape { shape, .. } if *shape == s));
+                let r = ui.selectable_label(has, egui::RichText::new(tr(k)).size(11.0));
+                e.notes.push((format!("tprop:extra_tip:{k}"), r.rect));
+                if r.clicked() {
+                    if has {
+                        e.p.extra_tips.retain(|t| !matches!(t, BrushTip::Shape { shape, .. } if *shape == s));
+                    } else {
+                        e.p.extra_tips.push(BrushTip::Shape { shape: s, aspect: 1.0 });
+                    }
+                }
+            }
+        });
+        if !e.p.extra_tips.is_empty() {
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut e.p.tip_order, aiai_paint::brush::TipOrder::Random, tr("tprop.tip_order.random"));
+                ui.selectable_value(&mut e.p.tip_order, aiai_paint::brush::TipOrder::Sequence, tr("tprop.tip_order.sequence"));
+            });
+        }
+    });
+}
+
+const TIP_SHAPES: [(TipShape, &str); 14] = [
+    (TipShape::Leaf, "tipshape.leaf"),
+    (TipShape::Petal, "tipshape.petal"),
+    (TipShape::GrassBlade, "tipshape.grass"),
+    (TipShape::CloudPuff, "tipshape.cloud"),
+    (TipShape::Star, "tipshape.star"),
+    (TipShape::Square, "tipshape.square"),
+    (TipShape::Rose, "tipshape.rose"),
+    (TipShape::Sakura, "tipshape.sakura"),
+    (TipShape::Feather, "tipshape.feather"),
+    (TipShape::Bokeh, "tipshape.bokeh"),
+    (TipShape::Tree, "tipshape.tree"),
+    (TipShape::Maple, "tipshape.maple"),
+    (TipShape::Pebble, "tipshape.pebble"),
+    (TipShape::Glint, "tipshape.glint"),
+];
+
 fn tip_combo(ui: &mut Ui, e: &mut Edit) {
-    const SHAPES: [(TipShape, &str); 14] = [
-        (TipShape::Leaf, "tipshape.leaf"),
-        (TipShape::Petal, "tipshape.petal"),
-        (TipShape::GrassBlade, "tipshape.grass"),
-        (TipShape::CloudPuff, "tipshape.cloud"),
-        (TipShape::Star, "tipshape.star"),
-        (TipShape::Square, "tipshape.square"),
-        (TipShape::Rose, "tipshape.rose"),
-        (TipShape::Sakura, "tipshape.sakura"),
-        (TipShape::Feather, "tipshape.feather"),
-        (TipShape::Bokeh, "tipshape.bokeh"),
-        (TipShape::Tree, "tipshape.tree"),
-        (TipShape::Maple, "tipshape.maple"),
-        (TipShape::Pebble, "tipshape.pebble"),
-        (TipShape::Glint, "tipshape.glint"),
-    ];
+    const SHAPES: [(TipShape, &str); 14] = TIP_SHAPES;
     let current = match &e.p.tip {
         BrushTip::Round { .. } => tr("tipshape.round").to_owned(),
         BrushTip::Shape { shape, .. } => SHAPES.iter().find(|(s, _)| s == shape).map(|(_, k)| tr(k).to_owned()).unwrap_or_default(),

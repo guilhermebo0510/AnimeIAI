@@ -445,6 +445,12 @@ pub struct BrushPreset {
     /// Duas cores no carimbo (só pontas de forma: rosa, nuvem, folha, pétala, grama).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub two_tone: Option<TwoTone>,
+    /// Várias pontas (Multi-Tip, auditoria 4.9d): além de `tip`, estas; cada carimbo usa uma delas (sorteada ou em
+    /// sequência, `tip_order`). Ex.: folhas de formatos diferentes num pincel de folhagem.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_tips: Vec<BrushTip>,
+    #[serde(default, skip_serializing_if = "is_default_order")]
+    pub tip_order: TipOrder,
     /// Cor em degradê AO LONGO DO TRAÇO: no lugar da cor do pincel, cada dab pega a cor do degradê na distância já
     /// percorrida (`length` px = uma passada de 0 a 1; `extend` do degradê decide o que vem depois: prender, repetir,
     /// espelhar). As cores de paleta já chegam resolvidas (o pincel não enxerga o projeto; paleta = magenta).
@@ -563,6 +569,19 @@ pub enum BrushMode {
 fn d_spacing() -> f32 {
     0.12
 }
+
+/// Como o carimbo escolhe entre `tip` e `extra_tips`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TipOrder {
+    #[default]
+    Random,
+    Sequence,
+}
+
+fn is_default_order(o: &TipOrder) -> bool {
+    *o == TipOrder::Random
+}
 fn d_one() -> f32 {
     1.0
 }
@@ -610,6 +629,8 @@ impl BrushPreset {
             mode: BrushMode::Normal,
             aliased: false,
             two_tone: None,
+            extra_tips: Vec::new(),
+            tip_order: TipOrder::Random,
             color_ramp: None,
             group: String::new(),
             antialias: None,
@@ -1822,6 +1843,8 @@ pub struct StrokeBuffer {
     carry: Option<(i32, Vec<[f32; 4]>)>,
     /// Tinta carregada (pré-multiplicada) do `paint_mix` em modo média.
     loaded: Option<[f32; 4]>,
+    /// Próxima ponta da sequência (Multi-Tip em ordem).
+    tip_seq: usize,
     /// Misturadores e Desfocar trocam o pixel (cor e alfa) em vez de pintar por cima: o buffer guarda o pixel final e
     /// este mapa (tiles de STS×STS) marca os pixels tocados.
     touched: Option<std::collections::HashMap<(i32, i32), Vec<bool>>>,
@@ -1859,6 +1882,7 @@ impl StrokeBuffer {
             dual: preset.dual.as_ref().map(|_| Default::default()),
             carry: None,
             loaded: None,
+            tip_seq: 0,
             touched: preset.paint_mix.as_ref().filter(|m| m.amount <= 0.0 || m.blur > 0.0).map(|_| Default::default()),
             prev: None,
             acc: 0.0,
@@ -2226,7 +2250,8 @@ impl StrokeBuffer {
     }
 
     fn stamp(&mut self, layer: Option<&Image>, d: Dab) {
-        let preset = self.preset.clone();
+        let mut preset = self.preset.clone();
+        let tips: Vec<BrushTip> = if preset.extra_tips.is_empty() { Vec::new() } else { std::iter::once(preset.tip.clone()).chain(preset.extra_tips.iter().cloned()).collect() };
         let (cx, cy, dir) = (d.x, d.y, d.dir);
         let pr = d.pr.clamp(0.0, 1.0);
         let v = d.v;
@@ -2240,6 +2265,17 @@ impl StrokeBuffer {
             None => (1.0, 1.0),
         };
         for _ in 0..preset.count {
+            // Multi-Tip: a ponta deste carimbo
+            if !tips.is_empty() {
+                let k = match preset.tip_order {
+                    TipOrder::Sequence => {
+                        self.tip_seq = (self.tip_seq + 1) % tips.len();
+                        self.tip_seq
+                    }
+                    TipOrder::Random => ((self.rng.f32() * tips.len() as f32) as usize).min(tips.len() - 1),
+                };
+                preset.tip = tips[k].clone();
+            }
             let mut size = match &preset.size_dyn {
                 Some(dy) => {
                     let rnd = self.dyn_rnd(dy, d.s, 1);

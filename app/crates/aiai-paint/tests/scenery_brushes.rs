@@ -88,3 +88,25 @@ fn rose_and_cloud_have_two_tones_and_follow_the_brush_color() {
     let (top, base) = (luma(sky.data[sky.idx(350, 70)]), luma(sky.data[sky.idx(350, 128)]));
     assert!(top > 0.95 && base < top - 0.1, "topo claro, base na sombra: {top} / {base}");
 }
+
+#[test]
+fn multi_tip_brush_mixes_its_tips_and_repeats_with_the_same_seed() {
+    // Multi-Tip (auditoria 4.9d): folhagem com folha, pétala e bordo; o carimbo varia de ponta e o mesmo seed repete
+    use aiai_paint::brush::{BrushTip, TipOrder, TipShape};
+    let base = preset("Folhagem");
+    let mut multi = base.clone();
+    multi.extra_tips = vec![BrushTip::Shape { shape: TipShape::Petal, aspect: 0.8 }, BrushTip::Shape { shape: TipShape::Maple, aspect: 1.0 }];
+    let path = line(40.0, 560.0, 100.0, 10.0);
+    let paint = |p: &aiai_paint::brush::BrushPreset| {
+        let mut img = Image::new(600, 200);
+        paint_stroke(&mut img, p, &path, [0.3, 0.6, 0.3, 1.0], 7);
+        img
+    };
+    let (a, b, b2) = (paint(&base), paint(&multi), paint(&multi));
+    assert_ne!(a.data, b.data, "as pontas extras mudam o desenho");
+    assert_eq!(b.data, b2.data, "determinístico");
+    let mut seq = multi.clone();
+    seq.tip_order = TipOrder::Sequence;
+    assert_ne!(paint(&seq).data, b.data, "em sequência é outra ordem");
+    assert!(b.data.iter().filter(|p| p[3] > 0.1).count() > 2000, "pintou");
+}

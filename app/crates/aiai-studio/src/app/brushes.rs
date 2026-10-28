@@ -194,8 +194,10 @@ impl BrushLibrary {
     /// Hashes de imagem que o preset usa (ponta e textura).
     fn asset_refs(p: &BrushPreset) -> Vec<aiai_core::BlobHash> {
         let mut v = Vec::new();
-        if let aiai_paint::brush::BrushTip::Image { blob, .. } = &p.tip {
-            v.push(blob.clone());
+        for tip in std::iter::once(&p.tip).chain(&p.extra_tips) {
+            if let aiai_paint::brush::BrushTip::Image { blob, .. } = tip {
+                v.push(blob.clone());
+            }
         }
         if let Some(h) = p.texture.as_ref().and_then(|t| t.image.clone()) {
             v.push(h);
@@ -206,9 +208,11 @@ impl BrushLibrary {
     /// O preset com as máscaras de imagem carregadas da biblioteca (miniaturas e prévia do criador).
     pub(crate) fn with_masks(&self, p: &BrushPreset) -> BrushPreset {
         let mut q = p.clone();
-        if let aiai_paint::brush::BrushTip::Image { blob, mask } = &mut q.tip {
-            if mask.is_none() {
-                *mask = self.asset(blob).and_then(|b| aiai_paint::mask::Mask::decode(&b).ok());
+        for tip in std::iter::once(&mut q.tip).chain(q.extra_tips.iter_mut()) {
+            if let aiai_paint::brush::BrushTip::Image { blob, mask } = tip {
+                if mask.is_none() {
+                    *mask = self.asset(blob).and_then(|b| aiai_paint::mask::Mask::decode(&b).ok());
+                }
             }
         }
         if let Some(t) = &mut q.texture {
