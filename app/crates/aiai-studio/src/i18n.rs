@@ -687,6 +687,8 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("panel.model_props.title", "Propriedades do objeto", "Object properties"),
     ("panel.model_props.empty", "Transformação, cor toon, sombreamento e malha do objeto ativo da Modelagem.", "Transform, toon color, shading and mesh of the active Modeling object."),
     ("panel.model_modifiers.title", "Modificadores", "Modifiers"),
+    ("panel.model_uv.title", "Editor de UV", "UV editor"),
+    ("panel.model_uv.empty", "As ilhas de UV do objeto em edição: costuras, desdobrar, empacotar, projeções; G/R/S movem os UVs.", "UV islands of the object being edited: seams, unwrap, pack, projections; G/R/S move the UVs."),
     ("panel.model_modifiers.empty", "Pilha de modificadores do objeto ativo: espelho, subdivisão e array (não mudam a malha editável).", "Modifier stack of the active object: mirror, subdivision and array (they do not change the editable mesh)."),
     ("panel.cat.general", "Geral", "General"),
     ("panel.cat.preprod", "Pré-produção", "Pre-production"),

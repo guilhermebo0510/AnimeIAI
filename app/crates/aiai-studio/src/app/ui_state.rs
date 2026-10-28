@@ -333,6 +333,8 @@ impl StudioApp {
     /// dock {op: list|maximize|restore|detach|redock|redock_all, panel?, group?} (painel maximizado e janelas soltas).
     /// modeling_view {layout?: single|split_v|split_h|quad, slot?, view?: perspective|ortho|front|back|right|left|top|bottom}
     /// (multivista da Modelagem).
+    /// uv {edit?: bool, select_mode?: vertex|edge|face, select?: all|none|tree_seams, op?: mark_seam|unwrap|pack|…}
+    /// (editor de UV da Modelagem).
     /// sculpt {mode?: bool, brush?, radius? (px), strength?, symmetry? [x,y,z], invert?, paths? [[[x,y]..]..] (0..1 da vista
     /// ativa), op?: mask_invert|mask_clear|smooth_all|voxel_remesh|symmetrize} (escultura da Modelagem).
     /// Apelidos aceitos: set_tool = select_tool; open_panel = toggle_panel com visible=true.
@@ -362,6 +364,7 @@ impl StudioApp {
             "dock" => Some(&["op", "panel", "group"]),
             "modeling_view" => Some(&["layout", "slot", "view"]),
             "sculpt" => Some(&["mode", "brush", "radius", "strength", "invert", "paths", "op", "symmetry"]),
+            "uv" => Some(&["edit", "select", "op", "select_mode"]),
             _ => None,
         };
         if let Some(keys) = keys {
@@ -522,6 +525,60 @@ impl StudioApp {
                 json!({ "panel": key, "visible": target, "workspace": ws.key(), "inserted": found.is_none() && target })
             }
             "dock" => self.bridge_dock(params)?,
+            "uv" => {
+                // UV da Modelagem: modo Edição, seleção (all | none | tree_seams = a cruz que abre a malha numa ilha) e
+                // uma ação do editor de UV (mark_seam, unwrap, pack, project_box…)
+                use super::modeling::uv as muv;
+                use super::modeling::EditMode;
+                if let Some(on) = m.get("edit").and_then(Value::as_bool) {
+                    let t = self.tokens();
+                    let ws = self.ws;
+                    let mut notes = Vec::new();
+                    let mut env = super::ui_kit::Env { t, core: &mut self.core, ed: &mut self.ed, icons: &mut self.icons, notes: &mut notes, tool: &mut self.tool, ws };
+                    super::modeling::set_mode(&mut env, if on { EditMode::Edit } else { EditMode::Object });
+                }
+                let ms = &mut self.ed.modeling;
+                if let Some(sm) = text(&m, &["select_mode"]) {
+                    let mode = match sm {
+                        "vertex" => aiai_3d_edit::SelectMode::Vertex,
+                        "edge" => aiai_3d_edit::SelectMode::Edge,
+                        "face" => aiai_3d_edit::SelectMode::Face,
+                        _ => return Err(BridgeError::invalid_params(format!("select_mode desconhecido: {sm} (vertex, edge, face)"))),
+                    };
+                    ms.set_select_mode(mode);
+                }
+                if let Some(sel) = text(&m, &["select"]) {
+                    match sel {
+                        "all" => ms.uv_select_all(),
+                        "none" => ms.uv_select_none(),
+                        "tree_seams" => {
+                            let mesh = ms.uv_active_object().map(|o| o.mesh.clone()).ok_or_else(|| BridgeError::invalid_params("uv: sem objeto ativo"))?;
+                            ms.set_select_mode(aiai_3d_edit::SelectMode::Edge);
+                            ms.set_selection(aiai_3d_edit::Selection::from_edges(muv::spanning_tree_seams(&mesh)));
+                        }
+                        _ => return Err(BridgeError::invalid_params(format!("select desconhecido: {sel} (all, none, tree_seams)"))),
+                    }
+                }
+                let mut msg = None;
+                if let Some(a) = text(&m, &["op"]) {
+                    let act = muv::action_from_key(a).ok_or_else(|| BridgeError::invalid_params(format!("ação de UV desconhecida: {a} ({})", muv::UvAction::ALL.iter().map(|x| x.key()).collect::<Vec<_>>().join(", "))))?;
+                    let mut uvs = std::mem::take(&mut ms.uv);
+                    let cam = ms.cam;
+                    let r = muv::run_headless(ms, &mut uvs, cam, act);
+                    ms.uv = uvs;
+                    msg = Some(r.map_err(BridgeError::failed)?);
+                }
+                let report = ms.uv_active_object().and_then(|o| aiai_3d_edit::uv::metrics::uv_report(&o.mesh, 1024).ok());
+                json!({
+                    "mode": format!("{:?}", ms.mode).to_lowercase(),
+                    "message": msg,
+                    "selection": { "verts": ms.sel.verts.len(), "edges": ms.sel.edges.len(), "faces": ms.sel.faces.len() },
+                    "islands": report.as_ref().map(|r| r.island_count),
+                    "flipped": report.as_ref().map(|r| r.flipped_faces),
+                    "coverage": report.as_ref().map(|r| (r.uv_area * 1000.0).round() / 1000.0),
+                    "history": ms.history.labels(),
+                })
+            }
             "sculpt" => {
                 // escultura da Modelagem: entrar/sair, pincel e ajustes, traços roteirizados (coordenadas 0..1 da vista
                 // ativa) e as ferramentas de malha inteira

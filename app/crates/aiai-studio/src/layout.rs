@@ -72,6 +72,8 @@ pub enum PanelKind {
     ModelProps,
     /// Modelagem: pilha de modificadores (espelho, subdivisão, array).
     ModelModifiers,
+    /// Editor de UV da Modelagem (ilhas 2D, costuras, desdobrar, empacotar).
+    ModelUv,
     /// Texto: fonte, tamanho, cor, alinhamento, contorno e sombra da camada de texto.
     Text,
     /// Mesa de luz (papel cebola): desenhos vizinhos por baixo do atual no canvas.
@@ -181,7 +183,7 @@ const DRAWING_WS: &[WorkspaceId] = &[W::Personagens, W::Layout, W::Cenario, W::A
 const LIBRARY_WS: &[WorkspaceId] = &[W::Biblioteca, W::Modelagem, W::Personagens, W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Composicao];
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 57] = [
+    pub const ALL: [PanelKind; 58] = [
         PanelKind::Canvas,
         PanelKind::Layers,
         PanelKind::Properties,
@@ -224,6 +226,7 @@ impl PanelKind {
         PanelKind::ModelOutliner,
         PanelKind::ModelProps,
         PanelKind::ModelModifiers,
+        PanelKind::ModelUv,
         PanelKind::Text,
         PanelKind::LightTable,
         PanelKind::SceneInfo,
@@ -295,6 +298,7 @@ impl PanelKind {
             PanelKind::ModelOutliner => "panel.model_outliner.title",
             PanelKind::ModelProps => "panel.model_props.title",
             PanelKind::ModelModifiers => "panel.model_modifiers.title",
+            PanelKind::ModelUv => "panel.model_uv.title",
             PanelKind::Text => "panel.text.title",
             PanelKind::LightTable => "panel.light_table.title",
             PanelKind::SceneInfo => "panel.scene_info.title",
@@ -358,6 +362,7 @@ impl PanelKind {
             PanelKind::ModelOutliner => "panel.model_outliner.empty",
             PanelKind::ModelProps => "panel.model_props.empty",
             PanelKind::ModelModifiers => "panel.model_modifiers.empty",
+            PanelKind::ModelUv => "panel.model_uv.empty",
             PanelKind::Text => "panel.text.empty",
             PanelKind::LightTable => "panel.light_table.empty",
             PanelKind::SceneInfo => "panel.scene_info.empty",
@@ -423,6 +428,7 @@ impl PanelKind {
             PanelKind::ModelOutliner => (C::Resources, Left, &[W::Modelagem], false),
             PanelKind::ModelProps => (C::Resources, Right, &[W::Modelagem], false),
             PanelKind::ModelModifiers => (C::Resources, Right, &[W::Modelagem], false),
+            PanelKind::ModelUv => (C::Resources, Right, &[W::Modelagem], false),
             PanelKind::Text => (C::Drawing, Right, &[W::Layout, W::Cenario, W::Animacao, W::Composicao, W::Edicao], false),
             PanelKind::LightTable => (C::Drawing, Right, &[W::Animacao, W::Pintura], false),
             PanelKind::SceneInfo => (C::PreProduction, Left, &[W::Storyboard, W::Layout, W::Cenario, W::Animacao, W::Pintura], false),
@@ -597,7 +603,7 @@ fn default_node(ws: WorkspaceId) -> Node {
         W::Modelagem => Row(vec![
             (0.19, Col(vec![(0.58, Pane(P::ModelOutliner)), (0.42, Pane(P::SubView))])),
             (0.55, Pane(P::Modeling)),
-            (0.26, Col(vec![(0.58, Pane(P::ModelProps)), (0.42, Pane(P::ModelModifiers))])),
+            (0.26, Col(vec![(0.58, Pane(P::ModelProps)), (0.42, TabsOf(&[P::ModelModifiers, P::ModelUv]))])),
         ]),
         // nível Audition (S24 11): cortes, forma de onda grande, monitor (imagem do corte) sobre os medidores e o rack/voz
         // na altura toda à direita; multipista embaixo com o Mixer e a linha do tempo em abas

@@ -1555,6 +1555,7 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::ModelOutliner => panels::modeling::outliner(&mut self.env, ui, body),
             PanelKind::ModelProps => panels::modeling::properties(&mut self.env, ui, body),
             PanelKind::ModelModifiers => panels::modeling::modifiers(&mut self.env, ui, body),
+            PanelKind::ModelUv => panels::modeling::uv_editor(&mut self.env, ui, body),
         }
         if let Some((hdr, hresp)) = canvas_hdr {
             dock_ui::header_extras(self, ui, hdr, kind, tile_id, &hresp);

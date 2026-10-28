@@ -21,6 +21,7 @@ pub(crate) mod multiview;
 mod nav_gizmo;
 mod picking;
 pub(crate) mod sculpt;
+pub(crate) mod uv;
 mod workbench;
 
 use super::commands::NodeId;
@@ -132,6 +133,8 @@ pub(crate) struct ModelingState {
     pub views: multiview::MultiView,
     /// Modo Escultura: pincéis, simetria, dyntopo e o vínculo com o objeto ativo.
     pub sculpt: sculpt::SculptState,
+    /// Editor de UV (modo Edição).
+    pub uv: uv::UvState,
     pub shade: ViewShade,
     pub snap: bool,
     pub xray: bool,
@@ -184,6 +187,7 @@ impl Default for ModelingState {
             cam: default_cam(),
             views: multiview::MultiView::default(),
             sculpt: sculpt::SculptState::default(),
+            uv: uv::UvState::default(),
             shade: ViewShade::Toon,
             snap: false,
             xray: false,

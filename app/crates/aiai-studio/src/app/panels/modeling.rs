@@ -293,6 +293,32 @@ fn report(env: &mut Env, r: Result<(), String>) {
     }
 }
 
+/// O editor de UV enxerga o estado da Modelagem pelo `UvHost` (a câmera da vista ativa vai junto, para "da vista").
+fn uv_host<R>(env: &mut Env, f: impl FnOnce(&mut mdl::uv::UvHost) -> R) -> R {
+    let ms = &mut env.ed.modeling;
+    let mut uv = std::mem::take(&mut ms.uv);
+    let camera = ms.cam;
+    let r = {
+        let mut h = mdl::uv::UvHost { modeling: ms, uv: &mut uv, camera, notes: env.notes };
+        f(&mut h)
+    };
+    env.ed.modeling.uv = uv;
+    r
+}
+
+/// Painel Editor de UV.
+pub(crate) fn uv_editor(env: &mut Env, ui: &mut Ui, body: Rect) {
+    let t = env.t;
+    let mut child = body_ui(ui, body, 4.0);
+    let ui = &mut child;
+    if env.ed.modeling.mode != EditMode::Edit || env.ed.modeling.active.is_none() {
+        dim_label(ui, &t, tr("panel.model_uv.empty"));
+        return;
+    }
+    env.note("mdl:uv_editor", body);
+    uv_host(env, |h| h.uv_editor_panel(ui));
+}
+
 /// Painel Propriedades do objeto.
 pub(crate) fn properties(env: &mut Env, ui: &mut Ui, body: Rect) {
     let t = env.t;
@@ -311,6 +337,7 @@ pub(crate) fn properties(env: &mut Env, ui: &mut Ui, body: Rect) {
         if env.ed.modeling.mode == EditMode::Edit {
             adjust_last(env, ui);
             egui::CollapsingHeader::new(egui::RichText::new(tr("mdl.ops_catalog")).strong()).id_salt("mdl_ops_catalog").default_open(true).show(ui, |ui| operators(env, ui));
+            uv_host(env, |h| h.inspector_uv(ui));
         }
         let o = env.ed.modeling.doc.objects[a].clone();
         section(ui, &t, "mdl.object");

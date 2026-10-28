@@ -17,6 +17,7 @@ pub mod sculpt;
 pub mod select;
 pub mod subdiv;
 pub mod topology;
+pub mod uv;
 
 pub use doc::{History, ModelDoc, ModifierSpec, Object3d, Primitive, Shading};
 pub use error::{ModelError, ModelResult};
