@@ -110,3 +110,43 @@ fn multi_tip_brush_mixes_its_tips_and_repeats_with_the_same_seed() {
     assert_ne!(paint(&seq).data, b.data, "em sequência é outra ordem");
     assert!(b.data.iter().filter(|p| p[3] > 0.1).count() > 2000, "pintou");
 }
+
+#[test]
+fn ribbon_brush_runs_the_image_along_the_stroke() {
+    // Ribbon (auditoria 4.9d): ponta de imagem 40×10 com barras de 10 colunas; diâmetro 20 → a imagem mede 80 px no
+    // traço e as barras viram faixas de 10/40 × 80 = 20 px que se repetem, sem buracos dentro delas
+    use aiai_paint::brush::BrushTip;
+    use aiai_paint::mask::Mask;
+    let mut m = Mask::new(40, 10);
+    for y in 0..10u32 {
+        for x in 0..40u32 {
+            if (x / 10) % 2 == 0 {
+                m.data[(y * 40 + x) as usize] = 255;
+            }
+        }
+    }
+    let mut p = BrushPreset::round("fita", 20.0, 1.0);
+    p.tip = BrushTip::Image { blob: aiai_core::BlobHash::of(b"fita"), mask: Some(m) };
+    p.ribbon = true;
+    p.spacing = 0.1;
+    p.size_pressure_min = 1.0;
+    let path: Vec<BrushPoint> = (0..=90).map(|k| BrushPoint { x: 20.0 + k as f32 * 4.0, y: 50.0, pressure: 1.0 }).collect();
+    let mut img = Image::new(400, 100);
+    paint_stroke(&mut img, &p, &path, [0.2, 0.2, 0.8, 1.0], 1);
+    let row: Vec<bool> = (30..370).map(|x| img.get(x, 50)[3] > 0.5).collect();
+    let mut runs = Vec::new();
+    let mut n = 0;
+    for &on in &row {
+        if on {
+            n += 1;
+        } else if n > 0 {
+            runs.push(n);
+            n = 0;
+        }
+    }
+    // 340 px de janela / período de 40 px: 8 ou 9 faixas (a primeira pode vir cortada pela janela)
+    assert!((8..=10).contains(&runs.len()), "faixas: {runs:?}");
+    assert!(runs[1..].iter().all(|&r| (16..=24).contains(&r)), "faixas de ~20 px sem buraco: {runs:?}");
+    // fora da largura (raio 10) nada
+    assert!((30..370).all(|x| img.get(x, 30)[3] < 0.01));
+}

@@ -451,6 +451,10 @@ pub struct BrushPreset {
     pub extra_tips: Vec<BrushTip>,
     #[serde(default, skip_serializing_if = "is_default_order")]
     pub tip_order: TipOrder,
+    /// Fita (Ribbon, auditoria 4.9d): com ponta de imagem, a imagem corre ao longo do traço (repete a cada comprimento
+    /// da própria imagem na escala do diâmetro) em vez de carimbar cópias: corrente, renda, fita, trilho.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ribbon: bool,
     /// Cor em degradê AO LONGO DO TRAÇO: no lugar da cor do pincel, cada dab pega a cor do degradê na distância já
     /// percorrida (`length` px = uma passada de 0 a 1; `extend` do degradê decide o que vem depois: prender, repetir,
     /// espelhar). As cores de paleta já chegam resolvidas (o pincel não enxerga o projeto; paleta = magenta).
@@ -631,6 +635,7 @@ impl BrushPreset {
             two_tone: None,
             extra_tips: Vec::new(),
             tip_order: TipOrder::Random,
+            ribbon: false,
             color_ramp: None,
             group: String::new(),
             antialias: None,
@@ -2238,6 +2243,49 @@ impl StrokeBuffer {
         }
     }
 
+    /// Uma fatia da fita: os pixels a até meio passo do carimbo, ao longo da direção do traço, pegam a coluna da imagem
+    /// na distância percorrida (`s`); na transversal, a altura da imagem ocupa o diâmetro. Tinta pelo máximo: as fatias
+    /// vizinhas se encostam sem dobrar a cor.
+    fn stamp_ribbon(&mut self, preset: &BrushPreset, cx: f32, cy: f32, r: f32, dir_deg: f32, s: f32, step: f32, alpha: f32, rgb: [f32; 3]) {
+        let BrushTip::Image { mask: Some(mask), .. } = &preset.tip else { return };
+        if mask.width == 0 || mask.height == 0 {
+            return;
+        }
+        let len = 2.0 * r * mask.width as f32 / mask.height as f32;
+        let (sn, cs) = dir_deg.to_radians().sin_cos();
+        let half = step * 0.5 + 0.75;
+        let ext = half.max(r) + 1.0;
+        let (bx0, by0) = (((cx - ext).floor() as i32).max(0), ((cy - ext).floor() as i32).max(0));
+        let (bx1, by1) = (((cx + ext).ceil() as i32).min(self.w), ((cy + ext).ceil() as i32).min(self.h));
+        if bx0 >= bx1 || by0 >= by1 {
+            return;
+        }
+        self.mark([bx0, by0, bx1, by1]);
+        for y in by0..by1 {
+            for x in bx0..bx1 {
+                let (dx, dy) = (x as f32 + 0.5 - cx, y as f32 + 0.5 - cy);
+                let along = dx * cs + dy * sn;
+                let across = -dx * sn + dy * cs;
+                if along.abs() > half || across.abs() > r {
+                    continue;
+                }
+                let u = ((s + along) / len.max(1.0)).rem_euclid(1.0) * mask.width as f32;
+                let v = (across / (2.0 * r) + 0.5) * mask.height as f32;
+                let a = mask.get((u as u32).min(mask.width - 1), (v.max(0.0) as u32).min(mask.height - 1));
+                let da = (a * alpha).clamp(0.0, 1.0);
+                if da <= 0.0 {
+                    continue;
+                }
+                let d = self.buf_mut(x, y);
+                if da > d[3] {
+                    *d = [rgb[0] * da, rgb[1] * da, rgb[2] * da, da];
+                }
+                let a = d[3];
+                self.max_a = self.max_a.max(a);
+            }
+        }
+    }
+
     /// Sorteio do aleatório de uma dinâmica: por carimbo, ou suave ao longo do caminho (`random_len`).
     fn dyn_rnd(&mut self, dy: &crate::brush_dyn::Dynamics, s: f32, k: u32) -> f32 {
         if !dy.uses_random() {
@@ -2339,6 +2387,12 @@ impl StrokeBuffer {
                 Some(g) if g.moving => (self.rng.f32() * 997.0, self.rng.f32() * 991.0),
                 _ => (0.0, 0.0),
             };
+            // fita: a fatia da imagem que cabe neste trecho do traço
+            if preset.ribbon && matches!(&preset.tip, BrushTip::Image { mask: Some(_), .. }) {
+                let step = (preset.spacing * preset.size).max(1.0);
+                self.stamp_ribbon(&preset, px, py, r, dir, d.s, step, flow * dab_opacity * color[3], rgb);
+                continue;
+            }
             if let Some(sp) = preset.spray.clone() {
                 self.stamp_spray(&preset, &sp, px, py, r, angle, thick, flow * dab_opacity * color[3], [rgb[0], rgb[1], rgb[2]], grain_off);
                 continue;

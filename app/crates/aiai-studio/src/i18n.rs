@@ -1422,6 +1422,8 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("opt.stroke_group", "Grupo de intercalação", "In-between group"),
     ("opt.move_puppet", "Marionete", "Puppet"),
     ("tprop.extra_tips", "Pontas extras", "Extra tips"),
+    ("tprop.ribbon", "Fita (ribbon)", "Ribbon"),
+    ("tprop.ribbon.tip", "A imagem da ponta corre ao longo do traço, repetindo, em vez de carimbar cópias (corrente, renda, fita, trilho)", "The tip image runs along the stroke, repeating, instead of stamping copies (chain, lace, ribbon, rail)"),
     ("tprop.tip_order.random", "sorteadas", "random"),
     ("tprop.tip_order.sequence", "em sequência", "in sequence"),
     ("lprops.stroke_mods", "Modificadores do traço", "Stroke modifiers"),

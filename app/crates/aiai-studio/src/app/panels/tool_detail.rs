@@ -85,6 +85,7 @@ pub(crate) const PARAMS: &[Param] = &[
     prm("follow", "tprop.follow", Cat::Shape),
     prm("two_tone", "tprop.two_tone", Cat::Shape),
     prm("extra_tips", "tprop.extra_tips", Cat::Shape),
+    prm("ribbon", "tprop.ribbon", Cat::Shape),
     prm("hardness", "tprop.hardness", Cat::Tip),
     prm("thickness", "tprop.thickness", Cat::Tip),
     prm("angle", "tprop.angle", Cat::Tip),
@@ -118,6 +119,7 @@ pub(crate) fn applies(p: &BrushPreset, key: &str) -> bool {
         "hardness" | "thickness" | "angle" | "edge" => round,
         "aspect" | "two_tone" => shape,
         "extra_tips" => !matches!(p.tip, BrushTip::Image { .. }),
+        "ribbon" => matches!(p.tip, BrushTip::Image { .. }),
         "texture_depth" | "texture_scale" => p.texture.is_some(),
         _ => true,
     }
@@ -185,6 +187,15 @@ pub(crate) fn param_ui(ui: &mut Ui, e: &mut Edit, key: &str) -> bool {
         "aa" => labeled(ui, e, prm.label, |ui, e| aa_icons(ui, e)),
         "tip_shape" => labeled(ui, e, prm.label, |ui, e| tip_combo(ui, e)),
         "extra_tips" => labeled(ui, e, prm.label, |ui, e| extra_tips_ui(ui, e)),
+        "ribbon" => {
+            if matches!(e.p.tip, BrushTip::Image { .. }) {
+                labeled(ui, e, prm.label, |ui, e| {
+                    ui.checkbox(&mut e.p.ribbon, "").on_hover_text(tr("tprop.ribbon.tip"));
+                })
+            } else {
+                disabled_row(ui, e, prm.label)
+            }
+        }
         "follow" => labeled(ui, e, prm.label, |ui, e| {
             ui.checkbox(&mut e.p.follow_direction, "").on_hover_text(tr("tprop.follow.tip"));
         }),
