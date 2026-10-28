@@ -101,6 +101,8 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: Rect) {
         if l.kind == aiai_core::LayerType::Vector {
             stroke_mods(env, ui, &layer, &l);
         }
+        // ---- rigging 2D: pai (pegbar) e ponta do osso
+        rig_section(env, ui, &layer, &l);
         // ---- partículas (o sistema da camada)
         if l.kind == aiai_core::LayerType::Particles {
             super::particles_ed::editor(env, ui, &layer, &l);
@@ -206,6 +208,57 @@ fn stroke_mods(env: &mut Env, ui: &mut Ui, layer: &cmds::NodeId, l: &aiai_core::
             env.ed.notify(e);
         }
     }
+}
+
+/// Rigging 2D (auditoria 4.6d): o pai da camada (ela anda, gira e escala com ele em volta do pivô de cada um) e a
+/// ponta do osso (com W, arrastar a ponta faz o IK do pai e da camada).
+fn rig_section(env: &mut Env, ui: &mut Ui, layer: &cmds::NodeId, l: &aiai_core::LayerData) {
+    let t = env.t;
+    section(ui, &t, "lprops.rig");
+    let Some(cut) = env.ed.cut.clone() else { return };
+    let p = &env.core.project;
+    let cur = aiai_render::compose::layer_parent(l);
+    let rows: Vec<(cmds::NodeId, String)> = cmds::layer_rows(p, &cut)
+        .into_iter()
+        .filter(|r| &r.id != layer)
+        .map(|r| (r.id.clone(), p.node(&r.id).map(|n| n.name.clone()).unwrap_or_default()))
+        .collect();
+    let mut pick: Option<Option<cmds::NodeId>> = None;
+    ui.horizontal(|ui| {
+        ui.label(tr("lprops.rig.parent"));
+        let label = cur.as_ref().and_then(|c| rows.iter().find(|(id, _)| id == c)).map(|(_, n)| n.clone()).unwrap_or_else(|| tr("lprops.rig.none").to_owned());
+        let r = egui::ComboBox::from_id_salt(("rig_parent", &layer.0)).selected_text(label).width(130.0).show_ui(ui, |ui| {
+            if ui.selectable_label(cur.is_none(), tr("lprops.rig.none")).clicked() {
+                pick = Some(None);
+            }
+            for (id, n) in &rows {
+                if ui.selectable_label(cur.as_ref() == Some(id), n).clicked() {
+                    pick = Some(Some(id.clone()));
+                }
+            }
+        });
+        env.note("lprops:rig_parent", r.response.rect);
+    });
+    if let Some(np) = pick {
+        if let Err(e) = crate::app::actions::run(env.core, "RIG", json!({ "op": "parent", "layer": layer, "parent": np })) {
+            env.ed.notify(e);
+        }
+    }
+    let tip: Option<[f32; 2]> = l.params.get("bone_tip").and_then(|v| serde_json::from_value(v.clone()).ok());
+    ui.horizontal(|ui| {
+        ui.label(tr("lprops.rig.tip"));
+        match tip {
+            Some(t) => ui.label(format!("{:.0}, {:.0}", t[0], t[1])),
+            None => ui.label(tr("lprops.rig.none")),
+        };
+        let b = ui.button(tr("lprops.rig.tip_pick")).on_hover_text(tr("lprops.rig.tip_pick.tip"));
+        env.note("lprops:rig_tip", b.rect);
+        if b.clicked() {
+            env.ed.comp.tip_pick = Some(layer.clone());
+            env.ed.notify(tr("lprops.rig.tip_armed"));
+        }
+    });
+    ui.label(egui::RichText::new(tr("lprops.rig.hint")).size(11.0).color(t.text_dim));
 }
 
 #[cfg(test)]

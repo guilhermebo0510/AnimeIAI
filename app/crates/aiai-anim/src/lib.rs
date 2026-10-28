@@ -11,6 +11,7 @@
 //! 4. Traços sem par se apagam (os de A, do fim para o começo) ou se desenham (os de B) ao longo das intercalações,
 //!    andando junto com o movimento do desenho, em vez de pularem na metade do caminho.
 
+pub mod ik;
 pub mod particles;
 
 use aiai_core::{ColorRef, Ease, Id, Stroke, StrokeGeometry, StrokePoint};

@@ -445,6 +445,8 @@ pub(crate) enum CompDrag {
     Camera { start: Vec2, orig: aiai_core::CameraData },
     /// Região de interesse.
     Roi { start: Vec2, cur: Vec2 },
+    /// W na ponta do osso (rigging 2D): IK de dois ossos até o cursor; grava ao soltar.
+    Ik { layer: NodeId, cut: NodeId, cur: Vec2 },
 }
 
 /// Arrasto de chaves na linha do tempo.
@@ -463,6 +465,8 @@ pub(crate) struct CompState {
     /// Região de interesse (canvas: x0, y0, x1, y1).
     pub roi: Option<[f32; 4]>,
     pub roi_pick: bool,
+    /// "Pôr a ponta do osso": o próximo clique no viewer marca a ponta do osso desta camada.
+    pub tip_pick: Option<NodeId>,
     pub drag: Option<CompDrag>,
     /// Ctrl apertado no viewer (o arrasto da câmera gira com Ctrl).
     pub ctrl: bool,
@@ -524,6 +528,7 @@ impl Default for CompState {
             alpha_view: false,
             roi: None,
             roi_pick: false,
+            tip_pick: None,
             drag: None,
             ctrl: false,
             preview: None,

@@ -524,3 +524,34 @@ fn linear_light_mixes_as_light_and_leaves_opaque_layers_alone() {
         assert!((px(&lin, 50)[c] - px(&srgb, 50)[c]).abs() < 1e-4, "opaca muda: {:?} x {:?}", px(&lin, 50), px(&srgb, 50));
     }
 }
+
+/// Rigging (auditoria 4.6d): o filho (params.parent) gira com o pai em volta do pivô do pai, e o cache por camada
+/// refaz o filho quando só o pai mudou.
+#[test]
+fn child_layer_follows_its_parent_also_through_the_frame_cache() {
+    let mut s = CoreSession::for_tests("pai");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 200, "height": 200}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = create(&mut s, Some(&sc), "C", NodeKind::Cut(CutData::new(2)));
+    let (pai, _) = layer(&mut s, &cut, "pai", LayerType::Vector, serde_json::Value::Null);
+    let (filho, cel) = layer(&mut s, &cut, "filho", LayerType::Vector, serde_json::Value::Null);
+    let mut fl = match &s.project.node(&filho).unwrap().data { NodeKind::Layer(l) => l.clone(), _ => unreachable!() };
+    fl.params = json!({"parent": pai.0});
+    s.apply(Command::ReplaceData { id: filho.clone(), data: NodeKind::Layer(fl) }).unwrap();
+    // traço do filho: de (110,100) a (150,100), à direita do centro (pivô do pai = centro 100,100)
+    let st = gpen(&[(110.0, 100.0, 1.0), (150.0, 100.0, 1.0)], 6.0, ColorRef::Direct { rgba: Rgba::BLACK });
+    s.apply(Command::InsertStrokes { cel, items: vec![IndexedStroke { index: 0, stroke: st }] }).unwrap();
+    let mut cache = aiai_render::FrameCache::default();
+    let opts = RenderOptions { layer_motion: true, ..Default::default() };
+    let a = aiai_render::render_frame_cached(&s.project, &s.blobs, &cut, 0, &opts, &mut cache).unwrap().image;
+    assert!(a.get(140, 100)[3] > 0.5 && a.get(100, 140)[3] < 0.01);
+    // gira só o pai 90°: o traço do filho vai para baixo do centro
+    let mut pl = match &s.project.node(&pai).unwrap().data { NodeKind::Layer(l) => l.clone(), _ => unreachable!() };
+    pl.rotation = 90.0;
+    s.apply(Command::ReplaceData { id: pai.clone(), data: NodeKind::Layer(pl) }).unwrap();
+    let b = aiai_render::render_frame_cached(&s.project, &s.blobs, &cut, 0, &opts, &mut cache).unwrap().image;
+    let fresh = render_frame(&s.project, &s.blobs, &cut, 0, &opts).unwrap().image;
+    assert!(b.get(100, 140)[3] > 0.5 && b.get(140, 100)[3] < 0.01, "o filho girou com o pai");
+    assert_eq!(b.content_hash(), fresh.content_hash(), "o cache refez o filho");
+}

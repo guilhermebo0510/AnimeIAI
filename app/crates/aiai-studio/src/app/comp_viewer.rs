@@ -173,6 +173,33 @@ pub(crate) fn press(env: &mut Env, xf: &Xf, pos: Pos2, mods: egui::Modifiers) ->
     }
     let Some(cut) = env.ed.active_cut(env.core) else { return false };
     let frame = env.ed.frame;
+    // ponta do osso armada: o clique marca a ponta (na pose de repouso da camada)
+    if let Some(layer) = env.ed.comp.tip_pick.take() {
+        let canvas = cmds::canvas_size(&env.core.project, &cut);
+        if let Some(l) = cmds::layer_data(&env.core.project, &layer).cloned() {
+            let g = aiai_render::compose::parent_chain_affine(&env.core.project, &l, frame, canvas.0, canvas.1);
+            let m = compose(&g, &aiai_render::compose::layer_motion_affine(&l, frame, canvas.0, canvas.1));
+            if let Some(inv) = m.inverse() {
+                let (x, y) = inv.apply(c.x, c.y);
+                let r = crate::app::actions::run(env.core, "RIG", serde_json::json!({ "op": "bone_tip", "layer": layer, "tip": [x, y] }));
+                if let Err(e) = r {
+                    env.ed.notify(e);
+                }
+            }
+        }
+        return true;
+    }
+    // W na ponta do osso de uma camada com pai: IK
+    if tool == ToolId::Rotate {
+        if let Some(layer) = env.ed.active_layer(env.core) {
+            if let Ok((_, _, tip)) = aiai_tools::rig::chain_points(&env.core.project, &cut, &layer, frame) {
+                if (xf.to_screen(Vec2::new(tip[0], tip[1])) - pos).length() <= 10.0 {
+                    env.ed.comp.drag = Some(CompDrag::Ik { layer, cut, cur: c });
+                    return true;
+                }
+            }
+        }
+    }
     if tool == ToolId::Camera {
         let Some(cd) = cmds::cut_data(&env.core.project, &cut) else { return false };
         env.ed.comp.drag = Some(CompDrag::Camera { start: c, orig: cd.camera.clone() });
@@ -192,7 +219,11 @@ pub(crate) fn press(env: &mut Env, xf: &Xf, pos: Pos2, mods: egui::Modifiers) ->
     let _ = mods;
     env.ed.comp.drag = Some(match tool {
         ToolId::Rotate => {
-            let pivot = anchor_canvas(&l, &layer, frame, canvas);
+            // o pivô no lugar em que está na tela: com pai, o movimento dele leva o pivô junto
+            let g = aiai_render::compose::parent_chain_affine(&env.core.project, &l, frame, canvas.0, canvas.1);
+            let a = anchor_canvas(&l, &layer, frame, canvas);
+            let (px, py) = g.apply(a.x, a.y);
+            let pivot = Vec2::new(px, py);
             let d = c - pivot;
             CompDrag::Rotate { layer: layer.clone(), pivot, start_angle: d.y.atan2(d.x), orig: l.clone() }
         }
@@ -210,6 +241,7 @@ pub(crate) fn drag(env: &mut Env, xf: &Xf, pos: Pos2, mods: egui::Modifiers) {
     let Some(d) = env.ed.comp.drag.clone() else { return };
     match d {
         CompDrag::Roi { start, .. } => env.ed.comp.drag = Some(CompDrag::Roi { start, cur: c }),
+        CompDrag::Ik { layer, cut, .. } => env.ed.comp.drag = Some(CompDrag::Ik { layer, cut, cur: c }),
         CompDrag::Move { layer, start, orig } => {
             let mut l = orig.clone();
             let (_, p, _, _) = transform_at(&orig, &layer, frame);
@@ -318,6 +350,13 @@ pub(crate) fn release(env: &mut Env) {
     let preview = env.ed.comp.preview.take();
     let cam = env.ed.comp.cam_preview.take();
     match d {
+        CompDrag::Ik { layer, cut, cur } => {
+            let frame = env.ed.frame;
+            let r = crate::app::actions::run(env.core, "RIG", serde_json::json!({ "op": "ik", "cut": cut, "layer": layer, "target": [cur.x, cur.y], "frame": frame }));
+            if let Err(e) = r {
+                env.ed.notify(e);
+            }
+        }
         CompDrag::Roi { start, cur } => {
             env.ed.comp.roi_pick = false;
             let r = Rect::from_two_pos(start.to_pos2(), cur.to_pos2());
@@ -370,9 +409,46 @@ pub(crate) fn drop_target(env: &mut Env, ui: &Ui, resp: &egui::Response) {
 
 /// Desenho por cima do quadro: contorno e âncora da camada selecionada (com as ferramentas de camada), a câmera em
 /// arrasto e a região de interesse.
+/// m2 ∘ m1 (aplica m1, depois m2).
+fn compose(m2: &aiai_paint::Affine, m1: &aiai_paint::Affine) -> aiai_paint::Affine {
+    let (a, b) = (m2.0, m1.0);
+    aiai_paint::Affine([
+        a[0] * b[0] + a[1] * b[3],
+        a[0] * b[1] + a[1] * b[4],
+        a[0] * b[2] + a[1] * b[5] + a[2],
+        a[3] * b[0] + a[4] * b[3],
+        a[3] * b[1] + a[4] * b[4],
+        a[3] * b[2] + a[4] * b[5] + a[5],
+    ])
+}
+
+/// Ossos da camada ativa (W, rigging): ombro → cotovelo → ponta, com a ponta para arrastar (IK); no arrasto, a reta
+/// até o cursor.
+fn paint_bones(env: &Env, painter: &egui::Painter, xf: &Xf, cut: &NodeId) {
+    if *env.tool != ToolId::Rotate {
+        return;
+    }
+    let Some(layer) = env.ed.layer.clone() else { return };
+    let Ok((root, elbow, tip)) = aiai_tools::rig::chain_points(&env.core.project, cut, &layer, env.ed.frame) else { return };
+    let s = |p: [f32; 2]| xf.to_screen(Vec2::new(p[0], p[1]));
+    let col = Color32::from_rgb(120, 200, 255);
+    painter.line_segment([s(root), s(elbow)], Stroke::new(3.0, col.gamma_multiply(0.8)));
+    painter.line_segment([s(elbow), s(tip)], Stroke::new(3.0, col.gamma_multiply(0.8)));
+    for p in [root, elbow] {
+        painter.circle_filled(s(p), 4.0, col);
+    }
+    painter.circle_stroke(s(tip), 7.0, Stroke::new(2.0, env.t.accent));
+    if let Some(CompDrag::Ik { cur, .. }) = &env.ed.comp.drag {
+        let c = xf.to_screen(*cur);
+        painter.extend(Shape::dashed_line(&[s(root), c], Stroke::new(1.0, env.t.accent), 5.0, 3.0));
+        painter.circle_stroke(c, 7.0, Stroke::new(2.0, env.t.accent));
+    }
+}
+
 pub(crate) fn paint_overlay(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut: &NodeId, canvas: (u32, u32)) {
     let t = env.t;
     let frame = env.ed.frame;
+    paint_bones(env, painter, xf, cut);
     let (cw, ch) = (canvas.0 as f32, canvas.1 as f32);
     // região de interesse: escurece fora
     let roi = match &env.ed.comp.drag {
@@ -408,7 +484,7 @@ pub(crate) fn paint_overlay(env: &mut Env, painter: &egui::Painter, rect: Rect, 
             };
             if let Some(l) = l {
                 let ct = cmds::exposed_cel(&env.core.project, cut, &layer, frame).and_then(|c| cmds::cel_data(&env.core.project, &c).map(|d| d.transform)).unwrap_or([0.0, 0.0, 1.0, 0.0]);
-                let a = aiai_render::compose::layer_placement(&l, ct, frame, canvas.0, canvas.1);
+                let a = aiai_render::compose::layer_placement_in(&env.core.project, &l, ct, frame, canvas.0, canvas.1);
                 let pts: Vec<Pos2> = [Vec2::new(0.0, 0.0), Vec2::new(cw, 0.0), Vec2::new(cw, ch), Vec2::new(0.0, ch)]
                     .iter()
                     .map(|v| {
@@ -420,7 +496,11 @@ pub(crate) fn paint_overlay(env: &mut Env, painter: &egui::Painter, rect: Rect, 
                 for p in &pts {
                     painter.rect_filled(Rect::from_center_size(*p, egui::vec2(5.0, 5.0)), 0.0, t.accent);
                 }
-                let ac = xf.to_screen(anchor_canvas(&l, &layer, frame, canvas));
+                // com pai, a âncora anda com ele
+                let g = aiai_render::compose::parent_chain_affine(&env.core.project, &l, frame, canvas.0, canvas.1);
+                let a0 = anchor_canvas(&l, &layer, frame, canvas);
+                let (ax, ay) = g.apply(a0.x, a0.y);
+                let ac = xf.to_screen(Vec2::new(ax, ay));
                 painter.circle_stroke(ac, 6.0, Stroke::new(2.5, Color32::from_black_alpha(160)));
                 painter.circle_stroke(ac, 6.0, Stroke::new(1.2, Color32::WHITE));
                 for dv in [egui::vec2(10.0, 0.0), egui::vec2(-10.0, 0.0), egui::vec2(0.0, 10.0), egui::vec2(0.0, -10.0)] {

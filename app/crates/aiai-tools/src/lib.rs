@@ -3,6 +3,7 @@
 //! na UI, na bridge/MCP e no modo headless.
 
 pub mod assist;
+pub mod rig;
 pub mod anim;
 pub mod audio;
 pub mod audio_edit;

@@ -161,7 +161,8 @@ fn compose_affine(m2: Affine, m1: Affine) -> Affine {
 }
 
 /// Valor de propriedade animável da camada no quadro.
-fn layer_prop(layer: &LayerData, prop: &str, frame: u32, default: f32) -> f32 {
+/// Valor de uma propriedade animável da camada no quadro (chave, senão o valor fixo).
+pub fn layer_prop(layer: &LayerData, prop: &str, frame: u32, default: f32) -> f32 {
     layer.keys.eval(prop, frame as f32).unwrap_or(default)
 }
 
@@ -185,6 +186,51 @@ pub fn layer_placement(layer: &LayerData, cel_transform: [f32; 4], frame: u32, w
     let cel = Affine::from_trs(tx, ty, s, rot, center);
     let motion = Affine::from_trs(ox, oy, ks, kr, [center[0] + ax, center[1] + ay]);
     compose_affine(motion, cel)
+}
+
+/// Só o movimento da camada (deslocamento, escala e rotação em volta da âncora), sem o cel: o que um filho herda
+/// do pai.
+pub fn layer_motion_affine(layer: &LayerData, frame: u32, width: u32, height: u32) -> Affine {
+    let ox = layer_prop(layer, "offset_x", frame, layer.offset[0]);
+    let oy = layer_prop(layer, "offset_y", frame, layer.offset[1]);
+    let ks = layer_prop(layer, "scale", frame, layer.scale);
+    let kr = layer_prop(layer, "rotation", frame, layer.rotation);
+    let ax = layer_prop(layer, "anchor_x", frame, layer.anchor[0]);
+    let ay = layer_prop(layer, "anchor_y", frame, layer.anchor[1]);
+    Affine::from_trs(ox, oy, ks, kr, [width as f32 / 2.0 + ax, height as f32 / 2.0 + ay])
+}
+
+/// Pai da camada (rigging 2D, auditoria 4.6d): `params.parent` com o id de outra camada. O filho anda, gira e escala
+/// junto com o pai (pegbar), em volta do pivô (âncora) de cada um.
+pub fn layer_parent(layer: &LayerData) -> Option<Id> {
+    layer.params.get("parent").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| Id(s.to_string()))
+}
+
+/// O movimento herdado dos pais (pai, avô...), até 16 níveis; um ciclo para onde fecharia. Identidade sem pai.
+pub fn parent_chain_affine(project: &Project, layer: &LayerData, frame: u32, width: u32, height: u32) -> Affine {
+    let mut acc = Affine::IDENTITY;
+    let mut seen: Vec<Id> = Vec::new();
+    let mut cur = layer_parent(layer);
+    while let Some(pid) = cur {
+        if seen.contains(&pid) || seen.len() >= 16 {
+            break;
+        }
+        let Some(NodeKind::Layer(pl)) = project.node(&pid).map(|n| &n.data) else { break };
+        // o pai de mais acima é aplicado por último: acc = pai ∘ acc
+        acc = compose_affine(layer_motion_affine(pl, frame, width, height), acc);
+        seen.push(pid);
+        cur = layer_parent(pl);
+    }
+    acc
+}
+
+/// `layer_placement` com a herança dos pais (o que o compositor e as ferramentas usam).
+pub fn layer_placement_in(project: &Project, layer: &LayerData, cel_transform: [f32; 4], frame: u32, width: u32, height: u32) -> Affine {
+    let own = layer_placement(layer, cel_transform, frame, width, height);
+    if layer_parent(layer).is_none() {
+        return own;
+    }
+    compose_affine(parent_chain_affine(project, layer, frame, width, height), own)
 }
 
 /// Tamanho do canvas do corte.
@@ -428,12 +474,24 @@ fn stack_reads_below(stack: &[aiai_fx::EffectInstance]) -> bool {
 
 fn subtree_revision(project: &Project, id: &Id) -> u64 {
     let mut r = project.node(id).map(|n| n.provenance.revision).unwrap_or(0);
-    for d in project.subtree(id) {
+    for d in std::iter::once(id.clone()).chain(project.subtree(id)) {
         if let Some(n) = project.node(&d) {
             r = r.max(n.provenance.revision);
             if let NodeKind::Layer(l) = &n.data {
                 if let Some(m) = &l.mask {
                     r = r.max(subtree_revision(project, m));
+                }
+                // rigging: o pai que se move muda o filho guardado no cache
+                let mut cur = layer_parent(l);
+                let mut depth = 0;
+                while let (Some(pid), true) = (cur, depth < 16) {
+                    let Some(pn) = project.node(&pid) else { break };
+                    r = r.max(pn.provenance.revision);
+                    cur = match &pn.data {
+                        NodeKind::Layer(pl) => layer_parent(pl),
+                        _ => None,
+                    };
+                    depth += 1;
                 }
             }
         }
@@ -1102,7 +1160,7 @@ impl<'a> Renderer<'a> {
     /// Canvas do cel → imagem de saída: transformação do cel, movimento da camada e câmera (multiplano).
     fn placement_affine(&self, layer: &LayerData, frame: u32, cel_transform: [f32; 4]) -> Affine {
         let mut xf = if self.layer_motion {
-            layer_placement(layer, cel_transform, frame, self.width, self.height)
+            layer_placement_in(self.project, layer, cel_transform, frame, self.width, self.height)
         } else {
             let [tx, ty, s, rot] = cel_transform;
             Affine::from_trs(tx, ty, s, rot, [self.width as f32 / 2.0, self.height as f32 / 2.0])

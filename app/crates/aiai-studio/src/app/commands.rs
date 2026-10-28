@@ -116,7 +116,7 @@ pub(crate) fn layer_placement(p: &Project, cut: &NodeId, layer: &NodeId, frame: 
     let l = layer_data(p, layer)?;
     let ct = exposed_cel(p, cut, layer, frame).and_then(|c| cel_data(p, &c).map(|d| d.transform)).unwrap_or([0.0, 0.0, 1.0, 0.0]);
     let (w, h) = canvas_size(p, cut);
-    let a = aiai_render::compose::layer_placement(l, ct, frame, w, h);
+    let a = aiai_render::compose::layer_placement_in(p, l, ct, frame, w, h);
     (!a.is_identity()).then_some(a)
 }
 
