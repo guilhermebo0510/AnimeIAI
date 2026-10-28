@@ -46,7 +46,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 pub const PRODUCTION_ACTIONS: &[&str] = &[
-    "SKY", "PATTERN_FILL", "TEXT", "TEXT_LAYER", "LAYER_MERGE", "LINES", "GAG_BG", "ANIME_FX", "PARTICLES", "GUIDE3D", "PERSPECTIVE", "MODEL_SHEET", "CHARACTER_MATERIAL", "CONSISTENCY", "INBETWEEN", "PROPAGATE_FILLS",
+    "SKY", "PATTERN_FILL", "TEXT", "TEXT_LAYER", "LAYER_MERGE", "LINES", "GAG_BG", "ANIME_FX", "COLORIZE_HINTS", "PARTICLES", "GUIDE3D", "PERSPECTIVE", "MODEL_SHEET", "CHARACTER_MATERIAL", "CONSISTENCY", "INBETWEEN", "PROPAGATE_FILLS",
     "TTS_LINE", "TTS_KOKORO", "VOICE_PROFILE", "LIPSYNC", "SFX", "BGM", "IMPORT_AUDIO", "IMPORT_IMAGE", "IMPORT_LAYERS", "EXPORT_PSD", "EXPORT_XDTS", "EXPORT_SVG", "EXPORT_OTIO", "MIX_CUT", "LOUDNESS", "COMPARE", "PROBE_COLOR", "MEASURE_LINE", "MEASURE_EDGE", "FILL_SHAPE", "EDIT_SET", "EXPORT_VIDEO", "GRADIENT_PAINT",
 ];
 
@@ -54,7 +54,7 @@ pub const PRODUCTION_ACTIONS: &[&str] = &[
 pub fn is_mutating(action: &str) -> bool {
     matches!(
         action,
-        "SKY" | "PATTERN_FILL" | "TEXT" | "TEXT_LAYER" | "LAYER_MERGE" | "LINES" | "GAG_BG" | "ANIME_FX" | "PARTICLES" | "GUIDE3D" | "PERSPECTIVE" | "MODEL_SHEET" | "CHARACTER_MATERIAL" | "INBETWEEN" | "PROPAGATE_FILLS" | "TTS_LINE" | "TTS_KOKORO" | "VOICE_PROFILE" | "LIPSYNC" | "SFX" | "BGM" | "IMPORT_AUDIO" | "IMPORT_IMAGE" | "IMPORT_LAYERS" | "FILL_SHAPE" | "EDIT_SET" | "GRADIENT_PAINT"
+        "SKY" | "PATTERN_FILL" | "TEXT" | "TEXT_LAYER" | "LAYER_MERGE" | "LINES" | "GAG_BG" | "ANIME_FX" | "COLORIZE_HINTS" | "PARTICLES" | "GUIDE3D" | "PERSPECTIVE" | "MODEL_SHEET" | "CHARACTER_MATERIAL" | "INBETWEEN" | "PROPAGATE_FILLS" | "TTS_LINE" | "TTS_KOKORO" | "VOICE_PROFILE" | "LIPSYNC" | "SFX" | "BGM" | "IMPORT_AUDIO" | "IMPORT_IMAGE" | "IMPORT_LAYERS" | "FILL_SHAPE" | "EDIT_SET" | "GRADIENT_PAINT"
     )
 }
 
@@ -129,6 +129,11 @@ pub fn handle(session: &mut CoreSession, action: &str, params: &Value) -> Result
             let r: GagBgRequest = request(params, action)?;
             let cmd = gag_bg_command(&session.project, &mut session.blobs, &r).map_err(tool_error)?;
             apply(session, params, cmd)
+        }
+        "COLORIZE_HINTS" => {
+            let r: aiai_tools::hints::ColorizeHintsRequest = request(params, action)?;
+            let (cmd, info) = aiai_tools::hints::colorize_hints_command(&session.project, &mut session.blobs, &r).map_err(tool_error)?;
+            apply_with(session, params, cmd, info)
         }
         "ANIME_FX" => {
             let r: aiai_tools::anime_fx::AnimeFxRequest = request(params, action)?;

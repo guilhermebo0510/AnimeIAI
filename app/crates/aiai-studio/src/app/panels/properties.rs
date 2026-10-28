@@ -51,6 +51,57 @@ pub(crate) fn show(env: &mut Env, ui: &mut Ui, body: egui::Rect) {
     });
 }
 
+/// Colorir por dicas (auditoria 4.7h): a camada raster de rabiscos e o botão que pinta a camada de cor ativa.
+fn hints_row(env: &mut Env, ui: &mut Ui) {
+    let Some(cut) = env.ed.active_cut(env.core) else { return };
+    let p = &env.core.project;
+    let rasters: Vec<(cmds::NodeId, String)> = cmds::layer_rows(p, &cut)
+        .into_iter()
+        .filter(|r| cmds::layer_data(p, &r.id).is_some_and(|l| l.kind == aiai_core::LayerType::Raster))
+        .map(|r| (r.id.clone(), p.node(&r.id).map(|n| n.name.clone()).unwrap_or_default()))
+        .collect();
+    if rasters.is_empty() {
+        return;
+    }
+    let key = egui::Id::new(("fill_hint_layer", &cut.0));
+    let mut pick: Option<cmds::NodeId> = ui.data(|d| d.get_temp(key)).filter(|id: &cmds::NodeId| rasters.iter().any(|(r, _)| r == id));
+    // padrão: a camada raster com "dica" no nome, senão a primeira
+    if pick.is_none() {
+        pick = rasters.iter().find(|(_, n)| n.to_lowercase().contains("dica")).or(rasters.first()).map(|(id, _)| id.clone());
+    }
+    let mut run = false;
+    ui.horizontal_wrapped(|ui| {
+        let cur = rasters.iter().find(|(id, _)| Some(id) == pick.as_ref()).map(|(_, n)| n.clone()).unwrap_or_default();
+        let r = egui::ComboBox::from_id_salt(("fill_hints", &cut.0)).selected_text(cur).width(110.0).show_ui(ui, |ui| {
+            for (id, n) in &rasters {
+                if ui.selectable_label(Some(id) == pick.as_ref(), n).clicked() {
+                    pick = Some(id.clone());
+                }
+            }
+        });
+        env.note("opt:hint_layer", r.response.rect);
+        let b = ui.button(tr("opt.colorize_hints")).on_hover_text(tr("opt.colorize_hints.tip"));
+        env.note("opt:colorize_hints", b.rect);
+        run = b.clicked();
+    });
+    if let Some(id) = &pick {
+        ui.data_mut(|d| d.insert_temp(key, id.clone()));
+    }
+    if !run {
+        return;
+    }
+    let Some(hint) = pick else { return };
+    let Some(fill) = env.ed.active_layer(env.core).filter(|l| cmds::layer_data(&env.core.project, l).is_some_and(|d| d.kind == aiai_core::LayerType::Fill)) else {
+        env.ed.notify(tr("opt.colorize_hints.need_fill"));
+        return;
+    };
+    let r = crate::app::actions::run(env.core, "COLORIZE_HINTS", serde_json::json!({ "cut": cut, "frame": env.ed.frame, "fill_layer": fill, "hint_layer": hint, "gap": env.ed.opts.fill_gap }));
+    match r {
+        Ok(v) => env.ed.notify(tr("opt.colorize_hints.done").replace("{a}", &v["regions_from_hints"].to_string()).replace("{b}", &v["regions_from_neighbors"].to_string())),
+        Err(e) => env.ed.notify(e),
+    }
+}
+
 /// Miniatura 140×28 de cada preset: uma pincelada senoidal com pressão crescente desenhada pelo `paint_stroke`.
 pub(crate) fn brush_thumbnails(ctx: &egui::Context, presets: &[aiai_paint::brush::BrushPreset], bg: egui::Color32, ink: egui::Color32) -> Vec<egui::TextureHandle> {
     use aiai_paint::brush::{BrushPoint, paint_stroke};
@@ -513,6 +564,7 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
             if b.on_hover_text(tr("opt.lint.tip")).clicked() {
                 tools::run_lint(env);
             }
+            hints_row(env, ui);
             if let Some(msg) = &env.ed.lint_report {
                 ui.label(egui::RichText::new(msg).size(12.0).color(t.text_dim));
             }

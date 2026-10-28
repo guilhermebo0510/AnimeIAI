@@ -929,3 +929,48 @@ fn propagate_fills_paints_new_regions_by_inclusion() {
     let r = lint(&s.project, &s.blobs, &cut, 4, &fill, 3.0, 30).unwrap();
     assert!(r.unpainted.is_empty(), "nada sem cor: {:?}", r.unpainted);
 }
+
+#[test]
+fn colorize_by_hints_fills_regions_from_scribbles() {
+    // auditoria 4.7h: rabisco vermelho à esquerda, azul à direita; o quadradinho fechado dentro da esquerda não tem
+    // rabisco e herda o vermelho da vizinha; o fora do desenho fica sem cor
+    use aiai_paint::brush::BrushPreset;
+    use aiai_tools::hints::{ColorizeHintsRequest, colorize_hints_command};
+    use aiai_tools::paint::{PaintRequest, PaintStrokeSpec, paint_command};
+    let mut s = CoreSession::for_tests("dicas");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 320, "height": 200}}) }).unwrap();
+    let ep = create(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = create(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = create(&mut s, Some(&sc), "C", NodeKind::Cut(CutData::new(4)));
+    let fill = create(&mut s, Some(&cut), "cor", NodeKind::Layer(LayerData::new(LayerType::Fill)));
+    let hints = create(&mut s, Some(&cut), "dicas", NodeKind::Layer(LayerData::new(LayerType::Raster)));
+    let line = create(&mut s, Some(&cut), "linha", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+    for l in [&fill, &hints, &line] {
+        create(&mut s, Some(l), "1", NodeKind::Cel(CelData::new(1)));
+    }
+    s.apply(Command::SetProps { id: fill.clone(), name: None, data: json!({"line_refs": [line.0]}) }).unwrap();
+    let ink = ColorRef::Direct { rgba: Rgba::from_hex("#202020").unwrap() };
+    let curves = vec![
+        curve(&[[60.0, 50.0, 1.0], [260.0, 50.0, 1.0], [260.0, 150.0, 1.0], [60.0, 150.0, 1.0]], 3.0, &ink, true),
+        curve(&[[160.0, 30.0, 1.0], [160.0, 170.0, 1.0]], 3.0, &ink, false),
+        curve(&[[90.0, 80.0, 1.0], [120.0, 80.0, 1.0], [120.0, 110.0, 1.0], [90.0, 110.0, 1.0]], 2.0, &ink, true),
+    ];
+    s.apply(draw_command(&s.project, &DrawRequest { cut: cut.clone(), frame: 0, layer: line.clone(), curves, mirror_x: None }).unwrap()).unwrap();
+    // rabiscos soltos (sem cuidado com a linha)
+    for (pts, hex) in [(vec![vec![70.0, 130.0], vec![140.0, 135.0]], "#d02020"), (vec![vec![180.0, 70.0], vec![240.0, 120.0]], "#2040d0")] {
+        let req = PaintRequest { cut: cut.clone(), frame: 0, layer: hints.clone(), preset: BrushPreset::round("r", 8.0, 1.0), color: ColorRef::Direct { rgba: Rgba::from_hex(hex).unwrap() },
+            strokes: vec![PaintStrokeSpec { points: pts, smooth: false }], seed: 1 };
+        let c = paint_command(&s.project, &mut s.blobs, &req).unwrap();
+        s.apply(c).unwrap();
+    }
+    let req = ColorizeHintsRequest { cut: cut.clone(), frame: 0, fill_layer: fill.clone(), hint_layer: hints.clone(), gap: 3.0, spread: true, min_pixels: 3 };
+    let (cmd, info) = colorize_hints_command(&s.project, &mut s.blobs, &req).unwrap();
+    s.apply(cmd).unwrap();
+    assert_eq!((info["regions_from_hints"].as_u64(), info["regions_from_neighbors"].as_u64()), (Some(2), Some(1)), "{info}");
+    let img = render_frame(&s.project, &s.blobs, &cut, 0, &RenderOptions { only_layers: Some(vec![fill.clone()]), ..Default::default() }).unwrap().image;
+    let (left, right, square, outside) = (img.get(75, 70), img.get(210, 130), img.get(105, 95), img.get(20, 20));
+    assert!(left[0] > 0.6 && left[2] < 0.3, "esquerda vermelha {left:?}");
+    assert!(right[2] > 0.6 && right[0] < 0.3, "direita azul {right:?}");
+    assert!(square[0] > 0.6 && square[2] < 0.3, "o quadradinho herda o vermelho {square:?}");
+    assert!(outside[3] < 0.01, "fora sem cor {outside:?}");
+}

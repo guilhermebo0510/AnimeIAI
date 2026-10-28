@@ -22,6 +22,7 @@ pub mod fill_area;
 pub mod freeform;
 pub mod fx2d;
 pub mod anime_fx;
+pub mod hints;
 pub mod grad_tool;
 pub mod health;
 pub mod gradient_paint;

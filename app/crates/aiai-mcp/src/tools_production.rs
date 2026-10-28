@@ -28,6 +28,8 @@ Exemplo: {"layer":"<camada de cima>"}  ou  {"op":"selected","layers":["<a>","<b>
 const LINES_DESC: &str = r##"Linhas de velocidade (paralelas) ou de foco/concentração (集中線, convergindo num ponto) como traços vetoriais afinados na camada VETORIAL (editáveis; troque `seed` por quadro para "ferver"). `kind`: {type:"speed", angle (graus), area:[x,y,w,h]} ou {type:"focus", center:[x,y], clear:[rx,ry] (elipse livre no meio)}; `count` (até 2000), `length` [mín,máx] px, `width` [mín,máx] px, `color`, `seed`. Entra no undo. Confirme com aiai_render.
 Exemplo: {"cut":"<corte>","layer":"<vetorial>","kind":{"type":"focus","center":[960,540],"clear":[220,160]},"count":90,"length":[300,900],"width":[2,9],"color":{"type":"direct","rgba":[0,0,0,1]}}"##;
 
+const COLORIZE_HINTS_DESC: &str = r##"Colorir por dicas (sem IA): rabisque as cores, sem capricho, numa camada RASTER de dicas (`hint_layer`); cada região fechada pelas linhas da camada de cor (`fill_layer`, linhas do line_refs dela) ganha a cor mais presente entre os rabiscos que caem nela. `spread` (padrão true): regiões sem rabisco que encostam numa colorida herdam a cor da vizinha com mais borda em comum (o fora do desenho, que toca a borda do quadro, não). Vira um balde comum (um passo de desfazer). Devolve regions_from_hints e regions_from_neighbors. Exemplo: {"cut":"C","fill_layer":"cor","hint_layer":"dicas","frame":0}. Confirme com aiai_render."##;
+
 const ANIME_FX_DESC: &str = r##"Efeito de anime desenhado na camada RASTER (sobre o que já tem no cel do quadro), em formas chapadas de 2 a 3 tons: `kind` = {type:"fire", base:[x,y], height} (chama com línguas) | {type:"smoke", center:[x,y], radius, puffs:3, drift:[dx,dy]} (nuvens recortadas subindo) | {type:"lightning", from:[x,y], to:[x,y], width:10} (raio com galhos, brilho azul e miolo branco). `seed` muda o desenho; `phase` 0..1 é o momento do ciclo (chama tremula, fumaça sobe, raio muda): para animar, um cel por quadro com phase = quadro/ciclo. Entra no undo. Exemplo: {"cut":"C","layer":"FX","frame":0,"kind":{"type":"fire","base":[960,900],"height":400},"phase":0.25}. Confirme com aiai_render."##;
 
 const GAG_BG_DESC: &str = r##"Fundo de gag/choque/alegria na camada RASTER (cobre o canvas): `pattern` = {type:"radial_stripes", center, count, colors:["#rrggbb","#rrggbb"]} (faixas radiais) | {type:"dots", spacing, radius, color, background, angle} (retícula de pontos/screentone) | {type:"stripes", spacing, width, angle, colors:[a,b]} (listras) | {type:"flat", color}. Entra no undo. Confirme com aiai_render.
@@ -141,6 +143,7 @@ pub fn definitions() -> Vec<Value> {
         json!({ "name": "aiai_layer_merge", "description": LAYER_MERGE_DESC, "inputSchema": schema_of::<aiai_tools::layer_merge::LayerMergeRequest>() }),
         json!({ "name": "aiai_lines", "description": LINES_DESC, "inputSchema": schema_frame0::<fx2d::LinesRequest>() }),
         json!({ "name": "aiai_gag_bg", "description": GAG_BG_DESC, "inputSchema": schema_frame0::<fx2d::GagBgRequest>() }),
+        json!({ "name": "aiai_colorize_hints", "description": COLORIZE_HINTS_DESC, "inputSchema": schema_frame0::<aiai_tools::hints::ColorizeHintsRequest>() }),
         json!({ "name": "aiai_anime_fx", "description": ANIME_FX_DESC, "inputSchema": schema_frame0::<aiai_tools::anime_fx::AnimeFxRequest>() }),
         json!({ "name": "aiai_particles", "description": PARTICLES_DESC, "inputSchema": schema_of::<pt::ParticlesRequest>() }),
         json!({ "name": "aiai_guide3d", "description": GUIDE3D_DESC, "inputSchema": schema_frame0::<guide::Guide3dRequest>() }),
@@ -236,6 +239,7 @@ pub fn plan(name: &str, m: &Map<String, Value>) -> Option<Result<Plan, ToolError
         "aiai_lines" => with_req(&["cut", "layer", "kind", "count", "length", "width", "color"], "LINES", true),
         "aiai_gag_bg" => with_req(&["cut", "layer", "pattern"], "GAG_BG", true),
         "aiai_anime_fx" => with_req(&["cut", "layer", "kind"], "ANIME_FX", true),
+        "aiai_colorize_hints" => with_req(&["cut", "fill_layer", "hint_layer"], "COLORIZE_HINTS", true),
         "aiai_particles" => {
             required(m, &["layer"]).and_then(|_| {
                 if m.get("preset").is_none_or(Value::is_null) && m.get("system").is_none_or(Value::is_null) {
