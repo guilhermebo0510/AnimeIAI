@@ -414,6 +414,10 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
     if *env.tool != ToolId::Lasso && matches!(env.ed.gesture, Gesture::PolyLasso { .. }) {
         env.ed.gesture = Gesture::None;
     }
+    // amostras nativas da caneta deste quadro (pressão e inclinação de cada uma, borracha, botão lateral)
+    let native = crate::pen_native::drain();
+    let mut next_native = 0usize;
+    let phys = ui.ctx().pixels_per_point();
     for (idx, ev) in events.iter().enumerate() {
         match ev {
             Event::Touch { force: Some(f), phase, .. } => {
@@ -430,10 +434,22 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
             Event::PointerMoved(pos) => {
                 env.ed.cursor = Some(*pos);
                 // a pressão deste ponto vem do toque que chega logo depois (caneta: PointerMoved + Touch)
-                let pressure = events[idx + 1..events.len().min(idx + 3)].iter().find_map(|e| match e {
+                let mut pressure = events[idx + 1..events.len().min(idx + 3)].iter().find_map(|e| match e {
                     Event::Touch { force: Some(f), phase, .. } if *phase != egui::TouchPhase::End => Some(curve(env, *f)),
                     _ => None,
                 });
+                // a amostra nativa da mesma posição tem a pressão daquele instante (o winit repete a do último) e a
+                // inclinação
+                if let Some(k) = crate::pen_native::match_at(&native[next_native..], pos.x * phys, pos.y * phys) {
+                    let s = native[next_native + k];
+                    next_native += k + 1;
+                    env.ed.pen_seen = true;
+                    if s.in_contact || s.up {
+                        pressure = Some(curve(env, s.pressure));
+                        env.ed.pressure = pressure.unwrap_or(1.0);
+                    }
+                    env.ed.pen_tilt = env.ed.beh.prefs.pen_tilt.then_some(s.tilt);
+                }
                 on_move(env, rect, ppp, *pos, pressure.unwrap_or(env.ed.pressure));
             }
             Event::PointerButton { pos, button, pressed: true, .. } if matches!(env.ed.gesture, Gesture::PolyLasso { .. }) && over_canvas(ui, rect, *pos) => {
@@ -458,11 +474,36 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
                     if let Some(p) = touch_start_pressure(&events, idx) {
                         env.ed.pressure = curve(env, p);
                     }
+                    // caneta nativa: a pressão e a inclinação de quando encostou; ponta de borracha apaga e o botão lateral
+                    // pega a cor (a ferramenta volta ao soltar)
+                    if let Some(s) = native.iter().rev().find(|s| s.down).or(native.last()) {
+                        env.ed.pen_seen = true;
+                        env.ed.pressure = curve(env, s.pressure.max(0.02));
+                        env.ed.pen_tilt = env.ed.beh.prefs.pen_tilt.then_some(s.tilt);
+                        if *button == egui::PointerButton::Primary && env.ed.pen_restore.is_none() {
+                            let swap = if s.eraser {
+                                Some(ToolId::Eraser)
+                            } else if s.barrel && env.ed.beh.prefs.pen_barrel_picks {
+                                Some(ToolId::Eyedropper)
+                            } else {
+                                None
+                            };
+                            if let Some(t) = swap.filter(|t| *t != *env.tool) {
+                                env.ed.pen_restore = Some(*env.tool);
+                                *env.tool = t;
+                            }
+                        }
+                    }
                     on_press(env, rect, ppp, *pos, *button, *modifiers, space, r_held);
                 }
             }
             Event::PointerButton { pos, button, pressed: false, .. } => {
                 on_release(env, rect, ppp, *pos, *button);
+                if matches!(env.ed.gesture, Gesture::None) {
+                    if let Some(t) = env.ed.pen_restore.take() {
+                        *env.tool = t;
+                    }
+                }
                 if events.iter().any(|e| matches!(e, Event::Touch { phase: egui::TouchPhase::End | egui::TouchPhase::Cancel, .. })) {
                     env.ed.pressure = 1.0;
                 }
@@ -776,7 +817,10 @@ fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
             *last_angle = a;
             env.ed.view.rotate_by(d);
         }
-        Gesture::Stroke(g) => g.push(c, pressure),
+        Gesture::Stroke(g) => {
+            g.tilt = env.ed.pen_tilt;
+            g.push(c, pressure)
+        }
         Gesture::Select { start, pts, tool, .. } => match tool {
             t if t.is_path() => {
                 if pts.last().is_none_or(|l| (*l - c).length() * xf.scale >= 2.0) {
@@ -899,6 +943,7 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
         Gesture::Rotate { .. } => {}
         _ if button != egui::PointerButton::Primary => env.ed.gesture = g,
         Gesture::Stroke(mut g) => {
+            g.tilt = env.ed.pen_tilt;
             g.push(c, env.ed.pressure);
             tools::feed_live(env, &g);
             tools::finish_stroke(env, g, at);
@@ -1936,7 +1981,7 @@ mod tests {
             let mut p = BrushPreset::round("forma", 60.0, 1.0);
             p.tip = BrushTip::Shape { shape, aspect: 1.0 };
             let mut img = aiai_paint::Image::new(128, 128);
-            aiai_paint::brush::paint_stroke(&mut img, &p, &[aiai_paint::brush::BrushPoint { x: 64.0, y: 64.0, pressure: 1.0 }], [0.0, 0.0, 0.0, 1.0], 1);
+            aiai_paint::brush::paint_stroke(&mut img, &p, &[aiai_paint::brush::BrushPoint { x: 64.0, y: 64.0, pressure: 1.0, tilt: None }], [0.0, 0.0, 0.0, 1.0], 1);
             let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
             for y in 0..128u32 {
                 for x in 0..128u32 {

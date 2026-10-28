@@ -161,7 +161,7 @@ impl StrokeGesture {
         let keep = if self.tool == ToolId::Eraser { Some(p) } else { self.stab.feed_at(p, t) };
         if let Some(q) = keep {
             if self.samples.last().is_none_or(|l| (l.p - q).length() * self.screen_scale >= 0.4) {
-                self.samples.push(Sample { p: q, pressure: pressure.clamp(0.0, 1.0), t });
+                self.samples.push(Sample { p: q, pressure: pressure.clamp(0.0, 1.0), t, tilt: self.tilt });
             }
         }
     }
@@ -229,7 +229,7 @@ pub(crate) fn begin_stroke(env: &mut Env, tool: ToolId, p: Vec2, pressure: f32, 
     let inv = fwd.and_then(|a| a.inverse());
     let fwd = inv.and(fwd);
     let scale = scale * fwd.map(|a| a.0[0].hypot(a.0[3])).unwrap_or(1.0);
-    let mut g = StrokeGesture { tool, layer: t.layer, samples: Vec::new(), stab, t0: Instant::now(), hits: Vec::new(), path: Vec::new(), screen_scale: scale, fwd, inv, snap, moved_t: 0.0, moved_p: None };
+    let mut g = StrokeGesture { tool, layer: t.layer, samples: Vec::new(), stab, t0: Instant::now(), hits: Vec::new(), path: Vec::new(), screen_scale: scale, fwd, inv, snap, moved_t: 0.0, moved_p: None, tilt: env.ed.pen_tilt };
     g.push(p, pressure);
     Gesture::Stroke(Box::new(g))
 }
@@ -255,10 +255,11 @@ pub(crate) fn update_eraser_hits(env: &mut Env, g: &mut StrokeGesture) {
 pub(crate) fn finish_stroke(env: &mut Env, mut g: Box<StrokeGesture>, released_at: Instant) {
     let tail = g.stab.finish();
     let pressure = g.samples.last().map(|s| s.pressure).unwrap_or(1.0);
+    let tilt = g.samples.last().and_then(|s| s.tilt);
     for q in tail {
         if g.samples.last().is_none_or(|l| (l.p - q).length() * g.screen_scale >= 0.4) {
             let t = g.t0.elapsed().as_secs_f32();
-            g.samples.push(Sample { p: q, pressure, t });
+            g.samples.push(Sample { p: q, pressure, t, tilt });
         }
     }
     let Some(t) = target_for_commit(env, &g) else { return };
@@ -293,7 +294,7 @@ fn target_for_commit(env: &mut Env, g: &StrokeGesture) -> Option<Target> {
 }
 
 fn commit_pen(env: &mut Env, t: &Target, g: &StrokeGesture, released_at: Instant) {
-    let mut points: Vec<StrokePoint> = g.samples.iter().map(|s| StrokePoint { x: s.p.x, y: s.p.y, pressure: s.pressure, tilt: None, t: Some(s.t), corner: false, width: 1.0, id: 0, handle: None }).collect();
+    let mut points: Vec<StrokePoint> = g.samples.iter().map(|s| StrokePoint { x: s.p.x, y: s.p.y, pressure: s.pressure, tilt: s.tilt, t: Some(s.t), corner: false, width: 1.0, id: 0, handle: None }).collect();
     if points.is_empty() {
         return;
     }
@@ -516,7 +517,7 @@ pub(crate) fn sampled(stroke: &Stroke) -> (Vec<Vec2>, Vec<f32>) {
 
 /// O traço que a caneta gravaria com estes pontos agora (para a prévia durante o arrasto).
 pub(crate) fn pen_preview(env: &Env, g: &StrokeGesture) -> Option<Stroke> {
-    let mut points: Vec<StrokePoint> = g.samples.iter().map(|s| StrokePoint { x: s.p.x, y: s.p.y, pressure: s.pressure, tilt: None, t: Some(s.t), corner: false, width: 1.0, id: 0, handle: None }).collect();
+    let mut points: Vec<StrokePoint> = g.samples.iter().map(|s| StrokePoint { x: s.p.x, y: s.p.y, pressure: s.pressure, tilt: s.tilt, t: Some(s.t), corner: false, width: 1.0, id: 0, handle: None }).collect();
     if points.is_empty() {
         return None;
     }
@@ -560,8 +561,16 @@ fn ghost_color(env: &Env, alpha: f32) -> egui::Color32 {
 }
 
 /// Pontos do pincel a partir das amostras (~1,5 px entre eles, sempre com a última), com o tempo de cada um
-/// (`[x, y, pressão, t]`: o motor vê a velocidade). O commit, a prévia ao vivo e o calibrador usam esta mesma lista.
+/// (`[x, y, pressão, t]`: o motor vê a velocidade) e, com a caneta inclinada, a inclinação (`[x, y, pressão, t, tx,
+/// ty]`). O commit, a prévia ao vivo e o calibrador usam esta mesma lista.
 fn brush_points(samples: &[Sample]) -> Vec<Vec<f32>> {
+    if samples.iter().any(|s| s.tilt.is_some()) {
+        let raw: Vec<[f32; 6]> = samples.iter().map(|s| {
+            let t = s.tilt.unwrap_or([0.0, 0.0]);
+            [s.p.x, s.p.y, s.pressure, s.t, t[0], t[1]]
+        }).collect();
+        return tpaint::brush_points_from_samples(&raw);
+    }
     let raw: Vec<[f32; 4]> = samples.iter().map(|s| [s.p.x, s.p.y, s.pressure, s.t]).collect();
     tpaint::brush_points_from_samples(&raw)
 }
@@ -1404,7 +1413,7 @@ mod tests {
     fn erased_profile(o: &ToolOptions, brush: Option<BrushPreset>) -> Vec<f32> {
         let p = eraser_preset(o, brush);
         let mut img = aiai_paint::Image::filled(64, 64, [0.2, 0.3, 0.4, 1.0]);
-        aiai_paint::brush::paint_stroke(&mut img, &p, &[aiai_paint::brush::BrushPoint { x: 32.0, y: 32.0, pressure: 1.0 }], [0.0, 0.0, 0.0, 1.0], 1);
+        aiai_paint::brush::paint_stroke(&mut img, &p, &[aiai_paint::brush::BrushPoint { x: 32.0, y: 32.0, pressure: 1.0, tilt: None }], [0.0, 0.0, 0.0, 1.0], 1);
         (0..32).map(|i| 1.0 - img.get(32 + i, 32)[3]).collect()
     }
 
@@ -1441,7 +1450,7 @@ mod tests {
         let block = ToolOptions { eraser_size: 20.0, eraser_tip: EraserTip::Block, ..Default::default() };
         let p = eraser_preset(&block, None);
         let mut img = aiai_paint::Image::filled(64, 64, [0.2, 0.3, 0.4, 1.0]);
-        aiai_paint::brush::paint_stroke(&mut img, &p, &[aiai_paint::brush::BrushPoint { x: 32.0, y: 32.0, pressure: 1.0 }], [0.0, 0.0, 0.0, 1.0], 1);
+        aiai_paint::brush::paint_stroke(&mut img, &p, &[aiai_paint::brush::BrushPoint { x: 32.0, y: 32.0, pressure: 1.0, tilt: None }], [0.0, 0.0, 0.0, 1.0], 1);
         assert!(img.get(40, 40)[3] < 1e-3, "o canto do quadrado sai (a redonda deixaria)");
         assert!(img.get(43, 32)[3] > 0.999 && img.get(32, 43)[3] > 0.999, "nada além do lado de 20 px");
         let grass = presets().iter().find(|b| matches!(b.tip, aiai_paint::brush::BrushTip::Shape { shape: aiai_paint::brush::TipShape::GrassBlade, .. })).cloned().expect("pincel de grama");

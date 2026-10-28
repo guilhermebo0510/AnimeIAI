@@ -7,7 +7,7 @@ use aiai_paint::brush_dyn::{DynInput, Dynamics, Taper};
 
 fn line(x0: f32, x1: f32, y: f32, step: f32) -> Vec<BrushPoint> {
     let n = ((x1 - x0) / step).round() as usize;
-    (0..=n).map(|i| BrushPoint { x: x0 + (x1 - x0) * i as f32 / n as f32, y, pressure: 1.0 }).collect()
+    (0..=n).map(|i| BrushPoint { x: x0 + (x1 - x0) * i as f32 / n as f32, y, pressure: 1.0, tilt: None }).collect()
 }
 
 /// Soma do alfa na coluna `x` (largura da linha horizontal ali).
@@ -146,7 +146,7 @@ fn flat_nib_is_thin_one_way_and_wide_the_other() {
     let mut h = Image::new(200, 200);
     paint_stroke(&mut h, &fm, &line(40.0, 160.0, 100.0, 2.0), [0.0, 0.0, 0.0, 1.0], 1).unwrap();
     let mut v = Image::new(200, 200);
-    let vpath: Vec<BrushPoint> = line(40.0, 160.0, 100.0, 2.0).iter().map(|q| BrushPoint { x: q.y, y: q.x, pressure: 1.0 }).collect();
+    let vpath: Vec<BrushPoint> = line(40.0, 160.0, 100.0, 2.0).iter().map(|q| BrushPoint { x: q.y, y: q.x, pressure: 1.0, tilt: None }).collect();
     paint_stroke(&mut v, &fm, &vpath, [0.0, 0.0, 0.0, 1.0], 1).unwrap();
     let wh = width_at(&h, 100);
     let wv: f32 = (0..200).map(|x| v.get(x, 100)[3]).sum();
@@ -164,7 +164,7 @@ fn pixel_pen_draws_one_pixel_lines_without_doubled_steps() {
     assert!(px.is_pixel_pen());
     let mut img = Image::new(200, 100);
     // diagonal rasa: um pixel por coluna, só 0 ou 1
-    let path: Vec<BrushPoint> = (0..=60).map(|i| BrushPoint { x: 20.0 + i as f32 * 2.5, y: 20.0 + i as f32 * 1.0, pressure: 1.0 }).collect();
+    let path: Vec<BrushPoint> = (0..=60).map(|i| BrushPoint { x: 20.0 + i as f32 * 2.5, y: 20.0 + i as f32 * 1.0, pressure: 1.0, tilt: None }).collect();
     paint_stroke(&mut img, &px, &path, [0.0, 0.0, 0.0, 1.0], 1).unwrap();
     assert!(img.data.iter().all(|q| q[3] == 0.0 || q[3] == 1.0), "sem antisserrilhado");
     for x in 25..165 {
@@ -173,7 +173,7 @@ fn pixel_pen_draws_one_pixel_lines_without_doubled_steps() {
     }
     // diagonal de 45°: nenhum pixel com vizinho em L (degrau dobrado)
     let mut d = Image::new(100, 100);
-    let path: Vec<BrushPoint> = (0..=40).map(|i| BrushPoint { x: 10.3 + i as f32 * 1.7, y: 10.6 + i as f32 * 1.7, pressure: 1.0 }).collect();
+    let path: Vec<BrushPoint> = (0..=40).map(|i| BrushPoint { x: 10.3 + i as f32 * 1.7, y: 10.6 + i as f32 * 1.7, pressure: 1.0, tilt: None }).collect();
     paint_stroke(&mut d, &px, &path, [0.0, 0.0, 0.0, 1.0], 1).unwrap();
     let on = |x: i32, y: i32| x >= 0 && y >= 0 && x < 100 && y < 100 && d.get(x as u32, y as u32)[3] > 0.5;
     for y in 1..99 {

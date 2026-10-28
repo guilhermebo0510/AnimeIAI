@@ -6,7 +6,7 @@ use aiai_paint::brush_dyn::{Grain, GrainKind, Spray};
 
 fn line(x0: f32, x1: f32, y: f32, step: f32) -> Vec<BrushPoint> {
     let n = ((x1 - x0) / step).round() as usize;
-    (0..=n).map(|i| BrushPoint { x: x0 + (x1 - x0) * i as f32 / n as f32, y, pressure: 1.0 }).collect()
+    (0..=n).map(|i| BrushPoint { x: x0 + (x1 - x0) * i as f32 / n as f32, y, pressure: 1.0, tilt: None }).collect()
 }
 
 fn preset(name: &str) -> BrushPreset {

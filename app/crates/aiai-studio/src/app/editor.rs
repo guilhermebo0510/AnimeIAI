@@ -823,6 +823,8 @@ pub(crate) struct Sample {
     pub p: Vec2,
     pub pressure: f32,
     pub t: f32,
+    /// Inclinação da caneta (graus, X e Y), quando a caneta entrega (leitura nativa, `pen_native`).
+    pub tilt: Option<[f32; 2]>,
 }
 
 pub(crate) struct StrokeGesture {
@@ -845,6 +847,8 @@ pub(crate) struct StrokeGesture {
     /// Último instante (s desde `t0`) em que o cursor andou 1 pt ou mais: a forma rápida mede quanto tempo a caneta
     /// ficou parada antes de soltar.
     pub moved_t: f32,
+    /// Inclinação da caneta no ponto que vai entrar agora (o canvas põe antes de cada `push`).
+    pub tilt: Option<[f32; 2]>,
     /// Onde o cursor estava em `moved_t`.
     pub moved_p: Option<Vec2>,
 }
@@ -1074,6 +1078,11 @@ pub(crate) struct Editor {
     pub cursor_kind: String,
     /// Já chegou pressão de caneta nesta sessão (mostrado nas Preferências).
     pub pen_seen: bool,
+    /// Inclinação da caneta na última amostra nativa (graus); `None` com mouse.
+    pub pen_tilt: Option<[f32; 2]>,
+    /// Ferramenta a voltar quando a caneta for solta: a ponta de borracha (caneta virada) apaga e o botão lateral pega
+    /// a cor, como no Clip Studio, e depois volta a ferramenta que estava.
+    pub pen_restore: Option<crate::workspace::ToolId>,
     pub toast: Option<String>,
     pub pending_latency: Option<PendingLatency>,
     pub latency: Option<Latency>,
@@ -1214,6 +1223,8 @@ impl Default for Editor {
             beh: Default::default(),
             cursor_kind: String::new(),
             pen_seen: false,
+            pen_tilt: None,
+            pen_restore: None,
             toast: None,
             pending_latency: None,
             latency: None,

@@ -845,7 +845,7 @@ fn preview_texture(ctx: &egui::Context, p: &BrushPreset, bg: egui::Color32, ink:
     let path: Vec<BrushPoint> = (0..120)
         .map(|k| {
             let t = k as f32 / 119.0;
-            BrushPoint { x: 30.0 + t * (w as f32 - 60.0), y: h as f32 / 2.0 + 38.0 * (t * std::f32::consts::TAU).sin(), pressure: 0.15 + 0.85 * (t * std::f32::consts::PI).sin() }
+            BrushPoint { x: 30.0 + t * (w as f32 - 60.0), y: h as f32 / 2.0 + 38.0 * (t * std::f32::consts::TAU).sin(), pressure: 0.15 + 0.85 * (t * std::f32::consts::PI).sin(), tilt: None }
         })
         .collect();
     paint_stroke(&mut img, p, &path, c(ink), 11);

@@ -12,7 +12,7 @@ fn preset(name: &str) -> BrushPreset {
 fn line(x0: f32, x1: f32, y: f32, wave: f32) -> Vec<BrushPoint> {
     (0..80).map(|k| {
         let t = k as f32 / 79.0;
-        BrushPoint { x: x0 + (x1 - x0) * t, y: y + wave * (t * std::f32::consts::TAU).sin(), pressure: 0.7 + 0.3 * (t * std::f32::consts::PI).sin() }
+        BrushPoint { x: x0 + (x1 - x0) * t, y: y + wave * (t * std::f32::consts::TAU).sin(), pressure: 0.7 + 0.3 * (t * std::f32::consts::PI).sin(), tilt: None }
     }).collect()
 }
 
@@ -52,7 +52,7 @@ fn rose_and_cloud_have_two_tones_and_follow_the_brush_color() {
         big.spacing = 2.0;
         // a forma da ponta em si (o preset espalha rosas menores pelo spray desde o S25)
         big.spray = None;
-        paint_stroke(&mut sheet, &big, &[BrushPoint { x: 470.0 + 90.0 * k as f32, y: 140.0, pressure: 1.0 }], red, 9);
+        paint_stroke(&mut sheet, &big, &[BrushPoint { x: 470.0 + 90.0 * k as f32, y: 140.0, pressure: 1.0, tilt: None }], red, 9);
     }
     if let Ok(path) = std::env::var("AIAI_BRUSH_SHEET") {
         sheet.save_png(std::path::Path::new(&path)).unwrap();
@@ -68,7 +68,7 @@ fn rose_and_cloud_have_two_tones_and_follow_the_brush_color() {
     one.angle_jitter = 0.0;
     one.value_jitter = 0.0;
     one.spray = None;
-    paint_stroke(&mut img, &one, &[BrushPoint { x: 60.0, y: 60.0, pressure: 1.0 }], red, 1);
+    paint_stroke(&mut img, &one, &[BrushPoint { x: 60.0, y: 60.0, pressure: 1.0, tilt: None }], red, 1);
     let lum: Vec<f32> = img.data.iter().filter(|p| p[3] > 0.99).map(|p| luma(*p)).collect();
     assert!(lum.len() > 4000, "botão cheio, sem buracos: {} px", lum.len());
     let (lo, hi) = lum.iter().fold((f32::MAX, f32::MIN), |(a, b), &v| (a.min(v), b.max(v)));
@@ -130,7 +130,7 @@ fn ribbon_brush_runs_the_image_along_the_stroke() {
     p.ribbon = true;
     p.spacing = 0.1;
     p.size_pressure_min = 1.0;
-    let path: Vec<BrushPoint> = (0..=90).map(|k| BrushPoint { x: 20.0 + k as f32 * 4.0, y: 50.0, pressure: 1.0 }).collect();
+    let path: Vec<BrushPoint> = (0..=90).map(|k| BrushPoint { x: 20.0 + k as f32 * 4.0, y: 50.0, pressure: 1.0, tilt: None }).collect();
     let mut img = Image::new(400, 100);
     paint_stroke(&mut img, &p, &path, [0.2, 0.2, 0.8, 1.0], 1);
     let row: Vec<bool> = (30..370).map(|x| img.get(x, 50)[3] > 0.5).collect();

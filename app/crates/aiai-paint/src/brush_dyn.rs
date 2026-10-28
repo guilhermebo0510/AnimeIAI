@@ -138,14 +138,20 @@ impl Dynamics {
         Dynamics { pressure: Some(DynInput::linear(min)), ..Default::default() }
     }
 
-    /// Fator 0..1 sem o aleatório (entra no espaçamento entre carimbos).
+    /// Fator 0..1 sem o aleatório (entra no espaçamento entre carimbos), sem inclinação.
     pub fn base(&self, pressure: f32, velocity: f32) -> f32 {
+        self.base_tilt(pressure, velocity, None)
+    }
+
+    /// Como [`base`](Self::base), com quanto a caneta está deitada (0 em pé .. 1 deitada; `None` = mouse ou caneta sem
+    /// inclinação, e a entrada de inclinação não muda nada).
+    pub fn base_tilt(&self, pressure: f32, velocity: f32, tilt: Option<f32>) -> f32 {
         let mut f = 1.0;
         if let Some(p) = &self.pressure {
             f *= p.factor(pressure);
         }
-        if let Some(t) = &self.tilt {
-            f *= t.factor(0.0);
+        if let (Some(t), Some(amount)) = (&self.tilt, tilt) {
+            f *= t.factor(amount);
         }
         if let Some(v) = &self.velocity {
             f *= v.factor(velocity);
@@ -155,7 +161,12 @@ impl Dynamics {
 
     /// Fator 0..1 com o aleatório (`rnd` uniforme em 0..1).
     pub fn factor(&self, pressure: f32, velocity: f32, rnd: f32) -> f32 {
-        let mut f = self.base(pressure, velocity);
+        self.factor_tilt(pressure, velocity, None, rnd)
+    }
+
+    /// Como [`factor`](Self::factor), com a inclinação (ver [`base_tilt`](Self::base_tilt)).
+    pub fn factor_tilt(&self, pressure: f32, velocity: f32, tilt: Option<f32>, rnd: f32) -> f32 {
+        let mut f = self.base_tilt(pressure, velocity, tilt);
         if let Some(m) = self.random {
             let m = m.clamp(0.0, 1.0);
             f *= m + (1.0 - m) * rnd.clamp(0.0, 1.0);

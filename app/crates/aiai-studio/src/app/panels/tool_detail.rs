@@ -83,6 +83,7 @@ pub(crate) const PARAMS: &[Param] = &[
     prm("aa", "tprop.aa", Cat::AntiAlias),
     prm("tip_shape", "tprop.tip_shape", Cat::Shape),
     prm("follow", "tprop.follow", Cat::Shape),
+    prm("follow_tilt", "tprop.follow_tilt", Cat::Shape),
     prm("two_tone", "tprop.two_tone", Cat::Shape),
     prm("extra_tips", "tprop.extra_tips", Cat::Shape),
     prm("ribbon", "tprop.ribbon", Cat::Shape),
@@ -198,6 +199,9 @@ pub(crate) fn param_ui(ui: &mut Ui, e: &mut Edit, key: &str) -> bool {
         }
         "follow" => labeled(ui, e, prm.label, |ui, e| {
             ui.checkbox(&mut e.p.follow_direction, "").on_hover_text(tr("tprop.follow.tip"));
+        }),
+        "follow_tilt" => labeled(ui, e, prm.label, |ui, e| {
+            ui.checkbox(&mut e.p.follow_tilt, "").on_hover_text(tr("tprop.follow_tilt.tip"));
         }),
         "two_tone" => labeled(ui, e, prm.label, |ui, e| {
             let mut on = e.p.two_tone.is_some();
@@ -466,7 +470,8 @@ fn dyn_active(d: &Dynamics) -> bool {
     d.pressure.as_ref().is_some_and(|p| p.min < 0.999) || d.velocity.is_some() || d.random.is_some() || d.tilt.is_some()
 }
 
-/// Editor da dinâmica: pressão (mínimo e curva), velocidade (mínimo e curva; de fábrica, rápido afina) e aleatório.
+/// Editor da dinâmica: pressão (mínimo e curva), velocidade (mínimo e curva; de fábrica, rápido afina), inclinação da
+/// caneta (mínimo e curva) e aleatório.
 /// Sem dinâmica gravada, o mínimo antigo de pressão do preset vira o ponto de partida.
 fn dyn_editor(ui: &mut Ui, t: Tokens, dynamics: &mut Option<Dynamics>, legacy: Option<&mut f32>, salt: &str) {
     let legacy_min = legacy.as_ref().map(|m| **m).unwrap_or(1.0);
@@ -492,6 +497,17 @@ fn dyn_editor(ui: &mut Ui, t: Tokens, dynamics: &mut Option<Dynamics>, legacy: O
     if let Some(v) = &mut d.velocity {
         min_slider(ui, &mut v.min);
         curve_editor(ui, t, &mut v.curve, true, (salt, "velocity"));
+    }
+    ui.separator();
+    // inclinação da caneta (0 = em pé, 1 = deitada a 60°); com mouse não muda nada
+    let mut on = d.tilt.is_some();
+    ui.checkbox(&mut on, tr("tprop.dyn.tilt")).on_hover_text(tr("tprop.dyn.tilt.tip"));
+    if on != d.tilt.is_some() {
+        d.tilt = on.then(|| DynInput::linear(0.3));
+    }
+    if let Some(v) = &mut d.tilt {
+        min_slider(ui, &mut v.min);
+        curve_editor(ui, t, &mut v.curve, false, (salt, "tilt"));
     }
     ui.separator();
     // aleatório

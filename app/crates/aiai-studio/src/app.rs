@@ -147,6 +147,8 @@ impl StudioApp {
     pub fn new(cc: &eframe::CreationContext<'_>, cli: Cli) -> Self {
         // ícones pequeno e grande da janela, na grade de pixels e na variante do tema do Windows (brand.rs)
         crate::brand::init_window_icons(cc);
+        // caneta nativa: pressão e inclinação de cada amostra, borracha traseira e botão lateral (auditoria 4.1c–f)
+        crate::pen_native::install(cc);
         Self::build(&cc.egui_ctx, cli)
     }
 

@@ -326,6 +326,13 @@ impl StudioApp {
             });
         });
 
+        // inclinação e botões da caneta (leitura nativa do Windows Ink, auditoria 4.1d–e)
+        let r = ui.checkbox(&mut b.pen_tilt, tr("prefs.pen_tilt"));
+        self.rects.note("prefs:pen_tilt", r.rect);
+        let r = ui.checkbox(&mut b.pen_barrel_picks, tr("prefs.pen_barrel"));
+        self.rects.note("prefs:pen_barrel", r.rect);
+        hint(ui, t, "prefs.pen_eraser_end");
+
         section(ui, t, "prefs.sec.pressure_test");
         self.pressure_pad(ui, t, b.pen_pressure);
         self.set_behavior(b);

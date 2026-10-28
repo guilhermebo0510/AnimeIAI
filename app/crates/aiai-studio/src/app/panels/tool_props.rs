@@ -26,7 +26,7 @@ pub(crate) fn stroke_preview(ctx: &egui::Context, name: &str, p: &BrushPreset, b
     let path: Vec<BrushPoint> = (0..120)
         .map(|k| {
             let t = k as f32 / 119.0;
-            BrushPoint { x: 0.06 * w as f32 + t * 0.88 * w as f32, y: h as f32 / 2.0 + 0.26 * h as f32 * (t * std::f32::consts::TAU).sin(), pressure: 0.15 + 0.85 * (t * std::f32::consts::PI).sin() }
+            BrushPoint { x: 0.06 * w as f32 + t * 0.88 * w as f32, y: h as f32 / 2.0 + 0.26 * h as f32 * (t * std::f32::consts::TAU).sin(), pressure: 0.15 + 0.85 * (t * std::f32::consts::PI).sin(), tilt: None }
         })
         .collect();
     paint_stroke(&mut img, p, &path, c(ink), 11);

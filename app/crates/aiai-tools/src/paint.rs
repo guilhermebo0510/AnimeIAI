@@ -236,7 +236,7 @@ pub fn spline_segment(pts: &[BrushPoint], i: usize) -> Vec<BrushPoint> {
         let b2 = lerp(a2, a3, t1, t3, t);
         let c = lerp(b1, b2, t1, t2, t);
         let f = k as f32 / steps as f32;
-        out.push(BrushPoint { x: c.0, y: c.1, pressure: p1.pressure + (p2.pressure - p1.pressure) * f });
+        out.push(BrushPoint { x: c.0, y: c.1, pressure: p1.pressure + (p2.pressure - p1.pressure) * f, tilt: aiai_paint::brush::lerp_tilt(p1.tilt, p2.tilt, f) });
     }
     out
 }
@@ -268,7 +268,7 @@ pub fn spline_path_timed(pts: &[BrushPoint], times: &[f32]) -> (Vec<BrushPoint>,
 
 /// Pontos do pincel a partir das amostras da mão `[x, y, pressão, tempo]` (~1,5 px entre eles, sempre com a última):
 /// o motor de dab cuida do espaçamento fino. A ferramenta Pincel do app (commit e prévia) e o calibrador usam esta.
-pub fn brush_points_from_samples(samples: &[[f32; 4]]) -> Vec<Vec<f32>> {
+pub fn brush_points_from_samples<const N: usize>(samples: &[[f32; N]]) -> Vec<Vec<f32>> {
     let mut pts: Vec<Vec<f32>> = Vec::new();
     let mut last: Option<[f32; 2]> = None;
     for s in samples {
@@ -295,9 +295,28 @@ mod spline_tests {
     use super::*;
 
     #[test]
+    fn tilt_rides_along_the_timed_spline() {
+        // pontos [x, y, pressão, tempo, inclinação x, inclinação y] (caneta nativa do app)
+        let pts: Vec<Vec<f32>> = (0..6).map(|i| vec![i as f32 * 10.0, 0.0, 1.0, i as f32 * 0.01, i as f32 * 8.0, -(i as f32) * 4.0]).collect();
+        let out = brush_paths_timed(&[PaintStrokeSpec { points: pts, smooth: true }]).unwrap();
+        let (path, times) = &out[0];
+        assert!(times.is_some(), "continua com o tempo");
+        assert!(path.len() > 20);
+        assert_eq!(path[0].tilt, Some([0.0, 0.0]));
+        assert_eq!(path.last().unwrap().tilt, Some([40.0, -20.0]));
+        // no meio, a inclinação está entre as dos vizinhos e acompanha o x
+        let mid = path.iter().find(|p| (p.x - 25.0).abs() < 0.6).unwrap();
+        let t = mid.tilt.unwrap();
+        assert!((t[0] - 20.0).abs() < 1.5 && (t[1] + 10.0).abs() < 1.0, "{t:?}");
+        // sem inclinação (mouse) fica None
+        let plain = brush_paths_timed(&[PaintStrokeSpec { points: vec![vec![0.0, 0.0, 1.0, 0.0], vec![9.0, 0.0, 1.0, 0.01]], smooth: false }]).unwrap();
+        assert!(plain[0].0.iter().all(|p| p.tilt.is_none()));
+    }
+
+    #[test]
     fn centripetal_spline_does_not_overshoot_a_sharp_turn() {
         // trecho longo seguido de um curto com quina: a curva quase não sai da caixa dos pontos
-        let p = |x: f32, y: f32| BrushPoint { x, y, pressure: 1.0 };
+        let p = |x: f32, y: f32| BrushPoint { x, y, pressure: 1.0, tilt: None };
         let pts = [p(0.0, 0.0), p(200.0, 0.0), p(203.0, 3.0), p(203.0, 200.0)];
         let out = spline_path(&pts);
         let (mx, my) = out.iter().fold((f32::MIN, f32::MIN), |a, q| (a.0.max(q.x), a.1.max(q.y)));
@@ -459,9 +478,10 @@ pub fn brush_paths(strokes: &[PaintStrokeSpec]) -> ToolResult<Vec<Vec<BrushPoint
             .points
             .iter()
             .map(|q| match q.as_slice() {
-                [x, y] => Ok(BrushPoint { x: *x, y: *y, pressure: 1.0 }),
-                [x, y, pr] | [x, y, pr, _] => Ok(BrushPoint { x: *x, y: *y, pressure: pr.clamp(0.0, 1.0) }),
-                _ => Err(ToolError::Invalid("cada ponto é [x, y], [x, y, pressão] ou [x, y, pressão, tempo]".into())),
+                [x, y] => Ok(BrushPoint { x: *x, y: *y, pressure: 1.0, tilt: None }),
+                [x, y, pr] | [x, y, pr, _] => Ok(BrushPoint { x: *x, y: *y, pressure: pr.clamp(0.0, 1.0), tilt: None }),
+                [x, y, pr, _, tx, ty] => Ok(BrushPoint { x: *x, y: *y, pressure: pr.clamp(0.0, 1.0), tilt: Some([*tx, *ty]) }),
+                _ => Err(ToolError::Invalid("cada ponto é [x, y], [x, y, pressão], [x, y, pressão, tempo] ou [x, y, pressão, tempo, inclinação x, inclinação y]".into())),
             })
             .collect::<ToolResult<_>>()?;
         paths.push(if s.smooth { spline_path(&pts) } else { pts });
@@ -473,12 +493,12 @@ pub fn brush_paths(strokes: &[PaintStrokeSpec]) -> ToolResult<Vec<Vec<BrushPoint
 pub fn brush_paths_timed(strokes: &[PaintStrokeSpec]) -> ToolResult<Vec<(Vec<BrushPoint>, Option<Vec<f32>>)>> {
     let mut out = Vec::new();
     for s in strokes {
-        let timed = !s.points.is_empty() && s.points.iter().all(|q| q.len() == 4 && q[3].is_finite());
+        let timed = !s.points.is_empty() && s.points.iter().all(|q| (q.len() == 4 || q.len() == 6) && q[3].is_finite());
         if !timed {
             out.push((brush_paths(std::slice::from_ref(s))?.remove(0), None));
             continue;
         }
-        let pts: Vec<BrushPoint> = s.points.iter().map(|q| BrushPoint { x: q[0], y: q[1], pressure: q[2].clamp(0.0, 1.0) }).collect();
+        let pts: Vec<BrushPoint> = s.points.iter().map(|q| BrushPoint { x: q[0], y: q[1], pressure: q[2].clamp(0.0, 1.0), tilt: (q.len() == 6).then(|| [q[4], q[5]]) }).collect();
         let ts: Vec<f32> = s.points.iter().map(|q| q[3]).collect();
         let (p, t) = if s.smooth { spline_path_timed(&pts, &ts) } else { (pts, ts) };
         out.push((p, Some(t)));

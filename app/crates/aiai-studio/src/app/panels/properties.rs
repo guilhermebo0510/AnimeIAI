@@ -118,7 +118,7 @@ pub(crate) fn brush_thumbnails(ctx: &egui::Context, presets: &[aiai_paint::brush
             let path: Vec<BrushPoint> = (0..60)
                 .map(|k| {
                     let t = k as f32 / 59.0;
-                    BrushPoint { x: 16.0 + t * (w as f32 - 32.0), y: h as f32 / 2.0 + 10.0 * (t * std::f32::consts::TAU).sin(), pressure: 0.25 + 0.75 * (t * std::f32::consts::PI).sin() }
+                    BrushPoint { x: 16.0 + t * (w as f32 - 32.0), y: h as f32 / 2.0 + 10.0 * (t * std::f32::consts::TAU).sin(), pressure: 0.25 + 0.75 * (t * std::f32::consts::PI).sin(), tilt: None }
                 })
                 .collect();
             paint_stroke(&mut img, &q, &path, inkc, 7);

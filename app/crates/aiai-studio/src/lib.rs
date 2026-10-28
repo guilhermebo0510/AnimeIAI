@@ -16,6 +16,7 @@ pub mod icons;
 pub mod keymap;
 pub mod layout;
 pub mod layout_store;
+pub mod pen_native;
 pub mod prefs;
 pub mod splash;
 pub mod sysmem;

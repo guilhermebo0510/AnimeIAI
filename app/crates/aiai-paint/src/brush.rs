@@ -417,6 +417,10 @@ pub struct BrushPreset {
     /// A ponta gira seguindo a direção do traço.
     #[serde(default)]
     pub follow_direction: bool,
+    /// A ponta gira para o lado em que a caneta está deitada (azimute da inclinação; Clip Studio: "Direção da caneta").
+    /// Sem inclinação no ponto, vale a direção do traço (com `follow_direction`) ou 0.
+    #[serde(default)]
+    pub follow_tilt: bool,
     /// Jitter de matiz (0..1 da volta), saturação e valor (0..1).
     #[serde(default)]
     pub hue_jitter: f32,
@@ -622,6 +626,7 @@ impl BrushPreset {
             size_jitter: 0.0,
             angle_jitter: 0.0,
             follow_direction: false,
+            follow_tilt: false,
             hue_jitter: 0.0,
             saturation_jitter: 0.0,
             value_jitter: 0.0,
@@ -1626,6 +1631,24 @@ pub struct BrushPoint {
     pub y: f32,
     #[serde(default = "d_one")]
     pub pressure: f32,
+    /// Inclinação da caneta em graus (tiltX, tiltY de -90 a 90, como o Windows Ink entrega); `None` = mouse ou caneta
+    /// sem inclinação (as dinâmicas de inclinação não mexem no carimbo).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tilt: Option<[f32; 2]>,
+}
+
+/// Inclinação entre dois pontos (as duas precisam existir).
+pub fn lerp_tilt(a: Option<[f32; 2]>, b: Option<[f32; 2]>, f: f32) -> Option<[f32; 2]> {
+    match (a, b) {
+        (Some(a), Some(b)) => Some([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]),
+        (Some(a), None) => Some(a),
+        (None, b) => b,
+    }
+}
+
+/// Quanto a caneta está deitada, 0 (em pé) a 1 (60° ou mais, o máximo das mesas comuns).
+pub fn tilt_amount(t: [f32; 2]) -> f32 {
+    (t[0].hypot(t[1]) / 60.0).clamp(0.0, 1.0)
 }
 
 fn texture_value(t: &BrushTexture, x: f32, y: f32) -> f32 {
@@ -1821,6 +1844,8 @@ struct Dab {
     v: f32,
     /// Fator de afinamento já conhecido (entrada); a saída multiplica ao carimbar.
     taper: f32,
+    /// Inclinação da caneta neste dab (graus), interpolada entre os pontos.
+    tilt: Option<[f32; 2]>,
 }
 
 /// Traço de pincel em andamento, alimentado aos pedaços: guarda o buffer do traço (em tiles), o gerador aleatório, o
@@ -1950,7 +1975,7 @@ impl StrokeBuffer {
     fn push_point(&mut self, layer: Option<&Image>, p: BrushPoint, t: f32) {
         match self.prev {
             None => {
-                self.pending = Some(Dab { x: p.x, y: p.y, pr: p.pressure, dir: 0.0, s: 0.0, v: 0.0, taper: self.start_taper(0.0, 0.0) });
+                self.pending = Some(Dab { x: p.x, y: p.y, pr: p.pressure, dir: 0.0, s: 0.0, v: 0.0, taper: self.start_taper(0.0, 0.0), tilt: p.tilt });
                 if t.is_finite() {
                     self.speed.push(0.0, t);
                 }
@@ -2102,7 +2127,7 @@ impl StrokeBuffer {
                 self.emit(layer, d);
             }
             let s = self.travel + t;
-            let d = Dab { x: a.x + dx * f, y: a.y + dy * f, pr: a.pressure + (b.pressure - a.pressure) * f, dir, s, v, taper: self.start_taper(s, v) };
+            let d = Dab { x: a.x + dx * f, y: a.y + dy * f, pr: a.pressure + (b.pressure - a.pressure) * f, dir, s, v, taper: self.start_taper(s, v), tilt: lerp_tilt(a.tilt, b.tilt, f) };
             self.emit(layer, d);
         }
         self.travel += len;
@@ -2312,6 +2337,8 @@ impl StrokeBuffer {
             Some(t) => (if t.size { d.taper } else { 1.0 }, if t.opacity { d.taper } else { 1.0 }),
             None => (1.0, 1.0),
         };
+        // quanto a caneta está deitada neste dab (sem inclinação: as dinâmicas de inclinação ficam de fora)
+        let tm = d.tilt.map(tilt_amount);
         for _ in 0..preset.count {
             // Multi-Tip: a ponta deste carimbo
             if !tips.is_empty() {
@@ -2327,7 +2354,7 @@ impl StrokeBuffer {
             let mut size = match &preset.size_dyn {
                 Some(dy) => {
                     let rnd = self.dyn_rnd(dy, d.s, 1);
-                    preset.size * dy.factor(pr, v, rnd)
+                    preset.size * dy.factor_tilt(pr, v, tm, rnd)
                 }
                 None => preset.size * (preset.size_pressure_min + (1.0 - preset.size_pressure_min) * pr),
             };
@@ -2346,14 +2373,18 @@ impl StrokeBuffer {
                     px += preset.scatter * preset.size * 0.5 * self.rng.signed();
                 }
             }
-            let mut angle = if preset.follow_direction { dir } else { 0.0 };
+            let mut angle = match d.tilt.filter(|t| preset.follow_tilt && t[0].hypot(t[1]) > 1.0) {
+                Some(t) => t[1].atan2(t[0]).to_degrees(),
+                None if preset.follow_direction => dir,
+                None => 0.0,
+            };
             if preset.angle_jitter > 0.0 {
                 angle += preset.angle_jitter * self.rng.signed();
             }
             let thick = match &preset.thickness_dyn {
                 Some(dy) => {
                     let rnd = self.dyn_rnd(dy, d.s, 2);
-                    dy.factor(pr, v, rnd)
+                    dy.factor_tilt(pr, v, tm, rnd)
                 }
                 None => 1.0,
             };
@@ -2361,7 +2392,7 @@ impl StrokeBuffer {
             let mut dab_opacity = match &preset.opacity_dyn {
                 Some(dy) => {
                     let rnd = self.dyn_rnd(dy, d.s, 3);
-                    dy.factor(pr, v, rnd)
+                    dy.factor_tilt(pr, v, tm, rnd)
                 }
                 None => preset.opacity_pressure_min + (1.0 - preset.opacity_pressure_min) * pr,
             };
@@ -2369,7 +2400,7 @@ impl StrokeBuffer {
             let flow = match &preset.flow_dyn {
                 Some(dy) => {
                     let rnd = self.dyn_rnd(dy, d.s, 4);
-                    preset.flow * dy.factor(pr, v, rnd)
+                    preset.flow * dy.factor_tilt(pr, v, tm, rnd)
                 }
                 None => preset.flow * (preset.flow_pressure_min + (1.0 - preset.flow_pressure_min) * pr),
             };
@@ -2900,7 +2931,7 @@ mod tests {
     use super::*;
 
     fn line(n: usize) -> Vec<BrushPoint> {
-        (0..n).map(|i| BrushPoint { x: 20.0 + i as f32 * 4.0, y: 50.0, pressure: 1.0 }).collect()
+        (0..n).map(|i| BrushPoint { x: 20.0 + i as f32 * 4.0, y: 50.0, pressure: 1.0, tilt: None }).collect()
     }
 
     #[test]
@@ -2991,7 +3022,7 @@ mod tests {
             }
         }
         let sm = BrushPreset::defaults().into_iter().find(|p| p.name == "Borrador").unwrap();
-        let path: Vec<BrushPoint> = (0..40).map(|i| BrushPoint { x: 80.0 + i as f32 * 1.5, y: 60.0, pressure: 1.0 }).collect();
+        let path: Vec<BrushPoint> = (0..40).map(|i| BrushPoint { x: 80.0 + i as f32 * 1.5, y: 60.0, pressure: 1.0, tilt: None }).collect();
         paint_stroke(&mut img, &sm, &path, [0.5, 0.5, 0.5, 1.0], 1).unwrap();
         // logo depois da borda da tinta, as linhas continuam distintas (uma média daria roxo igual nas duas)
         let (x, red_row, blue_row) = (106, 60, 66);
@@ -3026,7 +3057,7 @@ mod tests {
             let path: Vec<BrushPoint> = (0..120)
                 .map(|i| {
                     let t = i as f32 / 119.0;
-                    BrushPoint { x: ox as f32 + 40.0 + t * 480.0, y: oy as f32 + rh as f32 / 2.0 + 14.0 * (t * 6.0).sin(), pressure: 0.3 + 0.7 * (t * 3.14).sin() }
+                    BrushPoint { x: ox as f32 + 40.0 + t * 480.0, y: oy as f32 + rh as f32 / 2.0 + 14.0 * (t * 6.0).sin(), pressure: 0.3 + 0.7 * (t * 3.14).sin(), tilt: None }
                 })
                 .collect();
             paint_stroke(&mut img, p, &path, [0.15, 0.35, 0.6, 1.0], 9);
@@ -3038,7 +3069,7 @@ mod tests {
     fn color_ramp_runs_along_the_stroke_length_and_feeds_in_chunks_the_same() {
         let mut p = BrushPreset::round("r", 10.0, 1.0);
         p.color_ramp = Some(ColorRamp { gradient: aiai_core::Gradient::from_colors(&[[1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0]], 0.0), length: 100.0 });
-        let path: Vec<BrushPoint> = (0..=40).map(|i| BrushPoint { x: 20.0 + i as f32 * 4.0, y: 50.0, pressure: 1.0 }).collect();
+        let path: Vec<BrushPoint> = (0..=40).map(|i| BrushPoint { x: 20.0 + i as f32 * 4.0, y: 50.0, pressure: 1.0, tilt: None }).collect();
         let mut a = Image::new(220, 100);
         paint_stroke(&mut a, &p, &path, [0.0, 1.0, 0.0, 1.0], 3).unwrap();
         let un = |q: [f32; 4]| [q[0] / q[3].max(1e-6), q[1] / q[3].max(1e-6), q[2] / q[3].max(1e-6)];

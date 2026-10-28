@@ -569,8 +569,9 @@ impl Incremental {
 
     fn region(&mut self, spec: &StartSpec, req: &Req) -> Option<aiai_tools::paint::PaintedRegion> {
         let pts: Vec<BrushPoint> = req.pts.iter().filter_map(|q| match q.as_slice() {
-            [x, y] => Some(BrushPoint { x: *x, y: *y, pressure: 1.0 }),
-            [x, y, pr] | [x, y, pr, _] => Some(BrushPoint { x: *x, y: *y, pressure: pr.clamp(0.0, 1.0) }),
+            [x, y] => Some(BrushPoint { x: *x, y: *y, pressure: 1.0, tilt: None }),
+            [x, y, pr] | [x, y, pr, _] => Some(BrushPoint { x: *x, y: *y, pressure: pr.clamp(0.0, 1.0), tilt: None }),
+            [x, y, pr, _, tx, ty] => Some(BrushPoint { x: *x, y: *y, pressure: pr.clamp(0.0, 1.0), tilt: Some([*tx, *ty]) }),
             _ => None,
         }).collect();
         let n = pts.len();

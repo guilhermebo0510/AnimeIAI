@@ -11,7 +11,7 @@ fn line(x0: f32, y0: f32, x1: f32, y1: f32, step: f32) -> Vec<BrushPoint> {
     let n = ((x1 - x0).hypot(y1 - y0) / step).round().max(1.0) as usize;
     (0..=n).map(|i| {
         let t = i as f32 / n as f32;
-        BrushPoint { x: x0 + (x1 - x0) * t, y: y0 + (y1 - y0) * t, pressure: 1.0 }
+        BrushPoint { x: x0 + (x1 - x0) * t, y: y0 + (y1 - y0) * t, pressure: 1.0, tilt: None }
     }).collect()
 }
 

@@ -517,7 +517,7 @@ pub fn render_thumbnail(preset: &BrushPreset) -> Result<Vec<u8>, String> {
     let path: Vec<BrushPoint> = (0..96)
         .map(|k| {
             let t = k as f32 / 95.0;
-            BrushPoint { x: 28.0 + t * (w as f32 - 56.0), y: h as f32 / 2.0 + 52.0 * (t * std::f32::consts::TAU).sin(), pressure: 0.2 + 0.8 * (t * std::f32::consts::PI).sin() }
+            BrushPoint { x: 28.0 + t * (w as f32 - 56.0), y: h as f32 / 2.0 + 52.0 * (t * std::f32::consts::TAU).sin(), pressure: 0.2 + 0.8 * (t * std::f32::consts::PI).sin(), tilt: None }
         })
         .collect();
     paint_stroke(&mut img, &q, &path, ink, 11);

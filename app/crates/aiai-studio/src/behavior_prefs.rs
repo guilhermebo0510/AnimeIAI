@@ -102,6 +102,10 @@ pub struct BehaviorPrefs {
     // ---- Tablet
     /// Liga a pressão da caneta (desligada, a caneta desenha como o mouse: pressão sempre cheia).
     pub pen_pressure: bool,
+    /// Usa a inclinação da caneta (pincéis com dinâmica de inclinação ou ponta que segue a inclinação).
+    pub pen_tilt: bool,
+    /// O botão lateral da caneta, apertado ao encostar, pega a cor (conta-gotas) enquanto estiver no traço.
+    pub pen_barrel_picks: bool,
     // ---- Cursor
     pub cursor_brush: CursorShape,
     pub cursor_pen: CursorShape,
@@ -144,6 +148,8 @@ impl Default for BehaviorPrefs {
             size_drag: true,
             size_drag_preview: true,
             pen_pressure: true,
+            pen_tilt: true,
+            pen_barrel_picks: true,
             cursor_brush: CursorShape::Tip,
             cursor_pen: CursorShape::Tip,
             cursor_eraser: CursorShape::Tip,

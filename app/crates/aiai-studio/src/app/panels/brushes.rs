@@ -508,7 +508,7 @@ fn ensure_thumbs(env: &mut Env, ui: &Ui) {
         let path: Vec<aiai_paint::brush::BrushPoint> = (0..40)
             .map(|k| {
                 let f = k as f32 / 39.0;
-                aiai_paint::brush::BrushPoint { x: 24.0 + f * (w as f32 - 48.0), y: h as f32 / 2.0 + 9.0 * (f * std::f32::consts::TAU).sin(), pressure: 1.0 }
+                aiai_paint::brush::BrushPoint { x: 24.0 + f * (w as f32 - 48.0), y: h as f32 / 2.0 + 9.0 * (f * std::f32::consts::TAU).sin(), pressure: 1.0, tilt: None }
             })
             .collect();
         aiai_paint::brush::paint_stroke(&mut img, p, &path, [0.0, 0.0, 0.0, 1.0], 3);

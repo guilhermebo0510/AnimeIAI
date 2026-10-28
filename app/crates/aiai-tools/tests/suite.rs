@@ -457,7 +457,7 @@ fn local_tile_painting_matches_full_canvas_painting() {
         // esperado: o motor no canvas inteiro
         let cd = match &s.project.node(&cel).unwrap().data { NodeKind::Cel(c) => c.clone(), _ => unreachable!() };
         let mut expect = cel_raster(&s.blobs, &cd, 900, 500).unwrap();
-        let path: Vec<BrushPoint> = pts.iter().map(|q| BrushPoint { x: q[0], y: q[1], pressure: q[2] }).collect();
+        let path: Vec<BrushPoint> = pts.iter().map(|q| BrushPoint { x: q[0], y: q[1], pressure: q[2], tilt: None }).collect();
         paint_stroke(&mut expect, &preset, &path, [0.1, 0.4, 0.2, 1.0], 11);
         // pelo comando (recorte nos tiles tocados)
         let req = PaintRequest { cut: cut.clone(), frame: 0, layer: rl.clone(), preset, color: ColorRef::Direct { rgba: Rgba([0.1, 0.4, 0.2, 1.0]) },

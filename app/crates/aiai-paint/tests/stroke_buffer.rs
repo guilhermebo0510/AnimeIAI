@@ -7,7 +7,7 @@ fn path() -> Vec<BrushPoint> {
     (0..240)
         .map(|k| {
             let t = k as f32 / 239.0;
-            BrushPoint { x: 30.0 + 540.0 * t, y: 160.0 + 90.0 * (t * 9.0).sin(), pressure: 0.3 + 0.7 * (t * 3.1).sin().abs() }
+            BrushPoint { x: 30.0 + 540.0 * t, y: 160.0 + 90.0 * (t * 9.0).sin(), pressure: 0.3 + 0.7 * (t * 3.1).sin().abs(), tilt: None }
         })
         .collect()
 }
