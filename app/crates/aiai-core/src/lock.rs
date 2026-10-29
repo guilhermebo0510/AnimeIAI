@@ -2,6 +2,10 @@
 //! abertura. Duas instâncias (app + MCP headless) anexando ao mesmo `wal.ndjson` intercalam o diário e quebram a
 //! recuperação; a trava avisa antes. É de cortesia (pasta de rede/nuvem não garante nada) e quem decide assumir é o
 //! usuário. Trava de processo que morreu (queda) é "velha" e é substituída sem perguntar.
+//!
+//! Pegar a trava é "conferir se está livre e gravar a nossa"; entre processos desta máquina essas duas etapas correm
+//! sob uma exclusão do sistema ([`AcqGuard`]), senão dois processos que conferem ao mesmo tempo achariam a trava livre e
+//! os dois ganhariam (CX15 C15-01).
 
 use crate::error::{CoreError, CoreResult};
 use serde::{Deserialize, Serialize};
@@ -110,15 +114,59 @@ impl ProjectLock {
     pub fn verify(&self) -> CoreResult<()> {
         match read_file(&self.file)? {
             Some(i) if i.token == self.info.token || (i.pid == std::process::id() && i.host == host_name()) => Ok(()),
-            None => write_lock(&self.file, &self.info),
+            None => {
+                // apagada por fora: regrava a nossa só se, sob a exclusão, ninguém pegou nesse meio-tempo
+                let _g = AcqGuard::take(&self.file)?;
+                match read_file(&self.file)? {
+                    None => write_lock(&self.file, &self.info),
+                    Some(i) if i.token == self.info.token => Ok(()),
+                    Some(i) => Err(CoreError::Locked(format!("outro processo assumiu o projeto ({})", i.describe()))),
+                }
+            }
             Some(i) => Err(CoreError::Locked(format!("outro processo assumiu o projeto ({})", i.describe()))),
         }
     }
 }
 
+/// Exclusão entre processos só enquanto se confere e grava uma trava: trava do sistema (`LockFileEx` no Windows,
+/// `flock` nos outros) num arquivo irmão `<trava>.acq`. O sistema a solta sozinho se o processo morrer, então ela nunca
+/// fica velha. O arquivo `.acq` fica na pasta: apagá-lo com outro processo esperando nele quebraria a exclusão.
+struct AcqGuard(std::fs::File);
+
+/// Quanto esperar por outro processo que está pegando a mesma trava (ele a segura por milissegundos).
+const ACQ_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+impl AcqGuard {
+    fn take(file: &Path) -> CoreResult<Self> {
+        let mut name = file.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+        name.push(".acq");
+        let path = file.with_file_name(name);
+        let f = std::fs::OpenOptions::new().create(true).write(true).truncate(false).open(&path).map_err(|e| CoreError::Io(format!("{}: {e}", path.display())))?;
+        let t0 = std::time::Instant::now();
+        loop {
+            match f.try_lock() {
+                Ok(()) => return Ok(AcqGuard(f)),
+                Err(std::fs::TryLockError::WouldBlock) if t0.elapsed() < ACQ_WAIT => std::thread::sleep(std::time::Duration::from_millis(5)),
+                Err(std::fs::TryLockError::WouldBlock) => {
+                    return Err(CoreError::Locked(format!("outro processo está pegando a trava {} há mais de {} s; tente de novo", file.display(), ACQ_WAIT.as_secs())));
+                }
+                Err(std::fs::TryLockError::Error(e)) => return Err(CoreError::Io(format!("{}: {e}", path.display()))),
+            }
+        }
+    }
+}
+
+impl Drop for AcqGuard {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+
 impl Drop for ProjectLock {
     fn drop(&mut self) {
-        // sem como devolver erro aqui: se não der para apagar, a próxima abertura vê o pid morto e trata como velha
+        // sem como devolver erro aqui: se não der para apagar, a próxima abertura vê o pid morto e trata como velha. Sob a
+        // exclusão, para não apagar a trava que outro acabou de gravar entre a leitura e a remoção.
+        let _g = AcqGuard::take(&self.file).ok();
         if read_file(&self.file).ok().flatten().is_some_and(|i| i.token == self.info.token) {
             let _ = std::fs::remove_file(&self.file);
         }
@@ -138,7 +186,12 @@ pub fn acquire(dir: &Path, take_over: bool) -> CoreResult<Result<Acquired, LockI
 }
 
 fn acquire_file(dir: &Path, file: &Path, take_over: bool) -> CoreResult<Result<Acquired, LockInfo>> {
-    let replaced = match inspect_file(file)? {
+    // conferir e gravar sob a exclusão: quem chega enquanto outro confere espera e depois vê a trava dele
+    let _g = AcqGuard::take(file)?;
+    let state = inspect_file(file)?;
+    #[cfg(test)]
+    tests::pause_after_inspect();
+    let replaced = match state {
         LockState::Free | LockState::Mine(_) => None,
         LockState::Stale(i) => Some(i),
         LockState::Held(i) if take_over => Some(i),
@@ -275,6 +328,128 @@ mod tests {
         drop(got);
         assert_eq!(read(&dir).unwrap().unwrap().token, "outro", "soltar a nossa não apaga a trava de outro");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn wait_for(p: &Path) {
+        let t0 = std::time::Instant::now();
+        while !p.exists() {
+            assert!(t0.elapsed() < std::time::Duration::from_secs(60), "esperando {}", p.display());
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    /// Gancho de teste em `acquire_file`: no processo filho da disputa (variável `AIAI_LOCK_SYNC`), a primeira aquisição
+    /// para logo depois de conferir a trava (ainda sem gravar) até o teste mandar seguir.
+    pub(super) fn pause_after_inspect() {
+        static ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        let Ok(sync) = std::env::var("AIAI_LOCK_SYNC") else { return };
+        if ONCE.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        let sync = PathBuf::from(sync);
+        std::fs::write(sync.join("inspected"), b"").unwrap();
+        wait_for(&sync.join("go"));
+    }
+
+    /// O outro processo da disputa (só roda chamado por `two_processes_racing_for_a_free_lock_only_one_wins`).
+    #[test]
+    #[ignore]
+    fn lock_contender_child() {
+        let Ok(sync) = std::env::var("AIAI_LOCK_SYNC") else { return };
+        let sync = PathBuf::from(sync);
+        let dir = PathBuf::from(std::env::var("AIAI_LOCK_DIR").unwrap());
+        let what = std::env::var("AIAI_LOCK_WHAT").unwrap();
+        let got = if what == "folder" { acquire(&dir, false) } else { acquire_cut(&dir, &crate::Id(what)) };
+        let got = got.unwrap().expect("o filho conferiu primeiro: a trava estava livre");
+        std::fs::write(sync.join("held"), &got.lock.info().token).unwrap();
+        wait_for(&sync.join("release"));
+        drop(got);
+        std::fs::write(sync.join("released"), b"").unwrap();
+    }
+
+    /// CX15 C15-01: dois processos disputam a mesma trava livre, sincronizados na aquisição: o filho confere (livre) e
+    /// para antes de gravar; este processo tenta pegar a mesma trava nesse instante. Só um ganha: o segundo espera, vê a
+    /// trava do primeiro e é recusado; pela sessão, a recusa não deixa mudança no projeto, no log, no histórico nem no
+    /// diário. Solta a primeira, a posse passa ao segundo. Vale para a trava da pasta e para a de um corte.
+    #[test]
+    fn two_processes_racing_for_a_free_lock_only_one_wins() {
+        use crate::command::Command;
+        use crate::model::*;
+        for what in ["folder", "cut"] {
+            let dir = tmp(&format!("race-{what}"));
+            let mut s = crate::session::CoreSession::for_tests("t");
+            let mk = |s: &mut crate::session::CoreSession, parent: Option<crate::Id>, name: &str, data: NodeKind| {
+                s.apply(Command::CreateNode { id: None, parent, index: None, name: name.into(), data }).unwrap().created[0].clone()
+            };
+            let ep = mk(&mut s, None, "EP", NodeKind::Episode(EpisodeData { number: 1 }));
+            let sc = mk(&mut s, Some(ep), "S", NodeKind::Scene(SceneData::default()));
+            let cut = mk(&mut s, Some(sc), "C001", NodeKind::Cut(CutData::new(24)));
+            let layer = mk(&mut s, Some(cut.clone()), "A", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+            let cel = mk(&mut s, Some(layer), "A1", NodeKind::Cel(CelData::new(1)));
+            s.apply(Command::SetProjectProps { patch: serde_json::json!({"settings": {"split_cuts": true}}) }).unwrap();
+            if what == "cut" {
+                // projeto dividido salvo: esta sessão tem a pasta; o filho disputa a trava do corte
+                crate::persist::save(&mut s, &dir).unwrap();
+            }
+            let sync = dir.join("sync");
+            std::fs::create_dir_all(&sync).unwrap();
+            let target = if what == "folder" { "folder".to_string() } else { cut.0.clone() };
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["lock::tests::lock_contender_child", "--exact", "--ignored", "--nocapture", "--test-threads=1"])
+                .env("AIAI_LOCK_SYNC", &sync)
+                .env("AIAI_LOCK_DIR", &dir)
+                .env("AIAI_LOCK_WHAT", &target)
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .unwrap();
+            wait_for(&sync.join("inspected"));
+            // o filho viu a trava livre e está parado antes de gravar: este processo tenta agora
+            let wal = dir.join(crate::persist::WAL_FILE);
+            let state = move |s: &crate::session::CoreSession| (serde_json::to_string(&s.project).unwrap(), s.log().len(), s.history(), std::fs::read(&wal).ok());
+            let before = state(&s);
+            let d2 = dir.clone();
+            let cel2 = cel.clone();
+            let contender = std::thread::spawn(move || {
+                // Some(texto do dono) = recusado; None = ganhou
+                let r: Option<String> = if what == "folder" {
+                    acquire(&d2, false).unwrap().err().map(|i| format!("pid {}", i.pid))
+                } else {
+                    match s.apply(Command::SetProps { id: cel2, name: Some("disputa".into()), data: serde_json::json!({}) }) {
+                        Err(CoreError::Locked(m)) => Some(m),
+                        Err(e) => panic!("{e}"),
+                        Ok(_) => None,
+                    }
+                };
+                (r, s)
+            });
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            assert!(!contender.is_finished(), "{what}: quem chega enquanto o outro confere espera a vez");
+            std::fs::write(sync.join("go"), b"").unwrap();
+            let (r, mut s) = contender.join().unwrap();
+            wait_for(&sync.join("held"));
+            let held = std::fs::read_to_string(sync.join("held")).unwrap();
+            let refused = r.unwrap_or_else(|| panic!("{what}: os dois processos ganharam a mesma trava"));
+            let file = if what == "folder" { dir.join(LOCK_FILE) } else { cut_lock_path(&dir, &cut) };
+            assert_eq!(read_file(&file).unwrap().unwrap().token, held, "{what}: a trava continua do primeiro");
+            if what == "folder" {
+                assert_eq!(refused, format!("pid {}", child.id()));
+            } else {
+                assert!(refused.contains("outro lugar"), "{refused}");
+                assert_eq!(state(&s), before, "a recusa não deixa mudança no projeto, no log, no histórico nem no diário");
+            }
+            // o primeiro solta: a posse passa ao segundo
+            std::fs::write(sync.join("release"), b"").unwrap();
+            wait_for(&sync.join("released"));
+            assert!(child.wait().unwrap().success());
+            if what == "folder" {
+                let got = acquire(&dir, false).unwrap().expect("solta, a trava passa ao segundo");
+                drop(got);
+            } else {
+                s.apply(Command::SetProps { id: cel, name: Some("depois".into()), data: serde_json::json!({}) }).unwrap();
+            }
+            drop(s);
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 
     /// Pid de um processo vivo que não é este: um filho que fica esperando enquanto o teste roda.
