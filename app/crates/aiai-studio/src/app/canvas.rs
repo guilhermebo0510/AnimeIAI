@@ -68,6 +68,7 @@ pub(crate) fn show_with_header(env: &mut Env, ui: &mut Ui, body: Rect, reserve: 
     }
     update_render(env, &ctx, &cut, canvas);
     super::ibp_ui::tick(env);
+    super::copilot_ui::tick(env, &ctx);
     super::anim::onion_frame(env, &ctx, &cut, canvas);
     super::text_tool::frame(env, &ctx);
 
@@ -114,6 +115,7 @@ pub(crate) fn show_with_header(env: &mut Env, ui: &mut Ui, body: Rect, reserve: 
     paint_canvas(env, &painter, rect, &xf, &cut, canvas, ppp);
     // prévia de intercalação: barra com Aceitar/Descartar/Atualizar (só com prévia viva neste corte)
     super::ibp_ui::bar(env, &ctx, rect, &cut);
+    super::copilot_ui::window(env, &ctx, rect);
     // S25: lançador da seleção (some enquanto se desenha) e Delete limpa a seleção
     super::sel_ops::launcher(env, &ctx, &xf, rect);
     super::sel_ops::shortcuts(env, &ctx, rect);
@@ -257,6 +259,15 @@ fn toolbar(env: &mut Env, ui: &mut Ui, has_cut: bool) {
         if env.ws == crate::workspace::WorkspaceId::Animacao && has_cut {
             sep(ui, &t);
             phase_bar(env, ui);
+        }
+        if has_cut {
+            sep(ui, &t);
+            let on = env.ed.copilot.on;
+            let r = ui.selectable_label(on, tr("copilot.title")).on_hover_text(tr("copilot.toggle.tip"));
+            env.note("canvas:copilot", r.rect);
+            if r.clicked() {
+                super::copilot_ui::set_on(env, !on);
+            }
         }
     });
 }
@@ -527,6 +538,10 @@ fn handle_input(env: &mut Env, ui: &Ui, rect: Rect, resp: &egui::Response, ppp: 
     }
     // linha fantasma da caneta (4.8e): Tab no meio do traço aceita a continuação; depois de soltar, troca pelo traço
     // sem tremido
+    // copiloto: Tab aceita os fantasmas à vista, Esc descarta (antes da linha fantasma da caneta)
+    if !matches!(env.ed.gesture, Gesture::Stroke(_)) {
+        super::copilot_ui::keys(env, ui);
+    }
     let tab = env.ed.opts.pen_ghost && *env.tool == ToolId::Pen && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab));
     if matches!(env.ed.gesture, Gesture::Stroke(_)) {
         super::tools::update_ghost(env, tab);
@@ -607,6 +622,10 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
     env.ed.beh.drag_armed = false;
     // Personagens > Consistência: com uma medida armada, o clique só marca a altura (não desenha)
     if button == egui::PointerButton::Primary && !space && !r_held && super::panels::characters::cons_pick(env, xf.to_canvas(pos).y) {
+        return;
+    }
+    // copiloto: alças das caixas e o modo "nova caixa" (não desenha)
+    if button == egui::PointerButton::Primary && !space && !r_held && super::copilot_ui::press(env, &xf, pos) {
         return;
     }
     // prévia de intercalação com "Corrigir pares": o clique escolhe traços de A e de B (não desenha)
@@ -776,6 +795,10 @@ fn on_press(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Pointe
 fn on_move(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, pressure: f32) {
     let xf = env.ed.view.xf(rect, ppp);
     let c = xf.to_canvas(pos);
+    // copiloto: arrastando uma caixa (criar, mover, redimensionar)
+    if super::copilot_ui::drag(env, &xf, pos) {
+        return;
+    }
     if let Some(sd) = env.ed.beh.size_drag {
         if let Some((_, range)) = tip_size(env, sd.tool) {
             let v = crate::behavior_prefs::size_from_drag(sd.start, pos.x - sd.origin.x, xf.scale, range);
@@ -932,6 +955,9 @@ fn on_release(env: &mut Env, rect: Rect, ppp: f32, pos: Pos2, button: egui::Poin
     let at = Instant::now();
     let xf = env.ed.view.xf(rect, ppp);
     let c = xf.to_canvas(pos);
+    if button == egui::PointerButton::Primary && super::copilot_ui::release(env, &xf, pos) {
+        return;
+    }
     if button == egui::PointerButton::Primary && env.ed.beh.size_drag.take().is_some() {
         return;
     }
@@ -1406,6 +1432,7 @@ fn paint_canvas(env: &mut Env, painter: &egui::Painter, rect: Rect, xf: &Xf, cut
     // prévia de intercalação (só visão): candidato, chaves finas e ligações dos pares
     let t_ibp = std::time::Instant::now();
     super::ibp_ui::paint(env, painter, xf, cut);
+    super::copilot_ui::paint(env, painter, xf, cut);
     if super::ibp_ui::current_here(env, cut) {
         env.ed.ibp.perf.push_paint(t_ibp.elapsed().as_secs_f32() * 1000.0);
     }

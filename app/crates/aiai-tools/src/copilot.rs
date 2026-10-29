@@ -143,10 +143,14 @@ fn spawn() -> ToolResult<Service> {
 
 /// Estado do serviço: "parado", "carregando" ou "pronto" (não bloqueia).
 pub fn service_state() -> &'static str {
-    match service().lock().ok().as_deref() {
-        Some(Some(s)) if s.ready => "pronto",
-        Some(Some(_)) => "carregando",
-        _ => "parado",
+    // sem esperar: com a trava presa, o serviço está atendendo um pedido
+    match service().try_lock() {
+        Ok(g) => match g.as_ref() {
+            Some(s) if s.ready => "pronto",
+            Some(_) => "carregando",
+            None => "parado",
+        },
+        Err(_) => "gerando",
     }
 }
 
@@ -230,10 +234,15 @@ fn layer_lines(p: &Project, blobs: &aiai_core::BlobStore, cut_id: &Id, layer: &I
     Ok(out)
 }
 
-/// Gera uma sugestão (bloqueia até o serviço responder; a interface chama isto numa thread).
-pub fn suggest(p: &Project, blobs: &aiai_core::BlobStore, req: &SuggestRequest) -> ToolResult<Suggestion> {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-    let t0 = Instant::now();
+/// O que a interface prepara (rápido, com o documento) para a thread de geração.
+pub struct Prepared {
+    pub req: SuggestRequest,
+    win: [u32; 4],
+    lines: image::GrayImage,
+}
+
+/// Parte 1 (com o documento, rápida): a janela de contexto e a linha da camada nela.
+pub fn prepare(p: &Project, blobs: &aiai_core::BlobStore, req: &SuggestRequest) -> ToolResult<Prepared> {
     let cut = cut_data(p, &req.cut)?;
     layer_data(p, &req.layer)?;
     let canvas = canvas_size(p, cut);
@@ -242,6 +251,20 @@ pub fn suggest(p: &Project, blobs: &aiai_core::BlobStore, req: &SuggestRequest) 
     }
     let win = context_window(req.rect, req.context.unwrap_or(2.0), canvas);
     let lines = layer_lines(p, blobs, &req.cut, &req.layer, req.frame, win)?;
+    Ok(Prepared { req: req.clone(), win, lines })
+}
+
+/// Gera uma sugestão (bloqueia até o serviço responder).
+pub fn suggest(p: &Project, blobs: &aiai_core::BlobStore, req: &SuggestRequest) -> ToolResult<Suggestion> {
+    finish(prepare(p, blobs, req)?)
+}
+
+/// Parte 2 (sem o documento, demorada: rode numa thread): gera, vetoriza, corta na caixa e separa.
+pub fn finish(prep: Prepared) -> ToolResult<Suggestion> {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let t0 = Instant::now();
+    let Prepared { req, win, lines } = prep;
+    let req = &req;
     let dir = std::env::temp_dir().join("aiai-copiloto");
     std::fs::create_dir_all(&dir).map_err(|e| ToolError::Invalid(format!("pasta temporária: {e}")))?;
     let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

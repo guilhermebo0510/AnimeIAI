@@ -1183,6 +1183,8 @@ pub(crate) struct Editor {
     pub anim: super::anim::AnimState,
     /// Prévia de intercalação de um quadro (R16): o estado da tela (a proposta mora na sessão).
     pub ibp: super::ibp_ui::IbpUi,
+    /// Copiloto de traço (protótipo): caixas, fila, fantasmas.
+    pub copilot: super::copilot_ui::CopilotUi,
     /// Fonte da entrada deste quadro por tipo: (ponteiro, Enter/Espaço que aciona botão em foco). Uma ação de clique
     /// grava a do ponteiro; um botão acionado pelo teclado, a do Enter/Espaço (R16 REQ-P03).
     pub input_src: (aiai_core::InputSource, aiai_core::InputSource),
@@ -1209,6 +1211,7 @@ impl Default for Editor {
             back_to_board: None,
             anim: Default::default(),
             ibp: Default::default(),
+            copilot: Default::default(),
             input_src: (aiai_core::InputSource::UiPlatformUnattributed, aiai_core::InputSource::UiPlatformUnattributed),
             rulers: Default::default(),
             m3d: Default::default(),

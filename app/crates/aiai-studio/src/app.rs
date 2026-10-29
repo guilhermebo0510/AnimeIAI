@@ -29,6 +29,7 @@ mod gpu_evict;
 mod gpu_owners;
 mod gradient_tool;
 mod ibp_ui;
+mod copilot_ui;
 mod input_queue;
 mod layer_merge;
 mod layer_thumbs;

@@ -246,6 +246,18 @@ pub(crate) fn finish_stroke(env: &mut Env, mut g: Box<StrokeGesture>, released_a
     let Some(t) = target_for_commit(env, &g) else { return };
     let before = env.core.change_counter;
     finish_commit(env, &t, &g, released_at);
+    // copiloto: um traço de caneta gravado põe a caixa onde ele caiu na fila
+    if g.tool == ToolId::Pen && env.core.change_counter != before && !g.samples.is_empty() {
+        let pts: Vec<Vec2> = g.samples.iter().map(|q| g.to_canvas(q.p)).collect();
+        let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for p in &pts {
+            x0 = x0.min(p.x);
+            y0 = y0.min(p.y);
+            x1 = x1.max(p.x);
+            y1 = y1.max(p.y);
+        }
+        super::copilot_ui::on_stroke(env, &t.cut, [x0, y0, x1 - x0, y1 - y0]);
+    }
     // gesto que não gravou nada (clique sem traço, erro): a camada criada sozinha para ele não fica para trás
     if let Some(c) = env.ed.auto_layer.take() {
         if env.core.change_counter == before && before == c && env.core.undo().is_ok() {
