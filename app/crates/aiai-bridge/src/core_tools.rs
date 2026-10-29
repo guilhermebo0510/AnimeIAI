@@ -34,7 +34,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 use std::path::Path;
 
-pub const TOOL_ACTIONS: &[&str] = &["RENDER", "DRAW_CURVES", "FILL", "LINT", "PAINT", "GRADIENT", "FIGURE", "TRANSFORM", "REPEAT", "ERASE_VECTOR", "BRUSH_PRESETS", "READ_POINTS", "EDIT_POINTS"];
+pub const TOOL_ACTIONS: &[&str] = &["RENDER", "DRAW_CURVES", "FILL", "LINT", "PAINT", "GRADIENT", "FIGURE", "TRANSFORM", "REPEAT", "ERASE_VECTOR", "BRUSH_PRESETS", "READ_POINTS", "EDIT_POINTS", "VECTORIZE"];
 
 /// Todas as ações de ferramenta de documento: as de aqui + as de [`crate::production_tools`].
 pub fn is_tool_action(action: &str) -> bool {
@@ -54,7 +54,7 @@ pub fn is_tool_action(action: &str) -> bool {
 
 /// Ações de ferramenta que mudam o documento.
 pub fn is_mutating_tool(action: &str) -> bool {
-    matches!(action, "DRAW_CURVES" | "FILL" | "PAINT" | "GRADIENT" | "FIGURE" | "TRANSFORM" | "REPEAT" | "ERASE_VECTOR" | "EDIT_POINTS") || crate::production_tools::is_mutating(action) || crate::preprod_tools::is_mutating(action) || crate::review_tools::is_mutating(action)
+    matches!(action, "DRAW_CURVES" | "FILL" | "PAINT" | "GRADIENT" | "FIGURE" | "TRANSFORM" | "REPEAT" | "ERASE_VECTOR" | "EDIT_POINTS" | "VECTORIZE") || crate::production_tools::is_mutating(action) || crate::preprod_tools::is_mutating(action) || crate::review_tools::is_mutating(action)
         || crate::satsuei_tools::is_mutating(action)
         || crate::preview_tools::is_mutating(action)
         || crate::audio_tools::is_mutating(action)
@@ -99,6 +99,14 @@ pub fn handle_tool_action(session: &mut CoreSession, action: &str, params: &Valu
         "DRAW_CURVES" => request::<DrawRequest>(params, "DRAW_CURVES").and_then(|r| {
             let cmd = draw_command(&session.project, &r).map_err(tool_error)?;
             apply(session, params, cmd)
+        }),
+        "VECTORIZE" => request::<aiai_tools::vectorize::VectorizeRequest>(params, "VECTORIZE").and_then(|r| {
+            let (cmd, report) = aiai_tools::vectorize::vectorize_command(&session.project, &session.blobs, &r).map_err(tool_error)?;
+            let mut out = apply(session, params, cmd)?;
+            if let (Some(o), Value::Object(e)) = (out.as_object_mut(), report) {
+                o.extend(e);
+            }
+            Ok(out)
         }),
         "FILL" => request::<FillRequest>(params, "FILL").and_then(|r| {
             let cmd = fill_command(&session.project, &mut session.blobs, &r).map_err(tool_error)?;

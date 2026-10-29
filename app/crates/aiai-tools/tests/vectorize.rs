@@ -346,3 +346,59 @@ fn bench_real_cels() {
     println!("tempo por cel: mediana {:.0} ms, máx {:.0} ms (maior janela {:?})", times[times.len() / 2], times[times.len() - 1], rows.iter().max_by_key(|r| r.4 * r.5).map(|r| (r.4, r.5)));
     println!("piores (95% de posição): {:?}", &worst[..worst.len().min(5)]);
 }
+
+/// O comando: imagem de arquivo → traços no cel exposto da camada vetorial, um passo de desfazer; fonte vetorial e
+/// camada de destino raster são recusadas.
+#[test]
+fn vectorize_command_puts_the_found_strokes_in_the_vector_cel() {
+    use aiai_core::command::CellEdit;
+    use aiai_core::*;
+    let mut s = CoreSession::for_tests("vet");
+    s.apply(Command::SetProjectProps { patch: serde_json::json!({"settings": {"width": W, "height": H}}) }).unwrap();
+    let mk = |s: &mut CoreSession, parent: Option<&Id>, name: &str, data: NodeKind| -> Id {
+        let id = s.ids.next();
+        s.apply(Command::CreateNode { id: Some(id.clone()), parent: parent.cloned(), index: None, name: name.into(), data }).unwrap();
+        id
+    };
+    let ep = mk(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = mk(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = mk(&mut s, Some(&sc), "C", NodeKind::Cut(CutData::new(4)));
+    let vec_l = mk(&mut s, Some(&cut), "V", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+    let ras_l = mk(&mut s, Some(&cut), "R", NodeKind::Layer(LayerData::new(LayerType::Raster)));
+    mk(&mut s, Some(&vec_l), "V1", NodeKind::Cel(CelData::new(1)));
+    mk(&mut s, Some(&ras_l), "R1", NodeKind::Cel(CelData::new(1)));
+    for (t, l) in [("tv", &vec_l), ("tr", &ras_l)] {
+        s.apply(Command::AddTrack { cut: cut.clone(), index: None, track: Track::new(Id::from(t), t, TrackKind::Drawing, Some(l.clone())) }).unwrap();
+        s.apply(Command::SetCells { cut: cut.clone(), track: Id::from(t), cells: vec![CellEdit { frame: 0, cell: Some(CellRef::Cel { number: 1 }) }] }).unwrap();
+    }
+    // a imagem: o rosto do teste acima, preto sobre branco
+    let head = stroke(&ellipse(200.0, 150.0, 90.0, 110.0, 24), VectorTip::GPen, 5.0, true);
+    let eye = stroke(&[(160.0, 130.0), (170.0, 120.0), (180.0, 130.0)], VectorTip::GPen, 3.0, false);
+    let (ink, _) = draw(&[head, eye]);
+    let mut img = image::RgbaImage::new(W, H);
+    for (i, v) in ink.iter().enumerate() {
+        let g = ((1.0 - v) * 255.0).round() as u8;
+        img.put_pixel(i as u32 % W, i as u32 / W, image::Rgba([g, g, g, 255]));
+    }
+    let path = std::env::temp_dir().join(format!("aiai-vet-{}.png", std::process::id()));
+    img.save(&path).unwrap();
+    let req = |layer: &Id, source: serde_json::Value| -> aiai_tools::vectorize::VectorizeRequest {
+        serde_json::from_value(serde_json::json!({"cut": cut, "frame": 0, "layer": layer, "source": source})).unwrap()
+    };
+    let src = serde_json::json!({"image": {"path": path.to_string_lossy(), "fit": "actual"}});
+    let (cmd, report) = aiai_tools::vectorize::vectorize_command(&s.project, &s.blobs, &req(&vec_l, src.clone())).unwrap();
+    assert_eq!(report["strokes"], 2, "{report}");
+    assert_eq!(report["closed"], 1);
+    let undo0 = s.history().0.len();
+    s.apply(cmd).unwrap();
+    assert_eq!(s.history().0.len(), undo0 + 1, "um passo de desfazer");
+    let cel = s.project.cel_by_number(&vec_l, 1).unwrap();
+    let NodeKind::Cel(cd) = &cel.data else { unreachable!() };
+    assert_eq!(cd.strokes.len(), 2);
+    // recusas
+    let e = aiai_tools::vectorize::vectorize_command(&s.project, &s.blobs, &req(&ras_l, src)).unwrap_err().to_string();
+    assert!(e.contains("vetorial"), "{e}");
+    let e = aiai_tools::vectorize::vectorize_command(&s.project, &s.blobs, &req(&vec_l, serde_json::json!({"layer": {"layer": vec_l}}))).unwrap_err().to_string();
+    assert!(e.contains("raster"), "{e}");
+    let _ = std::fs::remove_file(path);
+}

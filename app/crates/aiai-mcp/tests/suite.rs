@@ -169,7 +169,7 @@ fn stdio_protocol_initialize_list_and_headless_apply_query_undo() {
     let names: Vec<&str> = tool_list.iter().map(|t| t["name"].as_str().unwrap()).collect();
     for want in [
         "aiai_status", "aiai_apply", "aiai_query", "aiai_undo", "aiai_redo", "aiai_log", "aiai_project", "aiai_render", "aiai_compare", "aiai_screenshot", "aiai_input", "aiai_ui", "aiai_schema",
-        "aiai_draw_curves", "aiai_fill", "aiai_lint", "aiai_paint", "aiai_gradient", "aiai_figure", "aiai_transform", "aiai_repeat", "aiai_brush_presets",
+        "aiai_draw_curves", "aiai_fill", "aiai_lint", "aiai_paint", "aiai_gradient", "aiai_figure", "aiai_transform", "aiai_repeat", "aiai_brush_presets", "aiai_vectorize",
         "aiai_sky", "aiai_pattern_fill", "aiai_text", "aiai_lines", "aiai_gag_bg", "aiai_particles", "aiai_guide3d", "aiai_perspective", "aiai_model_sheet", "aiai_character_material", "aiai_consistency", "aiai_inbetween",
         "aiai_propagate_fills", "aiai_tts_line", "aiai_tts_kokoro", "aiai_voice_profile", "aiai_lipsync", "aiai_sfx", "aiai_bgm", "aiai_mix", "aiai_loudness", "aiai_probe_color",
         "aiai_measure_line", "aiai_measure_edge", "aiai_fill_shape", "aiai_edit", "aiai_export_video",
@@ -552,7 +552,7 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
     assert!(plan("aiai_zzz", json!({})).is_err());
     // o catálogo é uma lista estável de ferramentas, todas com plano
     let defs = tools::definitions();
-    assert_eq!(defs.as_array().unwrap().len(), 96);
+    assert_eq!(defs.as_array().unwrap().len(), 97);
     // todas as ferramentas de produção: descrição com exemplo de uma linha, schema de objeto, plano com a ação certa e frame 0 por padrão
     for t in defs.as_array().unwrap() {
         let n = t["name"].as_str().unwrap();
@@ -598,6 +598,7 @@ fn tool_arguments_are_validated_and_mapped_to_bridge_actions() {
         ("aiai_audio_analyze", json!({"asset": "a"}), "AUDIO_ANALYZE"),
         ("aiai_ruler", json!({"layer": "l", "op": "list"}), "RULER"),
         ("aiai_line_fix", json!({"cut": "c", "layer": "l", "op": "dust"}), "LINE_FIX"),
+        ("aiai_vectorize", json!({"cut": "c", "layer": "l", "source": {"image": {"path": "x.png"}}}), "VECTORIZE"),
         ("aiai_fill_area", json!({"cut": "c", "layer": "l", "mode": "enclose", "color": {"rgba": [1, 0, 0, 1]}, "path": [[0, 0], [9, 0], [9, 9]]}), "FILL_AREA"),
         ("aiai_model3d", json!({"op": "list"}), "MODEL3D"),
         ("aiai_modeling", json!({"op": "list"}), "MODELING"),

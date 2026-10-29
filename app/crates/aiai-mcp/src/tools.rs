@@ -39,6 +39,8 @@ const RENDER_DESC: &str = r##"Renderiza um quadro de um corte com o motor CPU re
 Parâmetros: cut (id do corte, obrigatório), frame (0-based, padrão 0), layers (ids; só estas camadas, ex.: só a linha), background ("#rrggbb": achata sobre cor opaca; sem isso o fundo é transparente), include_guides / include_reference (mostram camadas de guia/referência), camera (padrão true = tamanho do projeto com a câmera do corte; false = canvas inteiro do corte, sem câmera), size [largura, altura] (reduz o PNG), out (caminho .png dentro das pastas permitidas), inline (true = devolve a imagem mesmo com out; sem out a imagem sempre volta).
 Devolve {width, height, warnings, path?}: `warnings` lista o que NÃO foi desenhado (nunca ignore). Vários quadros numa imagem: aiai_render_sheet. `range` e backend gpu não existem aqui e dão erro claro."##;
 
+const VECTORIZE_DESC: &str = r##"VETORIZAR LINEART (Copiloto de traço, passo 1): lê linhas de uma imagem (arquivo, preto sobre branco ou sobre transparente) ou de uma camada RASTER do corte (`source`: {"image": {"path", "fit"}} ou {"layer": {"layer": id}}) e põe os traços pela LINHA CENTRAL, com a largura medida ponto a ponto, no cel exposto da camada VETORIAL `layer` no `frame`. Cruzamentos em X ficam como dois traços; esporões saem. `width_mode`: drawing (largura do desenho, padrão) | pen (todos com `width`, a ponta afina) | fixed (todos com `width`). `tip` e `color` como em aiai_draw_curves; `threshold` (tinta mínima 0..1, padrão 0,5), `simplify` (px, padrão 0,4), `min_length` (px, padrão 3). Um passo de undo. Devolve o Outcome + strokes, closed, ms. Confirme com aiai_render."##;
+
 const DRAW_DESC: &str = r##"Desenha curvas vetoriais (traços de linha) no cel exposto de uma camada VETORIAL no quadro dado. Entra no undo e aparece ao vivo no app. Devolve o Outcome (revision, created, can_undo/can_redo).
 GUIA RÁPIDO
 - Coordenadas são pixels do canvas do corte: origem no canto superior esquerdo, x para a direita, y PARA BAIXO. Rotação positiva é horária.
@@ -261,6 +263,11 @@ Só grava em pastas permitidas (AIAI_MCP_ALLOWED_DIRS; padrão producoes/, calib
             "inputSchema": schema_of::<aiai_tools::draw::DrawRequest>()
         },
         {
+            "name": "aiai_vectorize",
+            "description": VECTORIZE_DESC,
+            "inputSchema": schema_of::<aiai_tools::vectorize::VectorizeRequest>()
+        },
+        {
             "name": "aiai_fill",
             "description": FILL_DESC,
             "inputSchema": schema_of::<aiai_tools::fill::FillRequest>()
@@ -475,6 +482,10 @@ pub fn plan(name: &str, args: &Value) -> Result<Plan, ToolError> {
                 return Err(ToolError::invalid("'curves' deve ser uma lista não vazia de curvas {points, width, ...}"));
             }
             simple("DRAW_CURVES", with_frame(m))
+        }
+        "aiai_vectorize" => {
+            required(&m, &["cut", "layer", "source"])?;
+            simple("VECTORIZE", with_frame(m))
         }
         "aiai_fill" => {
             required(&m, &["cut", "layer", "seeds"])?;

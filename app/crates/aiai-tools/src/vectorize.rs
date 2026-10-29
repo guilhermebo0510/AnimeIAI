@@ -905,3 +905,131 @@ pub fn path_to_stroke(p: &InkPath, tip: VectorTip, color: ColorRef, scale: f32, 
         group: String::new(),
     }
 }
+
+/// Como a largura dos traços achados é decidida (Copiloto de traço, seção 6).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WidthMode {
+    /// A largura medida no desenho, ponto a ponto (padrão).
+    #[default]
+    Drawing,
+    /// Todos com `width`; a ponta da caneta decide o afinamento.
+    Pen,
+    /// Todos com `width`, sem variação.
+    Fixed,
+}
+
+/// De onde vem a lineart: um arquivo de imagem ou uma camada raster do mesmo corte (o cel exposto no quadro).
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum VectorizeSource {
+    /// Caminho absoluto; a imagem é ajustada ao canvas como na importação (`fit`).
+    Image {
+        path: String,
+        #[serde(default)]
+        fit: crate::import::ImageFit,
+    },
+    /// Camada raster: o cel exposto no `frame`.
+    Layer { layer: Id },
+}
+
+/// Pedido: vetorizar a lineart da fonte e pôr os traços no cel exposto da camada vetorial `layer` no `frame`.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+pub struct VectorizeRequest {
+    pub cut: Id,
+    #[serde(default)]
+    pub frame: u32,
+    /// Camada VETORIAL que recebe os traços.
+    pub layer: Id,
+    pub source: VectorizeSource,
+    #[serde(default)]
+    pub tip: VectorTip,
+    #[serde(default)]
+    pub color: ColorRef,
+    #[serde(default)]
+    pub width_mode: WidthMode,
+    /// Largura em px para `pen` e `fixed`.
+    #[serde(default)]
+    pub width: Option<f32>,
+    /// Tinta mínima 0..1 (padrão 0,5).
+    #[serde(default)]
+    pub threshold: Option<f32>,
+    /// Tolerância da simplificação em px (padrão 0,4).
+    #[serde(default)]
+    pub simplify: Option<f32>,
+    /// Caminhos abertos mais curtos que isto (px) saem (padrão 3).
+    #[serde(default)]
+    pub min_length: Option<f32>,
+}
+
+/// O comando que insere os traços achados e um resumo (quantos, tempo).
+pub fn vectorize_command(p: &aiai_core::Project, blobs: &aiai_core::BlobStore, req: &VectorizeRequest) -> crate::ToolResult<(aiai_core::Command, serde_json::Value)> {
+    use crate::context::*;
+    use crate::ToolError;
+    let cut = cut_data(p, &req.cut)?;
+    let target = layer_data(p, &req.layer)?;
+    if target.kind != aiai_core::LayerType::Vector {
+        return Err(ToolError::Invalid("a camada que recebe os traços precisa ser vetorial".into()));
+    }
+    if target.locked {
+        return Err(ToolError::Invalid("camada travada".into()));
+    }
+    let cel = exposed_cel(p, cut, &req.layer, req.frame).ok_or_else(|| ToolError::Invalid(format!("a camada não expõe nenhum cel no quadro {} (crie o cel e a célula do timesheet)", req.frame)))?;
+    let aiai_core::NodeKind::Cel(cd) = &cel.data else { unreachable!() };
+    let (w, h) = canvas_size(p, cut);
+    let rgba: image::RgbaImage = match &req.source {
+        VectorizeSource::Image { path, fit } => {
+            let img = crate::import::fitted_image(path, w, h, *fit)?;
+            to_rgba8(&img)
+        }
+        VectorizeSource::Layer { layer } => {
+            let l = layer_data(p, layer)?;
+            if l.kind != aiai_core::LayerType::Raster {
+                return Err(ToolError::Invalid("a fonte precisa ser uma camada raster (ou um arquivo de imagem)".into()));
+            }
+            let src = exposed_cel(p, cut, layer, req.frame).ok_or_else(|| ToolError::Invalid(format!("a camada fonte não expõe cel no quadro {}", req.frame)))?;
+            let aiai_core::NodeKind::Cel(sc) = &src.data else { unreachable!() };
+            let name = p.node(layer).map(|n| n.name.clone()).unwrap_or_default();
+            let (img, _) = aiai_render::compose::render_cel_image(p, blobs, sc, false, (w, h), &name);
+            to_rgba8(&img)
+        }
+    };
+    let mut o = VectorizeOptions::default();
+    if let Some(t) = req.threshold {
+        o.threshold = t.clamp(0.05, 0.95);
+    }
+    if let Some(s) = req.simplify {
+        o.simplify = s.clamp(0.0, 10.0);
+    }
+    if let Some(m) = req.min_length {
+        o.min_length = m.max(0.0);
+    }
+    let t0 = std::time::Instant::now();
+    let paths = vectorize(w, h, &ink_from_rgba(&rgba), &o);
+    let ms = t0.elapsed().as_secs_f32() * 1000.0;
+    if paths.is_empty() {
+        return Err(ToolError::Invalid("nenhuma linha achada na fonte (imagem vazia ou tinta abaixo do limiar)".into()));
+    }
+    let mut idx = cd.strokes.len();
+    let mut items = Vec::with_capacity(paths.len());
+    for path in &paths {
+        let mut s = path_to_stroke(path, req.tip, req.color.clone(), 1.0, [0.0, 0.0]);
+        if req.width_mode != WidthMode::Drawing {
+            s.width = req.width.unwrap_or(s.width).max(0.1);
+            for q in &mut s.points {
+                q.width = 1.0;
+            }
+        }
+        if req.width_mode == WidthMode::Fixed {
+            s.tip = VectorTip::Marker;
+        }
+        items.push(aiai_core::command::IndexedStroke { index: idx, stroke: s });
+        idx += 1;
+    }
+    let report = serde_json::json!({ "strokes": items.len(), "closed": paths.iter().filter(|p| p.closed).count(), "ms": ms.round(), "canvas": [w, h] });
+    Ok((aiai_core::Command::InsertStrokes { cel: cel.id.clone(), items }, report))
+}
+
+fn to_rgba8(img: &aiai_paint::Image) -> image::RgbaImage {
+    image::RgbaImage::from_raw(img.width, img.height, img.to_rgba8()).expect("tamanho da imagem")
+}
