@@ -49,5 +49,6 @@ pub mod production_history;
 pub mod production_stats;
 pub mod ruler;
 pub mod transform;
+pub mod vectorize;
 
 pub use context::{ToolError, ToolResult};
