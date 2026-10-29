@@ -100,6 +100,10 @@ pub struct CoreSession {
     lock: Option<crate::lock::ProjectLock>,
     /// Travas dos cortes que esta sessão editou (projeto dividido por corte, auditoria 4.6k).
     cut_locks: std::collections::BTreeMap<crate::Id, crate::lock::ProjectLock>,
+    /// Base de cada arquivo de corte: o caminho relativo e o hash do conteúdo que esta sessão leu ou gravou por último
+    /// (`None` = não existia). Pegar a trava de um corte confere que o disco ainda tem essa base: senão outro processo
+    /// salvou o corte depois e editar aqui gravaria por cima da versão nova (CX16 C16-04).
+    cut_bases: std::collections::BTreeMap<crate::Id, (String, Option<String>)>,
     /// Época do documento: única no processo, muda ao abrir/trocar o projeto (R16 REQ-D02: proposta de outra época
     /// não vale).
     document_epoch: u64,
@@ -139,6 +143,7 @@ impl CoreSession {
             dropped_since_gc: 0,
             lock: None,
             cut_locks: Default::default(),
+            cut_bases: Default::default(),
             document_epoch: next_epoch(),
             ext: Default::default(),
         }
@@ -206,41 +211,117 @@ impl CoreSession {
         self.cut_locks.clear();
     }
 
-    /// Projeto dividido com pasta: trava os cortes que o comando mexeu (a primeira edição de cada um). Corte travado
-    /// por outro processo = erro; sessão só de leitura (outro processo tem a pasta) só edita dentro de cortes.
-    fn claim_cuts_for(&mut self, affected: &[crate::Id]) -> CoreResult<()> {
-        if !self.project.settings.split_cuts {
+    /// Troca as travas de corte de uma vez (Salvar como: as da pasta nova entram, as da antiga saem; CX16 C16-03).
+    pub(crate) fn replace_cut_locks(&mut self, locks: std::collections::BTreeMap<crate::Id, crate::lock::ProjectLock>) {
+        self.cut_locks = locks;
+    }
+
+    pub(crate) fn cut_lock(&self, cut: &crate::Id) -> Option<&crate::lock::ProjectLock> {
+        self.cut_locks.get(cut)
+    }
+
+    /// Registra a base de um arquivo de corte (lido ao abrir, gravado ao salvar).
+    pub(crate) fn set_cut_base(&mut self, cut: crate::Id, rel: String, hash: Option<String>) {
+        self.cut_bases.insert(cut, (rel, hash));
+    }
+
+    pub(crate) fn clear_cut_bases(&mut self) {
+        self.cut_bases.clear();
+    }
+
+    /// Cortes e nós de fora dos cortes que o comando mexe, olhando o projeto de ANTES dele (CX16 C16-11): apagar e mover
+    /// tiram nós do corte de origem, e depois do comando o projeto já não sabe de onde eles saíram.
+    fn pre_domain(&self, c: &Command) -> (std::collections::BTreeSet<crate::Id>, bool) {
+        fn walk(p: &crate::Project, c: &Command, cuts: &mut std::collections::BTreeSet<crate::Id>, global: &mut bool) {
+            let mut mark = |id: &crate::Id| {
+                if p.nodes.contains_key(id) {
+                    match p.cut_of(id) {
+                        Some(cut) => {
+                            cuts.insert(cut);
+                        }
+                        None => *global = true,
+                    }
+                }
+            };
+            match c {
+                Command::DeleteNode { id } => {
+                    mark(id);
+                    for d in p.subtree(id) {
+                        mark(&d);
+                    }
+                }
+                Command::MoveNode { id, .. } => mark(id),
+                Command::Batch { commands, .. } => commands.iter().for_each(|c| walk(p, c, cuts, global)),
+                _ => {}
+            }
+        }
+        let (mut cuts, mut global) = (Default::default(), false);
+        walk(&self.project, c, &mut cuts, &mut global);
+        (cuts, global)
+    }
+
+    /// O arquivo do corte no disco ainda é a base que esta sessão conhece?
+    fn check_cut_base(&self, dir: &std::path::Path, cut: &crate::Id) -> CoreResult<()> {
+        let (rel, base) = match self.cut_bases.get(cut) {
+            Some((rel, h)) => (rel.clone(), h.clone()),
+            None => (format!("{}/{}.json", crate::lock::CUTS_DIR, crate::lock::cut_file_stem(cut)), None),
+        };
+        let disk = match crate::persist::retry_io(|| std::fs::read(dir.join(&rel))) {
+            Ok(b) => Some(crate::blob::BlobHash::of(&b).0),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(CoreError::Io(format!("{rel}: {e}"))),
+        };
+        if disk == base {
             return Ok(());
         }
-        let Some(dir) = self.path.clone() else { return Ok(()) };
-        let read_only = self.lock.is_none() && matches!(crate::lock::inspect(&dir), Ok(crate::lock::LockState::Held(_)));
+        let name = self.project.nodes.get(cut).map(|n| n.name.clone()).unwrap_or_else(|| cut.0.clone());
+        Err(CoreError::Locked(format!(
+            "o corte {name} foi salvo em outro lugar depois que esta sessão o leu; feche e abra o projeto de novo para trabalhar na versão nova (nada foi mudado)"
+        )))
+    }
+
+    /// Projeto dividido com pasta: trava os cortes que o comando mexeu (a primeira edição de cada um). Corte travado
+    /// por outro processo = erro; sessão só de leitura (outro processo tem a pasta) só edita dentro de cortes.
+    fn claim_cuts_for(&mut self, affected: &[crate::Id], pre: &(std::collections::BTreeSet<crate::Id>, bool)) -> CoreResult<std::collections::BTreeSet<crate::Id>> {
         let mut cuts = std::collections::BTreeSet::new();
+        if !self.project.settings.split_cuts {
+            return Ok(cuts);
+        }
+        let Some(dir) = self.path.clone() else { return Ok(cuts) };
+        let read_only = self.lock.is_none() && matches!(crate::lock::inspect(&dir), Ok(crate::lock::LockState::Held(_)));
+        let outside = || CoreError::Locked("outro processo tem o projeto aberto: aqui só dá para editar dentro de um corte (o resto fica com ele)".into());
+        // o que o comando tirou de cortes (apagar, mover) conta como edição desses cortes; nó de fora dos cortes, como
+        // edição global
+        cuts.extend(pre.0.iter().cloned());
+        if read_only && pre.1 {
+            return Err(outside());
+        }
         for id in affected {
             match self.project.cut_of(id) {
                 Some(c) => {
                     cuts.insert(c);
                 }
-                None if read_only && self.project.nodes.contains_key(id) => {
-                    return Err(CoreError::Locked("outro processo tem o projeto aberto: aqui só dá para editar dentro de um corte (o resto fica com ele)".into()));
-                }
+                None if read_only && self.project.nodes.contains_key(id) => return Err(outside()),
                 None => {}
             }
         }
-        for c in cuts {
-            if self.cut_locks.contains_key(&c) {
+        for c in &cuts {
+            if self.cut_locks.contains_key(c) {
                 continue;
             }
-            match crate::lock::acquire_cut(&dir, &c)? {
+            match crate::lock::acquire_cut(&dir, c)? {
                 Ok(a) => {
-                    self.cut_locks.insert(c, a.lock);
+                    // posse nova: o disco ainda tem a versão que esta sessão leu? (senão a trava sai com `a`)
+                    self.check_cut_base(&dir, c)?;
+                    self.cut_locks.insert(c.clone(), a.lock);
                 }
                 Err(owner) => {
-                    let name = self.project.nodes.get(&c).map(|n| n.name.clone()).unwrap_or_else(|| c.0.clone());
+                    let name = self.project.nodes.get(c).map(|n| n.name.clone()).unwrap_or_else(|| c.0.clone());
                     return Err(CoreError::Locked(format!("o corte {name} está sendo editado em outro lugar ({})", owner.describe())));
                 }
             }
         }
-        Ok(())
+        Ok(cuts)
     }
 
     /// Fechamento limpo: solta a trava da pasta (o `project.lock` desta abertura sai do disco).
@@ -261,6 +342,7 @@ impl CoreSession {
             }
         }
         command.resolve_ids(&mut self.ids);
+        let pre = self.pre_domain(&command);
         let revision = self.project.revision + 1;
         // a proveniência de todos os nós antes do comando, sempre que ele ainda pode voltar depois de aplicado (diário,
         // validação completa, trava de corte): toda volta a devolve exata, inclusive de nós apagados e recriados e de nós
@@ -281,17 +363,20 @@ impl CoreSession {
         }
         // projeto dividido por corte: o corte mexido fica travado para esta sessão (ou o comando volta, se outro processo
         // está com ele)
-        if let Err(e) = self.claim_cuts_for(&applied.affected) {
-            let ctx = ApplyCtx { blobs: &self.blobs, author, revision };
-            applied.inverse.apply(&mut self.project, &ctx).expect("inverso deve restaurar");
-            self.restore_provenance(prior);
-            return Err(e);
-        }
+        let cuts = match self.claim_cuts_for(&applied.affected, &pre) {
+            Ok(c) => c,
+            Err(e) => {
+                let ctx = ApplyCtx { blobs: &self.blobs, author, revision };
+                applied.inverse.apply(&mut self.project, &ctx).expect("inverso deve restaurar");
+                self.restore_provenance(prior);
+                return Err(e);
+            }
+        };
         self.project.revision = revision;
         self.change_counter += 1;
         let description = applied.command.description();
         let outcome = Outcome { revision, description: description.clone(), created: applied.created.clone(), affected: applied.affected.clone() };
-        if let Err(e) = self.record("apply", &description, author, Some(applied.command.clone())) {
+        if let Err(e) = self.record("apply", &description, author, Some(applied.command.clone()), &cuts) {
             // sem diário não há passo: o comando volta, a revisão também e a proveniência dos nós mexidos volta ao valor
             // exato de antes (nada aplicado sem o seu desfazer, nenhum autor inventado)
             let ctx = ApplyCtx { blobs: &self.blobs, author, revision: revision - 1 };
@@ -338,6 +423,7 @@ impl CoreSession {
         let a = self.undo.pop().ok_or(CoreError::NothingToUndo)?;
         let author = self.author.clone();
         let revision = self.project.revision + 1;
+        let pre = self.pre_domain(&a.inverse);
         let prior = self.provenance_snapshot();
         let r = {
             let ctx = ApplyCtx { blobs: &self.blobs, author: &author, revision };
@@ -350,18 +436,21 @@ impl CoreSession {
             }
         };
         // desfazer num corte também é editar o corte: a mesma barreira da trava que aplicar, antes de gravar (CX14 C14-01)
-        if let Err(e) = self.claim_cuts_for(&r.affected) {
-            let ctx = ApplyCtx { blobs: &self.blobs, author: &author, revision };
-            r.inverse.apply(&mut self.project, &ctx).expect("refazer deve restaurar");
-            self.restore_provenance(prior);
-            self.undo.push(a);
-            return Err(e);
-        }
+        let cuts = match self.claim_cuts_for(&r.affected, &pre) {
+            Ok(c) => c,
+            Err(e) => {
+                let ctx = ApplyCtx { blobs: &self.blobs, author: &author, revision };
+                r.inverse.apply(&mut self.project, &ctx).expect("refazer deve restaurar");
+                self.restore_provenance(prior);
+                self.undo.push(a);
+                return Err(e);
+            }
+        };
         self.project.revision = revision;
         self.change_counter += 1;
         let description = format!("Desfazer: {}", a.command.description());
         let outcome = Outcome { revision, description: description.clone(), created: r.created.clone(), affected: r.affected.clone() };
-        if let Err(e) = self.record("undo", &description, &author, Some(a.inverse.clone())) {
+        if let Err(e) = self.record("undo", &description, &author, Some(a.inverse.clone()), &cuts) {
             let ctx = ApplyCtx { blobs: &self.blobs, author: &author, revision: revision - 1 };
             r.inverse.apply(&mut self.project, &ctx).expect("refazer deve restaurar");
             self.restore_provenance(prior);
@@ -378,6 +467,7 @@ impl CoreSession {
         let a = self.redo.pop().ok_or(CoreError::NothingToRedo)?;
         let author = self.author.clone();
         let revision = self.project.revision + 1;
+        let pre = self.pre_domain(&a.command);
         let prior = self.provenance_snapshot();
         let r = {
             let ctx = ApplyCtx { blobs: &self.blobs, author: &author, revision };
@@ -389,18 +479,21 @@ impl CoreSession {
                 }
             }
         };
-        if let Err(e) = self.claim_cuts_for(&r.affected) {
-            let ctx = ApplyCtx { blobs: &self.blobs, author: &author, revision };
-            r.inverse.apply(&mut self.project, &ctx).expect("desfazer deve restaurar");
-            self.restore_provenance(prior);
-            self.redo.push(a);
-            return Err(e);
-        }
+        let cuts = match self.claim_cuts_for(&r.affected, &pre) {
+            Ok(c) => c,
+            Err(e) => {
+                let ctx = ApplyCtx { blobs: &self.blobs, author: &author, revision };
+                r.inverse.apply(&mut self.project, &ctx).expect("desfazer deve restaurar");
+                self.restore_provenance(prior);
+                self.redo.push(a);
+                return Err(e);
+            }
+        };
         self.project.revision = revision;
         self.change_counter += 1;
         let description = format!("Refazer: {}", a.command.description());
         let outcome = Outcome { revision, description: description.clone(), created: r.created.clone(), affected: r.affected.clone() };
-        if let Err(e) = self.record("redo", &description, &author, Some(a.command.clone())) {
+        if let Err(e) = self.record("redo", &description, &author, Some(a.command.clone()), &cuts) {
             let ctx = ApplyCtx { blobs: &self.blobs, author: &author, revision: revision - 1 };
             r.inverse.apply(&mut self.project, &ctx).expect("desfazer deve restaurar");
             self.restore_provenance(prior);
@@ -413,7 +506,7 @@ impl CoreSession {
         Ok(outcome)
     }
 
-    fn record(&mut self, op: &str, description: &str, author: &str, command: Option<Command>) -> CoreResult<()> {
+    fn record(&mut self, op: &str, description: &str, author: &str, command: Option<Command>, cuts: &std::collections::BTreeSet<crate::Id>) -> CoreResult<()> {
         let entry = LogEntry {
             seq: self.log.len() as u64,
             revision: self.project.revision,
@@ -424,8 +517,22 @@ impl CoreSession {
             command,
             source: self.source,
         };
-        if let Some(wal) = self.wal.as_mut() {
-            wal.append(&entry, &mut self.blobs)?;
+        if self.wal.is_some() {
+            // gravar no diário é o momento em que a edição vale: a posse dos cortes mexidos e a da pasta são conferidas
+            // aqui, e a da pasta fica segura até a linha estar no disco (quem tenta assumir espera). Posse perdida = o
+            // comando volta inteiro (CX16 C16-02).
+            for c in cuts {
+                if let Some(l) = self.cut_locks.get(c) {
+                    l.verify()?;
+                }
+            }
+            let _held = match self.lock.as_ref() {
+                Some(l) => Some(l.hold()?),
+                None => None,
+            };
+            if let Some(wal) = self.wal.as_mut() {
+                wal.append(&entry, &mut self.blobs)?;
+            }
         }
         self.log.push(entry);
         if self.log.len() > LOG_KEEP_COMMANDS {

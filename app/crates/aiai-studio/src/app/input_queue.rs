@@ -74,10 +74,26 @@ pub(crate) struct Attribution {
     /// Enter/Espaço APERTADOS neste quadro (o que aciona um botão em foco no egui): (injetado, plataforma). Uma tecla
     /// alheia no mesmo quadro não entra (CX12 C12-01).
     activate: (bool, bool),
-    /// Gesto do ponteiro em andamento (ou que terminou neste quadro): (injetado, plataforma) dos BOTÕES dele. Só eventos
-    /// de ponteiro entram: uma tecla no meio do gesto não muda a origem do clique (CX10 C10-01).
-    gesture: Option<(bool, bool)>,
-    gesture_open: bool,
+    /// Gesto de cada botão do ponteiro (primário, secundário, meio, extra 1 e 2), em andamento ou terminado neste quadro:
+    /// (injetado, plataforma) dos eventos DESSE botão e se ele ainda está apertado. Só eventos de ponteiro entram: uma
+    /// tecla no meio do gesto não muda a origem do clique (CX10 C10-01); e um botão não contamina a origem de outro
+    /// (CX16 C16-10: o secundário apertado na plataforma não faz o clique primário injetado virar "misto").
+    gestures: [(Option<(bool, bool)>, bool); 5],
+}
+
+fn button_index(b: egui::PointerButton) -> usize {
+    match b {
+        egui::PointerButton::Primary => 0,
+        egui::PointerButton::Secondary => 1,
+        egui::PointerButton::Middle => 2,
+        egui::PointerButton::Extra1 => 3,
+        egui::PointerButton::Extra2 => 4,
+    }
+}
+
+/// Fonte de um gesto: os dois lados no mesmo gesto (apertar injetado, soltar de verdade) = `Mixed`.
+fn gesture_source(g: (bool, bool)) -> aiai_core::InputSource {
+    if g == (true, true) { aiai_core::InputSource::Mixed } else { one(g) }
 }
 
 fn is_pointer_trigger(e: &Event) -> bool {
@@ -109,27 +125,40 @@ impl Attribution {
         self.pointer = (injected.iter().any(is_pointer_trigger), platform.iter().any(is_pointer_trigger));
         self.keys = (injected.iter().any(is_key_trigger), platform.iter().any(is_key_trigger));
         self.activate = (injected.iter().any(is_activation), platform.iter().any(is_activation));
-        if !self.gesture_open {
-            self.gesture = None;
+        for slot in self.gestures.iter_mut() {
+            if !slot.1 {
+                slot.0 = None;
+            }
         }
         for (evs, inj) in [(platform, false), (injected, true)] {
             for e in evs {
-                if let Event::PointerButton { pressed, .. } = e {
-                    let g = self.gesture.get_or_insert((false, false));
+                if let Event::PointerButton { button, pressed, .. } = e {
+                    let slot = &mut self.gestures[button_index(*button)];
+                    let g = slot.0.get_or_insert((false, false));
                     if inj { g.0 = true } else { g.1 = true }
-                    self.gesture_open = *pressed;
+                    slot.1 = *pressed;
                 }
             }
         }
     }
 
-    /// Fonte de uma ação disparada pelo ponteiro (clique, arrasto): a dos botões do gesto; apertar injetado e soltar
-    /// na plataforma = `Mixed`.
-    pub(crate) fn pointer_source(&self) -> aiai_core::InputSource {
-        match self.gesture {
-            Some((true, true)) => aiai_core::InputSource::Mixed,
-            Some(g) => one(g),
+    /// Fonte de uma ação disparada por um botão específico (o Aceitar usa o primário): a do gesto desse botão; sem
+    /// gesto dele neste quadro, a dos eventos de ponteiro do quadro.
+    pub(crate) fn button_source(&self, b: egui::PointerButton) -> aiai_core::InputSource {
+        match self.gestures[button_index(b)].0 {
+            Some(g) => gesture_source(g),
             None => one(self.pointer),
+        }
+    }
+
+    /// Fonte de uma ação do ponteiro sem saber o botão: a dos gestos em andamento quando todos concordam; gestos de
+    /// botões com fontes diferentes = não dá para saber qual acionou (desconhecida, sem afirmar mistura).
+    pub(crate) fn pointer_source(&self) -> aiai_core::InputSource {
+        let mut it = self.gestures.iter().filter_map(|s| s.0).map(gesture_source);
+        match it.next() {
+            None => one(self.pointer),
+            Some(first) if it.all(|x| x == first) => first,
+            Some(_) => aiai_core::InputSource::UnknownLegacy,
         }
     }
 
@@ -146,7 +175,7 @@ impl Attribution {
     /// Fonte das ações deste quadro quando não se sabe se vieram do ponteiro ou do teclado: a do único tipo de entrada
     /// que disparou algo; os dois com fontes diferentes = desconhecida (nunca "humano", nunca chute).
     pub(crate) fn source(&self) -> aiai_core::InputSource {
-        let ptr = self.gesture.is_some() || self.pointer.0 || self.pointer.1;
+        let ptr = self.gestures.iter().any(|s| s.0.is_some()) || self.pointer.0 || self.pointer.1;
         let key = self.keys.0 || self.keys.1;
         match (ptr, key) {
             (true, false) => self.pointer_source(),
@@ -168,9 +197,9 @@ impl InputQueue {
         self.attr.source()
     }
 
-    /// Fonte de uma ação disparada por clique/arrasto neste quadro (o botão da barra usa esta).
-    pub(crate) fn pointer_source(&self) -> aiai_core::InputSource {
-        self.attr.pointer_source()
+    /// Fonte de um clique do botão primário neste quadro (o Aceitar da barra usa esta; CX16 C16-10).
+    pub(crate) fn primary_source(&self) -> aiai_core::InputSource {
+        self.attr.button_source(egui::PointerButton::Primary)
     }
 
     /// Fonte de um botão acionado por Enter/Espaço neste quadro.
@@ -461,7 +490,7 @@ mod tests {
                 raw.events.push(key2.clone());
             }
             q.next_events(&mut raw);
-            last = Some((q.pointer_source(), q.attr.key_source(), q.frame_source()));
+            last = Some((q.attr.pointer_source(), q.attr.key_source(), q.frame_source()));
         }
         assert_eq!(last, Some((S::BridgeInjected, S::UiPlatformUnattributed, S::UnknownLegacy)), "clique da bridge; tecla da plataforma; o quadro sozinho não diz");
         // CX12 C12-01: Enter injetado (aciona o botão em foco) com a soltura de outra tecla da plataforma no mesmo quadro
@@ -484,6 +513,32 @@ mod tests {
         let s = sources(json!([{"kind":"mouse_move","x":10,"y":20},{"kind":"mouse_down","x":10,"y":20}]), &[(3, press(false))]);
         assert_eq!(s[1], S::BridgeInjected, "{s:?}");
         assert_eq!(s[3], S::Mixed, "{s:?}");
+    }
+
+    #[test]
+    fn each_mouse_button_keeps_its_own_source() {
+        // CX16 C16-10
+        use aiai_core::InputSource as S;
+        use egui::PointerButton::{Primary, Secondary};
+        let btn = |button, pressed| Event::PointerButton { pos: Pos2::new(1.0, 1.0), button, pressed, modifiers: Modifiers::NONE };
+        // a plataforma aperta o secundário (fica apertado); no quadro seguinte a bridge clica o primário
+        let mut a = Attribution::default();
+        a.frame(&[btn(Secondary, true)], &[]);
+        a.frame(&[], &[btn(Primary, true), btn(Primary, false)]);
+        assert_eq!(a.button_source(Primary), S::BridgeInjected, "o secundário da plataforma não contamina o clique primário");
+        assert_eq!(a.pointer_source(), S::UnknownLegacy, "sem saber o botão, gestos de fontes diferentes = desconhecida");
+        // soltura de outro botão (plataforma) no meio de um gesto primário injetado
+        let mut a = Attribution::default();
+        a.frame(&[], &[btn(Primary, true)]);
+        a.frame(&[btn(Secondary, false)], &[]);
+        a.frame(&[], &[btn(Primary, false)]);
+        assert_eq!(a.button_source(Primary), S::BridgeInjected);
+        // o mesmo botão apertado pela bridge e solto na plataforma: misto de verdade
+        let mut a = Attribution::default();
+        a.frame(&[], &[btn(Primary, true)]);
+        a.frame(&[btn(Primary, false)], &[]);
+        assert_eq!(a.button_source(Primary), S::Mixed);
+        assert_eq!(a.pointer_source(), S::Mixed);
     }
 
     #[test]

@@ -119,8 +119,20 @@ pub fn render_with_preview(project: &Project, blobs: &BlobStore, prop: &Inbetwee
     let mut image = base.image;
     // cópia de trabalho: um cel novo só com o candidato, na cor da prévia, exposto no quadro da proposta
     let mut tmp = project.clone();
-    let cel_id = Id(format!("__inbetween_preview_{}", prop.id));
-    let number = u32::MAX - 1;
+    // id e número do cel temporário que não existam na camada nem no projeto (CX16 C16-08: um cel já com esse número
+    // seria achado antes do temporário e o quadro mostraria o desenho errado)
+    let mut cel_id = Id(format!("__inbetween_preview_{}", prop.id));
+    while tmp.nodes.contains_key(&cel_id) {
+        cel_id = Id(format!("{}_", cel_id.0));
+    }
+    let used: std::collections::BTreeSet<u32> = tmp
+        .node(&prop.layer)
+        .map(|l| l.children.iter().filter_map(|c| tmp.node(c)).filter_map(|n| match &n.data {
+            NodeKind::Cel(c) => Some(c.number),
+            _ => None,
+        }).collect())
+        .unwrap_or_default();
+    let number = (1..u32::MAX).rev().find(|n| !used.contains(n)).ok_or_else(|| BridgeError::invalid_params("a camada não tem número de cel livre para a prévia"))?;
     let mut cel = CelData::new(number);
     cel.role = CelRole::Inbetween;
     cel.strokes = prop

@@ -2047,3 +2047,62 @@ fn gradient_paint_on_fill_regions_text_effects_and_palette_round_trip() {
     let o = act(&mut s, "TEXT_LAYER", json!({"layer": tl, "fill": null, "effects": [], "warp": null}));
     assert!(o["text"]["params"]["fill"].is_null() && o["text"]["params"]["warp"].is_null());
 }
+
+
+/// CX16 C16-08: o quadro com a prévia não pega um cel que já existe com o número que o cel temporário usaria: a
+/// imagem é a mesma com ou sem esse cel (que não está exposto no quadro).
+#[test]
+fn preview_render_never_borrows_an_existing_cel_number() {
+    use aiai_core::command::CellEdit;
+    use aiai_core::*;
+    let pt = |x: f32, y: f32| StrokePoint { x, y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None };
+    let st = |id: &str, dx: f32| {
+        let mut s = Stroke {
+            id: Id::from(id),
+            points: vec![pt(100.0 + dx, 100.0), pt(140.0 + dx, 90.0), pt(180.0 + dx, 100.0)],
+            geometry: StrokeGeometry::Spline,
+            tension: 0.0,
+            tip: VectorTip::GPen,
+            width: 3.0,
+            profile: Default::default(),
+            color: ColorRef::Direct { rgba: Rgba::BLACK },
+            opacity: 1.0,
+            closed: false,
+            aliased: false,
+            color_trace: false,
+            group: String::new(),
+        };
+        s.width = 6.0;
+        s
+    };
+    let mut s = CoreSession::for_tests("ibp");
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"width": 320, "height": 200}}) }).unwrap();
+    let mk = |s: &mut CoreSession, parent: Option<Id>, name: &str, data: NodeKind| s.apply(Command::CreateNode { id: None, parent, index: None, name: name.into(), data }).unwrap().created[0].clone();
+    let ep = mk(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = mk(&mut s, Some(ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = mk(&mut s, Some(sc), "C001", NodeKind::Cut(CutData::new(24)));
+    let layer = mk(&mut s, Some(cut.clone()), "A", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+    for (n, dx) in [(1u32, 0.0f32), (2, 80.0)] {
+        let mut c = CelData::new(n);
+        c.role = CelRole::Key;
+        c.strokes = vec![st(&format!("k{n}"), dx)];
+        mk(&mut s, Some(layer.clone()), &format!("A{n}"), NodeKind::Cel(c));
+    }
+    // um cel com o número que o temporário usava, com um traço longe; não exposto
+    let mut odd = CelData::new(u32::MAX - 1);
+    odd.strokes = vec![st("longe", -90.0)];
+    let odd_id = mk(&mut s, Some(layer.clone()), "estranho", NodeKind::Cel(odd));
+    let track = Id::from("trk-a");
+    s.apply(Command::AddTrack { cut: cut.clone(), index: None, track: Track::new(track.clone(), "A", TrackKind::Drawing, Some(layer.clone())) }).unwrap();
+    s.apply(Command::SetCells { cut: cut.clone(), track, cells: vec![CellEdit { frame: 0, cell: Some(CellRef::Cel { number: 1 }) }, CellEdit { frame: 8, cell: Some(CellRef::Cel { number: 2 }) }] }).unwrap();
+    let prop = aiai_tools::inbetween_preview::preview(&mut s, &aiai_tools::inbetween_preview::InbetweenPreviewRequest::new(cut.clone(), layer.clone(), 4)).unwrap();
+    let opts = aiai_render::RenderOptions { include_guides: false, include_reference: false, only_layers: None, background: None, camera: false, layer_motion: true };
+    let (with_odd, _) = aiai_bridge::inbetween_tools::render_with_preview(&s.project, &s.blobs, &prop, &opts).unwrap();
+    let mut without = s.project.clone();
+    without.nodes.remove(&odd_id);
+    if let Some(l) = without.nodes.get_mut(&layer) {
+        l.children.retain(|c| *c != odd_id);
+    }
+    let (clean, _) = aiai_bridge::inbetween_tools::render_with_preview(&without, &s.blobs, &prop, &opts).unwrap();
+    assert!(with_odd.data == clean.data, "o cel existente não entra no quadro da prévia");
+}

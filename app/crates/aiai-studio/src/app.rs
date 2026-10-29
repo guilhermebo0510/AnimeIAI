@@ -1383,7 +1383,7 @@ impl eframe::App for StudioApp {
         self.input.next_events(raw_input);
         // as ações da interface deste quadro levam a fonte dos eventos que as dispararam (R16 REQ-P03)
         self.core.source = self.input.frame_source();
-        self.ed.input_src = (self.input.pointer_source(), self.input.activation_source());
+        self.ed.input_src = (self.input.primary_source(), self.input.activation_source());
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {

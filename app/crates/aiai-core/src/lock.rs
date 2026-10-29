@@ -128,13 +128,34 @@ impl ProjectLock {
     }
 }
 
+impl ProjectLock {
+    /// Segura a posse enquanto a gravação acontece (CX16 C16-02): pega a exclusão da trava e confere, sob ela, que a
+    /// trava ainda é desta abertura. Enquanto a guarda viver, ninguém consegue assumir (assumir também passa pela
+    /// exclusão). Trava apagada por fora = regrava a nossa; de outro = recusa.
+    pub fn hold(&self) -> CoreResult<HeldGuard> {
+        let g = AcqGuard::take(&self.file)?;
+        match read_file(&self.file)? {
+            // mesma regra de `verify`: a desta abertura, ou outra abertura deste mesmo processo
+            Some(i) if i.token == self.info.token || (i.pid == std::process::id() && i.host == host_name()) => {}
+            None => write_lock(&self.file, &self.info)?,
+            Some(i) => return Err(CoreError::Locked(format!("outro processo assumiu ({}); nada foi gravado", i.describe()))),
+        }
+        Ok(HeldGuard(g))
+    }
+}
+
+/// Posse segura durante uma gravação ([`ProjectLock::hold`]); solta ao sair do escopo.
+pub struct HeldGuard(#[allow(dead_code)] AcqGuard);
+
 /// Exclusão entre processos só enquanto se confere e grava uma trava: trava do sistema (`LockFileEx` no Windows,
 /// `flock` nos outros) num arquivo irmão `<trava>.acq`. O sistema a solta sozinho se o processo morrer, então ela nunca
 /// fica velha. O arquivo `.acq` fica na pasta: apagá-lo com outro processo esperando nele quebraria a exclusão.
 struct AcqGuard(std::fs::File);
 
-/// Quanto esperar por outro processo que está pegando a mesma trava (ele a segura por milissegundos).
-const ACQ_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+/// Quanto esperar por outro processo que está pegando a mesma trava (ele a segura por milissegundos ao pegar; ao
+/// gravar, pelo tempo de gravar o documento). Curto porque quem espera pode ser a interface (CX16 C16-13): passou disso,
+/// recusa com mensagem e o usuário tenta de novo.
+const ACQ_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 
 impl AcqGuard {
     fn take(file: &Path) -> CoreResult<Self> {
@@ -165,8 +186,9 @@ impl Drop for AcqGuard {
 impl Drop for ProjectLock {
     fn drop(&mut self) {
         // sem como devolver erro aqui: se não der para apagar, a próxima abertura vê o pid morto e trata como velha. Sob a
-        // exclusão, para não apagar a trava que outro acabou de gravar entre a leitura e a remoção.
-        let _g = AcqGuard::take(&self.file).ok();
+        // exclusão, para não apagar a trava que outro acabou de gravar entre a leitura e a remoção; sem conseguir a
+        // exclusão, não apaga nada (a trava que sobra é desta abertura e fica velha quando o processo sair) (CX16 C16-01)
+        let Ok(_g) = AcqGuard::take(&self.file) else { return };
         if read_file(&self.file).ok().flatten().is_some_and(|i| i.token == self.info.token) {
             let _ = std::fs::remove_file(&self.file);
         }
@@ -205,9 +227,18 @@ fn acquire_file(dir: &Path, file: &Path, take_over: bool) -> CoreResult<Result<A
 /// Pasta das travas e dos arquivos de corte (`cuts/`).
 pub const CUTS_DIR: &str = "cuts";
 
-/// Nome de arquivo seguro para o id do corte (o id é texto; só letras, números, `-` e `_` passam).
+/// Nome de arquivo do corte, único por id (CX16 C16-14). Id "simples" (minúsculas, dígitos, `-` e `_`, até 64 —
+/// os gerados são assim) vira o próprio nome, como sempre foi. Qualquer outro vira uma versão segura em minúsculas mais
+/// `~` e 16 dígitos do hash do id exato: `~` não aparece nos simples, então os dois grupos não se cruzam, e ids que só
+/// diferem em caixa ou em caracteres trocados por `_` ganham nomes diferentes (o Windows não distingue caixa).
 pub fn cut_file_stem(cut: &crate::Id) -> String {
-    cut.0.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect()
+    let simple = !cut.0.is_empty() && cut.0.len() <= 64 && cut.0.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');
+    if simple {
+        return cut.0.clone();
+    }
+    let safe: String = cut.0.chars().take(40).map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c.to_ascii_lowercase() } else { '_' }).collect();
+    let h = crate::blob::BlobHash::of(cut.0.as_bytes()).0;
+    format!("{safe}~{}", &h[..16])
 }
 
 /// Arquivo da trava de um corte (auditoria 4.6k): `cuts/<corte>.lock`.
@@ -449,6 +480,65 @@ mod tests {
             }
             drop(s);
             let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// CX16 C16-01: soltar sem conseguir a exclusão não apaga nada — a trava que outro gravou enquanto isso sobrevive.
+    #[test]
+    fn drop_without_the_exclusion_removes_nothing() {
+        let dir = tmp("drop-guard");
+        let got = acquire(&dir, false).unwrap().expect("livre");
+        // outro adquirente está no meio de assumir: segura a exclusão e grava o token dele
+        let busy = AcqGuard::take(&dir.join(LOCK_FILE)).unwrap();
+        let other = LockInfo { pid: live_other_pid(), host: host_name(), started_ms: u64::MAX / 4, exe: "outro.exe".into(), token: "novo".into() };
+        put(&dir, &other);
+        drop(got); // espera a exclusão, não consegue, não apaga
+        assert_eq!(read(&dir).unwrap().unwrap().token, "novo", "a trava de quem assumiu sobrevive");
+        drop(busy);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// CX16 C16-02: enquanto a posse está segura para uma gravação, assumir espera; depois que a gravação termina,
+    /// assume, e a próxima gravação do dono antigo é recusada.
+    #[test]
+    fn take_over_waits_for_a_commit_in_progress_and_then_revokes() {
+        let dir = tmp("hold");
+        let got = acquire(&dir, false).unwrap().expect("livre");
+        let held = got.lock.hold().unwrap();
+        let d2 = dir.clone();
+        let taker = std::thread::spawn(move || {
+            // outra abertura assumindo (mesmo processo, mas outro arquivo aberto: a exclusão do sistema vale igual)
+            let t0 = std::time::Instant::now();
+            let r = acquire(&d2, true).unwrap();
+            (r, t0.elapsed())
+        });
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(!taker.is_finished(), "assumir espera a gravação em andamento");
+        drop(held);
+        let (r, waited) = taker.join().unwrap();
+        let taken = r.ok().expect("depois da gravação, assume");
+        assert!(waited >= std::time::Duration::from_millis(250));
+        assert_eq!(read(&dir).unwrap().unwrap().token, taken.lock.info().token);
+        // posse do dono antigo: grava outro token "de outro processo" para simular o assumir de fora
+        let other = LockInfo { pid: live_other_pid(), host: host_name(), started_ms: u64::MAX / 4, exe: "outro.exe".into(), token: "outro".into() };
+        put(&dir, &other);
+        assert!(matches!(got.lock.hold(), Err(CoreError::Locked(_))), "o dono antigo não grava mais");
+        drop(got);
+        drop(taken);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// CX16 C16-14: ids diferentes nunca dão o mesmo arquivo (nem só por caixa, nem por caracteres trocados); os gerados
+    /// continuam com o nome de sempre.
+    #[test]
+    fn cut_file_stems_are_injective_and_keep_generated_ids() {
+        let id = |s: &str| crate::Id(s.into());
+        let uuid = "01a18508-6c4f-75c6-ae7d-4679881c7388";
+        assert_eq!(cut_file_stem(&id(uuid)), uuid);
+        let set: std::collections::BTreeSet<String> = ["cut:A", "cut?A", "cut_A", "cut_a", "A", "a", "Cut_A", "x/../y"].iter().map(|s| cut_file_stem(&id(s)).to_lowercase()).collect();
+        assert_eq!(set.len(), 8, "{set:?}");
+        for s in &set {
+            assert!(s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '~'), "{s}");
         }
     }
 

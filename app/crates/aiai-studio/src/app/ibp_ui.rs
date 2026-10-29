@@ -166,10 +166,13 @@ pub(crate) fn tick(env: &mut Env) {
     if let Some((id, frame, pcut, layer)) = ibp::current(env.core).map(|p| (p.id, p.frame, p.cut.clone(), p.layer.clone())) {
         if env.ed.ibp.seen != Some(id) {
             env.ed.ibp.seen = Some(id);
-            if cut.as_ref() == Some(&pcut) {
-                env.ed.frame = frame;
-                env.ed.layer = Some(layer);
+            // pedida com a tela em outro corte (modo diretor pelo MCP): a tela vai até o corte dela; sem isso o pedido
+            // dava certo e nada aparecia (CX16 C16-09)
+            if cut.as_ref() != Some(&pcut) {
+                env.ed.set_cut(pcut);
             }
+            env.ed.frame = frame;
+            env.ed.layer = Some(layer);
         }
     }
 }
@@ -802,4 +805,67 @@ pub(crate) fn command_for(env: &mut Env, ui: &mut egui::Ui, name: &str, here: Re
         return true;
     }
     false
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aiai_core::command::CellEdit;
+    use aiai_core::*;
+
+    fn line(id: &str, dx: f32) -> Stroke {
+        let pt = |x: f32, y: f32| StrokePoint { x, y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None };
+        Stroke {
+            id: Id::from(id),
+            points: vec![pt(100.0 + dx, 100.0), pt(140.0 + dx, 90.0), pt(180.0 + dx, 100.0)],
+            geometry: StrokeGeometry::Spline,
+            tension: 0.0,
+            tip: VectorTip::GPen,
+            width: 3.0,
+            profile: Default::default(),
+            color: ColorRef::Direct { rgba: Rgba::BLACK },
+            opacity: 1.0,
+            closed: false,
+            aliased: false,
+            color_trace: false,
+            group: String::new(),
+        }
+    }
+
+    /// CX16 C16-09: a tela está no corte 1 e o MCP pede uma prévia no corte 2 — a tela vai até o corte, o quadro e a
+    /// camada da prévia.
+    #[test]
+    fn a_proposal_requested_for_another_cut_brings_the_screen_to_it() {
+        let mut core = CoreSession::for_tests("t");
+        let mk = |s: &mut CoreSession, parent: Option<Id>, name: &str, data: NodeKind| s.apply(Command::CreateNode { id: None, parent, index: None, name: name.into(), data }).unwrap().created[0].clone();
+        let ep = mk(&mut core, None, "EP", NodeKind::Episode(EpisodeData::default()));
+        let sc = mk(&mut core, Some(ep), "S", NodeKind::Scene(SceneData::default()));
+        let mut made = Vec::new();
+        for k in 1..=2 {
+            let cut = mk(&mut core, Some(sc.clone()), &format!("C00{k}"), NodeKind::Cut(CutData::new(24)));
+            let layer = mk(&mut core, Some(cut.clone()), "A", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+            for (n, dx) in [(1u32, 0.0f32), (2, 80.0)] {
+                let mut c = CelData::new(n);
+                c.role = CelRole::Key;
+                c.strokes = vec![line(&format!("k{k}{n}"), dx)];
+                mk(&mut core, Some(layer.clone()), &format!("A{n}"), NodeKind::Cel(c));
+            }
+            let track = Id(format!("trk-{k}"));
+            core.apply(Command::AddTrack { cut: cut.clone(), index: None, track: Track::new(track.clone(), "A", TrackKind::Drawing, Some(layer.clone())) }).unwrap();
+            core.apply(Command::SetCells { cut: cut.clone(), track, cells: vec![CellEdit { frame: 0, cell: Some(CellRef::Cel { number: 1 }) }, CellEdit { frame: 8, cell: Some(CellRef::Cel { number: 2 }) }] }).unwrap();
+            made.push((cut, layer));
+        }
+        let mut ed = super::super::editor::Editor::default();
+        ed.cut = Some(made[0].0.clone());
+        ed.layer = Some(made[0].1.clone());
+        ed.frame = 0;
+        ibp::preview(&mut core, &InbetweenPreviewRequest::new(made[1].0.clone(), made[1].1.clone(), 4)).unwrap();
+        let mut icons = crate::icons::Icons::default();
+        let mut notes = Vec::new();
+        let mut tool = crate::workspace::ToolId::Pen;
+        let mut env = Env { t: crate::theme::Tokens::dark(), core: &mut core, ed: &mut ed, icons: &mut icons, notes: &mut notes, tool: &mut tool, ws: crate::workspace::WorkspaceId::Animacao };
+        tick(&mut env);
+        assert_eq!((ed.cut.clone(), ed.frame, ed.layer.clone()), (Some(made[1].0.clone()), 4, Some(made[1].1.clone())));
+    }
 }

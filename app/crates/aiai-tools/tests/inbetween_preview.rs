@@ -656,3 +656,39 @@ fn undo_of_an_accept_recovered_from_the_journal_respects_the_cut_lock() {
     drop(s);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+
+#[test]
+fn proposal_ids_of_different_sessions_never_open_each_others_proposals() {
+    // CX16 C16-07: cada sessão sorteia o começo dos seus ids (não depende do relógio); o id de outra sessão não aceita,
+    // não descarta e não acha nada aqui
+    let mut ids = std::collections::BTreeSet::new();
+    for _ in 0..300 {
+        let mut f = two_keys();
+        let p = ibp::preview(&mut f.s, &req(&f.cut, &f.layer, 4)).unwrap();
+        assert!(p.id < (1u64 << 53), "cabe exato em JSON");
+        assert!(ids.insert(p.id), "id repetido entre sessões: {}", p.id);
+    }
+    let mut a = two_keys();
+    let mut b = two_keys();
+    let pa = ibp::preview(&mut a.s, &req(&a.cut, &a.layer, 4)).unwrap();
+    let pb = ibp::preview(&mut b.s, &req(&b.cut, &b.layer, 4)).unwrap();
+    assert_ne!(pa.id, pb.id);
+    let rev = b.s.project.revision;
+    assert!(ibp::accept(&mut b.s, pa.id, "a").is_err(), "aceitar o id da outra sessão falha");
+    assert!(ibp::discard(&mut b.s, pa.id).is_err(), "descartar o id da outra sessão falha");
+    assert_eq!(b.s.project.revision, rev);
+    ibp::accept(&mut b.s, pb.id, "a").unwrap();
+}
+
+#[test]
+fn accept_on_a_layer_that_already_uses_the_largest_cel_number_is_refused_without_panic() {
+    // CX16 C16-08
+    let line = st("la", &[[100.0, 100.0], [140.0, 90.0], [180.0, 100.0]], false);
+    let mut f = fixture(&[(1, CelRole::Key, vec![line.clone()]), (u32::MAX, CelRole::Key, vec![shift(&line, 80.0, 0.0, "lb")])], &[(0, 1), (8, u32::MAX)]);
+    let p = ibp::preview(&mut f.s, &req(&f.cut, &f.layer, 4)).unwrap();
+    let rev = f.s.project.revision;
+    let e = ibp::accept(&mut f.s, p.id, "a").unwrap_err().to_string();
+    assert!(e.contains("maior possível"), "{e}");
+    assert_eq!(f.s.project.revision, rev);
+}

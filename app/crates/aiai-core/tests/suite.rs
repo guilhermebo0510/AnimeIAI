@@ -943,3 +943,197 @@ fn undo_and_redo_refused_by_a_cut_lock_leave_everything_untouched() {
     drop(s);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+
+/// Projeto dividido salvo com dois cortes (C001 e C002, cada um com uma camada e um cel) e reaberto.
+fn split_two_cuts(tag: &str) -> (std::path::PathBuf, CoreSession, [Id; 6]) {
+    let dir = std::env::temp_dir().join(format!("aiai-cx16-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut s = CoreSession::for_tests("t");
+    let (_ep, cut_a, layer_a, cel_a) = build_basic(&mut s);
+    let sc = s.project.nodes.get(&cut_a).unwrap().parent.clone().unwrap();
+    let cut_b = s.apply(Command::CreateNode { id: None, parent: Some(sc), index: None, name: "C002".into(), data: NodeKind::Cut(CutData::new(24)) }).unwrap().created[0].clone();
+    let layer_b = s.apply(Command::CreateNode { id: None, parent: Some(cut_b.clone()), index: None, name: "B".into(), data: NodeKind::Layer(LayerData::new(LayerType::Vector)) }).unwrap().created[0].clone();
+    let cel_b = s.apply(Command::CreateNode { id: None, parent: Some(layer_b.clone()), index: None, name: "B1".into(), data: NodeKind::Cel(CelData::new(1)) }).unwrap().created[0].clone();
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"split_cuts": true}}) }).unwrap();
+    persist::save(&mut s, &dir).unwrap();
+    drop(s);
+    let (s, _) = persist::open(&dir).unwrap();
+    (dir, s, [cut_a, layer_a, cel_a, cut_b, layer_b, cel_b])
+}
+
+fn full_state(s: &CoreSession, dir: &std::path::Path) -> (String, usize, (Vec<String>, Vec<String>), Option<Vec<u8>>) {
+    (serde_json::to_string(&s.project).unwrap(), s.log().len(), s.history(), std::fs::read(dir.join("wal.ndjson")).ok())
+}
+
+fn foreign_lock_json() -> String {
+    json!({"pid": 4, "host": aiai_core::lock::host_name(), "started_ms": 0, "exe": "outro.exe", "token": "x"}).to_string()
+}
+
+/// CX16 C16-02: outro processo assumiu a pasta; o dono antigo não grava mais nada — aplicar, desfazer e salvar são
+/// recusados sem mudar projeto, log, histórico nem diário.
+#[test]
+fn revoked_folder_owner_cannot_apply_undo_or_save() {
+    let (dir, mut s, [_, _, cel_a, ..]) = split_two_cuts("revoked");
+    s.apply(Command::SetProps { id: cel_a.clone(), name: Some("antes".into()), data: json!({}) }).unwrap();
+    std::fs::write(dir.join(aiai_core::lock::LOCK_FILE), foreign_lock_json()).unwrap(); // "assumir" de fora
+    let before = full_state(&s, &dir);
+    let e = s.apply(Command::SetProps { id: cel_a.clone(), name: Some("depois".into()), data: json!({}) }).unwrap_err().to_string();
+    assert!(e.contains("assumiu"), "{e}");
+    assert_eq!(full_state(&s, &dir), before, "aplicar recusado sem rastro");
+    assert!(s.undo().is_err());
+    assert_eq!(full_state(&s, &dir), before, "desfazer recusado sem rastro");
+    let doc = std::fs::read(dir.join(persist::PROJECT_FILE)).unwrap();
+    assert!(persist::save(&mut s, &dir).is_err());
+    assert_eq!(std::fs::read(dir.join(persist::PROJECT_FILE)).unwrap(), doc, "salvar recusado sem gravar");
+    std::fs::remove_file(dir.join(aiai_core::lock::LOCK_FILE)).unwrap();
+    drop(s);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// CX16 C16-03: Salvar como solta as travas dos cortes da pasta antiga; editar o corte de novo trava na pasta nova (e
+/// recusa se outro processo pegou o corte lá).
+#[test]
+fn save_as_releases_old_cut_locks_and_claims_again_in_the_new_folder() {
+    let (p, mut s, [cut_a, _, cel_a, ..]) = split_two_cuts("saveas-p");
+    let q = std::env::temp_dir().join(format!("aiai-cx16-saveas-q-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&q);
+    s.apply(Command::SetProps { id: cel_a.clone(), name: Some("em P".into()), data: json!({}) }).unwrap();
+    assert!(aiai_core::lock::cut_lock_path(&p, &cut_a).is_file());
+    persist::save(&mut s, &q).unwrap();
+    assert_eq!(s.claimed_cuts().count(), 0, "as travas de P saíram");
+    assert!(!aiai_core::lock::cut_lock_path(&p, &cut_a).exists(), "a trava de P/C001 foi solta");
+    // outro processo pega Q/C001: editar aqui é recusado sem rastro
+    std::fs::write(aiai_core::lock::cut_lock_path(&q, &cut_a), foreign_lock_json()).unwrap();
+    let before = full_state(&s, &q);
+    let r = s.apply(Command::SetProps { id: cel_a.clone(), name: Some("em Q".into()), data: json!({}) });
+    assert!(matches!(r, Err(CoreError::Locked(_))), "{r:?}");
+    assert_eq!(full_state(&s, &q), before);
+    std::fs::remove_file(aiai_core::lock::cut_lock_path(&q, &cut_a)).unwrap();
+    s.apply(Command::SetProps { id: cel_a, name: Some("em Q".into()), data: json!({}) }).unwrap();
+    assert!(aiai_core::lock::cut_lock_path(&q, &cut_a).is_file(), "travado na pasta nova");
+    drop(s);
+    let _ = std::fs::remove_dir_all(&p);
+    let _ = std::fs::remove_dir_all(&q);
+}
+
+/// CX16 C16-04: outro processo salvou o corte depois que esta sessão o leu; pegar a trava desse corte para editar
+/// recusa (gravaria por cima da versão nova) sem mudar nada; os outros cortes continuam editáveis.
+#[test]
+fn editing_a_cut_saved_elsewhere_after_it_was_read_is_refused() {
+    let (dir, mut s, [cut_a, _, cel_a, _, _, cel_b]) = split_two_cuts("base");
+    let f = dir.join("cuts").join(format!("{}.json", aiai_core::lock::cut_file_stem(&cut_a)));
+    let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(&f).unwrap()).unwrap();
+    v["nodes"][&cel_a.0]["name"] = json!("salvo por outro");
+    std::fs::write(&f, serde_json::to_string_pretty(&v).unwrap()).unwrap(); // o save_cuts de outro processo
+    let before = full_state(&s, &dir);
+    let e = s.apply(Command::SetProps { id: cel_a.clone(), name: Some("aqui".into()), data: json!({}) }).unwrap_err().to_string();
+    assert!(e.contains("salvo em outro lugar"), "{e}");
+    assert_eq!(full_state(&s, &dir), before, "nada mudou");
+    assert!(!aiai_core::lock::cut_lock_path(&dir, &cut_a).exists(), "a trava pega para conferir foi solta");
+    s.apply(Command::SetProps { id: cel_b, name: Some("outro corte".into()), data: json!({}) }).unwrap();
+    // reabrir lê a versão nova e aí edita normalmente
+    drop(s);
+    let (mut s, _) = persist::open(&dir).unwrap();
+    assert_eq!(s.project.nodes[&cel_a].name, "salvo por outro");
+    s.apply(Command::SetProps { id: cel_a, name: Some("aqui".into()), data: json!({}) }).unwrap();
+    drop(s);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// CX16 C16-06: erro de acesso à trava durante a recuperação não corta o diário: abrir recusa e a pasta fica igual;
+/// resolvido o acesso, recupera.
+#[test]
+fn io_error_while_replaying_refuses_to_open_and_keeps_the_journal() {
+    let (dir, mut s, [cut_a, _, cel_a, ..]) = split_two_cuts("io");
+    s.apply(Command::SetProps { id: cel_a.clone(), name: Some("só no diário".into()), data: json!({}) }).unwrap();
+    drop(s);
+    // o `.acq` da trava do corte vira uma pasta: abrir o arquivo falha (erro de acesso, não de conteúdo)
+    let acq = dir.join("cuts").join(format!("{}.lock.acq", aiai_core::lock::cut_file_stem(&cut_a)));
+    let _ = std::fs::remove_file(&acq);
+    std::fs::create_dir_all(&acq).unwrap();
+    let wal = std::fs::read(dir.join("wal.ndjson")).unwrap();
+    let e = persist::open(&dir).err().expect("recusa").to_string();
+    assert!(e.contains("tente abrir de novo"), "{e}");
+    assert_eq!(std::fs::read(dir.join("wal.ndjson")).unwrap(), wal, "diário intacto");
+    std::fs::remove_dir_all(&acq).unwrap();
+    let (s, rep) = persist::open(&dir).unwrap();
+    assert_eq!((rep.replayed, s.project.nodes[&cel_a].name.as_str()), (1, "só no diário"));
+    drop(s);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// CX16 C16-11: apagar um corte (ou mover uma camada para fora dele) é editar esse corte: com outro processo nele,
+/// recusa sem rastro e o arquivo dele não é apagado ao salvar.
+#[test]
+fn delete_and_move_claim_the_cut_they_take_nodes_from() {
+    let (dir, mut s, [cut_a, layer_a, _, cut_b, ..]) = split_two_cuts("domain");
+    let fa = dir.join("cuts").join(format!("{}.json", aiai_core::lock::cut_file_stem(&cut_a)));
+    std::fs::write(aiai_core::lock::cut_lock_path(&dir, &cut_a), foreign_lock_json()).unwrap();
+    let before = full_state(&s, &dir);
+    let r = s.apply(Command::DeleteNode { id: cut_a.clone() });
+    assert!(matches!(r, Err(CoreError::Locked(_))), "apagar o corte ocupado: {r:?}");
+    assert_eq!(full_state(&s, &dir), before);
+    let r = s.apply(Command::MoveNode { id: layer_a.clone(), parent: Some(cut_b.clone()), index: None });
+    assert!(matches!(r, Err(CoreError::Locked(_))), "tirar a camada do corte ocupado: {r:?}");
+    assert_eq!(full_state(&s, &dir), before);
+    persist::save(&mut s, &dir).unwrap();
+    assert!(fa.is_file(), "o arquivo do corte ocupado continua");
+    std::fs::remove_file(aiai_core::lock::cut_lock_path(&dir, &cut_a)).unwrap();
+    // livre: apagar vale, e salvar tira o arquivo dele
+    s.apply(Command::DeleteNode { id: cut_a.clone() }).unwrap();
+    persist::save(&mut s, &dir).unwrap();
+    assert!(!fa.exists());
+    drop(s);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// CX16 C16-14: cortes com ids que só diferem em caracteres trocados ou em caixa vão para arquivos diferentes e
+/// voltam inteiros ao reabrir.
+#[test]
+fn cuts_with_colliding_looking_ids_round_trip_in_separate_files() {
+    let dir = std::env::temp_dir().join(format!("aiai-cx16-ids-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut s = CoreSession::for_tests("t");
+    let (_ep, cut_a, _layer, _cel) = build_basic(&mut s);
+    let sc = s.project.nodes.get(&cut_a).unwrap().parent.clone().unwrap();
+    let ids = ["cut:A", "cut?A", "Cut_A", "cut_a"];
+    for (i, id) in ids.iter().enumerate() {
+        s.apply(Command::CreateNode { id: Some(Id::from(*id)), parent: Some(sc.clone()), index: None, name: format!("K{i}"), data: NodeKind::Cut(CutData::new(12 + i as u32)) }).unwrap();
+    }
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"split_cuts": true}}) }).unwrap();
+    persist::save(&mut s, &dir).unwrap();
+    let files: Vec<_> = std::fs::read_dir(dir.join("cuts")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_lowercase()).filter(|n| n.ends_with(".json")).collect();
+    assert_eq!(files.len(), 5, "um arquivo por corte: {files:?}");
+    let before = snapshot(&s);
+    drop(s);
+    let (s, _) = persist::open(&dir).unwrap();
+    assert_eq!(snapshot(&s), before);
+    for id in ids {
+        assert!(s.project.nodes.contains_key(&Id::from(id)), "{id}");
+    }
+    drop(s);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// CX16 C16-12: a recuperação do diário devolve a fonte gravada em cada linha ao log.
+#[test]
+fn wal_replay_keeps_the_input_source_of_each_entry() {
+    let dir = std::env::temp_dir().join(format!("aiai-cx16-src-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut s = CoreSession::for_tests("t");
+    let (_ep, _cut, _layer, cel) = build_basic(&mut s);
+    persist::save(&mut s, &dir).unwrap();
+    s.source = InputSource::DirectToolCall;
+    s.apply(Command::SetProps { id: cel.clone(), name: Some("mcp".into()), data: json!({}) }).unwrap();
+    s.source = InputSource::BridgeInjected;
+    s.apply(Command::SetProps { id: cel.clone(), name: Some("bridge".into()), data: json!({}) }).unwrap();
+    drop(s);
+    let (s, rep) = persist::open(&dir).unwrap();
+    assert_eq!(rep.replayed, 2);
+    let got: Vec<_> = s.log().iter().map(|e| e.source).collect();
+    assert_eq!(got, vec![InputSource::DirectToolCall, InputSource::BridgeInjected]);
+    assert_eq!(s.source, InputSource::UnknownLegacy, "a fonte da sessão volta ao que era");
+    drop(s);
+    let _ = std::fs::remove_dir_all(&dir);
+}

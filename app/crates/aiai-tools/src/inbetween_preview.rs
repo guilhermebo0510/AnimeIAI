@@ -771,13 +771,14 @@ impl AcceptScope {
 pub fn accept_scope(p: &Project, prop: &InbetweenProposal) -> ToolResult<AcceptScope> {
     let cut = cut_data(p, &prop.cut)?;
     let track = cut.xsheet.track_for_layer(&prop.layer).ok_or_else(|| ToolError::Invalid("configure o timesheet desta camada".into()))?;
-    let number = p
-        .node(&prop.layer)
-        .map(|l| l.children.iter().filter_map(|c| p.node(c)).filter_map(|n| match &n.data {
-            NodeKind::Cel(c) => Some(c.number),
-            _ => None,
-        }).max().unwrap_or(0) + 1)
-        .unwrap_or(1);
+    // o próximo número livre; a camada que já usa o maior número possível não tem "próximo" (CX16 C16-08)
+    let number = match p.node(&prop.layer).and_then(|l| l.children.iter().filter_map(|c| p.node(c)).filter_map(|n| match &n.data {
+        NodeKind::Cel(c) => Some(c.number),
+        _ => None,
+    }).max()) {
+        None => 1,
+        Some(max) => max.checked_add(1).ok_or_else(|| ToolError::Invalid(format!("a camada já tem um cel de número {max}, o maior possível: renumere os cels para criar um novo")))?,
+    };
     let next = prop.frame + 1;
     let restore_next = (next < cut.duration && !track.cells.contains_key(&next)).then(|| (next, track.exposed_at(next).unwrap_or(CellRef::Empty)));
     let replaces = track.cells.get(&prop.frame).copied();
@@ -885,13 +886,28 @@ pub struct ProposalStore {
     pub invalidated: Option<(String, InbetweenPreviewRequest)>,
 }
 
+/// Maior inteiro exato em JSON (2^53): os ids cabem abaixo dele.
+const MAX_EXACT_ID: u64 = 1 << 53;
+
+/// Começo aleatório dos ids de uma loja de propostas (CX16 C16-07): cada sessão (o app, o MCP headless, uma sessão
+/// reaberta) sorteia o seu bloco de 2^16 ids entre 2^37 blocos, sem depender do relógio — duas lojas criadas no mesmo
+/// milissegundo não começam iguais. Sorteio pelo `RandomState` (chaves aleatórias do sistema por processo, diferentes
+/// a cada instância), misturado com o processo, a hora e um contador: um id de outra sessão não acha proposta aqui.
+fn random_id_base() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    static STORES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+    h.write_u32(std::process::id());
+    h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0));
+    h.write_u64(STORES.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    let base = (h.finish() % MAX_EXACT_ID) & !0xFFFF;
+    base.clamp(1 << 16, MAX_EXACT_ID - (1 << 17))
+}
+
 impl ProposalStore {
     fn envelope(&mut self, s_epoch: u64, revision: u64) -> ProposalEnvelope {
-        if self.next_id == 0 {
-            // ids diferentes entre processos (o app e o MCP headless contam cada um o seu): começa pela hora, cabe em
-            // 2^53 (número exato em JSON)
-            let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(1);
-            self.next_id = (ms % (1 << 40)) << 10;
+        if self.next_id == 0 || self.next_id + 1 >= MAX_EXACT_ID {
+            self.next_id = random_id_base();
         }
         self.next_id += 1;
         self.generation += 1;
