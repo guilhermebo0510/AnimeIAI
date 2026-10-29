@@ -2106,3 +2106,166 @@ fn preview_render_never_borrows_an_existing_cel_number() {
     let (clean, _) = aiai_bridge::inbetween_tools::render_with_preview(&without, &s.blobs, &prop, &opts).unwrap();
     assert!(with_odd.data == clean.data, "o cel existente não entra no quadro da prévia");
 }
+
+fn core_ok(s: &mut CoreSession, action: &str, params: Value) -> Value {
+    handle_core_action(s, action, &params).expect("ação do núcleo").unwrap_or_else(|e| panic!("{action}: {e:?}"))
+}
+
+/// Projeto dividido salvo (um corte com uma camada) numa pasta `.aiai`.
+fn split_project_on_disk(dir: &std::path::Path) -> (aiai_core::Id, aiai_core::Id) {
+    use aiai_core::command::Command;
+    use aiai_core::model::*;
+    let mut s = CoreSession::for_tests("t");
+    let mk = |s: &mut CoreSession, parent: Option<aiai_core::Id>, name: &str, data: NodeKind| s.apply(Command::CreateNode { id: None, parent, index: None, name: name.into(), data }).unwrap().created[0].clone();
+    let ep = mk(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = mk(&mut s, Some(ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = mk(&mut s, Some(sc), "C001", NodeKind::Cut(CutData::new(24)));
+    let layer = mk(&mut s, Some(cut.clone()), "L", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"split_cuts": true}}) }).unwrap();
+    aiai_core::persist::save(&mut s, dir).unwrap();
+    (cut, layer)
+}
+
+fn rename_cmd(id: &aiai_core::Id, name: &str) -> Value {
+    json!({"command": serde_json::to_value(aiai_core::command::Command::SetProps { id: id.clone(), name: Some(name.into()), data: json!({}) }).unwrap()})
+}
+
+/// CX18 C18-01: pela entrada pública (OPEN_PROJECT/SAVE_PROJECT, a mesma da interface e do headless) — editar um
+/// projeto dividido logo depois de abrir funciona; uma edição que só estava no diário volta, é salva e continua lá ao
+/// reabrir; trocar de projeto solta as travas dos cortes do anterior.
+#[test]
+fn split_project_through_open_and_save_keeps_cut_bases_locks_and_recovered_edits() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("dividido.aiai");
+    let (cut, layer) = split_project_on_disk(&dir);
+    let path = json!({"path": dir.to_str().unwrap()});
+    // 1) abrir e editar
+    let mut a = core_ops::empty_session();
+    core_ok(&mut a, "OPEN_PROJECT", path.clone());
+    core_ok(&mut a, "APPLY_COMMAND", rename_cmd(&layer, "editada"));
+    core_ok(&mut a, "SAVE_PROJECT", json!({}));
+    // 2) edição só no diário ("queda"), recuperar, salvar, reabrir
+    core_ok(&mut a, "APPLY_COMMAND", rename_cmd(&layer, "so_no_diario"));
+    drop(a);
+    let mut b = core_ops::empty_session();
+    let o = core_ok(&mut b, "OPEN_PROJECT", path.clone());
+    assert_eq!(o["wal_replayed"], 1);
+    assert!(b.claimed_cuts().any(|c| *c == cut), "a trava do corte reaplicado veio junto");
+    core_ok(&mut b, "SAVE_PROJECT", json!({}));
+    drop(b);
+    let mut c = core_ops::empty_session();
+    let o = core_ok(&mut c, "OPEN_PROJECT", path.clone());
+    assert_eq!(o["wal_replayed"], 0);
+    assert_eq!(c.project.nodes[&layer].name, "so_no_diario", "a edição recuperada foi salva");
+    // 3) trocar de projeto solta as travas do anterior
+    core_ok(&mut c, "APPLY_COMMAND", rename_cmd(&layer, "de novo"));
+    assert!(aiai_core::lock::cut_lock_path(&dir, &cut).exists());
+    core_ok(&mut c, "NEW_PROJECT", json!({"name": "outro"}));
+    assert_eq!(c.claimed_cuts().count(), 0);
+    assert!(!aiai_core::lock::cut_lock_path(&dir, &cut).exists(), "a trava do corte do projeto anterior saiu");
+    drop(c);
+}
+
+/// CX18 C18-01: projeto novo dividido criado com pasta pelo NEW_PROJECT — a primeira edição de um corte não é tomada
+/// por "salvo em outro lugar".
+#[test]
+fn new_split_project_with_a_folder_can_be_edited_right_away() {
+    use aiai_core::command::Command;
+    use aiai_core::model::*;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("novo.aiai");
+    let mut s = core_ops::empty_session();
+    core_ok(&mut s, "NEW_PROJECT", json!({"name": "novo", "settings": {"split_cuts": true}, "path": dir.to_str().unwrap()}));
+    let ep = s.apply(Command::CreateNode { id: None, parent: None, index: None, name: "EP".into(), data: NodeKind::Episode(EpisodeData::default()) }).unwrap().created[0].clone();
+    let sc = s.apply(Command::CreateNode { id: None, parent: Some(ep), index: None, name: "S".into(), data: NodeKind::Scene(SceneData::default()) }).unwrap().created[0].clone();
+    let cut = s.apply(Command::CreateNode { id: None, parent: Some(sc), index: None, name: "C".into(), data: NodeKind::Cut(CutData::new(24)) }).unwrap().created[0].clone();
+    core_ok(&mut s, "SAVE_PROJECT", json!({}));
+    drop(s);
+    let mut s = core_ops::empty_session();
+    core_ok(&mut s, "NEW_PROJECT", json!({"name": "outro", "settings": {"split_cuts": true}, "path": tmp.path().join("outro.aiai").to_str().unwrap()}));
+    core_ok(&mut s, "OPEN_PROJECT", json!({"path": dir.to_str().unwrap()}));
+    core_ok(&mut s, "APPLY_COMMAND", rename_cmd(&cut, "editado"));
+    core_ok(&mut s, "SAVE_PROJECT", json!({}));
+}
+
+/// CX18 C18-05: a primeira gravação dividida numa pasta nova caiu logo depois do registro (sem `project.json`): a
+/// entrada pública reconhece a pasta como projeto e abrir termina a gravação; uma pasta qualquer continua recusada.
+#[test]
+fn folder_with_only_an_interrupted_first_save_opens_through_open_project() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("primeira.aiai");
+    let (cut, layer) = split_project_on_disk(&dir);
+    // o estado de uma primeira gravação que caiu depois do registro: só o registro (e as pastas)
+    let manifest = std::fs::read_to_string(dir.join(aiai_core::persist::PROJECT_FILE)).unwrap();
+    let rel = format!("cuts/{}.json", aiai_core::lock::cut_file_stem(&cut));
+    let text = std::fs::read_to_string(dir.join(&rel)).unwrap();
+    let cp = json!({"manifest": manifest, "files": [{"rel": rel, "old": null, "text": text}], "cuts": [cut.0]});
+    std::fs::write(dir.join(aiai_core::persist::CHECKPOINT_FILE), cp.to_string()).unwrap();
+    std::fs::remove_file(dir.join(aiai_core::persist::PROJECT_FILE)).unwrap();
+    std::fs::remove_file(dir.join(&rel)).unwrap();
+    let _ = std::fs::remove_file(dir.join(aiai_core::persist::WAL_FILE));
+    for e in std::fs::read_dir(&dir).unwrap().flatten() {
+        if e.path().extension().is_some_and(|x| x == "aiaiproj") {
+            std::fs::remove_file(e.path()).unwrap();
+        }
+    }
+    assert!(core_ops::is_project_dir(&dir));
+    let mut s = core_ops::empty_session();
+    core_ok(&mut s, "OPEN_PROJECT", json!({"path": dir.to_str().unwrap()}));
+    assert!(s.project.nodes.contains_key(&layer));
+    assert!(dir.join(aiai_core::persist::PROJECT_FILE).is_file() && !dir.join(aiai_core::persist::CHECKPOINT_FILE).exists());
+    drop(s);
+    let empty = tmp.path().join("vazia.aiai");
+    std::fs::create_dir_all(&empty).unwrap();
+    assert!(!core_ops::is_project_dir(&empty));
+    let mut s = core_ops::empty_session();
+    let r = handle_core_action(&mut s, "OPEN_PROJECT", &json!({"path": empty.to_str().unwrap()})).unwrap();
+    assert!(r.is_err());
+}
+
+/// CX18 C18-01: abrir P e depois Q, cópia de P com os mesmos ids — a trava do corte de P sai, editar em Q trava o corte
+/// em Q (conferindo a base lida de Q) e salvar grava em Q sem tocar em P.
+#[test]
+fn opening_another_folder_with_the_same_ids_moves_cut_locks_and_bases_with_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let p = tmp.path().join("p.aiai");
+    let (cut, layer) = split_project_on_disk(&p);
+    let q = tmp.path().join("q.aiai");
+    std::fs::create_dir_all(q.join("cuts")).unwrap();
+    for e in walk_files(&p) {
+        let rel = e.strip_prefix(&p).unwrap();
+        if rel.to_string_lossy().ends_with(".lock") {
+            continue;
+        }
+        std::fs::create_dir_all(q.join(rel).parent().unwrap()).unwrap();
+        std::fs::copy(&e, q.join(rel)).unwrap();
+    }
+    let mut s = core_ops::empty_session();
+    core_ok(&mut s, "OPEN_PROJECT", json!({"path": p.to_str().unwrap()}));
+    core_ok(&mut s, "APPLY_COMMAND", rename_cmd(&layer, "em P"));
+    assert!(aiai_core::lock::cut_lock_path(&p, &cut).exists());
+    let p_doc = std::fs::read(p.join("cuts").join(format!("{}.json", aiai_core::lock::cut_file_stem(&cut)))).unwrap();
+    core_ok(&mut s, "OPEN_PROJECT", json!({"path": q.to_str().unwrap()}));
+    assert!(!aiai_core::lock::cut_lock_path(&p, &cut).exists(), "a trava do corte em P saiu");
+    core_ok(&mut s, "APPLY_COMMAND", rename_cmd(&layer, "em Q"));
+    assert!(aiai_core::lock::cut_lock_path(&q, &cut).exists(), "travou o corte em Q");
+    core_ok(&mut s, "SAVE_PROJECT", json!({}));
+    assert_eq!(std::fs::read(p.join("cuts").join(format!("{}.json", aiai_core::lock::cut_file_stem(&cut)))).unwrap(), p_doc, "P intocado");
+    drop(s);
+    let mut r = core_ops::empty_session();
+    core_ok(&mut r, "OPEN_PROJECT", json!({"path": q.to_str().unwrap()}));
+    assert_eq!(r.project.nodes[&layer].name, "em Q");
+}
+
+fn walk_files(dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(dir).unwrap().flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            out.extend(walk_files(&p));
+        } else {
+            out.push(p);
+        }
+    }
+    out
+}

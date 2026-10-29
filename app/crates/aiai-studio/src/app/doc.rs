@@ -189,7 +189,7 @@ impl StudioApp {
             None => json!({ "name": tr("doc.untitled") }),
         };
         let dir = req.and_then(|r| r.dir);
-        if let Some(d) = dir.as_ref().filter(|d| d.join(aiai_core::persist::PROJECT_FILE).is_file()) {
+        if let Some(d) = dir.as_ref().filter(|d| aiai_core::persist::is_project_dir(d)) {
             self.doc_error("novo projeto", format!("{} {}", tr("start.exists"), d.display()));
             return;
         }

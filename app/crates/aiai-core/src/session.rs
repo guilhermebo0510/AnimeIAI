@@ -616,6 +616,9 @@ impl CoreSession {
         self.wal = None;
         self.path = None;
         self.lock = None;
+        // as travas e as bases dos cortes também (CX18 C18-01)
+        self.cut_locks.clear();
+        self.cut_bases.clear();
         self.project = project;
         self.blobs = blobs;
         self.undo.clear();
@@ -633,6 +636,10 @@ impl CoreSession {
         self.path = other.path.take();
         // a trava antiga só apaga o arquivo se ainda for dela (reabrir a mesma pasta grava token novo)
         self.lock = other.lock.take();
+        // as travas dos cortes (as que a recuperação pegou para o que reaplicou) e a base de cada arquivo de corte vêm
+        // junto: são do documento recebido; as antigas saem aqui (CX18 C18-01)
+        self.cut_locks = std::mem::take(&mut other.cut_locks);
+        self.cut_bases = std::mem::take(&mut other.cut_bases);
         self.project = other.project;
         self.blobs = other.blobs;
         self.undo = other.undo;

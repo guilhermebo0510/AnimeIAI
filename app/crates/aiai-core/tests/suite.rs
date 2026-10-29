@@ -1215,3 +1215,35 @@ fn refused_move_releases_the_locks_it_took() {
     drop(s);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// CX18 C18-06: sobrou um arquivo de nome antigo de um corte que esta gravação não grava e que está com outro processo:
+/// o arquivo fica (só sai com a posse do corte); livre o corte, a gravação seguinte o limpa sob a posse.
+#[test]
+fn leftover_file_of_a_cut_held_elsewhere_survives_a_save() {
+    let dir = std::env::temp_dir().join(format!("aiai-cx18-06-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut s = CoreSession::for_tests("t");
+    let (ep, cut0, _l, _c) = build_basic(&mut s);
+    let sc = s.project.nodes.get(&cut0).unwrap().parent.clone().unwrap();
+    let cut = Id::from("cut:A");
+    s.apply(Command::CreateNode { id: Some(cut.clone()), parent: Some(sc), index: None, name: "A".into(), data: NodeKind::Cut(CutData::new(12)) }).unwrap();
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"split_cuts": true}}) }).unwrap();
+    persist::save(&mut s, &dir).unwrap();
+    drop(s);
+    let new_rel = format!("cuts/{}.json", aiai_core::lock::cut_file_stem(&cut));
+    std::fs::copy(dir.join(&new_rel), dir.join("cuts/cut_A.json")).unwrap(); // sobra de uma migração
+    let (mut s, _) = persist::open(&dir).unwrap();
+    std::fs::write(aiai_core::lock::cut_lock_path(&dir, &cut), foreign_lock_json()).unwrap();
+    let lock_before = std::fs::read(aiai_core::lock::cut_lock_path(&dir, &cut)).unwrap();
+    s.apply(Command::SetProps { id: ep.clone(), name: Some("global".into()), data: json!({}) }).unwrap();
+    persist::save(&mut s, &dir).unwrap();
+    assert!(dir.join("cuts/cut_A.json").is_file(), "o arquivo do corte ocupado ficou");
+    assert_eq!(std::fs::read(aiai_core::lock::cut_lock_path(&dir, &cut)).unwrap(), lock_before, "a trava do outro não foi tocada");
+    std::fs::remove_file(aiai_core::lock::cut_lock_path(&dir, &cut)).unwrap();
+    s.apply(Command::SetProps { id: ep.clone(), name: Some("global 2".into()), data: json!({}) }).unwrap();
+    persist::save(&mut s, &dir).unwrap();
+    assert!(!dir.join("cuts/cut_A.json").exists() && dir.join(&new_rel).is_file(), "livre, a sobra saiu sob a posse");
+    assert!(!aiai_core::lock::cut_lock_path(&dir, &cut).exists(), "a trava pega só para limpar saiu");
+    drop(s);
+    let _ = std::fs::remove_dir_all(&dir);
+}

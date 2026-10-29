@@ -195,16 +195,10 @@ fn new_project(session: &mut CoreSession, params: &Value) -> Result<Value, Bridg
     if let Some(dir) = &dir {
         persist::save(&mut fresh, dir).map_err(core_error)?;
     }
-    let wal = fresh.detach_wal();
-    let lock = fresh.take_lock();
-    let blobs = std::mem::take(&mut fresh.blobs);
     session.detach_wal();
-    session.replace_project(fresh.project, blobs);
-    if let Some(w) = wal {
-        session.attach_wal(w);
-    }
-    // a trava da pasta nova vem junto (a do projeto anterior saiu no replace_project)
-    session.set_lock(lock);
+    // tudo o que é da pasta nova vem junto — diário, trava, travas e bases dos cortes —, e o do projeto anterior sai
+    // (CX18 C18-01: antes as bases dos cortes de um projeto novo dividido ficavam para trás)
+    session.adopt_document(fresh);
     session.path = dir.clone();
     Ok(json!({ "name": session.project.name, "revision": session.project.revision, "path": dir.map(|d| d.display().to_string()), "settings": session.project.settings }))
 }
@@ -255,9 +249,9 @@ fn save_project(session: &mut CoreSession, params: &Value) -> Result<Value, Brid
     Ok(json!({ "path": dir.display().to_string(), "revision": session.project.revision, "name": session.project.name }))
 }
 
-/// A pasta existe e tem `project.json`?
+/// A pasta é um projeto (tem `project.json`, ou o registro de uma gravação interrompida que abrir termina)?
 pub fn is_project_dir(dir: &Path) -> bool {
-    dir.join(persist::PROJECT_FILE).is_file()
+    persist::is_project_dir(dir)
 }
 
 /// Sessão vazia (autor `agent:claude`) para o headless e para testes que ainda não abriram nada.
