@@ -2037,6 +2037,8 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("anim.onion.color_default", "Cor padrão", "Default color"),
     ("ibp.title", "Prévia de intercalação", "In-between preview"),
     ("ibp.command", "Prévia de intercalação", "In-between preview"),
+    ("ibp.now", "Agora não dá:", "Not available now:"),
+    ("ibp.how", "Como usar: numa camada vetorial, desenhe duas chaves (por exemplo nos quadros 1 e 9), clique num quadro entre elas na linha do tempo e depois neste botão.", "How to use: on a vector layer, draw two keys (for example on frames 1 and 9), click a frame between them on the timeline, then this button."),
     ("ibp.command_tip", "Mostra o desenho que o intercalador faria neste quadro, entre as chaves antes e depois, com os pares de traços. Nada é gravado até Aceitar.", "Shows the drawing the in-betweener would make on this frame, between the keys before and after, with the stroke pairs. Nothing is saved until Accept."),
     ("ibp.need_layer", "Escolha uma camada vetorial", "Pick a vector layer"),
     ("ibp.need_vector", "A prévia de intercalação é só para camada vetorial", "The in-between preview is for vector layers only"),

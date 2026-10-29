@@ -304,6 +304,18 @@ fn resolve_keys(p: &Project, cut: &CutData, req: &InbetweenPreviewRequest) -> To
             CellRef::Empty => None,
         })
         .collect();
+    // os blocos que abrem um vão: chave ou breakdown, menos o que só volta a expor o desenho do limite anterior (a
+    // entrada que um aceite grava para o quadro seguinte continuar como estava). Sem isso, depois do primeiro aceite
+    // a prévia do quadro ao lado saía "entre Rosto1 → Rosto1" e com t errado (o vão passava a ser o da volta).
+    let mut bounds: Vec<u32> = Vec::new();
+    let mut last_bound: Option<u32> = None;
+    for s in starts.iter().filter(|s| is_boundary(s.3)) {
+        if last_bound != Some(s.1) {
+            bounds.push(s.0);
+        }
+        last_bound = Some(s.1);
+    }
+    let opens = |s: &(u32, u32, Id, CelRole)| bounds.contains(&s.0);
     let pick = |explicit: Option<u32>, key: Option<u32>, before: bool| -> ToolResult<(u32, u32, Id)> {
         let side = if before { "A" } else { "B" };
         match explicit {
@@ -327,7 +339,7 @@ fn resolve_keys(p: &Project, cut: &CutData, req: &InbetweenPreviewRequest) -> To
                     }
                     // o bloco-chave (chave ou breakdown, A6-06) mais próximo
                     None => {
-                        let mut c: Vec<_> = starts.iter().filter(side_ok).filter(|s| is_boundary(s.3)).collect();
+                        let mut c: Vec<_> = starts.iter().filter(side_ok).filter(|s| opens(s)).collect();
                         c.sort_by_key(|s| if before { u32::MAX - s.0 } else { s.0 });
                         c.first().copied()
                     }
@@ -342,13 +354,13 @@ fn resolve_keys(p: &Project, cut: &CutData, req: &InbetweenPreviewRequest) -> To
     let a = pick(req.frame_a, req.key_a, true)?;
     let b = pick(req.frame_b, req.key_b, false)?;
     if !(a.0 < req.frame && req.frame < b.0) {
-        return Err(ToolError::Invalid(format!("o quadro {} precisa ficar entre as chaves ({} < {} < {})", req.frame, a.0, req.frame, b.0)));
+        return Err(ToolError::Invalid(format!("o quadro {} precisa ficar entre as chaves (quadros {} e {})", req.frame + 1, a.0 + 1, b.0 + 1)));
     }
     if b.0 >= cut.duration {
         return Err(ToolError::Invalid(format!("a chave B ({}) passa da duração do corte ({})", b.0, cut.duration)));
     }
     // o quadro alvo não pode ser o começo de uma chave ou breakdown (a prévia substituiria um desenho-chave na folha)
-    if let Some(s) = starts.iter().find(|s| s.0 == req.frame && is_boundary(s.3)) {
+    if let Some(s) = starts.iter().find(|s| s.0 == req.frame && opens(s)) {
         return Err(ToolError::Invalid(format!("o quadro {} começa o desenho {} ({}); a prévia não substitui chave nem breakdown", req.frame + 1, s.1, role_name(s.3))));
     }
     Ok((a, b))

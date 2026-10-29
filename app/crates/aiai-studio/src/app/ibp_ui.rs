@@ -787,7 +787,16 @@ pub(crate) fn bar(env: &mut Env, ctx: &egui::Context, rect: Rect, cut: &Id) {
 /// Botão do comando no quadro atual da camada ativa (painel da mesa de luz).
 pub(crate) fn command_button(env: &mut Env, ui: &mut egui::Ui, name: &str) -> bool {
     let here = request_here(env);
-    command_for(env, ui, name, here)
+    // com o botão desligado, o motivo e o caminho ficam escritos (antes só apareciam com o mouse parado em cima)
+    let why = here.as_ref().err().cloned();
+    let clicked = command_for(env, ui, name, here);
+    if let Some(why) = why {
+        let t = env.t;
+        let r = ui.label(RichText::new(format!("{} {why}", tr("ibp.now"))).size(11.5).color(t.text_dim));
+        env.note(format!("{name}.why"), r.rect);
+        ui.label(RichText::new(tr("ibp.how")).size(11.5).color(t.text_dim));
+    }
+    clicked
 }
 
 /// Botão do comando: ligado só entre dois blocos-chave da camada (senão desligado, com o motivo na dica).

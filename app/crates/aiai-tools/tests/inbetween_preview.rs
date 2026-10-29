@@ -692,3 +692,28 @@ fn accept_on_a_layer_that_already_uses_the_largest_cel_number_is_refused_without
     assert!(e.contains("maior possível"), "{e}");
     assert_eq!(f.s.project.revision, rev);
 }
+
+/// Depois de aceitar o meio, a volta da chave A no quadro seguinte não vira chave B: os outros quadros do vão continuam
+/// entre as duas chaves de verdade, com o t delas, e o quadro da volta também pode receber a prévia. Uma chave que
+/// volta depois de outra chave (ciclo 1 → 2 → 1) continua abrindo vão.
+#[test]
+fn restoring_entry_of_an_accept_does_not_split_the_gap() {
+    let mut f = two_keys();
+    let p = ibp::preview(&mut f.s, &req(&f.cut, &f.layer, 4)).unwrap();
+    ibp::accept(&mut f.s, p.id, "agent:claude").unwrap();
+    assert_eq!(track_cells(&f), vec![(0, CellRef::Cel { number: 1 }), (4, CellRef::Cel { number: 3 }), (5, CellRef::Cel { number: 1 }), (8, CellRef::Cel { number: 2 })]);
+    for (frame, t) in [(2u32, 0.25f32), (5, 0.625), (6, 0.75)] {
+        let p = ibp::preview(&mut f.s, &req(&f.cut, &f.layer, frame)).unwrap();
+        assert_eq!((p.frame_a, p.frame_b, p.key_a, p.key_b), (0, 8, 1, 2), "quadro {frame}");
+        assert!((p.t - t).abs() < 1e-6, "quadro {frame}: t = {}", p.t);
+        ibp::accept(&mut f.s, p.id, "agent:claude").unwrap();
+    }
+    let n: Vec<u32> = track_cells(&f).iter().filter_map(|(_, c)| match c { CellRef::Cel { number } => Some(*number), _ => None }).collect();
+    assert_eq!(n.first(), Some(&1));
+    assert_eq!(n.last(), Some(&2));
+    // ciclo: 1 em 0, 2 em 8, 1 de novo em 16 (pose que volta, não a entrada de um aceite)
+    let line = st("l", &[[100.0, 100.0], [140.0, 90.0], [180.0, 100.0]], false);
+    let mut g = fixture(&[(1, CelRole::Key, vec![line.clone()]), (2, CelRole::Key, vec![shift(&line, 60.0, 0.0, "m")])], &[(0, 1), (8, 2), (16, 1)]);
+    let p = ibp::preview(&mut g.s, &req(&g.cut, &g.layer, 12)).unwrap();
+    assert_eq!((p.frame_a, p.frame_b, p.key_a, p.key_b), (8, 16, 2, 1));
+}
