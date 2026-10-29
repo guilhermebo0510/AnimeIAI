@@ -6,7 +6,8 @@ use aiai_core::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Uma curva descrita para o agente: pontos [x, y] ou [x, y, pressão]; largura com perfil opcional.
+/// Uma curva descrita para o agente: pontos [x, y], [x, y, pressão] ou [x, y, pressão, tempo em s]; largura com perfil
+/// opcional; entrada e saída (`taper`) como no Clip Studio.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CurveSpec {
     pub points: Vec<Vec<f32>>,
@@ -36,6 +37,10 @@ pub struct CurveSpec {
     /// Grupo de intercalação: o `INBETWEEN` só casa traços do mesmo grupo (ex.: "olho_esq", "cabelo").
     #[serde(default)]
     pub group: String,
+    /// Entrada e saída (substitui o afinamento automático da ponta): {start, end, unit: px|percent, min, by_speed}.
+    /// `by_speed` usa o tempo dos pontos ([x, y, pressão, t]); sem tempo conta como rápido.
+    #[serde(default)]
+    pub taper: Option<aiai_core::StrokeTaper>,
 }
 
 fn default_width() -> f32 {
@@ -56,14 +61,15 @@ impl CurveSpec {
             .map(|p| match p.as_slice() {
                 [x, y] => Ok(StrokePoint { x: *x, y: *y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }),
                 [x, y, pr] => Ok(StrokePoint { x: *x, y: *y, pressure: pr.clamp(0.0, 1.0), tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }),
-                _ => Err(ToolError::Invalid("cada ponto é [x, y] ou [x, y, pressão]".into())),
+                [x, y, pr, t] => Ok(StrokePoint { x: *x, y: *y, pressure: pr.clamp(0.0, 1.0), tilt: None, t: Some(t.max(0.0)), corner: false, width: 1.0, id: 0, handle: None }),
+                _ => Err(ToolError::Invalid("cada ponto é [x, y], [x, y, pressão] ou [x, y, pressão, tempo]".into())),
             })
             .collect::<ToolResult<Vec<_>>>()?;
         let profile = match self.widths {
             Some([a, b, c]) => vec![[0.0, a], [0.5, b], [1.0, c]],
             None => self.profile.clone(),
         };
-        let s = Stroke {
+        let s = Stroke { taper: self.taper,
             id: Id(String::new()),
             points,
             geometry: self.geometry,

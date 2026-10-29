@@ -825,7 +825,7 @@ mod tests {
 
     fn line(id: &str, dx: f32) -> Stroke {
         let pt = |x: f32, y: f32| StrokePoint { x, y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None };
-        Stroke {
+        Stroke { taper: None,
             id: Id::from(id),
             points: vec![pt(100.0 + dx, 100.0), pt(140.0 + dx, 90.0), pt(180.0 + dx, 100.0)],
             geometry: StrokeGeometry::Spline,

@@ -113,7 +113,7 @@ pub fn text_command(p: &Project, blobs: &mut BlobStore, req: &TextRequest) -> To
         for c in &outline.contours {
             items.push(IndexedStroke {
                 index: idx,
-                stroke: Stroke {
+                stroke: Stroke { taper: None,
                     id: Id(String::new()),
                     points: c.iter().map(|q| StrokePoint { x: q[0], y: q[1], pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect(),
                     geometry: StrokeGeometry::Polyline,
@@ -162,7 +162,7 @@ pub struct LinesRequest {
 }
 
 fn tapered(points: Vec<[f32; 2]>, width: f32, color: &ColorRef, profile: Vec<[f32; 2]>) -> Stroke {
-    Stroke {
+    Stroke { taper: None,
         id: Id(String::new()),
         points: points.into_iter().map(|q| StrokePoint { x: q[0], y: q[1], pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect(),
         geometry: StrokeGeometry::Polyline,

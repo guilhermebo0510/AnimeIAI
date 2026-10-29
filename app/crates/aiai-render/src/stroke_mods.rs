@@ -171,7 +171,7 @@ mod tests {
     use aiai_core::*;
 
     fn line() -> Stroke {
-        Stroke {
+        Stroke { taper: None,
             id: Id::from("s"),
             points: (0..=20).map(|i| StrokePoint { x: i as f32 * 10.0, y: 50.0, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect(),
             geometry: StrokeGeometry::Polyline,

@@ -1310,7 +1310,7 @@ mod tests {
 
     fn line(id: &str, a: (f32, f32), b: (f32, f32)) -> Stroke {
         let p = |x: f32, y: f32| StrokePoint { x, y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None };
-        Stroke {
+        Stroke { taper: None,
             id: Id(id.into()),
             points: vec![p(a.0, a.1), p(b.0, b.1)],
             geometry: StrokeGeometry::Polyline,

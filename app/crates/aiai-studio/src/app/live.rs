@@ -1142,7 +1142,7 @@ mod tests {
 
     fn line(y: f32, x0: f32, x1: f32, w: f32, rgb: [u8; 3]) -> Stroke {
         let sp = |x: f32| StrokePoint { x, y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None };
-        Stroke {
+        Stroke { taper: None,
             id: Id(String::new()),
             points: vec![sp(x0), sp((x0 + x1) / 2.0), sp(x1)],
             geometry: StrokeGeometry::Polyline,

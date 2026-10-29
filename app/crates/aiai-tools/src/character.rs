@@ -133,7 +133,7 @@ pub fn build_sheet(p: &Project, idgen: &mut IdGen, req: &ModelSheetRequest) -> T
         l
     };
     // grade de cabeças + linhas de referência atravessando todas as vistas
-    let line = |pts: Vec<[f32; 2]>, width: f32, hex: &str| Stroke {
+    let line = |pts: Vec<[f32; 2]>, width: f32, hex: &str| Stroke { taper: None,
         id: Id(String::new()),
         points: pts.into_iter().map(|q| StrokePoint { x: q[0], y: q[1], pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect(),
         geometry: StrokeGeometry::Polyline,

@@ -456,11 +456,31 @@ fn tool_options_in(env: &mut Env, ui: &mut Ui, compact: bool, panel: bool) {
             row(ui, &t, compact, "opt.pen_simplify", |ui| {
                 ui.add(egui::Slider::new(&mut o.pen_simplify, 0.0..=100.0).max_decimals(0)).on_hover_text(tr("opt.pen_simplify.tip"));
             });
+            ui.checkbox(&mut o.pen_taper_auto, tr("opt.pen_taper_auto")).on_hover_text(tr("opt.pen_taper_auto.tip"));
+            let pct = o.pen_taper_unit == aiai_core::TaperUnit::Percent;
+            let (hi, suffix) = if pct { (100.0, " %") } else { (400.0, " px") };
             row(ui, &t, compact, "opt.pen_taper_in", |ui| {
-                ui.add(egui::Slider::new(&mut o.pen_taper_in, 0.0..=400.0).max_decimals(0).suffix(" px")).on_hover_text(tr("opt.pen_taper.tip"));
+                ui.add(egui::Slider::new(&mut o.pen_taper_in, 0.0..=hi).max_decimals(0).suffix(suffix)).on_hover_text(tr("opt.pen_taper.tip"));
             });
             row(ui, &t, compact, "opt.pen_taper_out", |ui| {
-                ui.add(egui::Slider::new(&mut o.pen_taper_out, 0.0..=400.0).max_decimals(0).suffix(" px")).on_hover_text(tr("opt.pen_taper.tip"));
+                ui.add(egui::Slider::new(&mut o.pen_taper_out, 0.0..=hi).max_decimals(0).suffix(suffix)).on_hover_text(tr("opt.pen_taper.tip"));
+            });
+            row(ui, &t, compact, "opt.pen_taper_unit", |ui| {
+                for (u, key) in [(aiai_core::TaperUnit::Px, "opt.pen_taper_unit.px"), (aiai_core::TaperUnit::Percent, "opt.pen_taper_unit.pct")] {
+                    if ui.selectable_label(o.pen_taper_unit == u, tr(key)).clicked() && o.pen_taper_unit != u {
+                        o.pen_taper_unit = u;
+                        let hi = if u == aiai_core::TaperUnit::Percent { 100.0 } else { 400.0 };
+                        o.pen_taper_in = o.pen_taper_in.min(hi);
+                        o.pen_taper_out = o.pen_taper_out.min(hi);
+                    }
+                }
+            });
+            ui.checkbox(&mut o.pen_taper_speed, tr("opt.pen_taper_speed")).on_hover_text(tr("opt.pen_taper_speed.tip"));
+            row(ui, &t, compact, "opt.pen_taper_min", |ui| {
+                let mut v = o.pen_taper_min * 100.0;
+                if ui.add(egui::Slider::new(&mut v, 0.0..=100.0).max_decimals(0).suffix(" %")).changed() {
+                    o.pen_taper_min = v / 100.0;
+                }
             });
             ui.checkbox(&mut o.pen_color_trace, tr("opt.pen_color_trace")).on_hover_text(tr("opt.pen_color_trace.tip"));
             ui.checkbox(&mut o.pen_weld, tr("opt.pen_weld")).on_hover_text(tr("opt.pen_weld.tip"));

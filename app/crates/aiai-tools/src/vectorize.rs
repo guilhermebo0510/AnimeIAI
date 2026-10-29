@@ -885,7 +885,7 @@ pub fn path_to_stroke(p: &InkPath, tip: VectorTip, color: ColorRef, scale: f32, 
     ws.sort_by(f32::total_cmp);
     let base = ws.get(ws.len() / 2).copied().unwrap_or(1.0).max(0.5);
     let n = p.points.len();
-    let mut s = Stroke {
+    let mut s = Stroke { taper: None,
         id: Id(String::new()),
         points: p
             .points
@@ -908,8 +908,7 @@ pub fn path_to_stroke(p: &InkPath, tip: VectorTip, color: ColorRef, scale: f32, 
     // as pontas medidas já trazem o afinamento do desenho: sem isto a ponta G-Pen (e as outras que afinam) afinava
     // de novo por cima, e traços curtos saíam finos demais (achado desenhando a cena 15)
     if !p.closed && n >= 2 {
-        s.points[0].corner = true;
-        s.points[n - 1].corner = true;
+        s.taper = Some(aiai_core::StrokeTaper::NONE);
     }
     s
 }
@@ -1026,8 +1025,8 @@ pub fn vectorize_command(p: &aiai_core::Project, blobs: &aiai_core::BlobStore, r
             s.width = req.width.unwrap_or(s.width).max(0.1);
             for q in &mut s.points {
                 q.width = 1.0;
-                q.corner = false; // modo caneta: a ponta da caneta decide o afinamento
             }
+            s.taper = None; // modo caneta: a ponta da caneta decide o afinamento
         }
         if req.width_mode == WidthMode::Fixed {
             s.tip = VectorTip::Marker;

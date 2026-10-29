@@ -10,7 +10,7 @@ const W: u32 = 400;
 const H: u32 = 300;
 
 fn stroke(pts: &[(f32, f32)], tip: VectorTip, width: f32, closed: bool) -> Stroke {
-    Stroke {
+    Stroke { taper: None,
         id: Id::from("t"),
         points: pts.iter().map(|&(x, y)| StrokePoint { x, y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect(),
         geometry: StrokeGeometry::Spline,
@@ -240,7 +240,7 @@ fn found_path_becomes_an_app_stroke_with_the_measured_widths() {
     }
     // e a ponta não afina de novo por conta própria (G-Pen): o raio desenhado segue a largura medida também nas pontas
     let g = path_to_stroke(&found[0], VectorTip::GPen, ColorRef::default(), 1.0, [0.0, 0.0]);
-    assert!(g.points[0].corner && g.points[g.points.len() - 1].corner);
+    assert_eq!(g.taper, Some(aiai_core::StrokeTaper::NONE));
     let smp = sample_stroke(&g);
     let q = &found[0];
     let k = q.points.len() / 4; // um ponto perto da ponta, ainda dentro do trecho que a G-Pen afinaria

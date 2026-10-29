@@ -216,7 +216,7 @@ fn simplify(p: &[[f32; 2]], eps: f32) -> Polyline {
 }
 
 fn to_stroke(p: &[[f32; 2]], width: f32, color: Rgba) -> Stroke {
-    Stroke {
+    Stroke { taper: None,
         id: Id(String::new()),
         points: p.iter().map(|q| StrokePoint { x: q[0], y: q[1], pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect(),
         geometry: StrokeGeometry::Polyline,

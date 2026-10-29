@@ -848,7 +848,7 @@ mod tests {
     use aiai_core::command::IndexedStroke;
 
     fn line(id: &str, pts: &[(f32, f32)], width: f32) -> Stroke {
-        Stroke {
+        Stroke { taper: None,
             id: Id::from(id),
             points: pts.iter().map(|(x, y)| StrokePoint { x: *x, y: *y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect(),
             geometry: StrokeGeometry::Polyline,

@@ -15,7 +15,7 @@ fn pt(x: f32, y: f32) -> StrokePoint {
 }
 
 fn st(id: &str, pts: &[[f32; 2]], closed: bool) -> Stroke {
-    Stroke {
+    Stroke { taper: None,
         id: Id::from(id),
         points: pts.iter().map(|p| pt(p[0], p[1])).collect(),
         geometry: StrokeGeometry::Spline,

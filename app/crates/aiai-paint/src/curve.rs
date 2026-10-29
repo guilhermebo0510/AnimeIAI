@@ -6,7 +6,7 @@
 //! - Largura: `width/2 × ponta(pressão) × perfil(t) × afinamento(entrada/saída)` — a ponta G-pen afina nas pontas
 //!   (入り/抜き) como a linha principal de anime.
 
-use aiai_core::{Stroke, StrokeGeometry, VectorTip};
+use aiai_core::{Stroke, StrokeGeometry, StrokeTaper, TaperUnit, VectorTip};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StrokeSample {
@@ -312,6 +312,43 @@ fn profile_at(profile: &[[f32; 2]], t: f32) -> f32 {
     profile[profile.len() - 1][1]
 }
 
+/// Fator da entrada/saída configurada na distância `d` da ponta, com comprimento `len` (a mesma curva do pincel
+/// raster: sai rápido da ponta e chega no corpo sem quina).
+fn taper_ramp(tp: &StrokeTaper, d: f32, len: f32) -> f32 {
+    if len <= 1e-3 {
+        return 1.0;
+    }
+    let t = (d / len).clamp(0.0, 1.0);
+    let e = t * (2.0 - t);
+    let m = tp.min.clamp(0.0, 1.0);
+    m + (1.0 - m) * e
+}
+
+/// Velocidade normalizada (0..1, `StrokeTaper::VELOCITY_FULL` = 1) no começo e no fim do traço, pelo tempo `t` dos
+/// pontos nos primeiros/últimos ~12 px. Sem tempo (traço de agente, importado) conta como rápido (1).
+fn end_speeds(stroke: &Stroke) -> (f32, f32) {
+    let pts = &stroke.points;
+    let speed = |it: &mut dyn Iterator<Item = usize>| -> f32 {
+        let idx: Vec<usize> = it.collect();
+        let (Some(&i0), Some(t0)) = (idx.first(), idx.first().and_then(|&i| pts[i].t)) else { return 1.0 };
+        let mut dist = 0.0f32;
+        let mut prev = i0;
+        for &i in &idx[1..] {
+            dist += (pts[i].x - pts[prev].x).hypot(pts[i].y - pts[prev].y);
+            prev = i;
+            if dist >= 12.0 {
+                break;
+            }
+        }
+        match pts[prev].t {
+            Some(t1) if (t1 - t0).abs() > 1e-4 => (dist / (t1 - t0).abs() / StrokeTaper::VELOCITY_FULL).clamp(0.0, 1.0),
+            _ => 1.0,
+        }
+    };
+    let n = pts.len();
+    (speed(&mut (0..n)), speed(&mut (0..n).rev()))
+}
+
 /// Amostras finais (x, y, raio) do traço.
 pub fn sample_stroke(stroke: &Stroke) -> Vec<StrokeSample> {
     let flat = flatten(stroke);
@@ -328,6 +365,15 @@ pub fn sample_stroke(stroke: &Stroke) -> Vec<StrokeSample> {
     let total = acc.max(1e-6);
     let min_r = if stroke.aliased { 0.5 } else { 0.25 };
     let blunt = [stroke.points.first().is_some_and(|q| q.corner), stroke.points.last().is_some_and(|q| q.corner)];
+    // entrada e saída configuradas (Clip Studio): comprimentos já resolvidos (px, % do traço, velocidade em cada ponta)
+    let configured = stroke.taper.as_ref().map(|tp| {
+        let len = |v: f32| match tp.unit {
+            TaperUnit::Px => v.max(0.0),
+            TaperUnit::Percent => total * v.clamp(0.0, 100.0) / 100.0,
+        };
+        let (vs, ve) = if tp.by_speed { end_speeds(stroke) } else { (1.0, 1.0) };
+        (*tp, len(tp.start) * vs, len(tp.end) * ve)
+    });
     flat.iter()
         .zip(&cum)
         .map(|(q, &s)| {
@@ -336,7 +382,11 @@ pub fn sample_stroke(stroke: &Stroke) -> Vec<StrokeSample> {
             // (0,12 × 0,15) derrubava a ponta para o raio mínimo e as linhas não se encontravam nos cantos.
             let mut k = profile_at(&stroke.profile.0, t);
             if !stroke.closed {
-                k = k.min(taper(stroke.tip, s, total, stroke.width, blunt));
+                k = k.min(match &configured {
+                    // configurado: substitui o afinamento automático da ponta
+                    Some((tp, a, b)) => taper_ramp(tp, s, *a).min(taper_ramp(tp, total - s, *b)),
+                    None => taper(stroke.tip, s, total, stroke.width, blunt),
+                });
             }
             let r = 0.5 * stroke.width * tip_factor(stroke.tip, q.p) * q.w.max(0.0) * k;
             StrokeSample { x: q.x, y: q.y, r: r.max(min_r) }
@@ -362,7 +412,7 @@ mod tests {
     }
 
     pub(crate) fn mk(points: &[(f32, f32, f32)], geometry: StrokeGeometry, tip: VectorTip, width: f32) -> Stroke {
-        Stroke {
+        Stroke { taper: None,
             id: Id::from("s"),
             points: points.iter().map(|&(x, y, p)| StrokePoint { x, y, pressure: p, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect(),
             geometry,
@@ -389,6 +439,60 @@ mod tests {
             assert!(d <= STEP * 1.6, "amostras densas: {d}");
         }
         assert!(smp.iter().all(|q| (q.r - 2.0).abs() < 1e-5), "marcador tem largura constante");
+    }
+
+    /// Raio da amostra mais próxima da distância `d` do começo.
+    fn r_at(s: &Stroke, d: f32) -> f32 {
+        let smp = sample_stroke(s);
+        let x0 = smp[0].x;
+        smp.iter().min_by(|a, b| ((a.x - x0) - d).abs().total_cmp(&((b.x - x0) - d).abs())).unwrap().r
+    }
+
+    #[test]
+    fn configured_taper_replaces_the_tip_rule() {
+        use aiai_core::{StrokeTaper, TaperUnit};
+        // sem configuração: a G-Pen afina sozinha (a regra de sempre, traços antigos iguais)
+        let mut s = mk(&[(0.0, 0.0, 1.0), (300.0, 0.0, 1.0)], StrokeGeometry::Polyline, VectorTip::GPen, 10.0);
+        assert!(r_at(&s, 0.0) < 1.5);
+        // NONE: nada afina, nem a ponta da G-Pen
+        s.taper = Some(StrokeTaper::NONE);
+        assert!((r_at(&s, 0.0) - 5.0).abs() < 1e-3 && (r_at(&s, 300.0) - 5.0).abs() < 1e-3);
+        // px: entrada 20, saída 60; mínimo 0,2 na ponta
+        s.taper = Some(StrokeTaper { start: 20.0, end: 60.0, unit: TaperUnit::Px, min: 0.2, by_speed: false });
+        assert!((r_at(&s, 0.0) - 1.0).abs() < 0.05, "{}", r_at(&s, 0.0));
+        assert!((r_at(&s, 25.0) - 5.0).abs() < 1e-3, "a entrada acaba em 20 px");
+        assert!(r_at(&s, 250.0) < 4.9 && (r_at(&s, 235.0) - 5.0).abs() < 1e-3, "a saída começa a 60 px do fim");
+        // %: 10% de 300 = 30 px
+        s.taper = Some(StrokeTaper { start: 10.0, end: 0.0, unit: TaperUnit::Percent, min: 0.0, by_speed: false });
+        assert!(r_at(&s, 20.0) < 4.9 && (r_at(&s, 32.0) - 5.0).abs() < 1e-3);
+        assert!((r_at(&s, 300.0) - 5.0).abs() < 1e-3, "sem saída");
+    }
+
+    #[test]
+    fn taper_by_speed_is_short_when_slow_and_full_when_fast_or_without_time() {
+        use aiai_core::{StrokeTaper, TaperUnit};
+        let tp = StrokeTaper { start: 80.0, end: 80.0, unit: TaperUnit::Px, min: 0.0, by_speed: true };
+        let line = |dt: Option<f32>| {
+            // 31 pontos de 10 em 10 px; dt = segundos entre pontos
+            let pts: Vec<(f32, f32, f32)> = (0..31).map(|i| (i as f32 * 10.0, 0.0, 1.0)).collect();
+            let mut s = mk(&pts, StrokeGeometry::Polyline, VectorTip::Marker, 10.0);
+            if let Some(dt) = dt {
+                for (i, q) in s.points.iter_mut().enumerate() {
+                    q.t = Some(i as f32 * dt);
+                }
+            }
+            s.taper = Some(tp);
+            s
+        };
+        // lento (100 px/s = 4% da velocidade cheia): entrada de ~3 px; a 10 px já está cheio
+        let slow = line(Some(0.1));
+        assert!((r_at(&slow, 10.0) - 5.0).abs() < 1e-3, "lento quase não afina: {}", r_at(&slow, 10.0));
+        // rápido (5000 px/s): entrada inteira de 80 px
+        let fast = line(Some(0.002));
+        assert!(r_at(&fast, 40.0) < 4.9, "rápido afina o comprimento todo: {}", r_at(&fast, 40.0));
+        // sem tempo nos pontos: conta como rápido
+        let none = line(None);
+        assert!((r_at(&none, 40.0) - r_at(&fast, 40.0)).abs() < 1e-3);
     }
 
     #[test]

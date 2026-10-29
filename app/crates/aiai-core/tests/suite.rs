@@ -35,7 +35,7 @@ fn build_basic(s: &mut CoreSession) -> (Id, Id, Id, Id) {
 }
 
 fn stroke(id: &str, x: f32) -> Stroke {
-    Stroke {
+    Stroke { taper: None,
         id: Id::from(id),
         points: vec![
             StrokePoint { x, y: 10.0, pressure: 0.5, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None },

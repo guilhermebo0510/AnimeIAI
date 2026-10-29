@@ -150,7 +150,7 @@ pub fn perspective_info(p: &Project, req: &PerspectiveRequest) -> ToolResult<Per
 
 /// Traço de guia reto (polilinha de marcador, pressão 1): o das linhas de fuga e o das réguas convertidas em traços.
 pub fn guide_stroke(pts: Vec<[f32; 2]>, width: f32, color: Rgba) -> Stroke {
-    Stroke {
+    Stroke { taper: None,
         id: Id(String::new()),
         points: pts.into_iter().map(|q| StrokePoint { x: q[0], y: q[1], pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect(),
         geometry: StrokeGeometry::Polyline,

@@ -649,7 +649,8 @@ fn tool_actions_validate_params_and_render_out_and_size() {
         ("RENDER", json!({"cut": cut, "frame": 9999})),
         ("RENDER", json!({"cut": "nao-existe"})),
         ("DRAW_CURVES", json!({"cut": cut})),
-        ("DRAW_CURVES", json!({"cut": cut, "frame": 0, "layer": line, "curves": [{"points": [[1, 2, 3, 4]]}]})),
+        ("DRAW_CURVES", json!({"cut": cut, "frame": 0, "layer": line, "curves": [{"points": [[1, 2, 3, 4, 5]]}]})),
+        ("DRAW_CURVES", json!({"cut": cut, "frame": 0, "layer": line, "curves": [{"points": [[1, 2], [9, 9]], "taper": {"start": 150.0, "unit": "percent"}}]})),
         ("LINT", json!({"cut": cut})),
         ("FILL", json!([1])),
     ] {
@@ -2057,7 +2058,7 @@ fn preview_render_never_borrows_an_existing_cel_number() {
     use aiai_core::*;
     let pt = |x: f32, y: f32| StrokePoint { x, y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None };
     let st = |id: &str, dx: f32| {
-        let mut s = Stroke {
+        let mut s = Stroke { taper: None,
             id: Id::from(id),
             points: vec![pt(100.0 + dx, 100.0), pt(140.0 + dx, 90.0), pt(180.0 + dx, 100.0)],
             geometry: StrokeGeometry::Spline,

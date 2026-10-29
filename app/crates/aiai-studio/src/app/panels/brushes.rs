@@ -476,7 +476,7 @@ fn ensure_thumbs(env: &mut Env, ui: &Ui) {
                 aiai_core::StrokePoint { x: 18.0 + f * (w as f32 - 36.0), y: h as f32 / 2.0 + 13.0 * (f * std::f32::consts::TAU).sin(), pressure: 0.3 + 0.7 * (f * std::f32::consts::PI).sin(), tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }
             })
             .collect();
-        let s = aiai_core::Stroke { id: aiai_core::Id(String::new()), points: pts, geometry: aiai_core::StrokeGeometry::Spline, tension: 0.0, tip, width: 9.0, profile: Default::default(), color: aiai_core::ColorRef::default(), opacity: 1.0, closed: false, aliased: false, color_trace: false, group: String::new() };
+        let s = aiai_core::Stroke { taper: None, id: aiai_core::Id(String::new()), points: pts, geometry: aiai_core::StrokeGeometry::Spline, tension: 0.0, tip, width: 9.0, profile: Default::default(), color: aiai_core::ColorRef::default(), opacity: 1.0, closed: false, aliased: false, color_trace: false, group: String::new() };
         let mut img = aiai_paint::Image::filled(w, h, bg);
         if let Some(cov) = aiai_paint::stroke_raster::rasterize_with_tip(&s, &aiai_paint::sample_stroke(&s), w, h) {
             for yy in 0..cov.height {

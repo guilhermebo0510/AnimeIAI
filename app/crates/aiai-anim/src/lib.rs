@@ -617,7 +617,7 @@ mod tests {
     use aiai_core::{VectorTip, WidthProfile};
 
     fn st(pts: &[(f32, f32)], closed: bool) -> Stroke {
-        Stroke {
+        Stroke { taper: None,
             id: Id::from("x"),
             points: pts.iter().map(|&(x, y)| StrokePoint { x, y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect(),
             geometry: StrokeGeometry::Polyline,

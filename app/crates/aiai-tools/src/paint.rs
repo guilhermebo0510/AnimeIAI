@@ -643,7 +643,7 @@ pub fn fill_shape_command(p: &Project, blobs: &mut BlobStore, req: &FillShapeReq
         let pts: Vec<[f32; 2]> = if sh.geometry == "polyline" {
             sh.points.clone()
         } else {
-            let stroke = Stroke {
+            let stroke = Stroke { taper: None,
                 id: Id::default(),
                 points: sh.points.iter().map(|q| StrokePoint { x: q[0], y: q[1], pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect(),
                 geometry: StrokeGeometry::Spline,

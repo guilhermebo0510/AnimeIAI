@@ -698,6 +698,15 @@ pub(crate) struct ToolOptions {
     /// desenho), com qualquer ponta e sem pressão (mouse). 0 = desligado.
     pub pen_taper_in: f32,
     pub pen_taper_out: f32,
+    /// Unidade do início e do fim: px do desenho ou % do comprimento do traço.
+    pub pen_taper_unit: aiai_core::TaperUnit,
+    /// Início e fim pela velocidade: traço lento quase não afina, rápido afina o comprimento todo (Clip Studio).
+    pub pen_taper_speed: bool,
+    /// Espessura na ponta afinada (fração 0..1).
+    pub pen_taper_min: f32,
+    /// Afinamento automático da ponta (G-Pen, Maru, Fude...): ligado e sem início/fim = a regra da ponta de sempre.
+    /// Desligado ou com início/fim: vale só o que está configurado aqui.
+    pub pen_taper_auto: bool,
     pub pen_shape: PenShape,
     /// Mover em camada vetorial edita os pontos dos traços em vez de mover a seleção.
     pub stab_mode: StabMode,
@@ -779,6 +788,10 @@ impl Default for ToolOptions {
             pen_simplify: 10.0,
             pen_taper_in: 0.0,
             pen_taper_out: 0.0,
+            pen_taper_unit: aiai_core::TaperUnit::Px,
+            pen_taper_speed: false,
+            pen_taper_min: 0.1,
+            pen_taper_auto: true,
             pen_color_trace: false,
             pen_weld: true,
             pen_quickshape: true,
@@ -1484,7 +1497,7 @@ mod tests {
     }
 
     fn stroke(pts: &[(f32, f32)], width: f32) -> Stroke {
-        Stroke {
+        Stroke { taper: None,
             id: Id::from("s"),
             points: pts.iter().map(|(x, y)| StrokePoint { x: *x, y: *y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect(),
             geometry: StrokeGeometry::Polyline,

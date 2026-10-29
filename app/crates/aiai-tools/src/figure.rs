@@ -321,7 +321,7 @@ pub struct FigureRequest {
 
 /// Traço vetorial do contorno (pontos já no espaço do cel).
 pub fn outline_stroke(o: &Outline, width: f32, tip: VectorTip, color: &ColorRef, opacity: f32, aliased: bool) -> Stroke {
-    Stroke {
+    Stroke { taper: None,
         id: Id(String::new()),
         points: o.points.clone(),
         geometry: o.geometry,

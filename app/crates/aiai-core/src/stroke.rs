@@ -101,6 +101,57 @@ impl VectorTip {
     }
 }
 
+/// Unidade do comprimento da entrada e da saída.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TaperUnit {
+    /// Pixels de caminho.
+    #[default]
+    Px,
+    /// Porcentagem do comprimento do traço (0..100).
+    Percent,
+}
+
+/// Entrada e saída de um traço vetorial (afinamento das pontas), como no Clip Studio: comprimento em px ou em % do
+/// traço e, se `by_speed`, proporcional à velocidade em cada ponta (traço lento quase não afina; pede o tempo `t`
+/// dos pontos — sem ele conta como rápido). PRESENTE no traço = substitui o afinamento automático da ponta (`tip`):
+/// `start = end = 0` desliga o afinamento. Ausente = a regra antiga da ponta (traços gravados antes continuam iguais).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema, Default)]
+pub struct StrokeTaper {
+    /// Comprimento da entrada (px ou %); 0 = sem.
+    #[serde(default)]
+    pub start: f32,
+    /// Comprimento da saída (px ou %); 0 = sem.
+    #[serde(default)]
+    pub end: f32,
+    #[serde(default)]
+    pub unit: TaperUnit,
+    /// Espessura na ponta (fração 0..1 da largura).
+    #[serde(default)]
+    pub min: f32,
+    #[serde(default)]
+    pub by_speed: bool,
+}
+
+impl StrokeTaper {
+    /// Sem afinamento nenhum (nem o automático da ponta).
+    pub const NONE: StrokeTaper = StrokeTaper { start: 0.0, end: 0.0, unit: TaperUnit::Px, min: 0.0, by_speed: false };
+
+    /// Velocidade (px/s) que conta como 100% no "pela velocidade" (a mesma do pincel raster).
+    pub const VELOCITY_FULL: f32 = 2500.0;
+
+    pub fn validate(&self) -> Result<(), String> {
+        let max = if self.unit == TaperUnit::Percent { 100.0 } else { 5000.0 };
+        if !(self.start.is_finite() && self.end.is_finite() && (0.0..=max).contains(&self.start) && (0.0..=max).contains(&self.end)) {
+            return Err(format!("taper: entrada e saída entre 0 e {max}"));
+        }
+        if !(0.0..=1.0).contains(&self.min) {
+            return Err(format!("taper.min fora de 0..1: {}", self.min));
+        }
+        Ok(())
+    }
+}
+
 /// Perfil de largura ao longo do traço: pares (t em 0..=1, multiplicador da largura base).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Default)]
 pub struct WidthProfile(pub Vec<[f32; 2]>);
@@ -123,6 +174,9 @@ pub struct Stroke {
     /// Perfil opcional; vazio = só pressão e regra da ponta.
     #[serde(default, skip_serializing_if = "is_empty_profile")]
     pub profile: WidthProfile,
+    /// Entrada e saída configuradas (substitui o afinamento automático da ponta); ausente = regra da ponta.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub taper: Option<StrokeTaper>,
     #[serde(default)]
     pub color: ColorRef,
     #[serde(default = "one")]
@@ -190,6 +244,9 @@ impl Stroke {
         if !(0.0..=1.0).contains(&self.opacity) {
             return Err(format!("opacidade fora de 0..1: {}", self.opacity));
         }
+        if let Some(tp) = &self.taper {
+            tp.validate()?;
+        }
         for p in &self.points {
             if !(p.x.is_finite() && p.y.is_finite() && (0.0..=1.0).contains(&p.pressure)) {
                 return Err("ponto inválido (coordenada não finita ou pressão fora de 0..1)".into());
@@ -223,7 +280,7 @@ mod point_id_tests {
 
     #[test]
     fn ids_read_before_an_insert_still_point_to_the_same_points() {
-        let mut s = Stroke { id: Id::from("s"), points: vec![pt(0.0), pt(10.0), pt(20.0)], geometry: StrokeGeometry::Spline, tension: 0.0, tip: VectorTip::Marker, width: 2.0, profile: Default::default(), color: ColorRef::default(), opacity: 1.0, closed: false, aliased: false, color_trace: false, group: String::new() };
+        let mut s = Stroke { taper: None, id: Id::from("s"), points: vec![pt(0.0), pt(10.0), pt(20.0)], geometry: StrokeGeometry::Spline, tension: 0.0, tip: VectorTip::Marker, width: 2.0, profile: Default::default(), color: ColorRef::default(), opacity: 1.0, closed: false, aliased: false, color_trace: false, group: String::new() };
         assert_eq!((s.point_id(0), s.point_id(2)), (1, 3), "sem ids gravados: índice+1");
         s.materialize_point_ids();
         let mut q = pt(5.0);

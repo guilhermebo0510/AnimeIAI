@@ -265,14 +265,41 @@ fn pen_rows(env: &mut Env, ui: &mut Ui) {
     if plain_bar(env, ui, "opt.pen_simplify", &mut v, 0.0, 100.0, false, 0, "") {
         env.ed.opts.pen_simplify = v;
     }
-    // Início e fim: afinar por comprimento, sem depender de pressão (mouse)
+    // Início e fim (Clip Studio): comprimento em px ou %, pela velocidade, espessura na ponta, e o automático da ponta
+    let o = &mut env.ed.opts;
+    let r = ui.checkbox(&mut o.pen_taper_auto, tr("opt.pen_taper_auto")).on_hover_text(tr("opt.pen_taper_auto.tip"));
+    env.notes.push(("tprop:pen_taper_auto".into(), r.rect));
+    let pct = env.ed.opts.pen_taper_unit == aiai_core::TaperUnit::Percent;
+    let (hi, suffix) = if pct { (100.0, " %") } else { (400.0, " px") };
     let mut v = env.ed.opts.pen_taper_in;
-    if plain_bar(env, ui, "opt.pen_taper_in", &mut v, 0.0, 400.0, false, 0, " px") {
+    if plain_bar(env, ui, "opt.pen_taper_in", &mut v, 0.0, hi, false, 0, suffix) {
         env.ed.opts.pen_taper_in = v;
     }
     let mut v = env.ed.opts.pen_taper_out;
-    if plain_bar(env, ui, "opt.pen_taper_out", &mut v, 0.0, 400.0, false, 0, " px") {
+    if plain_bar(env, ui, "opt.pen_taper_out", &mut v, 0.0, hi, false, 0, suffix) {
         env.ed.opts.pen_taper_out = v;
+    }
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(tr("opt.pen_taper_unit")).size(12.0));
+        for (u, key, name) in [(aiai_core::TaperUnit::Px, "opt.pen_taper_unit.px", "px"), (aiai_core::TaperUnit::Percent, "opt.pen_taper_unit.pct", "pct")] {
+            let r = ui.selectable_label(env.ed.opts.pen_taper_unit == u, tr(key));
+            env.notes.push((format!("tprop:pen_taper_unit:{name}"), r.rect));
+            if r.clicked() && env.ed.opts.pen_taper_unit != u {
+                // troca a unidade mantendo o número dentro da faixa nova
+                let o = &mut env.ed.opts;
+                o.pen_taper_unit = u;
+                let hi = if u == aiai_core::TaperUnit::Percent { 100.0 } else { 400.0 };
+                o.pen_taper_in = o.pen_taper_in.min(hi);
+                o.pen_taper_out = o.pen_taper_out.min(hi);
+            }
+        }
+    });
+    let o = &mut env.ed.opts;
+    let r = ui.checkbox(&mut o.pen_taper_speed, tr("opt.pen_taper_speed")).on_hover_text(tr("opt.pen_taper_speed.tip"));
+    env.notes.push(("tprop:pen_taper_speed".into(), r.rect));
+    let mut v = env.ed.opts.pen_taper_min * 100.0;
+    if plain_bar(env, ui, "opt.pen_taper_min", &mut v, 0.0, 100.0, false, 0, " %") {
+        env.ed.opts.pen_taper_min = v / 100.0;
     }
     let o = &mut env.ed.opts;
     let r = ui.checkbox(&mut o.pen_weld, tr("opt.pen_weld")).on_hover_text(tr("opt.pen_weld.tip"));

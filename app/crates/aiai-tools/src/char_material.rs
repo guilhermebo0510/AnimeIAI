@@ -199,7 +199,7 @@ fn template(kind: MaterialKind, size: Option<[u32; 2]>) -> Option<Template> {
 }
 
 fn guide_line(pts: Vec<[f32; 2]>, width: f32, hex: &str) -> Stroke {
-    Stroke {
+    Stroke { taper: None,
         id: Id(String::new()),
         points: pts.into_iter().map(|q| StrokePoint { x: q[0], y: q[1], pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect(),
         geometry: StrokeGeometry::Polyline,
