@@ -1137,3 +1137,81 @@ fn wal_replay_keeps_the_input_source_of_each_entry() {
     drop(s);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+
+/// CX17 C17-02: gravar numa pasta (Salvar como) um corte que outro processo está editando lá é recusado antes de gravar
+/// qualquer arquivo; e as travas que a gravação pega só para gravar saem no fim.
+#[test]
+fn save_writes_cut_files_only_under_their_real_locks() {
+    let (p, mut s, [cut_a, ..]) = split_two_cuts("c1702-p");
+    let q = std::env::temp_dir().join(format!("aiai-cx17-02-q-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&q);
+    std::fs::create_dir_all(q.join("cuts")).unwrap();
+    std::fs::write(aiai_core::lock::cut_lock_path(&q, &cut_a), foreign_lock_json()).unwrap();
+    let r = persist::save(&mut s, &q);
+    assert!(matches!(r, Err(CoreError::Locked(_))), "{r:?}");
+    assert!(!q.join(persist::PROJECT_FILE).exists() && !q.join(persist::CHECKPOINT_FILE).exists(), "nada gravado em Q");
+    assert_eq!(s.path.as_deref(), Some(p.as_path()));
+    std::fs::remove_file(aiai_core::lock::cut_lock_path(&q, &cut_a)).unwrap();
+    persist::save(&mut s, &q).unwrap();
+    let locks: Vec<_> = std::fs::read_dir(q.join("cuts")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.ends_with(".lock")).collect();
+    assert!(locks.is_empty(), "as travas pegas só para gravar saíram: {locks:?}");
+    drop(s);
+    let _ = std::fs::remove_dir_all(&p);
+    let _ = std::fs::remove_dir_all(&q);
+}
+
+/// CX17 C17-04: projeto salvo pela versão anterior, com o corte `cut:A` no arquivo de nome antigo `cut_A.json`. Outro
+/// processo está com o corte; a dona salva só uma mudança global: o manifesto continua citando o arquivo que existe e
+/// o projeto reabre inteiro. Livre o corte, editá-lo aqui o grava no nome novo e o antigo sai.
+#[test]
+fn legacy_cut_file_name_survives_a_save_while_the_cut_is_held_and_migrates_later() {
+    let dir = std::env::temp_dir().join(format!("aiai-cx17-04-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut s = CoreSession::for_tests("t");
+    let (ep, cut0, _l, _c) = build_basic(&mut s);
+    let sc = s.project.nodes.get(&cut0).unwrap().parent.clone().unwrap();
+    let cut = Id::from("cut:A");
+    s.apply(Command::CreateNode { id: Some(cut.clone()), parent: Some(sc), index: None, name: "Antigo".into(), data: NodeKind::Cut(CutData::new(12)) }).unwrap();
+    let layer = s.apply(Command::CreateNode { id: None, parent: Some(cut.clone()), index: None, name: "L".into(), data: NodeKind::Layer(LayerData::new(LayerType::Vector)) }).unwrap().created[0].clone();
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"split_cuts": true}}) }).unwrap();
+    persist::save(&mut s, &dir).unwrap();
+    drop(s);
+    // como a versão anterior gravava: o arquivo com o nome antigo e o manifesto citando-o
+    let new_rel = format!("cuts/{}.json", aiai_core::lock::cut_file_stem(&cut));
+    std::fs::rename(dir.join(&new_rel), dir.join("cuts/cut_A.json")).unwrap();
+    let m = std::fs::read_to_string(dir.join(persist::PROJECT_FILE)).unwrap().replace(&new_rel, "cuts/cut_A.json");
+    std::fs::write(dir.join(persist::PROJECT_FILE), m).unwrap();
+    let (mut s, _) = persist::open(&dir).unwrap();
+    std::fs::write(aiai_core::lock::cut_lock_path(&dir, &cut), foreign_lock_json()).unwrap();
+    s.apply(Command::SetProps { id: ep.clone(), name: Some("global".into()), data: json!({}) }).unwrap();
+    persist::save(&mut s, &dir).unwrap();
+    assert!(dir.join("cuts/cut_A.json").is_file(), "o arquivo do corte ocupado ficou");
+    assert!(std::fs::read_to_string(dir.join(persist::PROJECT_FILE)).unwrap().contains("cuts/cut_A.json"), "o manifesto cita o arquivo que existe");
+    drop(s);
+    let (mut s, _) = persist::open(&dir).unwrap();
+    assert!(s.project.nodes.contains_key(&layer), "reabre com o corte inteiro");
+    std::fs::remove_file(aiai_core::lock::cut_lock_path(&dir, &cut)).unwrap();
+    s.apply(Command::SetProps { id: layer.clone(), name: Some("editada".into()), data: json!({}) }).unwrap();
+    persist::save(&mut s, &dir).unwrap();
+    assert!(dir.join(&new_rel).is_file() && !dir.join("cuts/cut_A.json").exists(), "migrou para o nome novo");
+    drop(s);
+    let (s, _) = persist::open(&dir).unwrap();
+    assert_eq!(s.project.nodes[&layer].name, "editada");
+    drop(s);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// CX17 C17-06: mover uma camada de A (livre) para B (ocupado) é recusado, e a trava de A pega na tentativa sai junto.
+#[test]
+fn refused_move_releases_the_locks_it_took() {
+    let (dir, mut s, [cut_a, layer_a, _, cut_b, ..]) = split_two_cuts("c1706");
+    std::fs::write(aiai_core::lock::cut_lock_path(&dir, &cut_b), foreign_lock_json()).unwrap();
+    let r = s.apply(Command::MoveNode { id: layer_a, parent: Some(cut_b.clone()), index: None });
+    assert!(matches!(r, Err(CoreError::Locked(_))), "{r:?}");
+    assert_eq!(s.claimed_cuts().count(), 0, "nenhuma trava ficou na sessão");
+    assert!(!aiai_core::lock::cut_lock_path(&dir, &cut_a).exists(), "a trava de A saiu do disco");
+    std::fs::remove_file(aiai_core::lock::cut_lock_path(&dir, &cut_b)).unwrap();
+    drop(s);
+    let _ = std::fs::remove_dir_all(&dir);
+}

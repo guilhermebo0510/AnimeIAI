@@ -112,6 +112,9 @@ pub struct CoreSession {
     ext: std::collections::HashMap<std::any::TypeId, Box<dyn std::any::Any + Send + Sync>>,
 }
 
+/// Cortes que um comando mexe e as travas que ele pegou agora (ainda não publicadas na sessão).
+type Claim = (std::collections::BTreeSet<crate::Id>, Vec<(crate::Id, crate::lock::ProjectLock)>);
+
 static NEXT_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 fn next_epoch() -> u64 {
@@ -225,6 +228,10 @@ impl CoreSession {
         self.cut_bases.insert(cut, (rel, hash));
     }
 
+    pub(crate) fn cut_base(&self, cut: &crate::Id) -> Option<&(String, Option<String>)> {
+        self.cut_bases.get(cut)
+    }
+
     pub(crate) fn clear_cut_bases(&mut self) {
         self.cut_bases.clear();
     }
@@ -282,12 +289,15 @@ impl CoreSession {
 
     /// Projeto dividido com pasta: trava os cortes que o comando mexeu (a primeira edição de cada um). Corte travado
     /// por outro processo = erro; sessão só de leitura (outro processo tem a pasta) só edita dentro de cortes.
-    fn claim_cuts_for(&mut self, affected: &[crate::Id], pre: &(std::collections::BTreeSet<crate::Id>, bool)) -> CoreResult<std::collections::BTreeSet<crate::Id>> {
+    /// Devolve os cortes do comando e as travas que ele PEGOU agora: elas só entram na sessão depois que o comando for
+    /// gravado; recusado em qualquer ponto, saem só elas e as que a sessão já tinha ficam (CX17 C17-06).
+    fn claim_cuts_for(&mut self, affected: &[crate::Id], pre: &(std::collections::BTreeSet<crate::Id>, bool)) -> CoreResult<Claim> {
         let mut cuts = std::collections::BTreeSet::new();
+        let mut fresh = Vec::new();
         if !self.project.settings.split_cuts {
-            return Ok(cuts);
+            return Ok((cuts, fresh));
         }
-        let Some(dir) = self.path.clone() else { return Ok(cuts) };
+        let Some(dir) = self.path.clone() else { return Ok((cuts, fresh)) };
         let read_only = self.lock.is_none() && matches!(crate::lock::inspect(&dir), Ok(crate::lock::LockState::Held(_)));
         let outside = || CoreError::Locked("outro processo tem o projeto aberto: aqui só dá para editar dentro de um corte (o resto fica com ele)".into());
         // o que o comando tirou de cortes (apagar, mover) conta como edição desses cortes; nó de fora dos cortes, como
@@ -311,9 +321,10 @@ impl CoreSession {
             }
             match crate::lock::acquire_cut(&dir, c)? {
                 Ok(a) => {
-                    // posse nova: o disco ainda tem a versão que esta sessão leu? (senão a trava sai com `a`)
+                    // posse nova: o disco ainda tem a versão que esta sessão leu? (senão a trava sai com `a`, e as
+                    // pegas antes saem com `fresh`)
                     self.check_cut_base(&dir, c)?;
-                    self.cut_locks.insert(c.clone(), a.lock);
+                    fresh.push((c.clone(), a.lock));
                 }
                 Err(owner) => {
                     let name = self.project.nodes.get(c).map(|n| n.name.clone()).unwrap_or_else(|| c.0.clone());
@@ -321,7 +332,7 @@ impl CoreSession {
                 }
             }
         }
-        Ok(cuts)
+        Ok((cuts, fresh))
     }
 
     /// Fechamento limpo: solta a trava da pasta (o `project.lock` desta abertura sai do disco).
@@ -363,7 +374,7 @@ impl CoreSession {
         }
         // projeto dividido por corte: o corte mexido fica travado para esta sessão (ou o comando volta, se outro processo
         // está com ele)
-        let cuts = match self.claim_cuts_for(&applied.affected, &pre) {
+        let (cuts, fresh) = match self.claim_cuts_for(&applied.affected, &pre) {
             Ok(c) => c,
             Err(e) => {
                 let ctx = ApplyCtx { blobs: &self.blobs, author, revision };
@@ -376,7 +387,7 @@ impl CoreSession {
         self.change_counter += 1;
         let description = applied.command.description();
         let outcome = Outcome { revision, description: description.clone(), created: applied.created.clone(), affected: applied.affected.clone() };
-        if let Err(e) = self.record("apply", &description, author, Some(applied.command.clone()), &cuts) {
+        if let Err(e) = self.record("apply", &description, author, Some(applied.command.clone()), &cuts, &fresh) {
             // sem diário não há passo: o comando volta, a revisão também e a proveniência dos nós mexidos volta ao valor
             // exato de antes (nada aplicado sem o seu desfazer, nenhum autor inventado)
             let ctx = ApplyCtx { blobs: &self.blobs, author, revision: revision - 1 };
@@ -386,6 +397,7 @@ impl CoreSession {
             self.change_counter += 1;
             return Err(e);
         }
+        self.cut_locks.extend(fresh);
         self.undo.push(applied);
         self.blobs.tick();
         // `while`: baixar o limite nas Preferências esvazia o excesso na próxima ação, não uma entrada por vez
@@ -436,7 +448,7 @@ impl CoreSession {
             }
         };
         // desfazer num corte também é editar o corte: a mesma barreira da trava que aplicar, antes de gravar (CX14 C14-01)
-        let cuts = match self.claim_cuts_for(&r.affected, &pre) {
+        let (cuts, fresh) = match self.claim_cuts_for(&r.affected, &pre) {
             Ok(c) => c,
             Err(e) => {
                 let ctx = ApplyCtx { blobs: &self.blobs, author: &author, revision };
@@ -450,7 +462,7 @@ impl CoreSession {
         self.change_counter += 1;
         let description = format!("Desfazer: {}", a.command.description());
         let outcome = Outcome { revision, description: description.clone(), created: r.created.clone(), affected: r.affected.clone() };
-        if let Err(e) = self.record("undo", &description, &author, Some(a.inverse.clone()), &cuts) {
+        if let Err(e) = self.record("undo", &description, &author, Some(a.inverse.clone()), &cuts, &fresh) {
             let ctx = ApplyCtx { blobs: &self.blobs, author: &author, revision: revision - 1 };
             r.inverse.apply(&mut self.project, &ctx).expect("refazer deve restaurar");
             self.restore_provenance(prior);
@@ -459,6 +471,7 @@ impl CoreSession {
             self.undo.push(a);
             return Err(e);
         }
+        self.cut_locks.extend(fresh);
         self.redo.push(Applied { command: r.inverse, inverse: a.inverse, created: a.created, affected: r.affected });
         Ok(outcome)
     }
@@ -479,7 +492,7 @@ impl CoreSession {
                 }
             }
         };
-        let cuts = match self.claim_cuts_for(&r.affected, &pre) {
+        let (cuts, fresh) = match self.claim_cuts_for(&r.affected, &pre) {
             Ok(c) => c,
             Err(e) => {
                 let ctx = ApplyCtx { blobs: &self.blobs, author: &author, revision };
@@ -493,7 +506,7 @@ impl CoreSession {
         self.change_counter += 1;
         let description = format!("Refazer: {}", a.command.description());
         let outcome = Outcome { revision, description: description.clone(), created: r.created.clone(), affected: r.affected.clone() };
-        if let Err(e) = self.record("redo", &description, &author, Some(a.command.clone()), &cuts) {
+        if let Err(e) = self.record("redo", &description, &author, Some(a.command.clone()), &cuts, &fresh) {
             let ctx = ApplyCtx { blobs: &self.blobs, author: &author, revision: revision - 1 };
             r.inverse.apply(&mut self.project, &ctx).expect("desfazer deve restaurar");
             self.restore_provenance(prior);
@@ -502,11 +515,12 @@ impl CoreSession {
             self.redo.push(a);
             return Err(e);
         }
+        self.cut_locks.extend(fresh);
         self.undo.push(r);
         Ok(outcome)
     }
 
-    fn record(&mut self, op: &str, description: &str, author: &str, command: Option<Command>, cuts: &std::collections::BTreeSet<crate::Id>) -> CoreResult<()> {
+    fn record(&mut self, op: &str, description: &str, author: &str, command: Option<Command>, cuts: &std::collections::BTreeSet<crate::Id>, fresh: &[(crate::Id, crate::lock::ProjectLock)]) -> CoreResult<()> {
         let entry = LogEntry {
             seq: self.log.len() as u64,
             revision: self.project.revision,
@@ -522,7 +536,7 @@ impl CoreSession {
             // aqui, e a da pasta fica segura até a linha estar no disco (quem tenta assumir espera). Posse perdida = o
             // comando volta inteiro (CX16 C16-02).
             for c in cuts {
-                if let Some(l) = self.cut_locks.get(c) {
+                if let Some(l) = self.cut_locks.get(c).or_else(|| fresh.iter().find(|(id, _)| id == c).map(|(_, l)| l)) {
                     l.verify()?;
                 }
             }

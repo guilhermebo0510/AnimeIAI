@@ -84,14 +84,28 @@ pub fn to_canonical_json(project: &Project) -> CoreResult<String> {
 pub const SPLIT_FORMAT: u32 = 2;
 
 /// O documento como vai para o disco: o `project.json` (inteiro, ou o manifesto) e os arquivos dos cortes
-/// (`cuts/<corte>.json`, caminho relativo e conteúdo), quando dividido.
+/// (`cuts/<corte>.json`, caminho relativo e conteúdo), quando dividido. Os caminhos são os do nome atual
+/// ([`crate::lock::cut_file_stem`]); quem grava pode manter o caminho que um corte já tem no disco (ver `write_document`).
 pub fn document_files(project: &Project) -> CoreResult<(String, Vec<(crate::Id, String, String)>)> {
     if !project.settings.split_cuts {
         return Ok((to_canonical_json(project)?, Vec::new()));
     }
+    let (v, parts) = document_parts(project)?;
+    let files: Vec<_> = parts.into_iter().map(|(id, text)| (id.clone(), cut_rel(&id), text)).collect();
+    let manifest = finish_manifest(v, files.iter().map(|f| f.1.clone()).collect())?;
+    Ok((manifest, files))
+}
+
+/// Caminho relativo atual do arquivo de um corte.
+fn cut_rel(cut: &crate::Id) -> String {
+    format!("{}/{}.json", crate::lock::CUTS_DIR, crate::lock::cut_file_stem(cut))
+}
+
+/// Projeto dividido: o manifesto ainda sem a lista de arquivos e o texto de cada corte (o texto não depende do caminho
+/// onde ele vai ficar).
+fn document_parts(project: &Project) -> CoreResult<(serde_json::Value, Vec<(crate::Id, String)>)> {
     let mut v = serde_json::to_value(project)?;
-    let mut files = Vec::new();
-    let mut names = Vec::new();
+    let mut parts = Vec::new();
     {
         let nodes = v.get_mut("nodes").and_then(|n| n.as_object_mut()).ok_or_else(|| CoreError::invalid("nodes", "documento sem nós"))?;
         for (id, n) in &project.nodes {
@@ -104,17 +118,19 @@ pub fn document_files(project: &Project) -> CoreResult<(String, Vec<(crate::Id, 
                     part.insert(d.0.clone(), x);
                 }
             }
-            let rel = format!("{}/{}.json", crate::lock::CUTS_DIR, crate::lock::cut_file_stem(id));
             let body = serde_json::json!({ "format": SPLIT_FORMAT, "cut": id.0, "nodes": serde_json::Value::Object(part) });
             let mut text = serde_json::to_string_pretty(&body)?;
             text.push('\n');
-            names.push(rel.clone());
-            files.push((id.clone(), rel, text));
+            parts.push((id.clone(), text));
         }
     }
+    Ok((v, parts))
+}
+
+/// Fecha o manifesto com a lista de arquivos. Dois cortes no mesmo arquivo (o Windows não distingue caixa) = um apagaria
+/// o outro: recusa antes de gravar qualquer coisa (CX16 C16-14).
+fn finish_manifest(mut v: serde_json::Value, mut names: Vec<String>) -> CoreResult<String> {
     names.sort();
-    // dois cortes no mesmo arquivo (o Windows não distingue caixa) = um apagaria o outro: recusa antes de gravar qualquer
-    // coisa (CX16 C16-14; com `cut_file_stem` injetivo isso só aconteceria por colisão de hash)
     let mut seen = std::collections::BTreeSet::new();
     for n in &names {
         if !seen.insert(n.to_lowercase()) {
@@ -125,7 +141,7 @@ pub fn document_files(project: &Project) -> CoreResult<(String, Vec<(crate::Id, 
     v["cut_files"] = serde_json::json!(names);
     let mut manifest = serde_json::to_string_pretty(&v)?;
     manifest.push('\n');
-    Ok((manifest, files))
+    Ok(manifest)
 }
 
 /// Lê o documento da pasta (inteiro ou dividido por corte) e devolve o projeto e os bytes do documento inteiro (a
@@ -211,9 +227,11 @@ fn disk_hash(path: &Path) -> CoreResult<Option<String>> {
     }
 }
 
-/// Termina uma gravação dividida interrompida (dona da pasta, antes de ler o documento). Confere tudo antes de gravar
-/// qualquer coisa: um arquivo que não está nem como antes nem como depois mudou por outro caminho, e abrir recusa sem
-/// mexer em nada.
+/// Termina uma gravação dividida interrompida (dona da pasta, antes de ler o documento, com a posse da pasta segura por
+/// quem chama). Manifesto já publicado = a gravação tinha terminado; só o registro sai. Senão confere tudo antes de
+/// gravar qualquer coisa: um arquivo que não está nem como antes nem como depois mudou por outro caminho, e um corte
+/// que ainda precisa ser gravado tem de estar livre (a trava é pega e segura durante a gravação); qualquer conflito =
+/// abrir recusa sem mexer em nada (CX17 C17-01). Cria as pastas que faltarem (CX17 C17-05).
 fn complete_checkpoint(dir: &Path) -> CoreResult<bool> {
     let path = dir.join(CHECKPOINT_FILE);
     let bytes = match retry_io(|| std::fs::read(&path)) {
@@ -222,6 +240,10 @@ fn complete_checkpoint(dir: &Path) -> CoreResult<bool> {
         Err(e) => return Err(CoreError::Io(format!("{}: {e}", path.display()))),
     };
     let cp: Checkpoint = serde_json::from_slice(&bytes).map_err(|e| CoreError::invalid(CHECKPOINT_FILE, e.to_string()))?;
+    if retry_io(|| std::fs::read(dir.join(PROJECT_FILE))).is_ok_and(|b| b == cp.manifest.as_bytes()) {
+        retry_io(|| std::fs::remove_file(&path))?;
+        return Ok(true);
+    }
     let mut todo = Vec::new();
     for f in &cp.files {
         if f.rel.contains("..") || Path::new(&f.rel).is_absolute() {
@@ -240,85 +262,172 @@ fn complete_checkpoint(dir: &Path) -> CoreResult<bool> {
         }
         todo.push(f);
     }
+    // as travas dos cortes que ainda vão ser gravados, todas antes de gravar o primeiro
+    let mut locks = Vec::new();
+    let mut held = Vec::new();
+    for f in &todo {
+        let cut = serde_json::from_str::<serde_json::Value>(&f.text).ok().and_then(|v| v.get("cut").and_then(|c| c.as_str()).map(|c| crate::Id(c.to_string())));
+        let Some(cut) = cut else { continue };
+        std::fs::create_dir_all(dir.join(crate::lock::CUTS_DIR))?;
+        match crate::lock::acquire_cut(dir, &cut)? {
+            Ok(a) => {
+                held.push(a.lock.hold()?);
+                locks.push(a.lock);
+            }
+            Err(owner) => {
+                return Err(CoreError::Locked(format!(
+                    "uma gravação foi interrompida e o corte {} está com outro processo ({}); feche o outro e abra de novo; nada foi mudado na pasta",
+                    cut.0,
+                    owner.describe()
+                )));
+            }
+        }
+    }
     for f in todo {
-        write_atomic(&dir.join(&f.rel), f.text.as_bytes())?;
+        let p = dir.join(&f.rel);
+        if let Some(parent) = p.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        write_atomic(&p, f.text.as_bytes())?;
     }
     write_atomic(&dir.join(PROJECT_FILE), cp.manifest.as_bytes())?;
     retry_io(|| std::fs::remove_file(&path))?;
+    drop(held);
+    drop(locks);
     Ok(true)
 }
 
-/// Grava o documento na pasta: os arquivos de corte que esta sessão editou (os outros podem ter sido salvos por quem
-/// os editou em outro lugar: a cópia daqui pode ser velha) ou que ainda não existem, nunca os travados por outro
-/// processo vivo; apaga os de cortes que não existem mais (ou todos, se o projeto deixou de ser dividido) e por fim o
-/// `project.json`. Corte editado aqui e travado por outro processo = recusa sem gravar nada (salvar "com sucesso"
-/// deixando a edição de fora mentiria; CX16 C16-02). Projeto dividido: antes de gravar, a gravação em andamento vai para
-/// [`CHECKPOINT_FILE`] (quem chama apaga depois de recomeçar o diário). Devolve os cortes cujo arquivo ficou igual ao da
-/// memória (caminho e hash), para a sessão atualizar as bases.
-fn write_document(dir: &Path, manifest: &str, files: &[(crate::Id, String, String)], edited: &[crate::Id], fresh: bool) -> CoreResult<Vec<CutBase>> {
+/// Posse dos cortes durante uma gravação completa: as guardas e as travas pegas só para ela. Ficam vivas até o
+/// registro da gravação sair (quem chama solta).
+#[derive(Default)]
+struct CutHolds {
+    held: Vec<crate::lock::HeldGuard>,
+    temp: Vec<crate::lock::ProjectLock>,
+    taken: std::collections::BTreeSet<crate::Id>,
+}
+
+impl CutHolds {
+    /// Segura a posse de um corte para gravar: a trava que a sessão já tem (conferida sob a exclusão), ou uma pega agora.
+    /// `Ok(false)` = outro processo está com o corte.
+    fn take(&mut self, dir: &Path, cut: &crate::Id, mine: Option<&crate::lock::ProjectLock>) -> CoreResult<bool> {
+        if !self.taken.insert(cut.clone()) {
+            return Ok(true); // já segura nesta gravação
+        }
+        match mine {
+            Some(l) => self.held.push(l.hold()?),
+            None => match crate::lock::acquire_cut(dir, cut)? {
+                Ok(a) => {
+                    self.held.push(a.lock.hold()?);
+                    self.temp.push(a.lock);
+                }
+                Err(_) => {
+                    self.taken.remove(cut);
+                    return Ok(false);
+                }
+            },
+        }
+        Ok(true)
+    }
+}
+
+/// Grava o documento na pasta (a posse da pasta segura por quem chama). Projeto dividido: grava os cortes que esta
+/// sessão editou, os que ainda não existem e, numa pasta nova ou na primeira gravação dividida, todos; os outros podem
+/// ter sido salvos por quem os editou em outro lugar e ficam como estão, **no caminho em que estão** (um corte de nome
+/// antigo continua no arquivo antigo até ser gravado aqui; CX17 C17-04). Todo arquivo de corte gravado ou apagado está
+/// sob a posse real daquele corte (a da sessão ou uma pega agora), segura até o fim (CX17 C17-02). Corte que precisa
+/// ser gravado e está com outro processo = recusa sem gravar nada (CX16 C16-02). Antes de gravar, a gravação em
+/// andamento vai para [`CHECKPOINT_FILE`] (com a pasta `cuts/` já criada, CX17 C17-05). `progress` recebe a base de
+/// cada corte assim que o arquivo dele fica igual ao da memória (mesmo se algo falhar depois).
+fn write_document(dir: &Path, session: &CoreSession, fresh: bool, progress: &mut Vec<CutBase>) -> CoreResult<CutHolds> {
+    let project = &session.project;
     let cuts_dir = dir.join(crate::lock::CUTS_DIR);
+    let mut holds = CutHolds::default();
     // a pasta ainda não estava dividida (primeira gravação dividida) ou é outra pasta (Salvar como): todos os arquivos
     // saem daqui
     let was_split = !fresh && retry_io(|| std::fs::read(dir.join(PROJECT_FILE))).is_ok_and(|b| b.windows(11).any(|w| w == b"\"cut_files\""));
-    let mut plan: Vec<(&crate::Id, &String, &String, Option<String>)> = Vec::new();
-    let mut same: Vec<CutBase> = Vec::new();
-    for (cut, rel, text) in files {
-        if matches!(crate::lock::inspect_cut(dir, cut)?, crate::lock::LockState::Held(_)) {
-            if fresh || edited.contains(cut) {
-                return Err(CoreError::Locked(format!("o corte {} que esta sessão vai gravar está com outro processo; nada foi gravado", cut.0)));
+    let mine = |cut: &crate::Id| if fresh { None } else { session.cut_lock(cut) };
+    let (manifest, parts) = if project.settings.split_cuts { (None, document_parts(project)?) } else { (Some(to_canonical_json(project)?), (serde_json::Value::Null, Vec::new())) };
+    let (manifest_v, parts) = parts;
+    let mut names = Vec::new();
+    let mut plan: Vec<(crate::Id, String, &String, Option<String>)> = Vec::new();
+    let mut removals: Vec<PathBuf> = Vec::new();
+    for (cut, text) in &parts {
+        let new_rel = cut_rel(cut);
+        let known = if fresh { None } else { session.cut_base(cut).map(|b| b.0.clone()) };
+        let existing = known.filter(|r| dir.join(r).is_file()).or_else(|| dir.join(&new_rel).is_file().then(|| new_rel.clone()));
+        let write = fresh || !was_split || mine(cut).is_some() || existing.is_none();
+        if !write {
+            names.push(existing.expect("existe"));
+            continue;
+        }
+        if !holds.take(dir, cut, mine(cut))? {
+            match existing {
+                // de outro processo e não editado aqui: o arquivo dele fica onde está
+                Some(rel) if !fresh && mine(cut).is_none() => {
+                    names.push(rel);
+                    continue;
+                }
+                _ => return Err(CoreError::Locked(format!("o corte {} que esta sessão vai gravar está com outro processo; nada foi gravado", cut.0))),
             }
-            continue;
         }
-        let p = dir.join(rel);
-        if was_split && p.is_file() && !edited.contains(cut) {
-            continue;
+        if let Some(old) = existing.filter(|r| *r != new_rel) {
+            removals.push(dir.join(old));
         }
-        let old = disk_hash(&p)?;
+        names.push(new_rel.clone());
+        let old = disk_hash(&dir.join(&new_rel))?;
         let new = BlobHash::of(text.as_bytes()).0;
         if old.as_deref() == Some(new.as_str()) {
-            same.push((cut.clone(), rel.clone(), new));
+            progress.push((cut.clone(), new_rel, new));
             continue;
         }
-        plan.push((cut, rel, text, old));
+        plan.push((cut.clone(), new_rel, text, old));
     }
-    // arquivos de corte que sobram (corte apagado, ou o projeto não é mais dividido): a trava é conferida pelo próprio
-    // nome do arquivo, porque o corte apagado já não está no projeto (CX16 C16-11)
-    let keep: std::collections::BTreeSet<String> = files.iter().map(|(_, r, _)| r.rsplit('/').next().unwrap_or(r).to_string()).collect();
-    let mut leftovers = Vec::new();
+    let manifest = match manifest {
+        Some(m) => m,
+        None => finish_manifest(manifest_v, names.clone())?,
+    };
+    // arquivos de corte que sobram (corte apagado, projeto que deixou de ser dividido, nome antigo): só saem com a posse
+    // do corte deles, achado pelo conteúdo do arquivo — o corte apagado já não está no projeto (CX16 C16-11, CX17 C17-02)
+    let keep: std::collections::BTreeSet<String> = names.iter().map(|r| r.rsplit('/').next().unwrap_or(r).to_lowercase()).collect();
     if let Ok(rd) = std::fs::read_dir(&cuts_dir) {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            if name.ends_with(".json") && !keep.contains(&name) {
-                let lock = cuts_dir.join(format!("{}.lock", name.trim_end_matches(".json")));
-                if !matches!(crate::lock::inspect_file(&lock)?, crate::lock::LockState::Held(_)) {
-                    leftovers.push(e.path());
-                }
+            if !name.ends_with(".json") || keep.contains(&name.to_lowercase()) || removals.contains(&e.path()) {
+                continue;
+            }
+            let owner = retry_io(|| std::fs::read(e.path())).ok().and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()).and_then(|v| v.get("cut").and_then(|c| c.as_str()).map(|c| crate::Id(c.to_string())));
+            let Some(cut) = owner else { continue }; // arquivo que não é de corte: não é nosso para apagar
+            let ours = parts.iter().any(|(c, _)| *c == cut);
+            if ours || holds.take(dir, &cut, mine(&cut))? {
+                removals.push(e.path());
             }
         }
     }
-    if !files.is_empty() || was_split {
+    if !parts.is_empty() || was_split {
+        std::fs::create_dir_all(&cuts_dir)?;
         let cp = Checkpoint {
-            manifest: manifest.to_string(),
-            files: plan.iter().map(|(_, rel, text, old)| CheckpointFile { rel: (*rel).clone(), old: old.clone(), text: (*text).clone() }).collect(),
+            manifest: manifest.clone(),
+            files: plan.iter().map(|(_, rel, text, old)| CheckpointFile { rel: rel.clone(), old: old.clone(), text: (*text).clone() }).collect(),
         };
         write_atomic(&dir.join(CHECKPOINT_FILE), serde_json::to_string(&cp)?.as_bytes())?;
+        #[cfg(test)]
+        checkpoint_tests::failpoint()?;
     }
-    if !plan.is_empty() {
-        std::fs::create_dir_all(&cuts_dir)?;
-    }
+    #[cfg(test)]
+    checkpoint_tests::on_write(dir);
     for (cut, rel, text, _) in &plan {
         #[cfg(test)]
         checkpoint_tests::failpoint()?;
         write_atomic(&dir.join(rel), text.as_bytes())?;
-        same.push(((*cut).clone(), (*rel).clone(), BlobHash::of(text.as_bytes()).0));
+        progress.push((cut.clone(), rel.clone(), BlobHash::of(text.as_bytes()).0));
     }
     #[cfg(test)]
     checkpoint_tests::failpoint()?;
     write_atomic(&dir.join(PROJECT_FILE), manifest.as_bytes())?;
-    for p in leftovers {
+    for p in removals {
         let _ = std::fs::remove_file(p);
     }
-    Ok(same)
+    Ok(holds)
 }
 
 /// Sessão só de leitura (outro processo tem a pasta) num projeto dividido por corte: grava só os cortes que esta
@@ -328,9 +437,12 @@ pub fn save_cuts(session: &mut CoreSession, dir: &Path) -> CoreResult<Vec<crate:
         return Err(CoreError::invalid("split_cuts", "o projeto não está dividido por corte"));
     }
     let mine: Vec<crate::Id> = session.claimed_cuts().cloned().collect();
-    let (_, files) = document_files(&session.project)?;
+    let (_, parts) = document_parts(&session.project)?;
     let mut written = Vec::new();
-    for (cut, rel, text) in files.iter().filter(|(c, _, _)| mine.contains(c)) {
+    for (cut, text) in parts.iter().filter(|(c, _)| mine.contains(c)) {
+        // o caminho que o manifesto do dono já cita para este corte (um nome antigo continua valendo; CX17 C17-04)
+        let rel = session.cut_base(cut).map(|b| b.0.clone()).unwrap_or_else(|| cut_rel(cut));
+        let rel = &rel;
         // os blobs deste corte: os do documento que aparecem no arquivo dele
         let pending: Vec<_> = session.project.referenced_blobs().into_iter().filter(|h| text.contains(&h.0)).filter_map(|h| session.blobs.get(&h).map(|b| (h, b))).collect();
         let blobs = &session.blobs;
@@ -621,10 +733,10 @@ pub fn save(session: &mut CoreSession, dir: &Path) -> CoreResult<()> {
         }
     }
     let new_lock = claim_lock(session, dir)?;
-    let (json, cut_files) = document_files(&session.project)?;
+    let fresh = session.path.as_deref() != Some(dir);
     let referenced = session.project.referenced_blobs();
     let blob_bytes: u64 = referenced.iter().filter_map(|h| session.blobs.get(h)).map(|b| b.len() as u64).sum();
-    let doc_bytes: u64 = json.len() as u64 + cut_files.iter().map(|f| f.2.len() as u64).sum::<u64>();
+    let doc_bytes = serde_json::to_vec(&session.project)?.len() as u64;
     ensure_space(dir, doc_bytes + blob_bytes)?;
     let required = session.project.required_blobs();
     let mut pending = Vec::new();
@@ -637,37 +749,45 @@ pub fn save(session: &mut CoreSession, dir: &Path) -> CoreResult<()> {
             None => {} // string com cara de hash em JSON livre que não é blob
         }
     }
-    // pasta nova (Salvar como): nada conferido nela ainda; na mesma pasta, só o que não foi lido/gravado nesta sessão
-    if session.path.as_deref() != Some(dir) {
-        session.blobs.clear_on_disk();
-    }
+    // pasta nova (Salvar como): grava todos e só marca na sessão depois do sucesso (se falhar, a sessão continua na
+    // pasta antiga sem achar que blobs dela estão no disco); na mesma pasta, só o que não foi lido/gravado nesta sessão
     let blobs = &session.blobs;
-    write_blobs_parallel(dir, &pending, &|h| !blobs.is_on_disk(h))?;
-    for (h, _) in &pending {
-        session.blobs.mark_on_disk(h.clone());
+    write_blobs_parallel(dir, &pending, &|h| fresh || !blobs.is_on_disk(h))?;
+    let pending: Vec<BlobHash> = pending.into_iter().map(|(h, _)| h).collect();
+    if !fresh {
+        for h in &pending {
+            session.blobs.mark_on_disk(h.clone());
+        }
     }
-    let fresh = session.path.as_deref() != Some(dir);
-    let edited: Vec<crate::Id> = session.claimed_cuts().cloned().collect();
-    let written = {
+    let mut progress = Vec::new();
+    let result = (|| -> CoreResult<(Wal, CutHolds)> {
         // o documento e o diário novo são gravados com a posse da pasta segura: quem tenta assumir espera (CX16 C16-02)
         let _held = match new_lock.as_ref().or(session.lock()) {
             Some(l) => Some(l.hold()?),
             None => None,
         };
-        let written = write_document(dir, &json, &cut_files, &edited, fresh)?;
+        let holds = write_document(dir, session, fresh, &mut progress)?;
         write_opener(dir, &session.project)?;
-        // WAL recomeça a partir desta revisão.
         #[cfg(test)]
         checkpoint_tests::failpoint()?;
+        // WAL recomeça a partir desta revisão; ainda não entra na sessão (CX17 C17-03)
         let wal = Wal::create(dir, session.project.revision)?;
-        session.attach_wal(wal);
-        // gravação completa: o registro da gravação em andamento sai por último
-        match std::fs::remove_file(dir.join(CHECKPOINT_FILE)) {
-            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(CoreError::Io(format!("{CHECKPOINT_FILE}: {e}"))),
-            _ => {}
+        Ok((wal, holds))
+    })();
+    let (wal, holds) = match result {
+        Ok(x) => x,
+        Err(e) => {
+            // na mesma pasta, os cortes que chegaram ao disco já são a base nova (senão a sessão acharia que outro os salvou)
+            if !fresh {
+                for (cut, rel, h) in progress {
+                    session.set_cut_base(cut, rel, Some(h));
+                }
+            }
+            return Err(e);
         }
-        written
     };
+    // daqui em diante nada falha: a sessão passa inteira para a pasta gravada
+    session.attach_wal(wal);
     if new_lock.is_some() {
         session.set_lock(new_lock);
     }
@@ -676,12 +796,20 @@ pub fn save(session: &mut CoreSession, dir: &Path) -> CoreResult<()> {
         // na pasta nova, conferindo a base (CX16 C16-03)
         session.replace_cut_locks(Default::default());
         session.clear_cut_bases();
+        session.blobs.clear_on_disk();
+        for h in &pending {
+            session.blobs.mark_on_disk(h.clone());
+        }
     }
-    for (cut, rel, h) in written {
+    for (cut, rel, h) in progress {
         session.set_cut_base(cut, rel, Some(h));
     }
     session.blobs.take_dirty();
     session.path = Some(dir.to_path_buf());
+    // gravação completa: o registro sai por último; se não sair, a próxima abertura vê o manifesto já publicado e só o
+    // apaga (não há o que refazer)
+    let _ = std::fs::remove_file(dir.join(CHECKPOINT_FILE));
+    drop(holds);
     // o que nem o documento nem o histórico usam sai da memória (traços desfeitos e descartados, tiles antigos)
     session.collect_garbage();
     Ok(())
@@ -749,7 +877,9 @@ pub fn open(dir: &Path) -> CoreResult<(CoreSession, OpenReport)> {
 /// Como [`open`]; `take_over` assume a trava mesmo de outro processo vivo (o usuário escolheu "Assumir").
 pub fn open_with(dir: &Path, take_over: bool) -> CoreResult<(CoreSession, OpenReport)> {
     let mut report = OpenReport::default();
-    if !dir.join(PROJECT_FILE).is_file() {
+    // sem documento só vale se houver uma gravação interrompida para terminar (a primeira gravação numa pasta nova pode
+    // ter caído antes do manifesto; CX17 C17-05)
+    if !dir.join(PROJECT_FILE).is_file() && !dir.join(CHECKPOINT_FILE).is_file() {
         return Err(CoreError::Io(format!("{}: projeto não encontrado", dir.join(PROJECT_FILE).display())));
     }
     let lock = match crate::lock::acquire(dir, take_over)? {
@@ -763,6 +893,12 @@ pub fn open_with(dir: &Path, take_over: bool) -> CoreResult<(CoreSession, OpenRe
         }
     };
     let read_only = lock.is_none();
+    // tudo o que a abertura grava (terminar a gravação interrompida, recuperar, consertar e reabrir o diário, cópia de
+    // segurança) acontece com a posse da pasta segura: quem tenta assumir espera (CX17 C17-01)
+    let _held = match lock.as_ref() {
+        Some(l) => Some(l.hold()?),
+        None => None,
+    };
     // gravação dividida interrompida: a dona da pasta a termina antes de ler (CX16 C16-05); só leitura lê como está
     if read_only {
         if dir.join(CHECKPOINT_FILE).is_file() {
@@ -808,8 +944,9 @@ pub fn open_with(dir: &Path, take_over: bool) -> CoreResult<(CoreSession, OpenRe
     // dona da pasta: a pasta e a trava valem já na recuperação, para ela travar os cortes que reaplica (sem isso Salvar
     // pulava o arquivo desses cortes e recomeçava o diário, perdendo o que foi recuperado; CX14). Só leitura não
     // recupera para si: o diário é do dono.
+    // (a trava entra na sessão só no fim, depois que a posse segura sai: numa recusa no meio, a guarda sai antes da
+    // trava e a trava consegue se apagar do disco)
     if !read_only {
-        session.set_lock(lock);
         session.path = Some(dir.to_path_buf());
     }
 
@@ -928,6 +1065,8 @@ pub fn open_with(dir: &Path, take_over: bool) -> CoreResult<(CoreSession, OpenRe
             Err(e) => report.warnings.push(format!("cópia de segurança do documento ao abrir falhou: {e}")),
         }
     }
+    drop(_held);
+    session.set_lock(lock);
     session.path = Some(dir.to_path_buf());
     Ok((session, report))
 }
@@ -1252,6 +1391,46 @@ mod checkpoint_tests {
         static FAIL_AFTER: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
     }
 
+    thread_local! {
+        /// Chamado no meio da gravação, antes do primeiro arquivo de corte (só nos testes).
+        static ON_WRITE: std::cell::RefCell<Option<Box<dyn Fn(&Path)>>> = const { std::cell::RefCell::new(None) };
+    }
+
+    pub(super) fn on_write(dir: &Path) {
+        ON_WRITE.with(|f| {
+            if let Some(f) = f.borrow().as_ref() {
+                f(dir)
+            }
+        });
+    }
+
+    /// CX17 C17-02: durante a gravação, cada corte gravado está sob a trava desta sessão — quem tentar pegá-lo nesse
+    /// meio-tempo vê a trava viva e é recusado; no fim, as travas pegas só para gravar saem.
+    #[test]
+    fn cut_files_are_written_under_this_session_s_cut_locks() {
+        let q = std::env::temp_dir().join(format!("aiai-cp-under-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&q);
+        let mut s = CoreSession::for_tests("t");
+        let ep = mk(&mut s, None, "EP", NodeKind::Episode(EpisodeData { number: 1 }));
+        let sc = mk(&mut s, Some(ep), "S", NodeKind::Scene(SceneData::default()));
+        let cut = mk(&mut s, Some(sc), "A", NodeKind::Cut(CutData::new(24)));
+        s.apply(Command::SetProjectProps { patch: serde_json::json!({"settings": {"split_cuts": true}}) }).unwrap();
+        let seen = std::rc::Rc::new(std::cell::Cell::new(None));
+        let (seen2, cut2) = (seen.clone(), cut.clone());
+        ON_WRITE.with(|f| {
+            *f.borrow_mut() = Some(Box::new(move |dir: &Path| {
+                let st = crate::lock::inspect_cut(dir, &cut2).unwrap();
+                seen2.set(Some(matches!(st, crate::lock::LockState::Mine(ref i) if i.pid == std::process::id())));
+            }))
+        });
+        save(&mut s, &q).unwrap();
+        ON_WRITE.with(|f| *f.borrow_mut() = None);
+        assert_eq!(seen.get(), Some(true), "o corte estava travado por esta sessão enquanto era gravado");
+        assert!(!crate::lock::cut_lock_path(&q, &cut).exists(), "a trava pega só para gravar saiu");
+        drop(s);
+        let _ = std::fs::remove_dir_all(&q);
+    }
+
     pub(super) fn failpoint() -> CoreResult<()> {
         FAIL_AFTER.with(|c| match c.get() {
             Some(0) => Err(CoreError::Io("queda simulada".into())),
@@ -1272,7 +1451,7 @@ mod checkpoint_tests {
     /// memória (cada edição uma vez, nenhuma perdida); nenhum registro de gravação sobra.
     #[test]
     fn split_save_interrupted_after_any_file_reopens_with_every_edit_exactly_once() {
-        for k in 0..=3 {
+        for k in 0..=4 {
             let dir = std::env::temp_dir().join(format!("aiai-cp-{k}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             let mut s = CoreSession::for_tests("t");
@@ -1304,6 +1483,117 @@ mod checkpoint_tests {
             drop(s);
             let _ = std::fs::remove_dir_all(&dir);
         }
+    }
+
+    fn split_project(s: &mut CoreSession) -> (crate::Id, crate::Id, crate::Id) {
+        let ep = mk(s, None, "EP", NodeKind::Episode(EpisodeData { number: 1 }));
+        let sc = mk(s, Some(ep), "S", NodeKind::Scene(SceneData::default()));
+        let ca = mk(s, Some(sc), "A", NodeKind::Cut(CutData::new(24)));
+        let la = mk(s, Some(ca.clone()), "LA", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+        s.apply(Command::SetProjectProps { patch: serde_json::json!({"settings": {"split_cuts": true}}) }).unwrap();
+        (ca, la.clone(), la)
+    }
+
+    fn foreign(dir: &Path, cut: &crate::Id) {
+        std::fs::create_dir_all(dir.join(crate::lock::CUTS_DIR)).unwrap();
+        let other = serde_json::json!({"pid": 4, "host": crate::lock::host_name(), "started_ms": 0, "exe": "outro.exe", "token": "x"});
+        std::fs::write(crate::lock::cut_lock_path(dir, cut), other.to_string()).unwrap();
+    }
+
+    /// CX17 C17-01: a gravação interrompida ainda precisa gravar um corte que agora está com outro processo — abrir
+    /// recusa sem mexer em nada (registro, documento, diário), solta a trava da pasta; o outro solta, abre e termina.
+    #[test]
+    fn finishing_an_interrupted_save_respects_a_cut_held_elsewhere() {
+        let dir = std::env::temp_dir().join(format!("aiai-cp-held-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut s = CoreSession::for_tests("t");
+        let (ca, la, _) = split_project(&mut s);
+        save(&mut s, &dir).unwrap();
+        mk(&mut s, Some(la), "A1", NodeKind::Cel(CelData::new(1)));
+        let expected = to_canonical_json(&s.project).unwrap();
+        FAIL_AFTER.with(|c| c.set(Some(0)));
+        assert!(save(&mut s, &dir).is_err());
+        FAIL_AFTER.with(|c| c.set(None));
+        drop(s);
+        foreign(&dir, &ca);
+        let files = [PROJECT_FILE, CHECKPOINT_FILE, WAL_FILE];
+        let before: Vec<_> = files.iter().map(|n| std::fs::read(dir.join(n)).ok()).collect();
+        let e = open(&dir).err().expect("recusa").to_string();
+        assert!(e.contains("outro processo"), "{e}");
+        assert_eq!(files.iter().map(|n| std::fs::read(dir.join(n)).ok()).collect::<Vec<_>>(), before, "nada mudou");
+        assert!(!dir.join(crate::lock::LOCK_FILE).exists(), "a trava da pasta saiu");
+        std::fs::remove_file(crate::lock::cut_lock_path(&dir, &ca)).unwrap();
+        let (s, _) = open(&dir).unwrap();
+        assert_eq!(to_canonical_json(&s.project).unwrap(), expected);
+        assert!(!dir.join(CHECKPOINT_FILE).exists());
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// CX17 C17-05: a primeira gravação numa pasta nova cai logo depois do registro (ainda sem `project.json`); e uma
+    /// conversão para dividido cai antes de existir `cuts/`. Abrir termina as duas sem ajuda.
+    #[test]
+    fn interrupted_save_before_the_first_document_or_folder_still_recovers() {
+        // pasta nova
+        let dir = std::env::temp_dir().join(format!("aiai-cp-first-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut s = CoreSession::for_tests("t");
+        let (_, la, _) = split_project(&mut s);
+        mk(&mut s, Some(la), "A1", NodeKind::Cel(CelData::new(1)));
+        let expected = to_canonical_json(&s.project).unwrap();
+        FAIL_AFTER.with(|c| c.set(Some(0)));
+        assert!(save(&mut s, &dir).is_err());
+        FAIL_AFTER.with(|c| c.set(None));
+        drop(s);
+        assert!(!dir.join(PROJECT_FILE).exists() && dir.join(CHECKPOINT_FILE).is_file());
+        let (s, _) = open(&dir).unwrap();
+        assert_eq!(to_canonical_json(&s.project).unwrap(), expected);
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
+        // conversão para dividido, `cuts/` ainda inexistente
+        let dir = std::env::temp_dir().join(format!("aiai-cp-conv-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut s = CoreSession::for_tests("t");
+        let ep = mk(&mut s, None, "EP", NodeKind::Episode(EpisodeData { number: 1 }));
+        let sc = mk(&mut s, Some(ep), "S", NodeKind::Scene(SceneData::default()));
+        mk(&mut s, Some(sc), "A", NodeKind::Cut(CutData::new(24)));
+        save(&mut s, &dir).unwrap();
+        s.apply(Command::SetProjectProps { patch: serde_json::json!({"settings": {"split_cuts": true}}) }).unwrap();
+        let expected = to_canonical_json(&s.project).unwrap();
+        FAIL_AFTER.with(|c| c.set(Some(0)));
+        assert!(save(&mut s, &dir).is_err());
+        FAIL_AFTER.with(|c| c.set(None));
+        drop(s);
+        let _ = std::fs::remove_dir_all(dir.join(crate::lock::CUTS_DIR));
+        let (s, _) = open(&dir).unwrap();
+        assert_eq!(to_canonical_json(&s.project).unwrap(), expected);
+        drop(s);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// CX17 C17-03: Salvar como que falha no fim deixa a sessão inteira na pasta antiga: a edição seguinte vai para o
+    /// diário de P, e reabrir P a recupera.
+    #[test]
+    fn failed_save_as_keeps_the_whole_session_in_the_old_folder() {
+        let p = std::env::temp_dir().join(format!("aiai-cp-sa-p-{}", std::process::id()));
+        let q = std::env::temp_dir().join(format!("aiai-cp-sa-q-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        let _ = std::fs::remove_dir_all(&q);
+        let mut s = CoreSession::for_tests("t");
+        let ep = mk(&mut s, None, "EP", NodeKind::Episode(EpisodeData { number: 1 }));
+        save(&mut s, &p).unwrap();
+        // passa pela gravação do documento em Q e cai antes do diário novo
+        FAIL_AFTER.with(|c| c.set(Some(1)));
+        assert!(save(&mut s, &q).is_err());
+        FAIL_AFTER.with(|c| c.set(None));
+        assert_eq!(s.path.as_deref(), Some(p.as_path()), "a sessão continua em P");
+        s.apply(Command::SetProps { id: ep.clone(), name: Some("depois da falha".into()), data: serde_json::json!({}) }).unwrap();
+        drop(s);
+        let (s, rep) = open(&p).unwrap();
+        assert_eq!((rep.replayed, s.project.nodes[&ep].name.as_str()), (1, "depois da falha"), "a edição foi para o diário de P");
+        drop(s);
+        let _ = std::fs::remove_dir_all(&p);
+        let _ = std::fs::remove_dir_all(&q);
     }
 
     /// Um arquivo que mudou por outro caminho depois da gravação interrompida: abrir recusa sem mexer em nada.
