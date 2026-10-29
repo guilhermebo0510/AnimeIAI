@@ -238,6 +238,14 @@ fn found_path_becomes_an_app_stroke_with_the_measured_widths() {
     for (q, wv) in s.points.iter().zip(&found[0].widths) {
         assert!((s.width * q.width - wv * 2.0).abs() < 1e-3);
     }
+    // e a ponta não afina de novo por conta própria (G-Pen): o raio desenhado segue a largura medida também nas pontas
+    let g = path_to_stroke(&found[0], VectorTip::GPen, ColorRef::default(), 1.0, [0.0, 0.0]);
+    assert!(g.points[0].corner && g.points[g.points.len() - 1].corner);
+    let smp = sample_stroke(&g);
+    let q = &found[0];
+    let k = q.points.len() / 4; // um ponto perto da ponta, ainda dentro do trecho que a G-Pen afinaria
+    let near = smp.iter().map(|s| ((s.x - q.points[k][0]).hypot(s.y - q.points[k][1]), s.r)).min_by(|a, b| a.0.total_cmp(&b.0)).unwrap();
+    assert!((2.0 * near.1 - q.widths[k]).abs() < 0.35 * q.widths[k], "raio {} × largura {}", near.1, q.widths[k]);
 }
 
 /// Bancada com desenhos de verdade (rodar à mão): `AIAI_VEC_BENCH=<project.json>` e opcional `AIAI_VEC_OUT=<pasta>`
