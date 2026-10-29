@@ -118,6 +118,9 @@ pub fn action_timeout(action: &str) -> Duration {
         "EXPORT_VIDEO" | "ANIMATIC" | "DELIVERY" => Duration::from_secs(1190),
         "STORYBOARD" | "CUTS_FROM_STORYBOARD" | "PRODUCTION" | "RETAKE" => Duration::from_secs(60),
         "RENDER_SHEET" | "EDIT_PREVIEW" | "EDIT_MIX" | "TTS_REGENERATE" => Duration::from_secs(120),
+        // copiloto: a 1ª sugestão carrega os modelos (~50 s) e uma de 768 px leva ~8 s; o serviço tem prazo próprio de 300 s
+        "COPILOT" => Duration::from_secs(300),
+        "VECTORIZE" => Duration::from_secs(60),
         "BGM" | "TTS_LINE" | "TTS_KOKORO" | "MIX_CUT" | "LOUDNESS" | "AUDIO_EDIT" | "AUDIO_ANALYZE" => Duration::from_secs(120),
         "SKY" | "PATTERN_FILL" | "FILL_SHAPE" | "EDIT_SET" | "LAYER_MERGE" | "TEXT" | "GAG_BG" | "ANIME_FX" | "GUIDE3D" | "MODEL_SHEET" | "CHARACTER_MATERIAL" | "INBETWEEN" | "PROPAGATE_FILLS" | "LIPSYNC" => Duration::from_secs(60),
         _ => Duration::from_secs(10),

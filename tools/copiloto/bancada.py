@@ -11,11 +11,12 @@ Modelos (baixados só para teste; licenças no relatório):
   - decodificador: VAE do modelo em fp32 ou TAESD (madebyollin, MIT)
 
 GTX 1650 (4 GB), achados: a VAE em fp16 dá NaN (imagem preta); acima de ~3,4 GB a placa transborda para a RAM e
-cada passo leva segundos. Por isso: decodificador em fp32 ou TAESD, atenção em fp32 opcional, tudo na placa.
+cada passo leva segundos; e o fp16 dela é 5 a 7x mais lento que o fp32. Por isso: pesos em fp16 com a conta em fp32
+(`--computo fp32`, padrão), TAESD, tudo na placa.
 
 Uso:
   python tools/copiloto/bancada.py --casos <pasta> --saida <pasta> [--base anylora] [--modelos cn,t2i] [--res 384,512]
-         [--passos 4,6] [--cfg 1.0] [--vae taesd] [--sketch-lora 0.6] [--upcast]
+         [--passos 4,6] [--cfg 1.0] [--vae taesd] [--sketch-lora 0.6] [--computo fp32|fp16]
 Cada caso: `caso_<nome>.png` (rascunho/desenho parcial, preto sobre branco) e, opcional, `caso_<nome>.txt` (prompt).
 """
 import argparse, json, os, time
@@ -59,14 +60,12 @@ def load_pipe(which, a):
     else:
         from diffusers import AutoencoderKL
         p.vae = AutoencoderKL.from_pretrained(base, subfolder="vae", torch_dtype=torch.float32, variant="fp16")
-    if a.upcast:
-        # GTX 16xx: atenção em fp32 (a soma do softmax em fp16 estoura em resoluções maiores)
-        from diffusers.models.attention_processor import Attention
-        for m in p.unet.modules():
-            if isinstance(m, Attention):
-                m.upcast_attention = True
-                m.upcast_softmax = True
     p.to("cuda")
+    if a.computo == "fp32":
+        # GTX 1650: o fp16 é 5 a 7x mais lento que o fp32 e é onde nasce o NaN; pesos em fp16, conta em fp32
+        from servico import computo_fp32
+        for root in (p.unet, getattr(p, "controlnet", None) or p.adapter, p.vae):
+            computo_fp32(root)
     if a.vae != "taesd":
         p.vae.to(torch.float32)
     p.set_progress_bar_config(disable=True)
@@ -100,7 +99,7 @@ def run(a):
     casos = sorted(f for f in os.listdir(a.casos) if f.startswith("caso_") and f.endswith(".png"))
     os.makedirs(a.saida, exist_ok=True)
     rows = []
-    tag = f"{a.base}{'_sk' if a.sketch_lora > 0 else ''}_{a.vae}_cfg{a.cfg:g}{'_up' if a.upcast else ''}"
+    tag = f"{a.base}{'_sk' if a.sketch_lora > 0 else ''}_{a.vae}_cfg{a.cfg:g}{'_fp16' if a.computo == 'fp16' else ''}"
     for nome_m in a.modelos.split(","):
         pipe = load_pipe(nome_m, a)
         for res in [int(x) for x in a.res.split(",")]:
@@ -150,6 +149,6 @@ if __name__ == "__main__":
     ap.add_argument("--cfg", type=float, default=1.0)
     ap.add_argument("--vae", default="taesd", choices=["taesd", "fp32"])
     ap.add_argument("--sketch-lora", type=float, default=0.0)
-    ap.add_argument("--upcast", action="store_true")
+    ap.add_argument("--computo", default="fp32", choices=["fp32", "fp16"])
     ap.add_argument("--seed", type=int, default=1)
     run(ap.parse_args())

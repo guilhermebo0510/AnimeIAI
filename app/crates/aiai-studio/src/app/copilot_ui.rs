@@ -63,6 +63,8 @@ pub(crate) struct CopilotUi {
     pub global_prompt: String,
     pub global_on: bool,
     pub steps: u32,
+    /// Resolução de geração em px (0 = automática: o tamanho da janela de contexto, de 384 a 512).
+    pub res: u32,
     pub strength: f32,
     pub opacity: f32,
     pub pause_s: f32,
@@ -93,6 +95,7 @@ impl Default for CopilotUi {
             global_prompt: String::new(),
             global_on: true,
             steps: 4,
+            res: 0,
             strength: 0.8,
             opacity: 0.25,
             pause_s: 0.4,
@@ -231,7 +234,7 @@ pub(crate) fn tick(env: &mut Env, ctx: &egui::Context) {
         improve: c.improve,
         complete: c.complete,
         steps: Some(c.steps),
-        res: None,
+        res: (c.res > 0).then_some(c.res),
         strength: Some(c.strength),
         seed: None,
         context: None,
@@ -482,6 +485,15 @@ pub(crate) fn window(env: &mut Env, ctx: &egui::Context, rect: Rect) {
                 ui.add(egui::Slider::new(&mut c.steps, 2..=12));
             });
             ui.horizontal(|ui| {
+                ui.label(tr("copilot.res")).on_hover_text(tr("copilot.res.tip"));
+                let label = |r: u32| if r == 0 { tr("copilot.res.auto").to_string() } else { format!("{r} px") };
+                egui::ComboBox::from_id_salt("copilot_res").width(110.0).selected_text(label(c.res)).show_ui(ui, |ui| {
+                    for r in [0, 384, 512, 640, 768] {
+                        ui.selectable_value(&mut c.res, r, label(r));
+                    }
+                });
+            });
+            ui.horizontal(|ui| {
                 ui.label(tr("copilot.opacity"));
                 let mut v = c.opacity * 100.0;
                 if ui.add(egui::Slider::new(&mut v, 10.0..=60.0).suffix(" %").max_decimals(0)).changed() {
@@ -687,6 +699,7 @@ pub(crate) fn state_json(c: &CopilotUi) -> serde_json::Value {
     let pts = |v: &Vec<Stroke>| v.iter().map(|s| s.points.iter().map(|q| [q.x.round(), q.y.round()]).collect::<Vec<_>>()).collect::<Vec<_>>();
     serde_json::json!({
         "on": c.on, "improve": c.improve, "complete": c.complete, "magnet": c.magnet, "replace_rough": c.replace_rough,
+        "steps": c.steps, "res": c.res,
         "service": cp::service_state(),
         "busy": c.busy.map(|b| b.0), "queue": c.dirty.iter().map(|d| d.0).collect::<Vec<_>>(),
         "boxes": c.boxes.iter().map(|b| serde_json::json!({"id": b.id, "rect": b.rect, "state": format!("{:?}", b.state), "prompt": b.prompt})).collect::<Vec<_>>(),

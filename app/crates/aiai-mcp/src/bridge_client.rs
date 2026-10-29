@@ -56,6 +56,8 @@ pub fn read_timeout_for(action: &str) -> Duration {
         "EXPORT_VIDEO" | "ANIMATIC" | "DELIVERY" => Duration::from_secs(1200),
         "STORYBOARD" | "CUTS_FROM_STORYBOARD" | "PRODUCTION" | "RETAKE" => Duration::from_secs(65),
         "RENDER_SHEET" | "EDIT_PREVIEW" | "EDIT_MIX" | "TTS_REGENERATE" => Duration::from_secs(130),
+        "COPILOT" => Duration::from_secs(305),
+        "VECTORIZE" => Duration::from_secs(65),
         "BGM" | "TTS_LINE" | "TTS_KOKORO" | "MIX_CUT" | "LOUDNESS" | "AUDIO_EDIT" | "AUDIO_ANALYZE" => Duration::from_secs(130),
         "SKY" | "PATTERN_FILL" | "FILL_SHAPE" | "EDIT_SET" | "LAYER_MERGE" | "TEXT" | "GAG_BG" | "ANIME_FX" | "GUIDE3D" | "MODEL_SHEET" | "CHARACTER_MATERIAL" | "INBETWEEN" | "PROPAGATE_FILLS" | "LIPSYNC" => Duration::from_secs(65),
         _ => Duration::from_secs(15),
@@ -155,4 +157,21 @@ impl BridgeClient {
 fn parse_addr(addr: &str) -> Option<SocketAddr> {
     let port = parse_loopback_port(addr)?;
     Some(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), port))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_timeout_for;
+    use aiai_bridge::host::action_timeout;
+
+    /// O cliente espera mais que o servidor dá à UI: o erro claro do app ("a UI não respondeu") chega antes do nosso.
+    #[test]
+    fn client_waits_longer_than_the_bridge_for_every_action() {
+        let mut actions: Vec<&str> = aiai_bridge::production_tools::PRODUCTION_ACTIONS.to_vec();
+        actions.extend(["COPILOT", "VECTORIZE", "SCREENSHOT", "RENDER", "COMPARE", "OPEN_PROJECT", "SAVE_PROJECT", "NEW_PROJECT", "APPLY", "QUERY"]);
+        for a in actions {
+            assert!(read_timeout_for(a) > action_timeout(a), "{a}: cliente {:?} <= ponte {:?}", read_timeout_for(a), action_timeout(a));
+        }
+        assert!(action_timeout("COPILOT").as_secs() >= 300, "a 1ª sugestão carrega os modelos");
+    }
 }

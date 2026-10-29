@@ -3,6 +3,11 @@ stdin/stdout, uma linha JSON por mensagem (o app nunca espera a carga nem a gera
 
 Cadeia: AnyLoRA (SD 1.5 de anime) + ControlNet lineart anime + LCM-LoRA + TAESD → Anime2Sketch (só linha).
 
+GTX 1650: o fp16 dela é 5 a 7 vezes MAIS LENTO que o fp32 (0,34 × 1,64 TFLOPS em matriz; 0,54 × 3,9 em convolução) e é
+onde nasce o NaN (imagem preta). Os pesos ficam em fp16 (o fp32 inteiro não cabe nos 4 GB) e a conta é feita em fp32
+(`computo_fp32`). Resultado: 384 px, 4 passos, de ~9 s para ~2 s; 512 a 768 px sem NaN. Defina AIAI_COPILOTO_FP16=1
+para voltar à conta em fp16 (placas com fp16 rápido).
+
 Mensagens:
   ← {"ready": true, "load_s": ..., "device": "cuda"}                    (uma vez, quando os modelos carregam)
   → {"id": 7, "image": "<png de contexto: linha preta sobre branco>", "out": "<png de saída>", "prompt": "...",
@@ -26,6 +31,29 @@ def send(obj):
     sys.stdout.flush()
 
 
+def computo_fp32(root):
+    """Pesos guardados em fp16, conta em fp32: cada camada sobe o próprio peso para fp32 na hora (custa pouco: a cópia é
+    limitada pela memória da placa, não pela conta)."""
+    import torch.nn as nn
+    import torch.nn.functional as F
+
+    def f32(t):
+        return None if t is None else t.float()
+
+    for m in root.modules():
+        if isinstance(m, nn.Linear):
+            m.forward = (lambda m: lambda x: F.linear(x.float(), m.weight.float(), f32(m.bias)))(m)
+        elif isinstance(m, nn.Conv2d):
+            m.forward = (lambda m: lambda x: m._conv_forward(x.float(), m.weight.float(), f32(m.bias)))(m)
+        elif isinstance(m, nn.GroupNorm):
+            m.forward = (lambda m: lambda x: F.group_norm(x.float(), m.num_groups, f32(m.weight), f32(m.bias), m.eps))(m)
+        elif isinstance(m, nn.LayerNorm):
+            m.forward = (lambda m: lambda x: F.layer_norm(x.float(), m.normalized_shape, f32(m.weight), f32(m.bias), m.eps))(m)
+
+
+FP32 = os.environ.get("AIAI_COPILOTO_FP16", "") != "1"
+
+
 def load():
     import torch
     from diffusers import StableDiffusionPipeline, StableDiffusionControlNetPipeline, ControlNetModel, LCMScheduler, AutoencoderTiny
@@ -39,6 +67,9 @@ def load():
                                              tokenizer=sd.tokenizer, unet=sd.unet, scheduler=LCMScheduler.from_config(sd.scheduler.config), controlnet=cn,
                                              safety_checker=None, feature_extractor=None, requires_safety_checker=False)
     pipe.to("cuda")
+    if FP32:
+        for root in (pipe.unet, pipe.controlnet, pipe.vae):
+            computo_fp32(root)
     pipe.set_progress_bar_config(disable=True)
     sys.path.insert(0, A2S)
     cwd = os.getcwd()
@@ -64,7 +95,7 @@ def generate(pipe, a2s, req):
     lat = pipe(prompt=prompt, image=ctrl, num_inference_steps=int(req.get("steps", 4)), guidance_scale=1.0, width=res, height=res, generator=g,
                controlnet_conditioning_scale=float(req.get("strength", 0.8)), output_type="latent").images
     with torch.no_grad():
-        x = pipe.vae.decode(lat / pipe.vae.config.scaling_factor).sample
+        x = pipe.vae.decode((lat.float() if FP32 else lat) / pipe.vae.config.scaling_factor).sample
     if torch.isnan(x).any():
         raise RuntimeError("a geração saiu com valores inválidos (NaN) nesta resolução")
     torch.cuda.synchronize()
@@ -92,7 +123,18 @@ def main():
     except Exception as e:
         send({"ready": False, "error": f"não consegui carregar os modelos: {e}"})
         return
-    send({"ready": True, "load_s": round(time.perf_counter() - t0, 1), "device": "cuda"})
+    # aquecimento: a primeira geração paga a preparação da placa (~1,5 s); melhor aqui do que na primeira sugestão
+    try:
+        import torch
+        from PIL import Image
+        import tempfile
+        tmp = tempfile.mkdtemp(prefix="copiloto-")
+        Image.new("L", (384, 384), 255).save(os.path.join(tmp, "a.png"))
+        generate(pipe, a2s, {"image": os.path.join(tmp, "a.png"), "out": os.path.join(tmp, "b.png"), "res": 384, "steps": 1})
+    except Exception as e:
+        send({"ready": False, "error": f"o aquecimento falhou: {type(e).__name__}: {e}"})
+        return
+    send({"ready": True, "load_s": round(time.perf_counter() - t0, 1), "device": "cuda", "compute": "fp32" if FP32 else "fp16"})
     for line in sys.stdin:
         line = line.strip()
         if not line:
