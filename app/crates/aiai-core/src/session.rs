@@ -349,6 +349,14 @@ impl CoreSession {
                 }
             }
         };
+        // desfazer num corte também é editar o corte: a mesma barreira da trava que aplicar, antes de gravar (CX14 C14-01)
+        if let Err(e) = self.claim_cuts_for(&r.affected) {
+            let ctx = ApplyCtx { blobs: &self.blobs, author: &author, revision };
+            r.inverse.apply(&mut self.project, &ctx).expect("refazer deve restaurar");
+            self.restore_provenance(prior);
+            self.undo.push(a);
+            return Err(e);
+        }
         self.project.revision = revision;
         self.change_counter += 1;
         let description = format!("Desfazer: {}", a.command.description());
@@ -363,8 +371,6 @@ impl CoreSession {
             return Err(e);
         }
         self.redo.push(Applied { command: r.inverse, inverse: a.inverse, created: a.created, affected: r.affected });
-        // desfazer num corte também é editar o corte (projeto dividido): a gravação seguinte regrava o arquivo dele
-        let _ = self.claim_cuts_for(&outcome.affected);
         Ok(outcome)
     }
 
@@ -383,6 +389,13 @@ impl CoreSession {
                 }
             }
         };
+        if let Err(e) = self.claim_cuts_for(&r.affected) {
+            let ctx = ApplyCtx { blobs: &self.blobs, author: &author, revision };
+            r.inverse.apply(&mut self.project, &ctx).expect("desfazer deve restaurar");
+            self.restore_provenance(prior);
+            self.redo.push(a);
+            return Err(e);
+        }
         self.project.revision = revision;
         self.change_counter += 1;
         let description = format!("Refazer: {}", a.command.description());
@@ -397,7 +410,6 @@ impl CoreSession {
             return Err(e);
         }
         self.undo.push(r);
-        let _ = self.claim_cuts_for(&outcome.affected);
         Ok(outcome)
     }
 

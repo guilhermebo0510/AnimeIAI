@@ -819,11 +819,127 @@ fn read_only_split_session_saves_only_its_cuts() {
     assert_eq!(std::fs::read(dir.join(persist::PROJECT_FILE)).unwrap(), manifest, "o manifesto é do dono");
     let fa = dir.join("cuts").join(format!("{}.json", aiai_core::lock::cut_file_stem(&cut_a)));
     assert!(std::fs::read_to_string(&fa).unwrap().contains("\"ro\""), "o corte foi gravado");
+    // CX14 C14-01, só leitura e sem diário: desfazer num corte que outro processo pegou é recusado sem rastro
+    s.release_cut_locks();
+    std::fs::write(aiai_core::lock::cut_lock_path(&dir, &cut_a), other.to_string()).unwrap();
+    let before = (serde_json::to_string(&s.project).unwrap(), s.log().len(), s.history());
+    let r = s.undo();
+    assert!(matches!(r, Err(CoreError::Locked(_))), "{r:?}");
+    assert_eq!((serde_json::to_string(&s.project).unwrap(), s.log().len(), s.history()), before);
+    std::fs::remove_file(aiai_core::lock::cut_lock_path(&dir, &cut_a)).unwrap();
+    s.undo().unwrap();
+    s.redo().unwrap();
     drop(s);
     std::fs::remove_file(dir.join(aiai_core::lock::LOCK_FILE)).unwrap();
     let (s, _) = persist::open(&dir).unwrap();
     let NodeKind::Cel(c) = &s.project.nodes[&cel_a].data else { panic!() };
     assert!(c.strokes.iter().any(|t| t.id.0 == "ro"), "o dono abre com o traço do outro");
+    drop(s);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Projeto dividido com uma edição no corte B que só está no diário (a sessão fechou sem Salvar).
+fn split_project_with_unsaved_edit_in_cut_b(tag: &str) -> (std::path::PathBuf, Id, Id) {
+    let dir = std::env::temp_dir().join(format!("aiai-replay-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut s = CoreSession::for_tests("t");
+    let (_ep, cut_a, _layer, _cel_a) = build_basic(&mut s);
+    let sc = s.project.nodes.get(&cut_a).unwrap().parent.clone().unwrap();
+    let cut_b = s.apply(Command::CreateNode { id: None, parent: Some(sc), index: None, name: "C002".into(), data: NodeKind::Cut(CutData::new(24)) }).unwrap().created[0].clone();
+    let lb = s.apply(Command::CreateNode { id: None, parent: Some(cut_b.clone()), index: None, name: "B".into(), data: NodeKind::Layer(LayerData::new(LayerType::Vector)) }).unwrap().created[0].clone();
+    let cel_b = s.apply(Command::CreateNode { id: None, parent: Some(lb), index: None, name: "B1".into(), data: NodeKind::Cel(CelData::new(1)) }).unwrap().created[0].clone();
+    s.apply(Command::SetProjectProps { patch: json!({"settings": {"split_cuts": true}}) }).unwrap();
+    persist::save(&mut s, &dir).unwrap();
+    drop(s);
+    let (mut s, _) = persist::open(&dir).unwrap();
+    s.apply(Command::InsertStrokes { cel: cel_b.clone(), items: vec![IndexedStroke { index: 0, stroke: stroke("diario", 7.0) }] }).unwrap();
+    drop(s); // fecha sem Salvar: a edição fica só no diário
+    (dir, cut_b, cel_b)
+}
+
+fn foreign_cut_lock(dir: &std::path::Path, cut: &Id) {
+    let other = json!({"pid": 4, "host": aiai_core::lock::host_name(), "started_ms": 0, "exe": "outro.exe", "token": "x"});
+    std::fs::write(aiai_core::lock::cut_lock_path(dir, cut), other.to_string()).unwrap();
+}
+
+fn strokes_of(s: &CoreSession, cel: &Id) -> usize {
+    match &s.project.nodes.get(cel).unwrap().data {
+        NodeKind::Cel(c) => c.strokes.len(),
+        _ => unreachable!(),
+    }
+}
+
+/// CX14 (raiz do C14-01): a recuperação do diário trava os cortes que reaplica; sem isso Salvar pulava o arquivo do
+/// corte e recomeçava o diário, perdendo a edição recuperada.
+#[test]
+fn wal_replay_claims_the_cuts_it_restores_and_save_keeps_the_edit() {
+    let (dir, cut_b, cel_b) = split_project_with_unsaved_edit_in_cut_b("save");
+    let (mut s, rep) = persist::open(&dir).unwrap();
+    assert_eq!(rep.replayed, 1);
+    assert_eq!(strokes_of(&s, &cel_b), 1, "recuperado do diário");
+    assert!(s.claimed_cuts().any(|c| *c == cut_b), "a recuperação travou o corte que mexeu");
+    persist::save(&mut s, &dir).unwrap();
+    drop(s);
+    let (s, _) = persist::open(&dir).unwrap();
+    assert_eq!(strokes_of(&s, &cel_b), 1, "a edição recuperada sobreviveu a Salvar e reabrir");
+    drop(s);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Recuperar edições de um corte que outro processo está editando não pode passar por cima dele nem cortar o diário:
+/// abrir recusa e a pasta fica como estava; o outro solta, abre e recupera.
+#[test]
+fn wal_replay_into_a_cut_held_elsewhere_refuses_to_open_and_changes_nothing() {
+    let (dir, cut_b, cel_b) = split_project_with_unsaved_edit_in_cut_b("held");
+    foreign_cut_lock(&dir, &cut_b);
+    let wal = std::fs::read(dir.join("wal.ndjson")).unwrap();
+    let doc = std::fs::read(dir.join(persist::PROJECT_FILE)).unwrap();
+    let e = persist::open(&dir).err().expect("abrir recusa").to_string();
+    assert!(e.contains("outro lugar") && e.contains("diário"), "{e}");
+    assert_eq!(std::fs::read(dir.join("wal.ndjson")).unwrap(), wal, "diário intacto");
+    assert_eq!(std::fs::read(dir.join(persist::PROJECT_FILE)).unwrap(), doc);
+    assert!(!dir.join("project.lock").exists(), "a trava da pasta saiu com a abertura recusada");
+    std::fs::remove_file(aiai_core::lock::cut_lock_path(&dir, &cut_b)).unwrap();
+    let (s, rep) = persist::open(&dir).unwrap();
+    assert_eq!((rep.replayed, strokes_of(&s, &cel_b)), (1, 1));
+    drop(s);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// CX14 C14-01: desfazer e refazer passam pela mesma barreira da trava de corte que aplicar; recusados, o projeto
+/// inteiro (com proveniência), a revisão, o log, o histórico e o diário ficam iguais; com diário e sem diário.
+#[test]
+fn undo_and_redo_refused_by_a_cut_lock_leave_everything_untouched() {
+    let (dir, cut_b, cel_b) = split_project_with_unsaved_edit_in_cut_b("undo");
+    let (mut s, _) = persist::open(&dir).unwrap();
+    let wal_file = dir.join("wal.ndjson");
+    let state = |s: &CoreSession| (serde_json::to_string(&s.project).unwrap(), s.log().len(), s.history(), std::fs::read(&wal_file).unwrap());
+    for with_wal in [true, false] {
+        let wal = if with_wal { None } else { s.detach_wal() };
+        // desfazer recusado
+        s.release_cut_locks();
+        foreign_cut_lock(&dir, &cut_b);
+        let before = state(&s);
+        let r = s.undo();
+        assert!(matches!(r, Err(CoreError::Locked(_))), "{r:?}");
+        assert_eq!(state(&s), before, "desfazer recusado não deixa rastro (diário: {with_wal})");
+        std::fs::remove_file(aiai_core::lock::cut_lock_path(&dir, &cut_b)).unwrap();
+        s.undo().unwrap();
+        assert_eq!(strokes_of(&s, &cel_b), 0);
+        // refazer recusado
+        s.release_cut_locks();
+        foreign_cut_lock(&dir, &cut_b);
+        let before = state(&s);
+        let r = s.redo();
+        assert!(matches!(r, Err(CoreError::Locked(_))), "{r:?}");
+        assert_eq!(state(&s), before, "refazer recusado não deixa rastro (diário: {with_wal})");
+        std::fs::remove_file(aiai_core::lock::cut_lock_path(&dir, &cut_b)).unwrap();
+        s.redo().unwrap();
+        assert_eq!(strokes_of(&s, &cel_b), 1);
+        if let Some(w) = wal {
+            s.attach_wal(w);
+        }
+    }
     drop(s);
     let _ = std::fs::remove_dir_all(&dir);
 }

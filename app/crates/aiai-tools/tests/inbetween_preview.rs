@@ -613,3 +613,46 @@ fn accept_refused_by_a_cut_lock_leaves_the_whole_project_log_and_history_untouch
     drop(s);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn undo_of_an_accept_recovered_from_the_journal_respects_the_cut_lock() {
+    // CX14 C14-01: aceite que só está no diário (fechou sem Salvar), reaberto; outro processo pega o corte; desfazer e
+    // refazer recusam sem rastro (projeto inteiro, log, histórico, diário) e valem quando a trava sai
+    let mut f = two_keys();
+    f.s.apply(Command::SetProjectProps { patch: json!({"settings": {"split_cuts": true}}) }).unwrap();
+    let dir = std::env::temp_dir().join(format!("aiai-ibp-undo-lock-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    persist::save(&mut f.s, &dir).unwrap();
+    let (cut, layer) = (f.cut.clone(), f.layer.clone());
+    drop(f);
+    let (mut s, _) = persist::open(&dir).unwrap();
+    let p = ibp::preview(&mut s, &req(&cut, &layer, 4)).unwrap();
+    let acc = ibp::accept(&mut s, p.id, "agent:claude").unwrap();
+    drop(s); // sem Salvar: o aceite está só no diário
+    let (mut s, rep) = persist::open(&dir).unwrap();
+    assert_eq!(rep.replayed, 1);
+    assert!(s.project.node(&acc.cel).is_some(), "aceite recuperado");
+    assert!(s.claimed_cuts().any(|c| *c == cut), "a recuperação travou o corte");
+    let other = json!({"pid": 4, "host": aiai_core::lock::host_name(), "started_ms": 0, "exe": "outro.exe", "token": "x"});
+    let wal = dir.join("wal.ndjson");
+    let state = |s: &CoreSession| (serde_json::to_string(&s.project).unwrap(), s.log().len(), s.history(), std::fs::read(&wal).unwrap());
+    s.release_cut_locks();
+    std::fs::write(aiai_core::lock::cut_lock_path(&dir, &cut), other.to_string()).unwrap();
+    let before = state(&s);
+    let e = s.undo().unwrap_err().to_string();
+    assert!(e.contains("outro lugar"), "{e}");
+    assert_eq!(state(&s), before, "desfazer recusado não deixa rastro");
+    std::fs::remove_file(aiai_core::lock::cut_lock_path(&dir, &cut)).unwrap();
+    s.undo().unwrap();
+    assert!(s.project.node(&acc.cel).is_none());
+    s.release_cut_locks();
+    std::fs::write(aiai_core::lock::cut_lock_path(&dir, &cut), other.to_string()).unwrap();
+    let before = state(&s);
+    assert!(s.redo().is_err());
+    assert_eq!(state(&s), before, "refazer recusado não deixa rastro");
+    std::fs::remove_file(aiai_core::lock::cut_lock_path(&dir, &cut)).unwrap();
+    s.redo().unwrap();
+    assert!(s.project.node(&acc.cel).is_some());
+    drop(s);
+    let _ = std::fs::remove_dir_all(&dir);
+}

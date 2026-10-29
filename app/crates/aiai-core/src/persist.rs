@@ -642,6 +642,13 @@ pub fn open_with(dir: &Path, take_over: bool) -> CoreResult<(CoreSession, OpenRe
     }
     let mut session = CoreSession::new(project);
     session.blobs = blobs;
+    // dona da pasta: a pasta e a trava valem já na recuperação, para ela travar os cortes que reaplica (sem isso Salvar
+    // pulava o arquivo desses cortes e recomeçava o diário, perdendo o que foi recuperado; CX14). Só leitura não
+    // recupera para si: o diário é do dono.
+    if !read_only {
+        session.set_lock(lock);
+        session.path = Some(dir.to_path_buf());
+    }
 
     // Recuperação: reaplica entradas do WAL posteriores à revisão salva.
     let wal_path = dir.join(WAL_FILE);
@@ -709,6 +716,14 @@ pub fn open_with(dir: &Path, take_over: bool) -> CoreResult<(CoreSession, OpenRe
                     };
                     match result {
                         Ok(()) => report.replayed += 1,
+                        // corte com outro processo: reaplicar passaria por cima dele, e cortar o diário perderia as
+                        // edições; nada foi gravado ainda, então abrir recusa e a pasta fica como estava
+                        Err(CoreError::Locked(why)) => {
+                            return Err(CoreError::Locked(format!(
+                                "o diário tem edições não salvas (revisão {}) num corte que está com outro processo: {why}. Feche o outro e abra de novo; nada foi mudado na pasta",
+                                e.revision
+                            )));
+                        }
                         Err(err) => {
                             report.replay_error = Some(format!("revisão {}: {err}", e.revision));
                             report.wal_lines_skipped = non_empty(i);
@@ -742,7 +757,6 @@ pub fn open_with(dir: &Path, take_over: bool) -> CoreResult<(CoreSession, OpenRe
             Err(e) => report.warnings.push(format!("cópia de segurança do documento ao abrir falhou: {e}")),
         }
     }
-    session.set_lock(lock);
     session.path = Some(dir.to_path_buf());
     Ok((session, report))
 }
