@@ -219,8 +219,9 @@ struct CheckpointFile {
     text: String,
 }
 
-/// Arquivo de onde um corte sai numa migração de nome (o manifesto em vigor ainda o cita): o hash que ele tinha quando a
-/// gravação começou. Terminar a gravação só publica o nome novo se a origem continuar igual (CX18 C18-02).
+/// Arquivo de corte que sai do documento com esta gravação — origem de uma migração de nome (CX18 C18-02) ou arquivo de
+/// um corte retirado (CX19 C19-01) — e o hash que ele tinha, lido sob a posse do corte. Terminar a gravação só publica
+/// o manifesto novo se cada um continuar igual.
 #[derive(serde::Serialize, serde::Deserialize)]
 struct CheckpointSource {
     cut: String,
@@ -232,11 +233,20 @@ struct CheckpointSource {
 struct Checkpoint {
     manifest: String,
     files: Vec<CheckpointFile>,
-    /// Cortes que a gravação mexe (arquivos novos e migrações): terminar pega a posse de todos ANTES de conferir.
+    /// Cortes que a gravação mexe (arquivos novos, migrações, cortes retirados): terminar pega a posse de todos ANTES
+    /// de conferir. `None` = registro de uma versão anterior, que não guardava isto (CX19 C19-02).
     #[serde(default)]
-    cuts: Vec<String>,
+    cuts: Option<Vec<String>>,
     #[serde(default)]
-    sources: Vec<CheckpointSource>,
+    sources: Option<Vec<CheckpointSource>>,
+}
+
+/// Os arquivos de corte que um manifesto cita (minúsculas; vazio se não é dividido ou não existe).
+fn manifest_cut_rels(manifest: &[u8]) -> std::collections::BTreeSet<String> {
+    serde_json::from_slice::<serde_json::Value>(manifest)
+        .ok()
+        .and_then(|v| v.get("cut_files").and_then(|c| c.as_array()).map(|a| a.iter().filter_map(|x| x.as_str()).map(|x| x.to_lowercase()).collect()))
+        .unwrap_or_default()
 }
 
 /// O corte de um arquivo de corte (o campo `cut` do conteúdo).
@@ -278,16 +288,30 @@ fn complete_checkpoint(dir: &Path) -> CoreResult<bool> {
         retry_io(|| std::fs::remove_file(&path))?;
         return Ok(true);
     }
+    let sources: &[CheckpointSource] = cp.sources.as_deref().unwrap_or(&[]);
     for f in &cp.files {
         inside_dir(&f.rel)?;
     }
-    for src in &cp.sources {
+    for src in sources {
         inside_dir(&src.rel)?;
     }
+    // arquivos de corte que o manifesto em vigor cita e o novo deixa de citar (troca de nome, corte retirado): cada um
+    // tem de estar no registro com a sua condição; registro de versão anterior não tem as condições, então recusa
+    // (CX19 C19-01/02: publicar sem elas podia esconder uma edição salva depois da queda)
+    let current = retry_io(|| std::fs::read(dir.join(PROJECT_FILE))).map(|b| manifest_cut_rels(&b)).unwrap_or_default();
+    let future = manifest_cut_rels(cp.manifest.as_bytes());
+    let covered: std::collections::BTreeSet<String> = sources.iter().map(|src| src.rel.to_lowercase()).collect();
+    for rel in current.difference(&future) {
+        if cp.sources.is_none() || (!covered.contains(rel) && dir.join(rel).is_file()) {
+            return Err(CoreError::Locked(format!(
+                "uma gravação foi interrompida quando o arquivo de corte {rel} saía do documento, e o registro dela não diz como ele estava (gravação de uma versão anterior); para não esconder uma edição salva nele depois, nada foi mudado na pasta — decida qual versão vale (a gravação interrompida está em {CHECKPOINT_FILE})"
+            )));
+        }
+    }
     // os cortes da gravação (registro de antes desta versão não tem a lista: sai do conteúdo de cada arquivo)
-    let mut cuts: std::collections::BTreeSet<crate::Id> = cp.cuts.iter().map(|c| crate::Id(c.clone())).collect();
+    let mut cuts: std::collections::BTreeSet<crate::Id> = cp.cuts.iter().flatten().map(|c| crate::Id(c.clone())).collect();
     cuts.extend(cp.files.iter().filter_map(|f| cut_of_text(f.text.as_bytes())));
-    cuts.extend(cp.sources.iter().map(|src| crate::Id(src.cut.clone())));
+    cuts.extend(sources.iter().map(|src| crate::Id(src.cut.clone())));
     let mut locks = Vec::new();
     let mut held = Vec::new();
     if !cuts.is_empty() {
@@ -311,10 +335,10 @@ fn complete_checkpoint(dir: &Path) -> CoreResult<bool> {
         }
     }
     // daqui em diante ninguém grava estes cortes: conferir agora vale até o fim
-    for src in &cp.sources {
+    for src in sources {
         if disk_hash(&dir.join(&src.rel))? != src.hash {
             return Err(CoreError::Locked(format!(
-                "uma gravação foi interrompida no meio da troca de nome do arquivo do corte {} e o arquivo de origem {} mudou depois (foi salvo por outro caminho); nada foi mudado na pasta (a gravação interrompida está em {CHECKPOINT_FILE})",
+                "uma gravação foi interrompida quando o arquivo {1} do corte {0} saía do documento (troca de nome ou corte retirado) e ele mudou depois (foi salvo por outro caminho); nada foi mudado na pasta (a gravação interrompida está em {CHECKPOINT_FILE})",
                 src.cut, src.rel
             )));
         }
@@ -395,7 +419,10 @@ fn write_document(dir: &Path, session: &CoreSession, fresh: bool, progress: &mut
     let mut holds = CutHolds::default();
     // a pasta ainda não estava dividida (primeira gravação dividida) ou é outra pasta (Salvar como): todos os arquivos
     // saem daqui
-    let was_split = !fresh && retry_io(|| std::fs::read(dir.join(PROJECT_FILE))).is_ok_and(|b| b.windows(11).any(|w| w == b"\"cut_files\""));
+    let current_doc = retry_io(|| std::fs::read(dir.join(PROJECT_FILE))).ok();
+    let was_split = !fresh && current_doc.as_ref().is_some_and(|b| b.windows(11).any(|w| w == b"\"cut_files\""));
+    // arquivos de corte que o manifesto em vigor na pasta cita (também num Salvar como por cima de outro projeto)
+    let current_rels = current_doc.as_deref().map(manifest_cut_rels).unwrap_or_default();
     let mine = |cut: &crate::Id| if fresh { None } else { session.cut_lock(cut) };
     let (manifest, parts) = if project.settings.split_cuts { (None, document_parts(project)?) } else { (Some(to_canonical_json(project)?), (serde_json::Value::Null, Vec::new())) };
     let (manifest_v, parts) = parts;
@@ -453,8 +480,15 @@ fn write_document(dir: &Path, session: &CoreSession, fresh: bool, progress: &mut
             let Some(cut) = owner else { continue }; // arquivo que não é de corte: não é nosso para apagar
             // sempre pela posse: um corte do projeto que esta gravação não grava pode estar com outro processo (CX18
             // C18-06); os que ela grava já estão seguros (`take` não pega duas vezes)
+            let rel = format!("{}/{name}", crate::lock::CUTS_DIR);
             if holds.take(dir, &cut, mine(&cut))? {
+                // sai sob a posse; a condição dele vai para o registro (corte retirado: CX19 C19-01)
+                sources.push(CheckpointSource { cut: cut.0.clone(), rel, hash: disk_hash(&e.path())? });
                 removals.push(e.path());
+            } else if current_rels.contains(&rel.to_lowercase()) {
+                // o documento em vigor ainda cita este arquivo e o corte dele está com outro processo: tirá-lo do
+                // documento esconderia o que o outro salvar ali
+                return Err(CoreError::Locked(format!("o corte {} sai do documento nesta gravação, mas está com outro processo; nada foi gravado", cut.0)));
             }
         }
     }
@@ -463,8 +497,8 @@ fn write_document(dir: &Path, session: &CoreSession, fresh: bool, progress: &mut
         let cp = Checkpoint {
             manifest: manifest.clone(),
             files: plan.iter().map(|(_, rel, text, old)| CheckpointFile { rel: rel.clone(), old: old.clone(), text: (*text).clone() }).collect(),
-            cuts: plan.iter().map(|(c, ..)| c.0.clone()).chain(sources.iter().map(|src| src.cut.clone())).collect(),
-            sources,
+            cuts: Some(plan.iter().map(|(c, ..)| c.0.clone()).chain(sources.iter().map(|src| src.cut.clone())).collect()),
+            sources: Some(sources),
         };
         write_atomic(&dir.join(CHECKPOINT_FILE), serde_json::to_string(&cp)?.as_bytes())?;
         #[cfg(test)]
@@ -1828,6 +1862,89 @@ mod checkpoint_tests {
         assert_eq!(seen.get(), Some(false), "o registro já tinha saído quando a posse da pasta foi solta");
         drop(s);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+
+    /// CX19 C19-01: a gravação que retira o corte B (apagado) cai depois do registro, antes do manifesto. Terminar não
+    /// publica a retirada (1) com B nas mãos de outro processo, nem (2) depois que o outro salvou B e soltou: recusa sem
+    /// mudar documento, diário nem registro. (3) Sem nada disso, termina e B sai do documento.
+    #[test]
+    fn interrupted_save_that_removes_a_cut_respects_its_owner_and_its_later_saves() {
+        for case in 1..=3 {
+            let dir = std::env::temp_dir().join(format!("aiai-cp-del-{case}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            let mut s = CoreSession::for_tests("t");
+            let ep = mk(&mut s, None, "EP", NodeKind::Episode(EpisodeData { number: 1 }));
+            let sc = mk(&mut s, Some(ep), "S", NodeKind::Scene(SceneData::default()));
+            let ca = mk(&mut s, Some(sc.clone()), "A", NodeKind::Cut(CutData::new(24)));
+            mk(&mut s, Some(ca), "LA", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+            let cb = mk(&mut s, Some(sc), "B", NodeKind::Cut(CutData::new(24)));
+            let lb = mk(&mut s, Some(cb.clone()), "LB", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+            s.apply(Command::SetProjectProps { patch: serde_json::json!({"settings": {"split_cuts": true}}) }).unwrap();
+            save(&mut s, &dir).unwrap();
+            drop(s);
+            let (mut s, _) = open(&dir).unwrap();
+            s.apply(Command::DeleteNode { id: cb.clone() }).unwrap();
+            let expected = to_canonical_json(&s.project).unwrap();
+            FAIL_AFTER.with(|c| c.set(Some(0)));
+            assert!(save(&mut s, &dir).is_err());
+            FAIL_AFTER.with(|c| c.set(None));
+            drop(s);
+            let fb = dir.join(cut_rel(&cb));
+            match case {
+                1 => foreign(&dir, &cb),
+                2 => rename_in_cut_file(&fb, &lb, "salvo pelo outro depois da queda"),
+                _ => {}
+            }
+            let files = [PROJECT_FILE, CHECKPOINT_FILE, WAL_FILE];
+            let before: Vec<_> = files.iter().map(|n| std::fs::read(dir.join(n)).ok()).collect();
+            let fb_before = std::fs::read(&fb).unwrap();
+            let r = open(&dir);
+            if case < 3 {
+                let e = r.err().expect("recusa").to_string();
+                assert!(if case == 1 { e.contains("outro processo") } else { e.contains("saía do documento") && e.contains("mudou depois") }, "{case}: {e}");
+                assert_eq!(files.iter().map(|n| std::fs::read(dir.join(n)).ok()).collect::<Vec<_>>(), before, "{case}: nada mudou");
+                assert_eq!(std::fs::read(&fb).unwrap(), fb_before, "{case}: o arquivo de B ficou como estava");
+                assert!(!dir.join(crate::lock::LOCK_FILE).exists(), "{case}: a trava da pasta saiu");
+            } else {
+                let (s, _) = r.unwrap();
+                assert_eq!(to_canonical_json(&s.project).unwrap(), expected);
+                assert!(!dir.join(CHECKPOINT_FILE).exists());
+                drop(s);
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// CX19 C19-02: registro de uma gravação da versão anterior (sem `cuts` e `sources`) que trocava o nome do arquivo
+    /// de um corte: o registro não diz como a origem estava, então terminar recusa em vez de publicar o nome novo — com
+    /// ou sem edição salva depois no arquivo antigo — e nada muda.
+    #[test]
+    fn legacy_record_of_an_interrupted_name_migration_refuses_to_publish() {
+        for outside_edit in [true, false] {
+            let dir = std::env::temp_dir().join(format!("aiai-cp-legacy-{outside_edit}-{}", std::process::id()));
+            let (_, layer) = legacy_named_cut(&dir);
+            let (mut s, _) = open(&dir).unwrap();
+            s.apply(Command::SetProps { id: layer.clone(), name: Some("A_ANTES_DA_QUEDA".into()), data: serde_json::json!({}) }).unwrap();
+            FAIL_AFTER.with(|c| c.set(Some(0)));
+            assert!(save(&mut s, &dir).is_err());
+            FAIL_AFTER.with(|c| c.set(None));
+            drop(s);
+            // o registro como a versão anterior o escrevia
+            let mut v: serde_json::Value = serde_json::from_slice(&std::fs::read(dir.join(CHECKPOINT_FILE)).unwrap()).unwrap();
+            v.as_object_mut().unwrap().remove("cuts");
+            v.as_object_mut().unwrap().remove("sources");
+            std::fs::write(dir.join(CHECKPOINT_FILE), serde_json::to_string(&v).unwrap()).unwrap();
+            if outside_edit {
+                rename_in_cut_file(&dir.join("cuts/cut_A.json"), &layer, "B_SALVO_DEPOIS_DA_QUEDA");
+            }
+            let names = [PROJECT_FILE, CHECKPOINT_FILE, "cuts/cut_A.json"];
+            let before: Vec<_> = names.iter().map(|n| std::fs::read(dir.join(n)).unwrap()).collect();
+            let e = open(&dir).err().expect("recusa").to_string();
+            assert!(e.contains("versão anterior") && e.contains("cut_a.json"), "{e}");
+            assert_eq!(names.iter().map(|n| std::fs::read(dir.join(n)).unwrap()).collect::<Vec<_>>(), before, "nada mudou");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 
 }
