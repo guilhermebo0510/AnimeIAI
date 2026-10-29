@@ -431,8 +431,56 @@ pub enum AcceptWhich {
     Complete,
 }
 
-/// O comando que põe os traços aceitos no cel exposto da camada vetorial (um passo de desfazer).
-pub fn accept_command(p: &Project, s: &Suggestion, which: AcceptWhich, only: Option<&[usize]>) -> ToolResult<aiai_core::Command> {
+/// Traços do cel que a versão limpa cobre: dentro da caixa e com pelo menos 70% das amostras a até `tol` px de algum
+/// traço limpo (tol = 4 px ou a largura do traço, o maior). São o rascunho que o Melhorar substitui.
+pub fn covered_strokes(cel: &[Stroke], clean: &[&Stroke], rect: [f32; 4]) -> Vec<Id> {
+    const CELL: f32 = 8.0;
+    let mut grid: std::collections::HashMap<(i32, i32), Vec<[f32; 2]>> = std::collections::HashMap::new();
+    for st in clean {
+        for q in aiai_paint::sample_stroke(st) {
+            grid.entry(((q.x / CELL).floor() as i32, (q.y / CELL).floor() as i32)).or_default().push([q.x, q.y]);
+        }
+    }
+    if grid.is_empty() {
+        return Vec::new();
+    }
+    let near = |x: f32, y: f32, tol: f32| {
+        let (cx, cy) = ((x / CELL).floor() as i32, (y / CELL).floor() as i32);
+        let r = (tol / CELL).ceil() as i32;
+        for gx in cx - r..=cx + r {
+            for gy in cy - r..=cy + r {
+                if let Some(v) = grid.get(&(gx, gy)) {
+                    if v.iter().any(|p| (p[0] - x).hypot(p[1] - y) <= tol) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    };
+    let inside = |x: f32, y: f32| x >= rect[0] && x <= rect[0] + rect[2] && y >= rect[1] && y <= rect[1] + rect[3];
+    cel.iter()
+        .filter(|st| !st.id.0.is_empty())
+        .filter(|st| {
+            let smp = aiai_paint::sample_stroke(st);
+            if smp.is_empty() {
+                return false;
+            }
+            let ins = smp.iter().filter(|q| inside(q.x, q.y)).count();
+            if ins * 2 < smp.len() {
+                return false; // o traço é mais de fora da caixa: o copiloto não mexe nele
+            }
+            let tol = (st.width).max(4.0);
+            let hit = smp.iter().filter(|q| near(q.x, q.y, tol)).count();
+            hit * 10 >= smp.len() * 7
+        })
+        .map(|st| st.id.clone())
+        .collect()
+}
+
+/// O comando que põe os traços aceitos no cel exposto da camada vetorial (um passo de desfazer). Com `replace`, os
+/// traços do rascunho que a versão limpa do Melhorar cobre saem no mesmo passo (substituição).
+pub fn accept_command(p: &Project, s: &Suggestion, which: AcceptWhich, only: Option<&[usize]>, replace: bool) -> ToolResult<aiai_core::Command> {
     let cut = cut_data(p, &s.cut)?;
     let l = layer_data(p, &s.layer)?;
     if l.kind != aiai_core::LayerType::Vector {
@@ -443,21 +491,30 @@ pub fn accept_command(p: &Project, s: &Suggestion, which: AcceptWhich, only: Opt
     }
     let cel = exposed_cel(p, cut, &s.layer, s.frame).ok_or_else(|| ToolError::Invalid(format!("a camada não expõe cel no quadro {}", s.frame)))?;
     let NodeKind::Cel(cd) = &cel.data else { unreachable!() };
-    let all: Vec<&Stroke> = match which {
-        AcceptWhich::All => s.improve.iter().chain(&s.complete).collect(),
-        AcceptWhich::Improve => s.improve.iter().collect(),
-        AcceptWhich::Complete => s.complete.iter().collect(),
+    let all: Vec<(&Stroke, bool)> = match which {
+        AcceptWhich::All => s.improve.iter().map(|x| (x, true)).chain(s.complete.iter().map(|x| (x, false))).collect(),
+        AcceptWhich::Improve => s.improve.iter().map(|x| (x, true)).collect(),
+        AcceptWhich::Complete => s.complete.iter().map(|x| (x, false)).collect(),
     };
-    let picked: Vec<&Stroke> = match only {
+    let picked: Vec<(&Stroke, bool)> = match only {
         Some(idx) => idx.iter().filter_map(|&i| all.get(i).copied()).collect(),
         None => all,
     };
     if picked.is_empty() {
         return Err(ToolError::Invalid("nada para aceitar nesta sugestão".into()));
     }
-    let start = cd.strokes.len();
-    let items = picked.into_iter().enumerate().map(|(k, st)| aiai_core::command::IndexedStroke { index: start + k, stroke: st.clone() }).collect();
-    Ok(aiai_core::Command::InsertStrokes { cel: cel.id.clone(), items })
+    let clean: Vec<&Stroke> = picked.iter().filter(|x| x.1).map(|x| x.0).collect();
+    let removed = if replace && !clean.is_empty() { covered_strokes(&cd.strokes, &clean, s.rect) } else { Vec::new() };
+    let start = cd.strokes.len() - removed.len();
+    let items: Vec<_> = picked.iter().enumerate().map(|(k, (st, _))| aiai_core::command::IndexedStroke { index: start + k, stroke: (*st).clone() }).collect();
+    let insert = aiai_core::Command::InsertStrokes { cel: cel.id.clone(), items };
+    if removed.is_empty() {
+        return Ok(insert);
+    }
+    Ok(aiai_core::Command::Batch {
+        label: Some(format!("Copiloto: melhorar {} traço(s) (substitui {} do rascunho)", clean.len(), removed.len())),
+        commands: vec![aiai_core::Command::RemoveStrokes { cel: cel.id.clone(), ids: removed }, insert],
+    })
 }
 
 // ------------------------------------------------------------------------------------------------ sugestões guardadas
@@ -499,6 +556,9 @@ pub struct CopilotRequest {
     /// Para `accept`: só estes índices (na ordem de `which`).
     #[serde(default)]
     pub only: Option<Vec<usize>>,
+    /// Para `accept`: o Melhorar substitui os traços do rascunho que cobre (padrão true); false mantém o rascunho.
+    #[serde(default = "yes")]
+    pub replace: bool,
 }
 
 /// Resumo de uma sugestão para o agente: contagens, tempos e os pontos de cada traço.

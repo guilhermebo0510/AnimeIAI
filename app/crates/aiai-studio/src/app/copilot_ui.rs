@@ -68,6 +68,8 @@ pub(crate) struct CopilotUi {
     pub pause_s: f32,
     /// Força do ímã (0 = desligado).
     pub magnet: f32,
+    /// Aceitar Melhorar substitui os traços do rascunho que a versão limpa cobre (desligado: mantém o rascunho).
+    pub replace_rough: bool,
     pub ghosts: Vec<Ghost>,
     /// Caixas esperando a vez: (caixa, quando mudou por último).
     dirty: Vec<(u32, Instant)>,
@@ -95,6 +97,7 @@ impl Default for CopilotUi {
             opacity: 0.25,
             pause_s: 0.4,
             magnet: 0.7,
+            replace_rough: true,
             ghosts: Vec::new(),
             dirty: Vec::new(),
             busy: None,
@@ -395,7 +398,7 @@ pub(crate) fn accept(env: &mut Env, which: AcceptWhich) -> usize {
             keep.push(g);
             continue;
         }
-        match cp::accept_command(&env.core.project, &g.s, which, None) {
+        match cp::accept_command(&env.core.project, &g.s, which, None, env.ed.copilot.replace_rough) {
             Ok(cmd) => match super::commands::run(env.core, cmd) {
                 Ok(_) => n += 1,
                 Err(e) => env.ed.notify(e),
@@ -469,6 +472,7 @@ pub(crate) fn window(env: &mut Env, ctx: &egui::Context, rect: Rect) {
                 ui.toggle_value(&mut c.improve, tr("copilot.improve")).on_hover_text(tr("copilot.improve.tip"));
                 ui.toggle_value(&mut c.complete, tr("copilot.complete")).on_hover_text(tr("copilot.complete.tip"));
             });
+            ui.checkbox(&mut c.replace_rough, tr("copilot.replace")).on_hover_text(tr("copilot.replace.tip"));
             ui.horizontal(|ui| {
                 ui.checkbox(&mut c.global_on, tr("copilot.global"));
                 ui.add(egui::TextEdit::singleline(&mut c.global_prompt).desired_width(170.0).hint_text(tr("copilot.global.hint")));
@@ -682,7 +686,7 @@ pub(crate) fn magnet_done(env: &mut Env, m: Magnet) -> bool {
 pub(crate) fn state_json(c: &CopilotUi) -> serde_json::Value {
     let pts = |v: &Vec<Stroke>| v.iter().map(|s| s.points.iter().map(|q| [q.x.round(), q.y.round()]).collect::<Vec<_>>()).collect::<Vec<_>>();
     serde_json::json!({
-        "on": c.on, "improve": c.improve, "complete": c.complete, "magnet": c.magnet,
+        "on": c.on, "improve": c.improve, "complete": c.complete, "magnet": c.magnet, "replace_rough": c.replace_rough,
         "service": cp::service_state(),
         "busy": c.busy.map(|b| b.0), "queue": c.dirty.iter().map(|d| d.0).collect::<Vec<_>>(),
         "boxes": c.boxes.iter().map(|b| serde_json::json!({"id": b.id, "rect": b.rect, "state": format!("{:?}", b.state), "prompt": b.prompt})).collect::<Vec<_>>(),

@@ -36,3 +36,71 @@ fn a_stroke_crossing_the_box_is_cut_at_its_edge() {
     // tudo fora: nada
     assert!(clip_to_box(&c, 1.0, [500.0, 500.0], [0.0, 0.0, 100.0, 100.0]).is_empty());
 }
+
+/// Melhorar substitui o rascunho: os traços do cel que a versão limpa cobre saem no mesmo passo; os de fora da caixa e
+/// os que não batem ficam; desligado, o rascunho fica.
+#[test]
+fn accepting_improve_replaces_the_rough_strokes_it_covers() {
+    use aiai_core::command::CellEdit;
+    use aiai_core::*;
+    use aiai_tools::copilot::{AcceptWhich, Suggestion, accept_command, covered_strokes};
+    let line = |id: &str, pts: &[(f32, f32)], w: f32| Stroke {
+        taper: None,
+        id: Id::from(id),
+        points: pts.iter().map(|&(x, y)| StrokePoint { x, y, pressure: 1.0, tilt: None, t: None, corner: false, width: 1.0, id: 0, handle: None }).collect(),
+        geometry: StrokeGeometry::Spline,
+        tension: 0.0,
+        tip: VectorTip::Marker,
+        width: w,
+        profile: WidthProfile::default(),
+        color: ColorRef::default(),
+        opacity: 1.0,
+        closed: false,
+        aliased: false,
+        color_trace: false,
+        group: String::new(),
+    };
+    // rascunho: duas passadas tremidas da mesma reta, outra reta longe e uma fora da caixa
+    let rough1 = line("r1", &[(100.0, 102.0), (150.0, 98.0), (200.0, 101.0)], 2.0);
+    let rough2 = line("r2", &[(102.0, 99.0), (151.0, 103.0), (198.0, 100.0)], 2.0);
+    let other = line("o", &[(100.0, 160.0), (200.0, 160.0)], 2.0);
+    let outside = line("x", &[(400.0, 100.0), (500.0, 100.0)], 2.0);
+    let clean = line("", &[(100.0, 100.0), (150.0, 100.0), (200.0, 100.0)], 3.0);
+    let rect = [80.0, 80.0, 150.0, 100.0];
+    let cel_strokes = vec![rough1.clone(), rough2.clone(), other.clone(), outside.clone()];
+    let mut got = covered_strokes(&cel_strokes, &[&clean], rect);
+    got.sort();
+    assert_eq!(got, vec![Id::from("r1"), Id::from("r2")]);
+    // no documento: um passo de desfazer que tira r1 e r2 e põe o limpo
+    let mut s = CoreSession::for_tests("cp");
+    let mk = |s: &mut CoreSession, parent: Option<&Id>, name: &str, data: NodeKind| -> Id {
+        let id = s.ids.next();
+        s.apply(Command::CreateNode { id: Some(id.clone()), parent: parent.cloned(), index: None, name: name.into(), data }).unwrap();
+        id
+    };
+    let ep = mk(&mut s, None, "EP", NodeKind::Episode(EpisodeData::default()));
+    let sc = mk(&mut s, Some(&ep), "S", NodeKind::Scene(SceneData::default()));
+    let cut = mk(&mut s, Some(&sc), "C", NodeKind::Cut(CutData::new(2)));
+    let lay = mk(&mut s, Some(&cut), "V", NodeKind::Layer(LayerData::new(LayerType::Vector)));
+    let mut cd = CelData::new(1);
+    cd.strokes = cel_strokes;
+    mk(&mut s, Some(&lay), "V1", NodeKind::Cel(cd));
+    s.apply(Command::AddTrack { cut: cut.clone(), index: None, track: Track::new(Id::from("t"), "t", TrackKind::Drawing, Some(lay.clone())) }).unwrap();
+    s.apply(Command::SetCells { cut: cut.clone(), track: Id::from("t"), cells: vec![CellEdit { frame: 0, cell: Some(CellRef::Cel { number: 1 }) }] }).unwrap();
+    let sg = Suggestion { id: 1, cut: cut.clone(), frame: 0, layer: lay.clone(), rect, improve: vec![clean.clone()], complete: vec![], ms: 0, gen_ms: 0, vec_ms: 0 };
+    let undo0 = s.history().0.len();
+    s.apply(accept_command(&s.project, &sg, AcceptWhich::All, None, true).unwrap()).unwrap();
+    assert_eq!(s.history().0.len(), undo0 + 1, "um passo só");
+    let ids_now = |s: &CoreSession| -> Vec<String> {
+        let NodeKind::Cel(c) = &s.project.cel_by_number(&lay, 1).unwrap().data else { unreachable!() };
+        c.strokes.iter().map(|x| x.id.0.clone()).collect()
+    };
+    let now = ids_now(&s);
+    assert!(!now.contains(&"r1".to_string()) && !now.contains(&"r2".to_string()) && now.contains(&"o".to_string()) && now.contains(&"x".to_string()), "{now:?}");
+    assert_eq!(now.len(), 3);
+    s.undo().unwrap();
+    assert_eq!(ids_now(&s), vec!["r1", "r2", "o", "x"], "desfazer volta o rascunho");
+    // replace = false: o rascunho fica e o limpo entra por cima
+    s.apply(accept_command(&s.project, &sg, AcceptWhich::All, None, false).unwrap()).unwrap();
+    assert_eq!(ids_now(&s).len(), 5);
+}

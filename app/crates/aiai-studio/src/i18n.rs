@@ -2061,6 +2061,8 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("copilot.steps", "Passos", "Steps"),
     ("copilot.opacity", "Fantasma", "Ghost"),
     ("copilot.pause", "Pausa", "Pause"),
+    ("copilot.replace", "Melhorar substitui o rascunho", "Improve replaces the rough"),
+    ("copilot.replace.tip", "Ao aceitar o Melhorar, os traços do rascunho que a versão limpa cobre saem no mesmo passo de desfazer. Desligado: a versão limpa entra por cima e o rascunho fica.", "When accepting Improve, the rough strokes the clean version covers are removed in the same undo step. Off: the clean version goes on top and the rough stays."),
     ("copilot.magnet", "Ímã", "Magnet"),
     ("copilot.magnet.tip", "Desenhar por cima de um fantasma puxa a caneta para ele; só o trecho desenhado entra (0 = desligado)", "Drawing over a ghost pulls the pen to it; only the drawn part goes in (0 = off)"),
     ("copilot.new_box", "Nova caixa", "New box"),
