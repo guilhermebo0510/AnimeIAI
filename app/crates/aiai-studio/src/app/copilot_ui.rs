@@ -66,6 +66,8 @@ pub(crate) struct CopilotUi {
     pub strength: f32,
     pub opacity: f32,
     pub pause_s: f32,
+    /// Força do ímã (0 = desligado).
+    pub magnet: f32,
     pub ghosts: Vec<Ghost>,
     /// Caixas esperando a vez: (caixa, quando mudou por último).
     dirty: Vec<(u32, Instant)>,
@@ -92,6 +94,7 @@ impl Default for CopilotUi {
             strength: 0.8,
             opacity: 0.25,
             pause_s: 0.4,
+            magnet: 0.7,
             ghosts: Vec::new(),
             dirty: Vec::new(),
             busy: None,
@@ -140,9 +143,9 @@ pub(crate) fn set_on(env: &mut Env, on: bool) {
 }
 
 /// Um traço terminou na camada `layer` do corte: a caixa onde ele caiu entra na fila (sem caixa, nasce uma em volta).
-pub(crate) fn on_stroke(env: &mut Env, cut: &Id, bbox: [f32; 4]) {
+pub(crate) fn on_stroke(env: &mut Env, cut: &Id, bbox: [f32; 4], traced: bool) {
     let c = &mut env.ed.copilot;
-    if !c.on || !(c.improve || c.complete) {
+    if !c.on || !(c.improve || c.complete) || traced {
         return;
     }
     let (cx, cy) = (bbox[0] + bbox[2] / 2.0, bbox[1] + bbox[3] / 2.0);
@@ -482,6 +485,13 @@ pub(crate) fn window(env: &mut Env, ctx: &egui::Context, rect: Rect) {
                 }
             });
             ui.horizontal(|ui| {
+                ui.label(tr("copilot.magnet")).on_hover_text(tr("copilot.magnet.tip"));
+                let mut v = c.magnet * 100.0;
+                if ui.add(egui::Slider::new(&mut v, 0.0..=100.0).suffix(" %").max_decimals(0)).changed() {
+                    c.magnet = v / 100.0;
+                }
+            });
+            ui.horizontal(|ui| {
                 ui.label(tr("copilot.pause"));
                 ui.add(egui::Slider::new(&mut c.pause_s, 0.2..=2.0).suffix(" s"));
             });
@@ -552,4 +562,131 @@ pub(crate) fn window(env: &mut Env, ctx: &egui::Context, rect: Rect) {
     if !open {
         env.ed.copilot.on = false;
     }
+}
+
+// ------------------------------------------------------------------------------------------------ ímã
+
+/// Uma linha fantasma que o ímã conhece: de qual sugestão, de qual lista e qual traço, com os pontos densos (canvas).
+struct MLine {
+    box_id: u32,
+    sid: u64,
+    list: u8,
+    idx: usize,
+    pts: Vec<Vec2>,
+    radii: Vec<f32>,
+    /// Primeira e última amostra puxadas por este traço.
+    hit: Option<(usize, usize)>,
+}
+
+/// Ímã do traço em andamento: puxa a caneta para o fantasma mais perto e guarda o trecho coberto.
+pub(crate) struct Magnet {
+    lines: Vec<MLine>,
+    radius: f32,
+    strength: f32,
+    pulled: usize,
+    total: usize,
+}
+
+/// Ímã para um traço de caneta que começa agora (só com fantasma à vista e força > 0). `scale` = px de tela por px do
+/// canvas: o raio de 12 px de tela vira canvas.
+pub(crate) fn magnet_for(env: &Env, scale: f32) -> Option<Magnet> {
+    let c = &env.ed.copilot;
+    if !c.on || c.magnet <= 0.0 {
+        return None;
+    }
+    let (cut, frame) = (env.ed.cut.clone()?, env.ed.frame);
+    let mut lines = Vec::new();
+    for g in c.ghosts.iter().filter(|g| g.s.cut == cut && g.s.frame == frame) {
+        for (list, v) in [(0u8, &g.s.improve), (1u8, &g.s.complete)] {
+            for (idx, st) in v.iter().enumerate() {
+                let smp = aiai_paint::sample_stroke(st);
+                if smp.len() >= 2 {
+                    lines.push(MLine { box_id: g.box_id, sid: g.s.id, list, idx, pts: smp.iter().map(|q| Vec2::new(q.x, q.y)).collect(), radii: smp.iter().map(|q| q.r).collect(), hit: None });
+                }
+            }
+        }
+    }
+    (!lines.is_empty()).then(|| Magnet { lines, radius: 12.0 / scale.max(1e-3), strength: c.magnet, pulled: 0, total: 0 })
+}
+
+impl Magnet {
+    /// O ponto (canvas) puxado para a linha fantasma mais perto, com força que cai com a distância.
+    pub(crate) fn pull(&mut self, p: Vec2) -> Vec2 {
+        self.total += 1;
+        let mut best: Option<(f32, usize, usize, Vec2)> = None;
+        for (li, l) in self.lines.iter().enumerate() {
+            for k in 0..l.pts.len() - 1 {
+                let (a, b) = (l.pts[k], l.pts[k + 1]);
+                let ab = b - a;
+                let t = ((p - a).dot(ab) / ab.length_sq().max(1e-6)).clamp(0.0, 1.0);
+                let q = a + ab * t;
+                let d = (p - q).length();
+                if d <= self.radius && best.is_none_or(|x| d < x.0) {
+                    best = Some((d, li, k, q));
+                }
+            }
+        }
+        let Some((d, li, k, q)) = best else { return p };
+        let l = &mut self.lines[li];
+        l.hit = Some(match l.hit {
+            Some((a, b)) => (a.min(k), b.max(k + 1)),
+            None => (k, k + 1),
+        });
+        self.pulled += 1;
+        let u = d / self.radius;
+        let w = self.strength * (1.0 - u * u).powi(2);
+        p + (q - p) * w
+    }
+}
+
+/// Fim do traço com ímã: o trecho de fantasma coberto sai (o traço desenhado entrou no lugar dele); o resto fica.
+/// `true` = o traço seguiu o fantasma quase todo (então não pede sugestão nova).
+pub(crate) fn magnet_done(env: &mut Env, m: Magnet) -> bool {
+    let mostly = m.total > 0 && m.pulled * 10 >= m.total * 7;
+    for l in m.lines.iter().filter(|l| l.hit.is_some()) {
+        let (a, b) = l.hit.unwrap();
+        let Some(g) = env.ed.copilot.ghosts.iter_mut().find(|g| g.box_id == l.box_id && g.s.id == l.sid) else { continue };
+        let v = if l.list == 0 { &mut g.s.improve } else { &mut g.s.complete };
+        let Some(old) = v.get(l.idx).cloned() else { continue };
+        // as sobras antes e depois do trecho coberto viram fantasmas menores (com folga de 2 amostras)
+        let mut rest = Vec::new();
+        for (from, to) in [(0usize, a.saturating_sub(2)), ((b + 2).min(l.pts.len()), l.pts.len())] {
+            if to > from + 2 {
+                let mut s = old.clone();
+                let w = s.width.max(0.1);
+                s.points = (from..to)
+                    .step_by(2)
+                    .chain(std::iter::once(to - 1))
+                    .map(|k| aiai_core::StrokePoint { x: l.pts[k].x, y: l.pts[k].y, pressure: 1.0, tilt: None, t: None, corner: false, width: (2.0 * l.radii[k] / w).max(0.05), id: 0, handle: None })
+                    .collect();
+                s.points.dedup_by(|x, y| (x.x - y.x).abs() < 1e-3 && (x.y - y.y).abs() < 1e-3);
+                s.closed = false;
+                if s.points.len() >= 2 {
+                    rest.push(s);
+                }
+            }
+        }
+        // o traço coberto vira as sobras (marcado vazio para sair; as sobras vão para o fim da lista)
+        v[l.idx].points.clear();
+        v.extend(rest);
+    }
+    for g in env.ed.copilot.ghosts.iter_mut() {
+        g.s.improve.retain(|s| !s.points.is_empty());
+        g.s.complete.retain(|s| !s.points.is_empty());
+    }
+    env.ed.copilot.ghosts.retain(|g| !g.s.improve.is_empty() || !g.s.complete.is_empty());
+    mostly
+}
+
+/// Estado para a ponte (GET_UI_STATE): caixas, fila e fantasmas (com uma amostra de pontos de cada traço).
+pub(crate) fn state_json(c: &CopilotUi) -> serde_json::Value {
+    let pts = |v: &Vec<Stroke>| v.iter().map(|s| s.points.iter().map(|q| [q.x.round(), q.y.round()]).collect::<Vec<_>>()).collect::<Vec<_>>();
+    serde_json::json!({
+        "on": c.on, "improve": c.improve, "complete": c.complete, "magnet": c.magnet,
+        "service": cp::service_state(),
+        "busy": c.busy.map(|b| b.0), "queue": c.dirty.iter().map(|d| d.0).collect::<Vec<_>>(),
+        "boxes": c.boxes.iter().map(|b| serde_json::json!({"id": b.id, "rect": b.rect, "state": format!("{:?}", b.state), "prompt": b.prompt})).collect::<Vec<_>>(),
+        "ghosts": c.ghosts.iter().map(|g| serde_json::json!({"box": g.box_id, "id": g.s.id, "stale": g.stale, "improve": pts(&g.s.improve), "complete": pts(&g.s.complete)})).collect::<Vec<_>>(),
+        "last": c.last,
+    })
 }

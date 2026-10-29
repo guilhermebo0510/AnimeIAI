@@ -117,6 +117,11 @@ impl StrokeGesture {
             Some(s) => s.filter(p),
             None => p,
         };
+        // ímã do copiloto: a caneta é puxada para o fantasma mais perto (a régua tem precedência)
+        let p = match (self.snap.is_none(), self.magnet.as_mut()) {
+            (true, Some(m)) => m.pull(p),
+            _ => p,
+        };
         let p = match &self.inv {
             Some(a) => {
                 let (x, y) = a.apply(p.x, p.y);
@@ -208,7 +213,10 @@ pub(crate) fn begin_stroke(env: &mut Env, tool: ToolId, p: Vec2, pressure: f32, 
     let inv = fwd.and_then(|a| a.inverse());
     let fwd = inv.and(fwd);
     let scale = scale * fwd.map(|a| a.0[0].hypot(a.0[3])).unwrap_or(1.0);
-    let mut g = StrokeGesture { tool, layer: t.layer, samples: Vec::new(), stab, t0: Instant::now(), hits: Vec::new(), path: Vec::new(), screen_scale: scale, fwd, inv, snap, moved_t: 0.0, moved_p: None, tilt: env.ed.pen_tilt, ghost: None, ghost_tip: None };
+    let mut g = StrokeGesture { tool, layer: t.layer, samples: Vec::new(), stab, t0: Instant::now(), hits: Vec::new(), path: Vec::new(), screen_scale: scale, fwd, inv, snap, moved_t: 0.0, moved_p: None, tilt: env.ed.pen_tilt, ghost: None, ghost_tip: None, magnet: None };
+    if tool == ToolId::Pen {
+        g.magnet = super::copilot_ui::magnet_for(env, scale);
+    }
     g.push(p, pressure);
     Gesture::Stroke(Box::new(g))
 }
@@ -247,6 +255,10 @@ pub(crate) fn finish_stroke(env: &mut Env, mut g: Box<StrokeGesture>, released_a
     let before = env.core.change_counter;
     finish_commit(env, &t, &g, released_at);
     // copiloto: um traço de caneta gravado põe a caixa onde ele caiu na fila
+    let traced = match g.magnet.take() {
+        Some(m) if env.core.change_counter != before => super::copilot_ui::magnet_done(env, m),
+        _ => false,
+    };
     if g.tool == ToolId::Pen && env.core.change_counter != before && !g.samples.is_empty() {
         let pts: Vec<Vec2> = g.samples.iter().map(|q| g.to_canvas(q.p)).collect();
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
@@ -256,7 +268,7 @@ pub(crate) fn finish_stroke(env: &mut Env, mut g: Box<StrokeGesture>, released_a
             x1 = x1.max(p.x);
             y1 = y1.max(p.y);
         }
-        super::copilot_ui::on_stroke(env, &t.cut, [x0, y0, x1 - x0, y1 - y0]);
+        super::copilot_ui::on_stroke(env, &t.cut, [x0, y0, x1 - x0, y1 - y0], traced);
     }
     // gesto que não gravou nada (clique sem traço, erro): a camada criada sozinha para ele não fica para trás
     if let Some(c) = env.ed.auto_layer.take() {

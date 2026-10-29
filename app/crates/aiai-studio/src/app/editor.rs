@@ -887,6 +887,8 @@ pub(crate) struct StrokeGesture {
     /// Onde a caneta estava (cel) quando a fantasma foi aceita: enquanto ela fica ali, os pontos não entram (soltar não
     /// puxa o traço de volta da ponta da fantasma).
     pub ghost_tip: Option<Vec2>,
+    /// Ímã do copiloto: puxa a caneta para o fantasma e guarda o trecho coberto.
+    pub magnet: Option<super::copilot_ui::Magnet>,
     /// Onde o cursor estava em `moved_t`.
     pub moved_p: Option<Vec2>,
 }

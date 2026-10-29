@@ -2061,6 +2061,8 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("copilot.steps", "Passos", "Steps"),
     ("copilot.opacity", "Fantasma", "Ghost"),
     ("copilot.pause", "Pausa", "Pause"),
+    ("copilot.magnet", "Ímã", "Magnet"),
+    ("copilot.magnet.tip", "Desenhar por cima de um fantasma puxa a caneta para ele; só o trecho desenhado entra (0 = desligado)", "Drawing over a ghost pulls the pen to it; only the drawn part goes in (0 = off)"),
     ("copilot.new_box", "Nova caixa", "New box"),
     ("copilot.new_box.tip", "Arraste no canvas para criar a caixa de sugestão; arraste a etiqueta para mover e os cantos para mudar o tamanho", "Drag on the canvas to create the suggestion box; drag the tag to move and the corners to resize"),
     ("copilot.pause_all", "Pausar todas", "Pause all"),
