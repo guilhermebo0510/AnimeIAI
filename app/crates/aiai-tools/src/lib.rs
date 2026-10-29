@@ -50,5 +50,6 @@ pub mod production_stats;
 pub mod ruler;
 pub mod transform;
 pub mod vectorize;
+pub mod copilot;
 
 pub use context::{ToolError, ToolResult};

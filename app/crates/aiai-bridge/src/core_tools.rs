@@ -34,7 +34,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 use std::path::Path;
 
-pub const TOOL_ACTIONS: &[&str] = &["RENDER", "DRAW_CURVES", "FILL", "LINT", "PAINT", "GRADIENT", "FIGURE", "TRANSFORM", "REPEAT", "ERASE_VECTOR", "BRUSH_PRESETS", "READ_POINTS", "EDIT_POINTS", "VECTORIZE"];
+pub const TOOL_ACTIONS: &[&str] = &["RENDER", "DRAW_CURVES", "FILL", "LINT", "PAINT", "GRADIENT", "FIGURE", "TRANSFORM", "REPEAT", "ERASE_VECTOR", "BRUSH_PRESETS", "READ_POINTS", "EDIT_POINTS", "VECTORIZE", "COPILOT"];
 
 /// Todas as ações de ferramenta de documento: as de aqui + as de [`crate::production_tools`].
 pub fn is_tool_action(action: &str) -> bool {
@@ -54,7 +54,7 @@ pub fn is_tool_action(action: &str) -> bool {
 
 /// Ações de ferramenta que mudam o documento.
 pub fn is_mutating_tool(action: &str) -> bool {
-    matches!(action, "DRAW_CURVES" | "FILL" | "PAINT" | "GRADIENT" | "FIGURE" | "TRANSFORM" | "REPEAT" | "ERASE_VECTOR" | "EDIT_POINTS" | "VECTORIZE") || crate::production_tools::is_mutating(action) || crate::preprod_tools::is_mutating(action) || crate::review_tools::is_mutating(action)
+    matches!(action, "DRAW_CURVES" | "FILL" | "PAINT" | "GRADIENT" | "FIGURE" | "TRANSFORM" | "REPEAT" | "ERASE_VECTOR" | "EDIT_POINTS" | "VECTORIZE" | "COPILOT") || crate::production_tools::is_mutating(action) || crate::preprod_tools::is_mutating(action) || crate::review_tools::is_mutating(action)
         || crate::satsuei_tools::is_mutating(action)
         || crate::preview_tools::is_mutating(action)
         || crate::audio_tools::is_mutating(action)
@@ -99,6 +99,29 @@ pub fn handle_tool_action(session: &mut CoreSession, action: &str, params: &Valu
         "DRAW_CURVES" => request::<DrawRequest>(params, "DRAW_CURVES").and_then(|r| {
             let cmd = draw_command(&session.project, &r).map_err(tool_error)?;
             apply(session, params, cmd)
+        }),
+        "COPILOT" => request::<aiai_tools::copilot::CopilotRequest>(params, "COPILOT").and_then(|r| {
+            use aiai_tools::copilot as cp;
+            match r.op.as_str() {
+                "suggest" => {
+                    let req = r.suggest.ok_or_else(|| BridgeError::invalid_params("suggest pede o campo `suggest`"))?;
+                    let sg = cp::suggest(&session.project, &session.blobs, &req).map_err(tool_error)?;
+                    let v = cp::summary(&sg);
+                    cp::keep(sg);
+                    Ok(v)
+                }
+                "accept" => {
+                    let id = r.id.ok_or_else(|| BridgeError::invalid_params("accept pede `id`"))?;
+                    let sg = cp::get(id).ok_or_else(|| BridgeError::invalid_params(format!("sugestão {id} não existe (já aceita ou descartada?)")))?;
+                    let cmd = cp::accept_command(&session.project, &sg, r.which, r.only.as_deref()).map_err(tool_error)?;
+                    let out = apply(session, params, cmd)?;
+                    cp::discard(id);
+                    Ok(out)
+                }
+                "discard" => Ok(serde_json::json!({"discarded": r.id.is_some_and(cp::discard)})),
+                "status" => Ok(serde_json::json!({"service": cp::service_state()})),
+                other => Err(BridgeError::invalid_params(format!("op desconhecida: {other} (suggest | accept | discard | status)"))),
+            }
         }),
         "VECTORIZE" => request::<aiai_tools::vectorize::VectorizeRequest>(params, "VECTORIZE").and_then(|r| {
             let (cmd, report) = aiai_tools::vectorize::vectorize_command(&session.project, &session.blobs, &r).map_err(tool_error)?;

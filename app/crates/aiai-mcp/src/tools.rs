@@ -41,6 +41,8 @@ Devolve {width, height, warnings, path?}: `warnings` lista o que NÃO foi desenh
 
 const VECTORIZE_DESC: &str = r##"VETORIZAR LINEART (Copiloto de traço, passo 1): lê linhas de uma imagem (arquivo, preto sobre branco ou sobre transparente) ou de uma camada RASTER do corte (`source`: {"image": {"path", "fit"}} ou {"layer": {"layer": id}}) e põe os traços pela LINHA CENTRAL, com a largura medida ponto a ponto, no cel exposto da camada VETORIAL `layer` no `frame`. Cruzamentos em X ficam como dois traços; esporões saem. `width_mode`: drawing (largura do desenho, padrão) | pen (todos com `width`, a ponta afina) | fixed (todos com `width`). `tip` e `color` como em aiai_draw_curves; `threshold` (tinta mínima 0..1, padrão 0,5), `simplify` (px, padrão 0,4), `min_length` (px, padrão 3). Um passo de undo. Devolve o Outcome + strokes, closed, ms. Confirme com aiai_render."##;
 
+const COPILOT_DESC: &str = r##"COPILOTO DE TRAÇO (protótipo): sugestões de traço numa CAIXA do canvas, a partir do que já está desenhado em volta na camada `layer`. O gerador roda num processo separado (modelo de imagem de anime + controle pelo desenho + Anime2Sketch; a primeira chamada carrega os modelos, ~50 s; depois ~8 s por sugestão numa GTX 1650). `op`: suggest {suggest: {cut, frame, layer, rect: [x, y, w, h], prompt, improve (melhorar o seu traço), complete (traços novos), steps, res, strength, seed, context, tip, color}} → {id, improve, complete, ms, pontos de cada traço}; nada é gravado. accept {id, which: all|improve|complete, only: [índices]} põe os traços no cel exposto da camada VETORIAL (um passo de desfazer). discard {id}. status → estado do serviço (parado | carregando | pronto)."##;
+
 const DRAW_DESC: &str = r##"Desenha curvas vetoriais (traços de linha) no cel exposto de uma camada VETORIAL no quadro dado. Entra no undo e aparece ao vivo no app. Devolve o Outcome (revision, created, can_undo/can_redo).
 GUIA RÁPIDO
 - Coordenadas são pixels do canvas do corte: origem no canto superior esquerdo, x para a direita, y PARA BAIXO. Rotação positiva é horária.
@@ -263,6 +265,11 @@ Só grava em pastas permitidas (AIAI_MCP_ALLOWED_DIRS; padrão producoes/, calib
             "inputSchema": schema_of::<aiai_tools::draw::DrawRequest>()
         },
         {
+            "name": "aiai_copilot",
+            "description": COPILOT_DESC,
+            "inputSchema": schema_of::<aiai_tools::copilot::CopilotRequest>()
+        },
+        {
             "name": "aiai_vectorize",
             "description": VECTORIZE_DESC,
             "inputSchema": schema_of::<aiai_tools::vectorize::VectorizeRequest>()
@@ -482,6 +489,10 @@ pub fn plan(name: &str, args: &Value) -> Result<Plan, ToolError> {
                 return Err(ToolError::invalid("'curves' deve ser uma lista não vazia de curvas {points, width, ...}"));
             }
             simple("DRAW_CURVES", with_frame(m))
+        }
+        "aiai_copilot" => {
+            required(&m, &["op"])?;
+            simple("COPILOT", Value::Object(m))
         }
         "aiai_vectorize" => {
             required(&m, &["cut", "layer", "source"])?;
