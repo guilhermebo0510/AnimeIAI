@@ -64,5 +64,10 @@
 5. **Rastreamento de movimento** (ponto e plano) para grudar efeito em algo que se move.
 6. Expressões simples (ligar uma propriedade a outra: wiggle, loop).
 
+**Conferido no app (30/10, ~08:37):** a Composição tem a linha do tempo no estilo do After Effects (barras das camadas,
+colunas Modo e Matte, Linear, Segurar, Easy Ease, Gráfico) e o navegador de efeitos com busca; a Modelagem tem o viewport
+no estilo do Blender (Objeto, Edição, Escultura; vértice, aresta, face, laço; primitivas; "Enviar ao Layout") e **não tem
+entrada de esqueleto/rig** para o modelo próprio. Telas em `calibracao/tmp/claude-ws-roteiro-telas/30_*` e `40_*`.
+
 **Ordem proposta para a fase 3:** primeiro o que destrava a produção dos cortes: (Modelagem) 1, 3 e 4; (Composição) 2
 e 4. Depois câmera 3D e partículas 3D, VRM, rastreamento e expressões. Cada item com o Codex na rodada do workspace.
