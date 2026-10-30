@@ -16,5 +16,22 @@
 | I-R08 | melhoria | Os segundos estimados por elemento são bons para anime, mas não há **meta** por cena nem comparação com o animatic (o tempo real dos cortes). | `script.rs:213-226`, `properties` | Coluna "no animatic" ao lado de "estimado", com a diferença. |
 | I-R09 | melhoria | A cena não sabe **quais cortes** a contam (ida e volta roteiro ↔ storyboard ↔ corte). `aiai_cuts_from_storyboard` cria cortes, mas o roteiro não mostra os cortes da cena. | `ScriptScene` sem ligação | Mostrar os cortes da cena e abrir o corte com um clique. |
 
+## Conferido no app (30/10, 08:35, release `ec0a63a`, cópia própria do episódio "A última rosa")
+
+Telas em `calibracao/tmp/claude-ws-roteiro-telas`.
+
+- **I-R01 confirmado:** cartões de formulário; Tab só passa para o campo seguinte (tradução), não troca o tipo.
+  **Ctrl+Enter funciona bem:** cria o próximo elemento logo abaixo, com o cursor nele, e o texto digitado entra
+  (`02_ctrl_enter.png`).
+- **I-R02 confirmado:** o cabeçalho é texto livre ("EXT. JARDIM DE ROSAS — PÔR DO SOL"); o artista escreve o local e a
+  hora, mas o programa não os entende.
+- **I-R03 confirmado:** Idioma "ja" e Tradução "pt-BR" em campos de texto livre.
+- **Fountain de ida e volta: sem perda** nos 10 elementos do roteiro (texto japonês, tradução, emoção, segundos e falante
+  ligado). Detalhe: os segundos saem com ruído de ponto flutuante (`[[sec: 1.8666667]]`); arredondar a 0,1.
+- **Novo I-R10 (não bloqueia):** o Histórico chama as edições do roteiro de "Substituir dados de 01a1474a-…" e "Editar
+  params (01a15a81-…)": o id interno no lugar do que aconteceu ("Roteiro: nova ação", "Roteiro: texto da fala").
+- **Novo I-R11 (não bloqueia):** os segundos do roteiro usam ponto ("8.7 s", "1.9 s") na interface em português,
+  enquanto outros painéis usam vírgula.
+
 **Para a rodada WS-R01 com o Codex:** conferir estes nove no app, e o que eu não li (Esboço/beats em `outline.rs`,
 Propriedades, Áudio/TTS a partir da fala, desfazer e salvar, Fountain de ida e volta com acentos e japonês).
