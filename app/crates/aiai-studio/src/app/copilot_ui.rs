@@ -267,6 +267,118 @@ fn invalidate_all(c: &mut CopilotUi) {
     c.vis_dirty = true;
 }
 
+/// Caixas e prompts salvos com o projeto: `copilot.json` ao lado do `project.json`, gravado ao Salvar (fora do desfazer,
+/// como as réguas de um programa de desenho). As caixas de agente (MCP) são da sessão e não entram.
+const SIDECAR: &str = "copilot.json";
+
+fn state_name(s: BoxState) -> &'static str {
+    match s {
+        BoxState::On => "on",
+        BoxState::Paused => "paused",
+        BoxState::Off => "off",
+    }
+}
+
+/// Grava as caixas e os ajustes do projeto. Sem caixa nem prompt e sem arquivo anterior, não cria nada.
+pub(crate) fn save_project_state(c: &CopilotUi, dir: &std::path::Path) -> std::io::Result<()> {
+    let path = dir.join(SIDECAR);
+    let boxes: Vec<serde_json::Value> = c
+        .boxes
+        .iter()
+        .filter(|b| !b.llm)
+        .map(|b| {
+            serde_json::json!({
+                "id": b.id, "cut": b.cut, "rect": b.rect, "prompt": b.prompt, "state": state_name(b.state), "seed": b.seed,
+                "auto": b.auto, "layer": b.layer, "use_global": b.use_global,
+            })
+        })
+        .collect();
+    if boxes.is_empty() && c.global_prompt.trim().is_empty() && !path.exists() {
+        return Ok(());
+    }
+    let v = serde_json::json!({
+        "version": 1, "boxes": boxes, "global_prompt": c.global_prompt, "global_on": c.global_on, "improve": c.improve,
+        "complete": c.complete, "change": c.change, "res": c.res, "steps": c.steps,
+    });
+    let tmp = dir.join("copilot.json.tmp");
+    std::fs::write(&tmp, serde_json::to_vec_pretty(&v).map_err(std::io::Error::other)?)?;
+    std::fs::rename(&tmp, &path)
+}
+
+/// Outro projeto aberto (ou novo): fantasmas, fila e pedidos do projeto anterior caem, e as caixas e os ajustes vêm do
+/// `copilot.json` dele (sem o arquivo, nenhuma caixa). Devolve um aviso se o arquivo existe mas não se lê.
+pub(crate) fn load_project_state(c: &mut CopilotUi, dir: Option<&std::path::Path>) -> Option<String> {
+    c.ghosts.clear();
+    c.dirty.clear();
+    c.drag = None;
+    c.new_box_mode = false;
+    invalidate_all(c);
+    fail_waiters(c, None, "outro projeto foi aberto");
+    c.boxes.clear();
+    c.global_prompt.clear();
+    c.next_box = 1;
+    let path = dir?.join(SIDECAR);
+    let bytes = std::fs::read(&path).ok()?;
+    let v: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(e) => return Some(format!("{}: {e}", path.display())),
+    };
+    let f = |k: &str| v.get(k);
+    if let Some(x) = f("global_prompt").and_then(|x| x.as_str()) {
+        c.global_prompt = x.to_owned();
+    }
+    for (k, slot) in [("global_on", &mut c.global_on), ("improve", &mut c.improve), ("complete", &mut c.complete)] {
+        if let Some(x) = f(k).and_then(|x| x.as_bool()) {
+            *slot = x;
+        }
+    }
+    if let Some(x) = f("change").and_then(|x| x.as_f64()) {
+        c.change = (x as f32).clamp(0.0, 1.0);
+    }
+    if let Some(x) = f("res").and_then(|x| x.as_u64()) {
+        c.res = x as u32;
+    }
+    if let Some(x) = f("steps").and_then(|x| x.as_u64()) {
+        c.steps = (x as u32).min(12);
+    }
+    for b in f("boxes").and_then(|x| x.as_array()).into_iter().flatten() {
+        let rect: Option<[f32; 4]> = serde_json::from_value(b.get("rect").cloned().unwrap_or_default()).ok();
+        let (Some(id), Some(cut), Some(rect)) = (b.get("id").and_then(|x| x.as_u64()), b.get("cut").and_then(|x| x.as_str()), rect) else { continue };
+        if !rect.iter().all(|x| x.is_finite()) || rect[2] < 4.0 || rect[3] < 4.0 || c.boxes.iter().any(|x| x.id as u64 == id) {
+            continue;
+        }
+        let state = match b.get("state").and_then(|x| x.as_str()) {
+            Some("paused") => BoxState::Paused,
+            Some("off") => BoxState::Off,
+            _ => BoxState::On,
+        };
+        c.boxes.push(CBox {
+            id: id as u32,
+            cut: Id::from(cut),
+            rect,
+            prompt: b.get("prompt").and_then(|x| x.as_str()).unwrap_or_default().to_owned(),
+            state,
+            seed: b.get("seed").and_then(|x| x.as_u64()).unwrap_or(1),
+            auto: b.get("auto").and_then(|x| x.as_bool()).unwrap_or(false),
+            layer: b.get("layer").and_then(|x| x.as_str()).map(Id::from),
+            use_global: b.get("use_global").and_then(|x| x.as_bool()).unwrap_or(true),
+            geo: 0,
+            content: 0,
+            llm: false,
+            src: 0,
+        });
+    }
+    // no máximo um foco por corte (arquivo editado à mão)
+    let mut seen = std::collections::HashSet::new();
+    for b in c.boxes.iter_mut().filter(|b| b.auto) {
+        if !seen.insert(b.cut.clone()) {
+            b.auto = false;
+        }
+    }
+    c.next_box = c.boxes.iter().map(|b| b.id + 1).max().unwrap_or(1);
+    None
+}
+
 /// Responde (com erro) os pedidos do MCP que esperavam uma caixa.
 fn fail_waiters(c: &mut CopilotUi, id: Option<u32>, msg: &str) {
     let mut keep = Vec::new();
@@ -1052,13 +1164,13 @@ pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
             _ => (t.text_dim, tr("copilot.svc.stopped").to_string()),
         };
         let busy = c.inflight.first().map(|(id, at)| format!(" · {} {id} · {:.0} s", tr("copilot.generating"), at.elapsed().as_secs_f32())).unwrap_or_default();
-        ui.horizontal(|ui| {
+        // um texto só, que quebra a linha no painel estreito (antes a fila ficava à direita, por cima do estado)
+        let queue = format!(" · {} {}", tr("copilot.queue"), c.dirty.len());
+        ui.horizontal_wrapped(|ui| {
             let (r, _) = ui.allocate_exact_size(Vec2::splat(10.0), egui::Sense::hover());
             ui.painter().circle_filled(r.center(), 4.0, dot);
             ui.label(RichText::new(format!("{svc}{busy}")).size(12.0).color(t.text));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(RichText::new(format!("{} {}", tr("copilot.queue"), c.dirty.len())).size(11.0).color(t.text_dim));
-            });
+            ui.label(RichText::new(queue).size(11.0).color(t.text_dim));
         });
         if !c.last.is_empty() {
             ui.label(RichText::new(format!("{}: {}", tr("copilot.last"), c.last)).size(11.0).color(t.text_dim));
@@ -1558,4 +1670,53 @@ pub(crate) fn state_json(c: &CopilotUi) -> serde_json::Value {
         "target": c.target, "new_box_mode": c.new_box_mode,
         "last": c.last, "last_reduced": c.last_reduced, "last_throttled": c.last_throttled, "last_truncated": c.last_truncated,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cbox(id: u32, auto: bool, llm: bool) -> CBox {
+        CBox { id, cut: Id::from("c1"), rect: [10.0, 20.0, 300.0, 200.0], prompt: format!("p{id}"), state: BoxState::Paused, seed: 7, auto, layer: Some(Id::from("L")), use_global: false, geo: 3, content: 4, llm, src: 9 }
+    }
+
+    #[test]
+    fn boxes_and_prompts_round_trip_through_the_project_sidecar_and_a_bad_file_only_warns() {
+        // CP1-17: as caixas e os prompts voltam ao abrir o projeto; as do agente (MCP) não
+        let dir = std::env::temp_dir().join(format!("aiai-copilot-sidecar-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut a = CopilotUi::default();
+        // sem caixa nem prompt, não cria arquivo
+        save_project_state(&a, &dir).unwrap();
+        assert!(!dir.join(SIDECAR).exists());
+        a.boxes = vec![cbox(2, true, false), cbox(5, false, false), cbox(6, false, true)];
+        a.global_prompt = "boy, black hair".into();
+        a.change = 0.62;
+        a.res = 512;
+        a.steps = 8;
+        a.improve = false;
+        save_project_state(&a, &dir).unwrap();
+        let mut b = CopilotUi::default();
+        b.boxes = vec![cbox(40, false, false)];
+        assert!(load_project_state(&mut b, Some(&dir)).is_none());
+        assert_eq!(b.boxes.iter().map(|x| x.id).collect::<Vec<_>>(), vec![2, 5], "a caixa do agente não volta; a antiga sai");
+        let x = &b.boxes[0];
+        assert_eq!((x.rect, x.prompt.as_str(), x.state, x.seed, x.auto, x.layer.clone(), x.use_global), ([10.0, 20.0, 300.0, 200.0], "p2", BoxState::Paused, 7, true, Some(Id::from("L")), false));
+        assert_eq!((b.global_prompt.as_str(), b.res, b.steps, b.improve), ("boy, black hair", 512, 8, false));
+        assert!((b.change - 0.62).abs() < 1e-6);
+        assert_eq!(b.next_box, 6);
+        // projeto sem arquivo: nenhuma caixa
+        assert!(load_project_state(&mut b, Some(&dir.join("nada"))).is_none());
+        assert!(b.boxes.is_empty() && b.global_prompt.is_empty());
+        // arquivo editado à mão: dois focos no mesmo corte, id repetido, caixa sem tamanho → só o que vale
+        std::fs::write(dir.join(SIDECAR), r#"{"version":1,"boxes":[{"id":1,"cut":"c","rect":[0,0,100,100],"auto":true},{"id":1,"cut":"c","rect":[0,0,50,50]},{"id":2,"cut":"c","rect":[0,0,300,300],"auto":true},{"id":3,"cut":"c","rect":[0,0,0,10]}]}"#).unwrap();
+        assert!(load_project_state(&mut b, Some(&dir)).is_none());
+        assert_eq!(b.boxes.iter().map(|x| (x.id, x.auto)).collect::<Vec<_>>(), vec![(1, true), (2, false)]);
+        // arquivo estragado: aviso, nenhuma caixa
+        std::fs::write(dir.join(SIDECAR), b"{nao e json").unwrap();
+        assert!(load_project_state(&mut b, Some(&dir)).is_some());
+        assert!(b.boxes.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

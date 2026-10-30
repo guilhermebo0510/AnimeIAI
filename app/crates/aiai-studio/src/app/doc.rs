@@ -196,6 +196,7 @@ impl StudioApp {
         match handle_core_action(&mut self.core, "NEW_PROJECT", &params) {
             Some(Ok(_)) => {
                 self.mark_saved();
+                super::copilot_ui::load_project_state(&mut self.ed.copilot, None);
                 self.start.open = false;
                 // com pasta: o projeto já nasce salvo nela, com o arquivo .aiaiproj para abrir depois
                 match dir {
@@ -221,6 +222,7 @@ impl StudioApp {
         match handle_core_action(&mut self.core, "OPEN_PROJECT", &json!({ "path": path.display().to_string(), "take_over": take_over })) {
             Some(Ok(v)) => {
                 self.mark_saved();
+                self.copilot_after_open();
                 // a janela de projeto (aberta no começo ou pelo menu) não fica por cima do projeto aberto
                 self.start.open = false;
                 self.note_recent();
@@ -504,6 +506,7 @@ impl StudioApp {
         match handle_core_action(&mut self.core, "SAVE_PROJECT", &params) {
             Some(Ok(_)) => {
                 self.mark_saved();
+                self.copilot_after_save();
                 self.note_recent();
                 self.notice(tr("msg.saved").to_owned());
                 self.spawn_thumbnail();
@@ -518,6 +521,22 @@ impl StudioApp {
                 false
             }
             None => false,
+        }
+    }
+
+    /// As caixas e os prompts do Copiloto vêm do projeto aberto (`copilot.json`; sem ele, nenhuma caixa).
+    pub(crate) fn copilot_after_open(&mut self) {
+        let dir = self.core.path.clone();
+        if let Some(w) = super::copilot_ui::load_project_state(&mut self.ed.copilot, dir.as_deref()) {
+            self.push_warnings(OpenWarnings { lines: vec![format!("{}: {w}", tr("copilot.title"))], ..Default::default() });
+        }
+    }
+
+    /// Salvar grava também as caixas e os prompts do Copiloto (só com a trava: aberto só para leitura não grava).
+    pub(crate) fn copilot_after_save(&mut self) {
+        let Some(dir) = self.core.path.clone().filter(|_| self.core.lock().is_some()) else { return };
+        if let Err(e) = super::copilot_ui::save_project_state(&self.ed.copilot, &dir) {
+            self.doc_error("salvar as caixas do Copiloto", e);
         }
     }
 

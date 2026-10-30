@@ -2134,7 +2134,7 @@ pub const TABLE: &[(&str, &str, &str)] = &[
     ("copilot.global.all", "Usar em todas as caixas", "Use in every box"),
     ("copilot.sec.boxes", "Caixas", "Boxes"),
     ("copilot.boxes.empty", "Desenhe com qualquer pincel: a caixa de foco vai até onde você desenha. Para uma caixa fixa, use + e arraste no canvas.", "Draw with any brush to create an automatic box, or use + and drag on the canvas."),
-    ("copilot.boxes.temp", "As caixas e os prompts valem nesta sessão: ainda não ficam salvos no projeto.", "Boxes and prompts last for this session: they are not saved in the project yet."),
+    ("copilot.boxes.temp", "As caixas e os prompts são salvos com o projeto (ao Salvar).", "Boxes and prompts are saved with the project (on Save)."),
     ("copilot.on_all", "Ligar todas", "Turn all on"),
     ("copilot.box.state.on", "Ligada: gera de novo a cada mudança na caixa", "On: generates again on every change in the box"),
     ("copilot.box.state.paused", "Pausada: guarda o fantasma, não gera", "Paused: keeps the ghost, does not generate"),

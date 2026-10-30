@@ -158,8 +158,17 @@ impl StudioApp {
                 }
                 // abrir pelo agente mostra os mesmos avisos (tiles danificados, trava, diário); salvar grava a miniatura
                 match action {
-                    "OPEN_PROJECT" => self.note_open_report(v),
-                    "SAVE_PROJECT" => self.spawn_thumbnail(),
+                    "OPEN_PROJECT" => {
+                        self.copilot_after_open();
+                        self.note_open_report(v);
+                    }
+                    "NEW_PROJECT" => {
+                        super::copilot_ui::load_project_state(&mut self.ed.copilot, None);
+                    }
+                    "SAVE_PROJECT" => {
+                        self.copilot_after_save();
+                        self.spawn_thumbnail();
+                    }
                     _ => {}
                 }
                 if core_ops::is_mutating(action) || is_file_action(action) {
