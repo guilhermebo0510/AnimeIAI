@@ -12,5 +12,16 @@
 | I-S05 | não bloqueia | Na grade não se reordena painel arrastando nem se divide/junta painel; o movimento de câmera do painel (pan, zoom, PAN/T.U./T.B.) não aparece na miniatura. | `show` (grade só com clique e duplo clique) | Arrastar para reordenar; marcas de câmera (setas e quadros de início e fim) na miniatura. |
 | I-S06 | melhoria | A miniatura só mostra o número do corte, o tipo de plano, os segundos e a ação. Faltam a fala e o SE (estão na folha). | `cell` | Fala e SE no cartão (resumidos). |
 
+## Conferido no app (30/10, 08:45, release `ec0a63a`, cópia própria do episódio, 7 painéis)
+
+Telas em `calibracao/tmp/claude-ws-roteiro-telas/2*_storyboard*.png`.
+
+- **I-S01 confirmado:** duplo clique no painel troca para o workspace Layout.
+- **I-S03 confirmado:** "Exportar folha de e-conte (PNG)".
+- **I-S05 confirmado:** o movimento de câmera só existe como texto na ação ("câmera desliza até a última rosa", "câmera
+  inclina para cima").
+- **Novo I-S07 (não bloqueia):** a Linha do tempo embaixo do Storyboard mostra as camadas do corte do workspace anterior
+  (aqui, a folha de modelo da Hana: brilho, linha, olhos, sombra, cor), e não o corte do painel selecionado.
+
 **Para a rodada WS-R03:** conferir no app, ler `shots.rs` e o MCP, e comparar com o Storyboard Pro (camadas por painel,
 câmera, transições, animatic com som).
