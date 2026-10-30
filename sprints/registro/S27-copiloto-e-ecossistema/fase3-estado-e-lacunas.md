@@ -15,7 +15,9 @@
   silhueta, contorno) e "não sai no render".
 - **Manequim posável**: corpo anime neutro com esqueleto humanoide VRM (55 ossos, torção e busto) e pesos de skin, vindo
   do ANIGO (`aiai-3d-charbase`); poses prontas (em pé, andar, correr, sentar, apontar, T), ossos por rotação e IK, **pose
-  por quadro com chave** e mistura entre chaves (slerp por osso, com easing).
+  por quadro com chave** e mistura entre chaves (slerp por osso, com easing); **posar na tela** (arrastar juntas e IK no
+  canvas, `model3d.rs` press/drag/release e `paint_pose`), espelhar e uma **biblioteca de poses** do usuário (salvar,
+  listar, apagar).
 - Guia 3D (`aiai_guide3d`): cena de blocos e manequins vista por uma câmera vira linhas de guia no cel.
 - Rig 2D (`aiai_rig`): pai e filho entre camadas e IK de dois ossos.
 
@@ -25,8 +27,8 @@
    importado ou modelado (encaixar o esqueleto humanoide nas proporções do modelo) e pesar automaticamente (pesos por
    difusão de calor, como o "Com pesos automáticos" do Blender), com pintura de pesos para corrigir.
 2. **VRM** (o formato de personagem anime com esqueleto pronto): o import diz "ainda não".
-3. **Posar na tela**: gizmo de rotação por osso e arrasto de IK no viewport, espelhar pose (lado esquerdo e direito),
-   copiar e colar pose, biblioteca de poses do projeto.
+3. Posar: já há arrasto de juntas, IK, espelhar e biblioteca de poses. Falta conferir o gizmo de rotação por osso,
+   copiar e colar pose entre quadros e a biblioteca **do projeto** (hoje é do usuário, numa pasta dele).
 4. **Animar como referência**: linha do tempo da camada 3D com as chaves de pose e de câmera visíveis e editáveis
    (mover, apagar, easing), ciclos (andar em loop), e a passagem para o 2D (cada quadro vira guia de linha para o genga).
 5. **Câmera 3D animada**: caminho da câmera com chaves e easing, travelling e dolly, e a câmera 3D ligada à câmera do
@@ -43,20 +45,24 @@
   intensidade (`aiai_effects`), grade de cor por corte (`aiai_grade`).
 - Câmera 2D do corte com pan, zoom, rotação, tremor e easing, e **multiplano** pela profundidade da camada
   (`aiai_camera`, `aiai_layer_motion`).
+- **Linha do tempo da composição** com chaves e easing (clique, Shift, caixa de seleção, arrasto, interpolação pelo
+  botão direito), **modos de mistura**, **matte** (recortar pelo alfa da camada de baixo, ou outra camada como máscara),
+  **cronômetro por propriedade** (também nas propriedades dos efeitos) e um **editor de gráfico** de valores com alças
+  (`panels/comp_timeline.rs`, `effect_controls.rs`, com o editor de curvas do ajuste de cor).
 - **Partículas 2D** determinísticas por camada (pétalas, brilhos, neve, chuva, poeira, folhas, com ajustes)
   (`aiai_particles`, `aiai-anim/particles.rs`).
 
 **Falta (a confirmar na rodada)**
 
-1. **Editor de gráfico** das chaves (curvas de valor e de velocidade, como o Graph Editor do After Effects), e chaves de
-   qualquer propriedade de efeito, não só a intensidade.
-2. **Pré-composição** (um corte ou um grupo de camadas usado como camada, com o próprio tempo), **máscaras** com
-   bezier, feather e expansão animáveis, e **track matte** (alfa e luma).
+1. No editor de gráfico, o **gráfico de velocidade** (o do After Effects para acertar easing) e várias propriedades ao
+   mesmo tempo; a conferir na rodada.
+2. **Pré-composição** (um corte ou um grupo de camadas usado como camada, com o próprio tempo), **máscaras desenhadas**
+   com bezier, feather e expansão animáveis, e matte por **luma** e invertido (o matte de hoje usa outra camada inteira).
 3. **Camadas 3D e câmera 3D** na composição (profundidade de verdade, não só o fator do multiplano), luz simples.
 4. **Partículas 3D** (emissor no espaço com a câmera: profundidade, desfoque pela distância, sombra) e emissor
    seguindo uma camada ou um caminho; forças (vento, turbulência), colisão com o chão.
 5. **Rastreamento de movimento** (ponto e plano) para grudar efeito em algo que se move.
 6. Expressões simples (ligar uma propriedade a outra: wiggle, loop).
 
-**Ordem proposta para a fase 3:** primeiro o que destrava a produção dos cortes: (Modelagem) 1, 3 e 4; (Composição) 1
-e 2. Depois câmera 3D e partículas 3D, VRM, rastreamento e expressões. Cada item com o Codex na rodada do workspace.
+**Ordem proposta para a fase 3:** primeiro o que destrava a produção dos cortes: (Modelagem) 1, 3 e 4; (Composição) 2
+e 4. Depois câmera 3D e partículas 3D, VRM, rastreamento e expressões. Cada item com o Codex na rodada do workspace.
