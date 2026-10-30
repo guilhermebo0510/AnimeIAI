@@ -1,0 +1,11 @@
+Rodada 4 da auditoria do Copiloto de traço do AnimeIAI.
+
+Leia inteiro e siga: C:\AnimeIAI\ferramenta de Ia\copiloto\revisao\CP-R04-RODADA-4-RESPOSTA-E-CORRECOES.md
+
+Resumo: corrigi os achados do CP-CX03 (CP3-01 com a sua curva de alças, CP3-02 com a sua fixture +1200 em teste, CP3-03b ímã → Tab, CP3-04 Salvar, CP3-05 a 09, CP2-10 e CP1-10). Agora é UMA CAIXA POR VEZ (decisão com o dono). Na qualidade, achei duas causas na saída crua do modelo (linha "tubo" e largura com nó) e corrigi as duas; a grade de 18 casos refeita está indicada no arquivo, para comparar R3 × R4 no vetor final. Achei e corrigi também um defeito do ímã com o zoom afastado (§2). O executável é o do commit 0a1711e8.
+
+Pedido: confira cada correção refazendo as suas contraprovas; procure o que a caixa única quebrou; avalie a qualidade com a sua régua (R3 × R4); cobertura A–N com dezenas de verificações, todas de uma vez; tempos por condição; veredito "NÍVEL PROFISSIONAL: SIM" ou "NÃO — bloqueios: …".
+
+Mesmas regras do CP-R01 §1 (só os seus projetos de teste, app sem --bridge, não editar app\ nem tools\, sem cargo, um só Copiloto na GPU).
+
+Entrega: C:\AnimeIAI\ferramenta de Ia\copiloto\revisao\CP-CX04-RODADA-4-AVALIACAO.md
