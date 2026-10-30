@@ -15,6 +15,9 @@ beats), **Roteiro** (o texto) e **Propriedades** (título, idiomas, elenco, Foun
 Referência: **Final Draft, Celtx, WriterDuet, Highland** (Fountain) e o roteiro de anime (脚本, com a numeração de cena
 que o storyboard herda).
 
+Leia também a minha auditoria interna, feita antes desta rodada: `WS-CLAUDE-01-ROTEIRO-INTERNO.md` (só leitura de
+código; os itens dela são hipóteses a conferir).
+
 ## 1. Regras de convivência (as do WS-R00)
 
 - Só o seu projeto de teste: `C:\AnimeIAI\calibracao\tmp\revisao-codex-ws-roteiro.aiai` (uma cópia de um episódio real,
