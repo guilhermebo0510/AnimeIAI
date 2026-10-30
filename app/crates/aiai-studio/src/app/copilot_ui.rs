@@ -508,7 +508,8 @@ pub(crate) fn on_stroke(env: &mut Env, cut: &Id, bbox: [f32; 4], traced: bool, m
     let id = b.id;
     let r = b.rect;
     let touches = &b.cut == cut && bbox[0] <= r[0] + r[2] && bbox[0] + bbox[2] >= r[0] && bbox[1] <= r[1] + r[3] && bbox[1] + bbox[3] >= r[1];
-    let shown = c.ghosts.iter().any(|g| g.box_id == id && !(g.vis_improve.is_empty() && g.vis_complete.is_empty()));
+    // "à vista" = neste corte e neste quadro (um fantasma guardado de outro quadro não prende a caixa, CP4-02)
+    let shown = c.ghosts.iter().any(|g| g.box_id == id && &g.s.cut == cut && g.s.frame == frame && !(g.vis_improve.is_empty() && g.vis_complete.is_empty()));
     if b.state != BoxState::On {
         // pausada ou desligada: guarda o lugar, a fonte e o fantasma (CP1-24, CP2-08)
         return;
@@ -1135,11 +1136,11 @@ pub(crate) fn accept_with(env: &mut Env, which: AcceptWhich, force: bool) -> usi
 
 /// Descarta os fantasmas do quadro (e o que estiver em voo deixa de valer).
 pub(crate) fn discard(env: &mut Env) -> usize {
-    let frame = env.ed.frame;
     let cut = env.ed.cut.clone();
     let c = &mut env.ed.copilot;
     let before = c.ghosts.len();
-    c.ghosts.retain(|g| Some(&g.s.cut) != cut.as_ref() || g.s.frame != frame);
+    // a caixa única sai inteira: o fantasma deste quadro e os guardados em outro quadro do corte (CP4-02)
+    c.ghosts.retain(|g| Some(&g.s.cut) != cut.as_ref());
     let ids: Vec<u32> = c.boxes.iter().filter(|b| Some(&b.cut) == cut.as_ref()).map(|b| b.id).collect();
     c.dirty.retain(|d| !ids.contains(&d.id));
     invalidate_all(c);
@@ -1148,6 +1149,12 @@ pub(crate) fn discard(env: &mut Env) -> usize {
         remove_box(c, id);
     }
     before - c.ghosts.len()
+}
+
+/// A caixa deste corte tem fantasma guardado em OUTRO quadro (não à vista aqui)? O Esc também a descarta (CP4-02).
+fn ghosts_elsewhere(env: &Env) -> bool {
+    let (frame, cut) = (env.ed.frame, env.ed.cut.clone());
+    env.ed.copilot.ghosts.iter().any(|g| Some(&g.s.cut) == cut.as_ref() && g.s.frame != frame)
 }
 
 /// Há fantasma à vista neste quadro?
@@ -1159,7 +1166,7 @@ fn ghosts_here(env: &Env) -> bool {
 /// Esc: com fantasma à vista e nenhum traço em andamento, descarta. Chamado pelos atalhos do editor ANTES do Esc geral
 /// (que cancela ferramentas); campo de texto em uso fica com a tecla (o chamador já confere). `true` = consumiu.
 pub(crate) fn escape(env: &mut Env, ctx: &egui::Context) -> bool {
-    if !ghosts_here(env) || matches!(env.ed.gesture, super::editor::Gesture::Stroke(_)) {
+    if !(ghosts_here(env) || ghosts_elsewhere(env)) || matches!(env.ed.gesture, super::editor::Gesture::Stroke(_)) {
         return false;
     }
     if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
@@ -1391,7 +1398,7 @@ pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
     section(ui, &t, "copilot.sec.suggest");
     {
         let c = &mut env.ed.copilot;
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             again |= ui.toggle_value(&mut c.improve, tr("copilot.improve")).on_hover_text(tr("copilot.improve.tip")).changed();
             again |= ui.toggle_value(&mut c.complete, tr("copilot.complete")).on_hover_text(tr("copilot.complete.tip")).changed();
         });
@@ -1415,7 +1422,7 @@ pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
     // --- perfil de velocidade (atalho para resolução e passos; mexer neles à mão vira "personalizado")
     {
         let c = &mut env.ed.copilot;
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(tr("copilot.profile")).size(12.0).color(t.text_dim)).on_hover_text(tr("copilot.profile.tip"));
             // na GPU de 4 GB, 640 px com cfg > 1 não cabe e cai para 512: o Qualidade ganha com passos, não com tamanho
             const PROFILES: [(&str, u32, u32); 3] = [("copilot.profile.fast", 384, 0), ("copilot.profile.balanced", 0, 0), ("copilot.profile.quality", 512, 8)];
@@ -1465,7 +1472,8 @@ pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
     for (id, auto, rect_b, plan) in &plans {
         let (id, auto) = (*id, *auto);
         egui::Frame::new().stroke(egui::Stroke::new(1.0, t.border)).corner_radius(4.0).inner_margin(egui::Margin::same(6)).show(ui, |ui| {
-            ui.horizontal(|ui| {
+            // cabeçalho da caixa: quebra na coluna estreita em vez de empurrar "outra versão" e a lixeira para fora (CP4-06)
+            ui.horizontal_wrapped(|ui| {
                 let badge = if auto { tr("copilot.focus").to_string() } else { id.to_string() };
                 let (r, resp) = ui.allocate_exact_size(Vec2::new(if auto { 40.0 } else { 22.0 }, 18.0), egui::Sense::hover());
                 ui.painter().rect_filled(r, 3.0, env.ed.copilot.box_color);
@@ -1496,19 +1504,18 @@ pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
                         }
                     }
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if env.icon_button_sized(ui, IconId::Trash, "copilot.box.delete", false, true, &format!("copilot:box:{id}:delete"), 22.0, false).clicked() {
-                        remove = Some(id);
+                ui.add_space(8.0);
+                if env.icon_button_sized(ui, IconId::Refresh, "copilot.box.again", false, true, &format!("copilot:box:{id}:again"), 22.0, false).clicked() {
+                    let c = &mut env.ed.copilot;
+                    if let Some(b) = c.boxes.iter_mut().find(|b| b.id == id) {
+                        b.seed = b.seed.wrapping_add(1);
+                        b.state = BoxState::On;
                     }
-                    if env.icon_button_sized(ui, IconId::Refresh, "copilot.box.again", false, true, &format!("copilot:box:{id}:again"), 22.0, false).clicked() {
-                        let c = &mut env.ed.copilot;
-                        if let Some(b) = c.boxes.iter_mut().find(|b| b.id == id) {
-                            b.seed = b.seed.wrapping_add(1);
-                            b.state = BoxState::On;
-                        }
-                        redo_box.push(id);
-                    }
-                });
+                    redo_box.push(id);
+                }
+                if env.icon_button_sized(ui, IconId::Trash, "copilot.box.delete", false, true, &format!("copilot:box:{id}:delete"), 22.0, false).clicked() {
+                    remove = Some(id);
+                }
             });
             // tamanho da caixa → tamanho da geração, e o aviso quando a escala atrapalha
             if let Some((win, gsz)) = plan {
@@ -1582,7 +1589,7 @@ pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
     // --- aceitar
     section(ui, &t, "copilot.sec.accept");
     let has = ghosts_here(env);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         for (icon, key, name, w) in [
             (IconId::Check, "copilot.accept_all", "copilot:accept:all", Some(AcceptWhich::All)),
             (IconId::ToolWand, "copilot.accept_improve", "copilot:accept:improve", Some(AcceptWhich::Improve)),
@@ -1612,7 +1619,7 @@ pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
         ui.add_enabled_ui(c.target == cp::AcceptTarget::Same, |ui| {
             ui.checkbox(&mut c.replace_rough, RichText::new(tr("copilot.replace")).size(12.0)).on_hover_text(tr("copilot.replace.tip"));
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(tr("copilot.width")).size(12.0).color(t.text_dim)).on_hover_text(tr("copilot.width.tip"));
             let label = |m: WidthMode| tr(match m {
                 WidthMode::Drawing => "copilot.width.drawing",
@@ -1832,8 +1839,12 @@ pub(crate) fn magnet_done(env: &mut Env, m: Magnet, fresh: &[u32]) -> bool {
     let (mostly, traced) = m.verdict();
     // traço que não seguiu o fantasma é desenho novo: o fantasma fica inteiro (fica velho e a caixa pede outro)
     if m.path.is_empty() || !mostly {
-        return mostly;
+        return false;
     }
+    // o restante só fica valendo (e a caixa não pede outro) se TODO fantasma tocado estava fresco e o traço o seguiu de
+    // perto; senão o resto fica velho e a caixa pede uma sugestão nova (sem deixar o artista entre o Tab que recusa e
+    // nenhuma geração, CP4-01)
+    let mut renewed = traced;
     let (cut, frame) = (env.ed.cut.clone(), env.ed.frame);
     // sai do fantasma só o trecho por onde a caneta passou (até 8 px do caminho), não tudo o que o ímã alcança (com o
     // zoom afastado o raio dele passa de 30 px do canvas e levava linhas vizinhas)
@@ -1859,9 +1870,12 @@ pub(crate) fn magnet_done(env: &mut Env, m: Magnet, fresh: &[u32]) -> bool {
         // o traço que seguiu o fantasma é mudança da própria sugestão: o restante continua aceitável (Tab sem forçar)
         if traced && fresh.contains(&g.box_id) {
             cp::refresh_after_own_accept(&env.core.project, &mut g.s);
+        } else {
+            renewed = false;
         }
     }
     let gone: Vec<u32> = env.ed.copilot.ghosts.iter().filter(|g| g.s.improve.is_empty() && g.s.complete.is_empty()).map(|g| g.box_id).collect();
+    let all_gone = !gone.is_empty() && !env.ed.copilot.ghosts.iter().any(|g| !gone.contains(&g.box_id));
     env.ed.copilot.ghosts.retain(|g| !g.s.improve.is_empty() || !g.s.complete.is_empty());
     // o fantasma inteiro virou traço do artista: a caixa some, como num aceite
     for id in gone {
@@ -1869,7 +1883,8 @@ pub(crate) fn magnet_done(env: &mut Env, m: Magnet, fresh: &[u32]) -> bool {
     }
     env.ed.copilot.vis_dirty = true;
     refresh_visible(&mut env.ed.copilot);
-    mostly
+    // `true` = não pedir outra sugestão: o resto foi renovado, ou o fantasma inteiro virou traço
+    renewed || all_gone
 }
 
 /// Estado para a ponte (GET_UI_STATE e `COPILOT status`): serviço, caixas, fila e fantasmas (o que aparece, no canvas).

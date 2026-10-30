@@ -589,3 +589,34 @@ fn a_cel_moved_1200_px_reads_the_same_ink_as_the_identity_control() {
     assert_eq!(a, b, "mesma posição na imagem de entrada");
     assert_eq!(wa[2..], wb[2..], "mesmo tamanho de janela");
 }
+
+#[test]
+fn a_layer_scaled_to_one_percent_is_refused_before_allocating_the_context() {
+    // CP4-03: escala 0,01 leva a janela de ~800 px do canvas a ~80 000 px do cel (dezenas de GB): erro, não alocação
+    use aiai_tools::copilot::{SuggestRequest, prepare};
+    let (mut s, cut, lay) = doc(vec![stroke("a", &[(0.0, 0.0), (100.0, 0.0)], 4.0)]);
+    let cel = s.project.cel_by_number(&lay, 1).unwrap().id.clone();
+    s.apply(aiai_core::Command::SetProps { id: cel, name: None, data: serde_json::json!({"transform": [0.0, 0.0, 0.01, 0.0]}) }).unwrap();
+    let req = SuggestRequest {
+        cut,
+        frame: 0,
+        layer: lay,
+        rect: [700.0, 300.0, 392.0, 401.0],
+        prompt: String::new(),
+        improve: true,
+        complete: true,
+        steps: None,
+        res: None,
+        change: None,
+        strength: None,
+        control_end: None,
+        cfg: None,
+        init: None,
+        seed: None,
+        context: None,
+        tip: aiai_core::VectorTip::Marker,
+        color: aiai_core::ColorRef::default(),
+    };
+    let e = prepare(&s.project, &s.blobs, &req).err().expect("recusa");
+    assert!(e.to_string().contains("reduzida demais"), "{e}");
+}

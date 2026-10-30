@@ -683,6 +683,9 @@ pub fn refresh_after_own_accept(p: &Project, s: &mut Suggestion) {
     s.src_sig = source_signature(p, &s.cut, &s.layer, s.frame, Some(s.src_region));
 }
 
+/// Maior janela de contexto no espaço do cel (px): a imagem cinza e o render RGBA dela cabem com folga na RAM.
+pub const CONTEXT_BUDGET_PX: f64 = 8.0 * 1024.0 * 1024.0;
+
 /// Parte 1 (com o documento, rápida): a janela de contexto e a linha da camada nela.
 pub fn prepare(p: &Project, blobs: &aiai_core::BlobStore, req: &SuggestRequest) -> ToolResult<Prepared> {
     let cut = cut_data(p, &req.cut)?;
@@ -719,6 +722,17 @@ pub fn prepare(p: &Project, blobs: &aiai_core::BlobStore, req: &SuggestRequest) 
     let wc = [(cw[0] as f32, cw[1] as f32), ((cw[0] + cw[2]) as f32, cw[1] as f32), ((cw[0] + cw[2]) as f32, (cw[1] + cw[3]) as f32), (cw[0] as f32, (cw[1] + cw[3]) as f32)].map(|(x, y)| inv.apply(x, y));
     let (wx0, wy0) = wc.iter().fold((f32::MAX, f32::MAX), |a, c| (a.0.min(c.0), a.1.min(c.1)));
     let (wx1, wy1) = wc.iter().fold((f32::MIN, f32::MIN), |a, c| (a.0.max(c.0), a.1.max(c.1)));
+    // orçamento antes de alocar (CP4-03): a camada muito reduzida (escala 0,01) leva a janela do canvas a dezenas de
+    // milhares de px do cel; acima de 8 Mpx (uns 2900 × 2900) o contexto não é montado e o pedido volta com erro, sem
+    // travar nem derrubar o app
+    let area = (wx1 - wx0) as f64 * (wy1 - wy0) as f64;
+    if !area.is_finite() || !(wx0.is_finite() && wy0.is_finite()) || area > CONTEXT_BUDGET_PX {
+        return Err(ToolError::Invalid(format!(
+            "a camada está reduzida demais para o Copiloto ler aqui (a área em volta da caixa daria {:.0} Mpx no desenho da camada; o limite é {:.0}); aumente a escala da camada ou use uma caixa menor",
+            area / 1e6,
+            CONTEXT_BUDGET_PX / 1e6
+        )));
+    }
     let win = [wx0.floor() as i32, wy0.floor() as i32, ((wx1 - wx0).ceil() as i32).max(1), ((wy1 - wy0).ceil() as i32).max(1)];
     let lines = layer_lines(p, blobs, &req.cut, &req.layer, req.frame, win)?;
     let cel = exposed_cel(p, cut, &req.layer, req.frame).map(|n| n.id.clone());
