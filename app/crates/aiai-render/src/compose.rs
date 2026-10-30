@@ -522,7 +522,7 @@ fn is_barrier(project: &Project, id: &Id) -> bool {
     }
     match l.kind {
         LayerType::Effect | LayerType::Adjustment => true,
-        LayerType::Group if l.blend == BlendMode::PassThrough && l.opacity >= 1.0 && l.mask.is_none() && !l.clip_to_below => {
+        LayerType::Group if l.blend == BlendMode::PassThrough && l.opacity >= 1.0 && l.mask.is_none() && !l.clip_to_below && l.masks.is_empty() => {
             node.children.iter().any(|c| is_barrier(project, c))
         }
         _ => aiai_fx::stack_from_params(&l.params).map(|s| stack_reads_below(&s)).unwrap_or(false),
@@ -850,7 +850,7 @@ impl<'a> Renderer<'a> {
             } else {
                 let first_warning = self.warnings.len();
                 if let Some((produced, placed)) = self.tiles_only_placed(id, node, layer, cut, frame) {
-                    let mask = if produced { layer.mask.as_ref().and_then(|m| self.mask_values(m, layer.mask_mode, cut, frame)).map(Arc::new) } else { None };
+                    let mask = if produced { self.layer_mask(layer, cut, frame).map(Arc::new) } else { None };
                     let placed = placed.map(Arc::new);
                     if let (Some(lc), Some(sig)) = (lc.as_deref_mut(), sig) {
                         let warnings = self.warnings[first_warning..].to_vec();
@@ -861,7 +861,7 @@ impl<'a> Renderer<'a> {
                 } else {
                     let content: Option<Image> = match layer.kind {
                         LayerType::Group => {
-                            if layer.blend == BlendMode::PassThrough && layer.opacity >= 1.0 && layer.mask.is_none() && !layer.clip_to_below {
+                            if layer.blend == BlendMode::PassThrough && layer.opacity >= 1.0 && layer.mask.is_none() && !layer.clip_to_below && layer.masks.is_empty() {
                                 self.composite_children(buf, &node.children, cut, frame, opts, allowed);
                                 clip_base = None;
                                 continue;
@@ -889,7 +889,7 @@ impl<'a> Renderer<'a> {
                                     if self.linear {
                                         convert_image(&mut processed, true);
                                     }
-                                    let mask = layer.mask.as_ref().and_then(|m| self.mask_values(m, layer.mask_mode, cut, frame));
+                                    let mask = self.layer_mask(layer, cut, frame);
                                     let opacity = layer_prop(layer, "opacity", frame, layer.opacity).clamp(0.0, 1.0);
                                     buf.data.par_iter_mut().enumerate().for_each(|(i, d)| {
                                         let k = opacity * mask.as_ref().map_or(1.0, |m| m[i]);
@@ -907,7 +907,7 @@ impl<'a> Renderer<'a> {
                             // Camada de ajuste: altera o que já foi composto abaixo dela (dentro da mesma pasta).
                             match layer.params.get("adjustment").map(|v| serde_json::from_value::<aiai_paint::adjust::Adjustment>(v.clone())) {
                                 Some(Ok(adj)) => {
-                                    let mask = layer.mask.as_ref().and_then(|m| self.mask_values(m, layer.mask_mode, cut, frame));
+                                    let mask = self.layer_mask(layer, cut, frame);
                                     let clip = if layer.clip_to_below { clip_base.as_ref().map(|c| c.to_vec(buf.width, buf.height)) } else { None };
                                     let m: Option<Vec<f32>> = match (mask, clip) {
                                         (Some(a), Some(b)) => Some(a.iter().zip(&b).map(|(x, y)| x * y).collect()),
@@ -961,7 +961,7 @@ impl<'a> Renderer<'a> {
                         }
                         (c, _) => c,
                     };
-                    let mask = if content.is_some() { layer.mask.as_ref().and_then(|m| self.mask_values(m, layer.mask_mode, cut, frame)).map(Arc::new) } else { None };
+                    let mask = if content.is_some() { self.layer_mask(layer, cut, frame).map(Arc::new) } else { None };
                     // sem conteúdo ou tudo transparente dá no mesmo: nada a misturar e, como base de recorte, recorta tudo
                     let placed = content.and_then(Placed::crop).map(Arc::new);
                     if let (Some(lc), Some(sig), false) = (lc.as_deref_mut(), sig, reads_below) {
@@ -1451,6 +1451,23 @@ impl<'a> Renderer<'a> {
     }
 
     /// Valores de máscara (luminância × alfa) da camada `mask_id` no quadro.
+    /// Máscara da camada na saída: a camada-máscara (no modo dela) vezes as máscaras desenhadas (que seguem o movimento
+    /// da camada). `None` = sem máscara.
+    fn layer_mask(&mut self, layer: &LayerData, cut: &CutData, frame: u32) -> Option<Vec<f32>> {
+        let from_layer = layer.mask.as_ref().and_then(|m| self.mask_values(m, layer.mask_mode, cut, frame));
+        let xf = self.placement_affine(layer, frame, [0.0, 0.0, 1.0, 0.0]);
+        let drawn = crate::shape_mask::coverage(&layer.masks, &xf, self.out_w, self.out_h);
+        match (from_layer, drawn) {
+            (Some(mut a), Some(b)) => {
+                for (x, y) in a.iter_mut().zip(&b) {
+                    *x *= y;
+                }
+                Some(a)
+            }
+            (a, b) => a.or(b),
+        }
+    }
+
     fn mask_values(&mut self, mask_id: &Id, mode: aiai_core::MaskMode, cut: &CutData, frame: u32) -> Option<Vec<f32>> {
         let project = self.project;
         let node = project.node(mask_id)?;

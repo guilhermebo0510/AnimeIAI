@@ -3,6 +3,7 @@
 
 pub mod compose;
 pub mod raster3d;
+pub mod shape_mask;
 pub mod stroke_mods;
 pub mod text;
 pub mod text_fx;

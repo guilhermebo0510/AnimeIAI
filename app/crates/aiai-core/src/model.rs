@@ -516,6 +516,44 @@ impl LayerType {
     }
 }
 
+/// Um ponto do caminho de uma máscara desenhada: posição e alças de entrada e saída (relativas ao ponto; zero = canto).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct MaskPoint {
+    pub pos: [f32; 2],
+    #[serde(default)]
+    pub h_in: [f32; 2],
+    #[serde(default)]
+    pub h_out: [f32; 2],
+}
+
+/// Como uma máscara desenhada se junta às anteriores (as do After Effects).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ShapeMaskMode {
+    #[default]
+    Add,
+    Subtract,
+    Intersect,
+    Difference,
+}
+
+/// Máscara desenhada (caminho fechado) com borda suave (`feather`, px), expansão (px; negativo encolhe), opacidade e
+/// inversão.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ShapeMask {
+    pub points: Vec<MaskPoint>,
+    #[serde(default)]
+    pub mode: ShapeMaskMode,
+    #[serde(default)]
+    pub feather: f32,
+    #[serde(default)]
+    pub expansion: f32,
+    #[serde(default = "one")]
+    pub opacity: f32,
+    #[serde(default)]
+    pub inverted: bool,
+}
+
 /// Modo da camada-máscara (`LayerData::mask`): alfa, luma (× alfa) ou o inverso de cada um.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
@@ -609,6 +647,10 @@ pub struct LayerData {
     /// O que da camada-máscara vale (como os track mattes do After Effects). Padrão: luma × alfa (o de sempre).
     #[serde(default, skip_serializing_if = "MaskMode::is_default")]
     pub mask_mode: MaskMode,
+    /// Máscaras desenhadas na própria camada (caminhos com alças, no espaço da camada), combinadas em ordem; multiplicam
+    /// o alfa da camada junto com a camada-máscara.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub masks: Vec<ShapeMask>,
     #[serde(default)]
     pub role: LayerRole,
     /// Profundidade para multiplano (0 = plano da câmera; maior = mais longe).
@@ -672,6 +714,7 @@ impl LayerData {
             clip_to_below: false,
             mask: None,
             mask_mode: MaskMode::Luma,
+            masks: Vec::new(),
             role: LayerRole::None,
             depth: 0.0,
             offset: [0.0, 0.0],
