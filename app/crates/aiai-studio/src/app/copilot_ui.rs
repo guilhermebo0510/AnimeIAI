@@ -460,9 +460,12 @@ pub(crate) fn restart(env: &mut Env) {
     }
 }
 
-/// Um traço terminou no corte: a MENOR caixa onde ele caiu entra na fila. Fora de todas, a caixa de FOCO (no máximo
-/// uma por corte) vai até ele (nasce na primeira vez), a não ser que o foco esteja pausado ou desligado; nunca nasce
-/// uma caixa por traço.
+/// Um traço terminou no corte. **Uma caixa por vez** (decisão de 30/10 com o dono: várias caixas enchiam o painel de
+/// prompts, brigavam na sobreposição e, numa GPU de 4 a 6 GB, só esperavam na fila):
+/// - sem caixa, o traço forma a caixa em volta dele e gera;
+/// - traço que toca a caixa a atualiza (ela cresce se o traço sai dela) e gera de novo;
+/// - traço fora dela, com sugestão à vista: é só desenho; outra caixa só depois de aceitar (Tab) ou descartar (Esc);
+/// - traço fora dela sem sugestão à vista (gerando, nada sugerido, recém-aberta): a caixa vai até o traço.
 pub(crate) fn on_stroke(env: &mut Env, cut: &Id, bbox: [f32; 4], traced: bool, make_box: bool) {
     // esta mudança já foi tratada aqui (o `tick` não precisa refazer o corte todo)
     env.ed.copilot.seen_change = env.core.change_counter;
@@ -473,54 +476,66 @@ pub(crate) fn on_stroke(env: &mut Env, cut: &Id, bbox: [f32; 4], traced: bool, m
         return;
     }
     let (cx, cy) = (bbox[0] + bbox[2] / 2.0, bbox[1] + bbox[3] / 2.0);
-    // caixas sobrepostas: o traço refaz só a MENOR que o contém (a mais específica), nunca várias de uma vez
-    let hit = c
-        .boxes
-        .iter()
-        .filter(|b| &b.cut == cut && cx >= b.rect[0] && cx <= b.rect[0] + b.rect[2] && cy >= b.rect[1] && cy <= b.rect[1] + b.rect[3])
-        // uma caixa fixa lê uma camada só: traço em outra camada não muda o que ela lê (vai para o foco, que segue)
-        .filter(|b| b.auto || b.layer.is_none() || b.layer == layer)
-        .min_by(|a, b| (a.rect[2] * a.rect[3]).total_cmp(&(b.rect[2] * b.rect[3])).then(b.id.cmp(&a.id)))
-        .map(|b| b.id);
-    let id = match hit {
-        Some(id) => {
-            // o foco passa a ler a camada em que você está desenhando (o fantasma era da outra)
-            // (só ligado: pausado ou desligado guarda a fonte e o fantasma, CP2-08)
-            if let Some(b) = c.boxes.iter_mut().find(|b| b.id == id && b.auto && b.state == BoxState::On && b.layer != layer) {
-                b.layer = layer.clone();
-                invalidate_box(c, id);
-            }
-            id
-        }
-        None if make_box => {
-            // fora das caixas: o foco vai até o traço, no tamanho que já tem (pelo menos 256 e cobrindo o traço)
+    let Some(b) = c.boxes.first().cloned() else {
+        if make_box {
             let min = bbox[2].max(bbox[3]).max(256.0);
-            match c.boxes.iter().position(|b| &b.cut == cut && b.auto) {
-                Some(k) => {
-                    // foco pausado ou desligado fica onde está (e guarda o fantasma, se pausado)
-                    if c.boxes[k].state != BoxState::On {
-                        return;
-                    }
-                    let b = &mut c.boxes[k];
-                    b.layer = layer.clone();
-                    let (w, h) = (b.rect[2].max(bbox[2] + 32.0).max(256.0), b.rect[3].max(bbox[3] + 32.0).max(256.0));
-                    b.rect = [cx - w / 2.0, cy - h / 2.0, w, h];
-                    let id = b.id;
-                    // o fantasma e o pedido em voo eram de outro lugar
-                    invalidate_box(c, id);
-                    id
-                }
-                None => {
-                    let id = c.next_box;
-                    c.next_box += 1;
-                    c.boxes.push(CBox { id, cut: cut.clone(), rect: [cx - min / 2.0, cy - min / 2.0, min, min], prompt: String::new(), state: BoxState::On, seed: 1, auto: true, layer: layer.clone(), use_global: true, geo: 0, content: 0, llm: false, src: 0, src_region: None });
-                    id
-                }
-            }
+            let id = c.next_box;
+            c.next_box += 1;
+            c.boxes.push(CBox { id, cut: cut.clone(), rect: [cx - min / 2.0, cy - min / 2.0, min, min], prompt: String::new(), state: BoxState::On, seed: 1, auto: true, layer, use_global: true, geo: 0, content: 0, llm: false, src: 0, src_region: None });
+            requeue(c, id, frame);
         }
-        None => return,
+        return;
     };
-    requeue(c, id, frame);
+    let id = b.id;
+    let r = b.rect;
+    let touches = &b.cut == cut && bbox[0] <= r[0] + r[2] && bbox[0] + bbox[2] >= r[0] && bbox[1] <= r[1] + r[3] && bbox[1] + bbox[3] >= r[1];
+    let shown = c.ghosts.iter().any(|g| g.box_id == id && !(g.vis_improve.is_empty() && g.vis_complete.is_empty()));
+    if b.state != BoxState::On {
+        // pausada ou desligada: guarda o lugar, a fonte e o fantasma (CP1-24, CP2-08)
+        return;
+    }
+    if touches {
+        let bx = c.boxes.iter_mut().find(|x| x.id == id).unwrap();
+        let mut moved = false;
+        // a caixa lê a camada em que você está desenhando
+        if bx.layer != layer {
+            bx.layer = layer.clone();
+            moved = true;
+        }
+        // o traço saiu da caixa (mais de 4 px): ela cresce para cobri-lo, com folga (até 1024 px de lado); traço que fica
+        // dentro, mesmo perto da borda, não mexe nela
+        let out = bbox[0] < r[0] - 4.0 || bbox[1] < r[1] - 4.0 || bbox[0] + bbox[2] > r[0] + r[2] + 4.0 || bbox[1] + bbox[3] > r[1] + r[3] + 4.0;
+        let (x0, y0) = (r[0].min(bbox[0] - 16.0), r[1].min(bbox[1] - 16.0));
+        let (x1, y1) = ((r[0] + r[2]).max(bbox[0] + bbox[2] + 16.0), (r[1] + r[3]).max(bbox[1] + bbox[3] + 16.0));
+        if out {
+            let (w, h) = ((x1 - x0).min(1024.0), (y1 - y0).min(1024.0));
+            bx.rect = [x0.max(cx - w / 2.0).min(x1 - w), y0.max(cy - h / 2.0).min(y1 - h), w, h];
+            moved = true;
+        }
+        if moved {
+            invalidate_box(c, id);
+        }
+        requeue(c, id, frame);
+    } else if !shown && make_box {
+        // sem sugestão à vista: a caixa vai até o traço (no tamanho que já tem, pelo menos 256 e cobrindo o traço)
+        let bx = c.boxes.iter_mut().find(|x| x.id == id).unwrap();
+        let (w, h) = (r[2].max(bbox[2] + 32.0).max(256.0), r[3].max(bbox[3] + 32.0).max(256.0));
+        bx.cut = cut.clone();
+        bx.layer = layer;
+        bx.rect = [cx - w / 2.0, cy - h / 2.0, w, h];
+        bx.auto = true;
+        bx.llm = false;
+        invalidate_box(c, id);
+        requeue(c, id, frame);
+    }
+}
+
+/// Tira a caixa (aceita por inteiro, descartada ou consumida pelo ímã): some do canvas e do painel.
+fn remove_box(c: &mut CopilotUi, id: u32) {
+    invalidate_box(c, id);
+    c.boxes.retain(|b| b.id != id);
+    c.dirty.retain(|d| d.id != id);
+    fail_waiters(c, Some(id), "a caixa foi aceita ou descartada");
 }
 
 /// Uma vez por quadro: recebe o que ficou pronto e manda a próxima caixa quando a vez chegar.
@@ -703,8 +718,13 @@ fn receive(env: &mut Env, (id, geo, content, hist, r): Done) {
             c.ghosts.retain(|g| g.box_id != id);
             c.vis_dirty = true;
             if s.improve.is_empty() && s.complete.is_empty() {
-                // nada a mostrar: não fica fantasma vazio (o Esc/Tab dele não fariam nada e enganariam)
+                // nada a mostrar: não fica fantasma vazio (o Esc/Tab dele não fariam nada e enganariam); e a caixa só
+                // existe enquanto há sugestão: sem nada sugerido ela some, a não ser que tenha prompt próprio (não se
+                // perde o que foi digitado). O próximo traço forma outra.
                 c.last = format!("{:.1} s · {}", s.ms as f32 / 1000.0, crate::i18n::tr("copilot.nothing"));
+                if b.prompt.trim().is_empty() && !b.llm {
+                    remove_box(c, id);
+                }
                 return;
             }
             c.ghosts.push(Ghost { box_id: id, s: s.clone(), stale: b.content != content, vis_improve: s.improve.clone(), vis_complete: s.complete.clone() });
@@ -919,9 +939,15 @@ pub(crate) fn release(env: &mut Env, xf: &Xf, pos: Pos2) -> bool {
             if let Some(cut) = env.ed.cut.clone() {
                 let layer = env.ed.layer.clone();
                 let c = &mut env.ed.copilot;
+                // uma caixa por vez: a caixa desenhada à mão troca a atual (o prompt dela vem junto)
+                let (prompt, use_global) = c.boxes.first().map(|b| (b.prompt.clone(), b.use_global)).unwrap_or((String::new(), true));
+                let old: Vec<u32> = c.boxes.iter().map(|b| b.id).collect();
+                for o in old {
+                    remove_box(c, o);
+                }
                 let id = c.next_box;
                 c.next_box += 1;
-                c.boxes.push(CBox { id, cut, rect: r, prompt: String::new(), state: BoxState::On, seed: 1, auto: false, layer, use_global: true, geo: 0, content: 0, llm: false, src: 0, src_region: None });
+                c.boxes.push(CBox { id, cut, rect: r, prompt, state: BoxState::On, seed: 1, auto: false, layer, use_global, geo: 0, content: 0, llm: false, src: 0, src_region: None });
                 requeue(c, id, frame);
                 c.vis_dirty = true;
             }
@@ -1021,6 +1047,7 @@ pub(crate) fn accept_with(env: &mut Env, which: AcceptWhich, force: bool) -> usi
     if stale > 0 {
         env.ed.notify(format!("{} ({stale})", crate::i18n::tr("copilot.stale_skipped")));
     }
+    let mut done_boxes = Vec::new();
     for mut g in todo {
         match accept_cmd(env, &g, which, None, target, replace) {
             Ok(cmd) => match super::commands::run(env.core, cmd) {
@@ -1028,6 +1055,8 @@ pub(crate) fn accept_with(env: &mut Env, which: AcceptWhich, force: bool) -> usi
                     n += 1;
                     if !strip_ghost(&env.core.project, &mut g, which, None) {
                         keep.push(g);
+                    } else {
+                        done_boxes.push(g.box_id);
                     }
                 }
                 Err(e) => {
@@ -1056,6 +1085,10 @@ pub(crate) fn accept_with(env: &mut Env, which: AcceptWhich, force: bool) -> usi
             drop_inflight_after_accept(&mut env.ed.copilot, cut, frame);
         }
     }
+    // tudo aceito: a caixa some (os traços já são traços comuns da camada)
+    for id in done_boxes {
+        remove_box(&mut env.ed.copilot, id);
+    }
     n
 }
 
@@ -1069,6 +1102,10 @@ pub(crate) fn discard(env: &mut Env) -> usize {
     let ids: Vec<u32> = c.boxes.iter().filter(|b| Some(&b.cut) == cut.as_ref()).map(|b| b.id).collect();
     c.dirty.retain(|d| !ids.contains(&d.id));
     invalidate_all(c);
+    // descartada: a caixa some; o próximo traço forma outra
+    for id in ids {
+        remove_box(c, id);
+    }
     before - c.ghosts.len()
 }
 
@@ -1140,9 +1177,9 @@ pub(crate) fn bridge(env: &mut Env, r: HostRequest) {
                 Err(e) => return r.respond(Err(BridgeError::invalid_params(e.to_string()))),
             };
             let c = &mut env.ed.copilot;
-            // a caixa do agente: a mesma caixa "IA" do mesmo corte e retângulo, ou uma nova
-            let same = |b: &CBox| b.llm && b.cut == s.cut && b.rect.iter().zip(s.rect.iter()).all(|(a, b)| (a - b).abs() < 0.5);
-            let id = match c.boxes.iter().position(same) {
+            // uma caixa por vez: o pedido do agente usa a caixa que existe (vira caixa "IA", no lugar e no tamanho
+            // pedidos) ou cria a única
+            let id = match (!c.boxes.is_empty()).then_some(0) {
                 Some(k) => {
                     // pedido novo na mesma caixa: o fantasma e o pedido em voo anteriores (de outra camada, quadro ou
                     // prompt) não valem mais (CP2-07)
@@ -1151,6 +1188,11 @@ pub(crate) fn bridge(env: &mut Env, r: HostRequest) {
                     let b = &mut c.boxes[k];
                     b.prompt = s.prompt.clone();
                     b.layer = Some(s.layer.clone());
+                    b.cut = s.cut.clone();
+                    b.rect = s.rect;
+                    b.llm = true;
+                    b.auto = false;
+                    b.use_global = false;
                     b.state = BoxState::On;
                     b.content += 1;
                     b.id
@@ -1187,6 +1229,9 @@ pub(crate) fn bridge(env: &mut Env, r: HostRequest) {
                     let left = serde_json::json!({"improve": g.vis_improve.len(), "complete": g.vis_complete.len()});
                     if !all_gone {
                         env.ed.copilot.ghosts.push(g);
+                    } else {
+                        // tudo aceito: a caixa some, como no Tab
+                        remove_box(&mut env.ed.copilot, g.box_id);
                     }
                     env.ed.copilot.vis_dirty = true;
                     env.ed.copilot.seen_change = env.core.change_counter;
@@ -1205,7 +1250,12 @@ pub(crate) fn bridge(env: &mut Env, r: HostRequest) {
         "discard" => {
             let Some(sid) = req.id else { return r.respond(Err(BridgeError::invalid_params("discard pede `id`"))) };
             let before = env.ed.copilot.ghosts.len();
+            let boxes: Vec<u32> = env.ed.copilot.ghosts.iter().filter(|g| g.s.id == sid).map(|g| g.box_id).collect();
             env.ed.copilot.ghosts.retain(|g| g.s.id != sid);
+            // descartada: a caixa some, como no Esc
+            for b in boxes {
+                remove_box(&mut env.ed.copilot, b);
+            }
             env.ed.copilot.vis_dirty = true;
             r.respond(Ok(serde_json::json!({"discarded": before != env.ed.copilot.ghosts.len()})));
         }
@@ -1360,20 +1410,6 @@ pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         section_inline(ui, &t, tr("copilot.sec.boxes"));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if env.icon_button_sized(ui, IconId::Play, "copilot.on_all", false, true, "copilot:on_all", 22.0, false).clicked() {
-                let c = &mut env.ed.copilot;
-                for b in c.boxes.iter_mut().filter(|b| Some(&b.cut) == cur_cut.as_ref()) {
-                    b.state = BoxState::On;
-                }
-                again = true;
-            }
-            if env.icon_button_sized(ui, IconId::Pause, "copilot.pause_all", false, true, "copilot:pause_all", 22.0, false).clicked() {
-                let c = &mut env.ed.copilot;
-                for b in c.boxes.iter_mut().filter(|b| b.state == BoxState::On) {
-                    b.state = BoxState::Paused;
-                }
-                c.dirty.clear();
-            }
             let nb = env.ed.copilot.new_box_mode;
             if env.icon_button_sized(ui, IconId::Plus, "copilot.new_box.tip", nb, true, "copilot:new_box", 22.0, false).clicked() {
                 env.ed.copilot.new_box_mode = !nb;
@@ -1424,12 +1460,6 @@ pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if env.icon_button_sized(ui, IconId::Trash, "copilot.box.delete", false, true, &format!("copilot:box:{id}:delete"), 22.0, false).clicked() {
                         remove = Some(id);
-                    }
-                    if auto && env.icon_button_sized(ui, IconId::Pin, "copilot.box.pin", false, true, &format!("copilot:box:{id}:pin"), 22.0, false).clicked() {
-                        // fixar: a caixa fica aqui; o próximo traço fora das caixas cria um foco novo
-                        if let Some(b) = env.ed.copilot.boxes.iter_mut().find(|b| b.id == id) {
-                            b.auto = false;
-                        }
                     }
                     if env.icon_button_sized(ui, IconId::Refresh, "copilot.box.again", false, true, &format!("copilot:box:{id}:again"), 22.0, false).clicked() {
                         let c = &mut env.ed.copilot;
@@ -1496,10 +1526,9 @@ pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
     {
         let c = &mut env.ed.copilot;
         if let Some(id) = remove {
-            invalidate_box(c, id);
-            c.boxes.retain(|b| b.id != id);
-            c.dirty.retain(|d| d.id != id);
-            fail_waiters(c, Some(id), "a caixa foi apagada");
+            // apagar = descartar: o fantasma e a caixa somem
+            c.ghosts.retain(|g| g.box_id != id);
+            remove_box(c, id);
         }
         for id in redo_box {
             requeue(c, id, frame);
@@ -1737,7 +1766,12 @@ pub(crate) fn magnet_done(env: &mut Env, m: Magnet) -> bool {
         g.s.improve = cut_v(&s.improve);
         g.s.complete = cut_v(&s.complete);
     }
+    let gone: Vec<u32> = env.ed.copilot.ghosts.iter().filter(|g| g.s.improve.is_empty() && g.s.complete.is_empty()).map(|g| g.box_id).collect();
     env.ed.copilot.ghosts.retain(|g| !g.s.improve.is_empty() || !g.s.complete.is_empty());
+    // o fantasma inteiro virou traço do artista: a caixa some, como num aceite
+    for id in gone {
+        remove_box(&mut env.ed.copilot, id);
+    }
     env.ed.copilot.vis_dirty = true;
     refresh_visible(&mut env.ed.copilot);
     mostly
