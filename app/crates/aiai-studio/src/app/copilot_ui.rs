@@ -1724,6 +1724,8 @@ pub(crate) struct Magnet {
     total: usize,
     /// Soma das distâncias (antes de puxar) dos pontos puxados: traço que segue o fantasma fica bem perto dele.
     dsum: f32,
+    /// Soma das distâncias que sobram depois de puxar (onde o traço fica gravado em relação ao fantasma).
+    dsum_after: f32,
     /// Linha do fantasma que puxou cada ponto puxado, em ordem: seguir uma linha fica nela; um traço novo que cruza o
     /// desenho pula de linha em linha.
     seq: Vec<u32>,
@@ -1756,7 +1758,7 @@ pub(crate) fn magnet_for(env: &Env, scale: f32) -> Option<Magnet> {
             }
         }
     }
-    (!lines.is_empty()).then(|| Magnet { lines, radius: 12.0 / scale.max(1e-3), strength: c.magnet, pulled: 0, total: 0, dsum: 0.0, seq: Vec::new(), path: Vec::new() })
+    (!lines.is_empty()).then(|| Magnet { lines, radius: 12.0 / scale.max(1e-3), strength: c.magnet, pulled: 0, total: 0, dsum: 0.0, dsum_after: 0.0, seq: Vec::new(), path: Vec::new() })
 }
 
 impl Magnet {
@@ -1781,7 +1783,10 @@ impl Magnet {
         let mostly = self.total > 0 && self.pulled * 10 >= self.total * 7 && along && avg <= (self.radius * 0.5).min(8.0);
         // seguiu o fantasma de verdade (para o restante continuar aceitável): quase todo o traço no ímã e, em média, bem
         // perto da linha. Um traço novo que só cruza linhas do fantasma (rosto cheio de linhas) não conta.
-        let traced = mostly && self.pulled * 20 >= self.total * 19 && avg <= (self.radius * 0.4).min(4.0);
+        // de perto: o traço GRAVADO (depois de puxar) fica, em média, a até 4 px do fantasma; com o zoom afastado a mão
+        // não fica tão perto, mas o ímã leva o traço até lá (I-22)
+        let after = if self.pulled > 0 { self.dsum_after / self.pulled as f32 } else { f32::MAX };
+        let traced = mostly && self.pulled * 20 >= self.total * 19 && after <= (self.radius * 0.4).min(4.0);
         (mostly, traced)
     }
 
@@ -1807,6 +1812,7 @@ impl Magnet {
         self.seq.push(li);
         let u = d / self.radius;
         let w = self.strength * (1.0 - u * u).powi(2);
+        self.dsum_after += d * (1.0 - w);
         let out = p + (q - p) * w;
         self.path.push(out);
         out
@@ -1980,11 +1986,17 @@ mod tests {
     fn magnet_follows_one_line_but_not_a_stroke_crossing_many() {
         // cinco linhas horizontais a cada 20 px, raio do ímã de 34 px (zoom afastado, como na bateria R3)
         let lines: Vec<MLine> = (0..5).map(|k| MLine { pts: vec![Vec2::new(0.0, k as f32 * 20.0), Vec2::new(200.0, k as f32 * 20.0)] }).collect();
-        let mk = || Magnet { lines: lines.iter().map(|l| MLine { pts: l.pts.clone() }).collect(), radius: 34.0, strength: 0.7, pulled: 0, total: 0, dsum: 0.0, seq: Vec::new(), path: Vec::new() };
+        let mk = || Magnet { lines: lines.iter().map(|l| MLine { pts: l.pts.clone() }).collect(), radius: 34.0, strength: 0.7, pulled: 0, total: 0, dsum: 0.0, dsum_after: 0.0, seq: Vec::new(), path: Vec::new() };
         // seguir a linha y=40 a 3 px
         let mut m = mk();
         for i in 0..40 {
             m.pull(Vec2::new(10.0 + i as f32 * 4.0, 43.0));
+        }
+        assert_eq!(m.verdict(), (true, true));
+        // com o zoom afastado a mão passa a 7 px da linha: o ímã leva o traço gravado para perto e o resto vale (I-22)
+        let mut m = mk();
+        for i in 0..40 {
+            m.pull(Vec2::new(10.0 + i as f32 * 4.0, 47.0));
         }
         assert_eq!(m.verdict(), (true, true));
         // um traço novo na diagonal, cruzando as cinco
