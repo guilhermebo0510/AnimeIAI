@@ -12,7 +12,7 @@
 | I-S05 | não bloqueia | Na grade não se reordena painel arrastando nem se divide/junta painel; o movimento de câmera do painel (pan, zoom, PAN/T.U./T.B.) não aparece na miniatura. | `show` (grade só com clique e duplo clique) | Arrastar para reordenar; marcas de câmera (setas e quadros de início e fim) na miniatura. |
 | I-S06 | melhoria | A miniatura só mostra o número do corte, o tipo de plano, os segundos e a ação. Faltam a fala e o SE (estão na folha). | `cell` | Fala e SE no cartão (resumidos). |
 
-## Conferido no app (30/10, 08:45, release `ec0a63a`, cópia própria do episódio, 7 painéis)
+## Conferido no app (30/10, ~08:33, release `ec0a63a`, cópia própria do episódio, 7 painéis)
 
 Telas em `calibracao/tmp/claude-ws-roteiro-telas/2*_storyboard*.png`.
 

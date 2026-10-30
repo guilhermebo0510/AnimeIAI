@@ -14,7 +14,7 @@
 | I-P06 | **errado em parte (figurino existe; ver abaixo)** | Ficha curta: nome, idade, cabeças e perfil livre. Faltam figurinos (衣装) e variações, acessórios e relações. | `settei_tab` | Campos de figurino e variação (cada uma com a sua paleta e referências). |
 | I-P07 | melhoria | A consistência mede proporção na vertical (topo, queixo, olhos, ombros, pés). Não confere largura (ombros, cintura) nem o rosto (olhos, boca), que é onde o desenho mais escapa do settei. | `consistency`, `CONS_LINES` | Medidas horizontais e do rosto; comparar com a referência do design (I-P01). |
 
-## Conferido no app (30/10, 08:40, release `ec0a63a`, cópia própria do episódio "A última rosa")
+## Conferido no app (30/10, ~08:32, release `ec0a63a`, cópia própria do episódio "A última rosa")
 
 Telas em `calibracao/tmp/claude-ws-roteiro-telas/1*_personagens*.png`. **A leitura de código errou em três itens:**
 

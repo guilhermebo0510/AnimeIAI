@@ -16,7 +16,7 @@
 | I-R08 | melhoria | Os segundos estimados por elemento são bons para anime, mas não há **meta** por cena nem comparação com o animatic (o tempo real dos cortes). | `script.rs:213-226`, `properties` | Coluna "no animatic" ao lado de "estimado", com a diferença. |
 | I-R09 | melhoria | A cena não sabe **quais cortes** a contam (ida e volta roteiro ↔ storyboard ↔ corte). `aiai_cuts_from_storyboard` cria cortes, mas o roteiro não mostra os cortes da cena. | `ScriptScene` sem ligação | Mostrar os cortes da cena e abrir o corte com um clique. |
 
-## Conferido no app (30/10, 08:35, release `ec0a63a`, cópia própria do episódio "A última rosa")
+## Conferido no app (30/10, ~08:30, release `ec0a63a`, cópia própria do episódio "A última rosa")
 
 Telas em `calibracao/tmp/claude-ws-roteiro-telas`.
 
