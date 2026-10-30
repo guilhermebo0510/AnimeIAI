@@ -850,7 +850,7 @@ impl<'a> Renderer<'a> {
             } else {
                 let first_warning = self.warnings.len();
                 if let Some((produced, placed)) = self.tiles_only_placed(id, node, layer, cut, frame) {
-                    let mask = if produced { layer.mask.as_ref().and_then(|m| self.mask_values(m, cut, frame)).map(Arc::new) } else { None };
+                    let mask = if produced { layer.mask.as_ref().and_then(|m| self.mask_values(m, layer.mask_mode, cut, frame)).map(Arc::new) } else { None };
                     let placed = placed.map(Arc::new);
                     if let (Some(lc), Some(sig)) = (lc.as_deref_mut(), sig) {
                         let warnings = self.warnings[first_warning..].to_vec();
@@ -889,7 +889,7 @@ impl<'a> Renderer<'a> {
                                     if self.linear {
                                         convert_image(&mut processed, true);
                                     }
-                                    let mask = layer.mask.as_ref().and_then(|m| self.mask_values(m, cut, frame));
+                                    let mask = layer.mask.as_ref().and_then(|m| self.mask_values(m, layer.mask_mode, cut, frame));
                                     let opacity = layer_prop(layer, "opacity", frame, layer.opacity).clamp(0.0, 1.0);
                                     buf.data.par_iter_mut().enumerate().for_each(|(i, d)| {
                                         let k = opacity * mask.as_ref().map_or(1.0, |m| m[i]);
@@ -907,7 +907,7 @@ impl<'a> Renderer<'a> {
                             // Camada de ajuste: altera o que já foi composto abaixo dela (dentro da mesma pasta).
                             match layer.params.get("adjustment").map(|v| serde_json::from_value::<aiai_paint::adjust::Adjustment>(v.clone())) {
                                 Some(Ok(adj)) => {
-                                    let mask = layer.mask.as_ref().and_then(|m| self.mask_values(m, cut, frame));
+                                    let mask = layer.mask.as_ref().and_then(|m| self.mask_values(m, layer.mask_mode, cut, frame));
                                     let clip = if layer.clip_to_below { clip_base.as_ref().map(|c| c.to_vec(buf.width, buf.height)) } else { None };
                                     let m: Option<Vec<f32>> = match (mask, clip) {
                                         (Some(a), Some(b)) => Some(a.iter().zip(&b).map(|(x, y)| x * y).collect()),
@@ -961,7 +961,7 @@ impl<'a> Renderer<'a> {
                         }
                         (c, _) => c,
                     };
-                    let mask = if content.is_some() { layer.mask.as_ref().and_then(|m| self.mask_values(m, cut, frame)).map(Arc::new) } else { None };
+                    let mask = if content.is_some() { layer.mask.as_ref().and_then(|m| self.mask_values(m, layer.mask_mode, cut, frame)).map(Arc::new) } else { None };
                     // sem conteúdo ou tudo transparente dá no mesmo: nada a misturar e, como base de recorte, recorta tudo
                     let placed = content.and_then(Placed::crop).map(Arc::new);
                     if let (Some(lc), Some(sig), false) = (lc.as_deref_mut(), sig, reads_below) {
@@ -1451,24 +1451,12 @@ impl<'a> Renderer<'a> {
     }
 
     /// Valores de máscara (luminância × alfa) da camada `mask_id` no quadro.
-    fn mask_values(&mut self, mask_id: &Id, cut: &CutData, frame: u32) -> Option<Vec<f32>> {
+    fn mask_values(&mut self, mask_id: &Id, mode: aiai_core::MaskMode, cut: &CutData, frame: u32) -> Option<Vec<f32>> {
         let project = self.project;
         let node = project.node(mask_id)?;
         let NodeKind::Layer(l) = &node.data else { return None };
         let img = self.layer_image(mask_id, node, l, cut, frame)?;
-        Some(
-            img.data
-                .iter()
-                .map(|p| {
-                    if p[3] <= 0.0 {
-                        0.0
-                    } else {
-                        let (r, g, b) = (p[0] / p[3], p[1] / p[3], p[2] / p[3]);
-                        (0.2126 * r + 0.7152 * g + 0.0722 * b) * p[3]
-                    }
-                })
-                .collect(),
-        )
+        Some(img.data.iter().map(|p| mode.value(*p)).collect())
     }
 }
 

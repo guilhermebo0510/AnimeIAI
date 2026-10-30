@@ -516,6 +516,35 @@ impl LayerType {
     }
 }
 
+/// Modo da camada-máscara (`LayerData::mask`): alfa, luma (× alfa) ou o inverso de cada um.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum MaskMode {
+    Alpha,
+    AlphaInverted,
+    #[default]
+    Luma,
+    LumaInverted,
+}
+
+impl MaskMode {
+    fn is_default(&self) -> bool {
+        *self == MaskMode::Luma
+    }
+
+    /// O valor da máscara num pixel pré-multiplicado `[r, g, b, a]`.
+    pub fn value(self, p: [f32; 4]) -> f32 {
+        let a = p[3].clamp(0.0, 1.0);
+        let luma = if a <= 0.0 { 0.0 } else { (0.2126 * p[0] / a + 0.7152 * p[1] / a + 0.0722 * p[2] / a).clamp(0.0, 1.0) * a };
+        match self {
+            MaskMode::Alpha => a,
+            MaskMode::AlphaInverted => 1.0 - a,
+            MaskMode::Luma => luma,
+            MaskMode::LumaInverted => 1.0 - luma,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum BlendMode {
@@ -577,6 +606,9 @@ pub struct LayerData {
     /// Camada usada como máscara (raster em escala de cinza ou vetor).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mask: Option<Id>,
+    /// O que da camada-máscara vale (como os track mattes do After Effects). Padrão: luma × alfa (o de sempre).
+    #[serde(default, skip_serializing_if = "MaskMode::is_default")]
+    pub mask_mode: MaskMode,
     #[serde(default)]
     pub role: LayerRole,
     /// Profundidade para multiplano (0 = plano da câmera; maior = mais longe).
@@ -639,6 +671,7 @@ impl LayerData {
             blend: if kind == LayerType::Group { BlendMode::PassThrough } else { BlendMode::Normal },
             clip_to_below: false,
             mask: None,
+            mask_mode: MaskMode::Luma,
             role: LayerRole::None,
             depth: 0.0,
             offset: [0.0, 0.0],

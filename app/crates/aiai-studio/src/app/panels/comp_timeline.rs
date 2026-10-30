@@ -707,7 +707,14 @@ fn matte_combo(env: &mut Env, ui: &mut Ui, r: Rect, id: &NodeId, l: &LayerData) 
     let cur = if l.clip_to_below {
         tr("comp.matte.below").to_owned()
     } else if let Some(m) = &l.mask {
-        names.iter().find(|(i, _)| i == m).map(|(_, n)| n.clone()).unwrap_or_else(|| m.0.clone())
+        let name = names.iter().find(|(i, _)| i == m).map(|(_, n)| n.clone()).unwrap_or_else(|| m.0.clone());
+        let mode = match l.mask_mode {
+            aiai_core::MaskMode::Alpha => tr("comp.matte.mode.alpha"),
+            aiai_core::MaskMode::AlphaInverted => tr("comp.matte.mode.alpha_inv"),
+            aiai_core::MaskMode::Luma => tr("comp.matte.mode.luma"),
+            aiai_core::MaskMode::LumaInverted => tr("comp.matte.mode.luma_inv"),
+        };
+        format!("{name} · {mode}")
     } else {
         tr("comp.matte.none").to_owned()
     };
@@ -723,6 +730,20 @@ fn matte_combo(env: &mut Env, ui: &mut Ui, r: Rect, id: &NodeId, l: &LayerData) 
         for (mid, n) in &names {
             if ui.selectable_label(l.mask.as_ref() == Some(mid), format!("{} {n}", tr("comp.matte.mask"))).on_hover_text(tr("comp.matte.mask.tip")).clicked() {
                 pick = Some(serde_json::json!({ "clip_to_below": false, "mask": mid }));
+            }
+        }
+        // o que da camada-máscara vale (os quatro track mattes do After Effects)
+        if l.mask.is_some() {
+            ui.separator();
+            for (m, k, key) in [
+                (aiai_core::MaskMode::Alpha, "comp.matte.mode.alpha", "alpha"),
+                (aiai_core::MaskMode::AlphaInverted, "comp.matte.mode.alpha_inv", "alpha_inverted"),
+                (aiai_core::MaskMode::Luma, "comp.matte.mode.luma", "luma"),
+                (aiai_core::MaskMode::LumaInverted, "comp.matte.mode.luma_inv", "luma_inverted"),
+            ] {
+                if ui.selectable_label(l.mask_mode == m, tr(k)).clicked() {
+                    pick = Some(serde_json::json!({ "mask_mode": key }));
+                }
             }
         }
     });
