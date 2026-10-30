@@ -1164,8 +1164,12 @@ pub fn accept_command(p: &Project, s: &Suggestion, which: AcceptWhich, only: Opt
     let clean: Vec<&Stroke> = picked.iter().filter(|x| x.1).map(|x| x.0).collect();
     let (removed, outside) = if replace && !clean.is_empty() { covered_strokes_by(&cd.strokes, &clean, |x, y| s.inside(x, y)) } else { (Vec::new(), Vec::new()) };
     let start = cd.strokes.len() - removed.len();
+    // a ponta do traço limpo que chega na borda da caixa solda na ponta do pedaço do rascunho que ficou fora: a linha
+    // continua sem degrau nem falha na borda
+    let ends: Vec<(f32, f32)> = outside.iter().filter_map(|o| Some([o.points.first()?, o.points.last()?])).flatten().map(|q| (q.x, q.y)).collect();
+    let welded: Vec<Stroke> = picked.iter().map(|(st, is_clean)| if *is_clean { weld_to(st, &ends, s) } else { (*st).clone() }).collect();
     // primeiro os pedaços de fora da caixa dos traços substituídos (o desenho de fora fica igual), depois os aceitos
-    let all_new: Vec<Stroke> = outside.into_iter().chain(picked.iter().map(|(st, _)| (*st).clone())).collect();
+    let all_new: Vec<Stroke> = outside.into_iter().chain(welded).collect();
     let items: Vec<_> = all_new.into_iter().enumerate().map(|(k, stroke)| aiai_core::command::IndexedStroke { index: start + k, stroke }).collect();
     let insert = aiai_core::Command::InsertStrokes { cel: cel.id.clone(), items };
     if removed.is_empty() {
@@ -1203,6 +1207,37 @@ pub fn strip_accepted(s: &mut Suggestion, which: AcceptWhich, only: Option<&[usi
         !gone.contains(&(k - 1))
     });
     s.improve.is_empty() && s.complete.is_empty()
+}
+
+/// Leva cada ponta de `st` que está na borda da caixa (até 4 px dela, no canvas) para a ponta de `ends` mais perto
+/// (até 10 px): a solda do traço limpo no rascunho que continua fora da caixa.
+fn weld_to(st: &Stroke, ends: &[(f32, f32)], s: &Suggestion) -> Stroke {
+    let mut out = st.clone();
+    if ends.is_empty() || st.closed || out.points.len() < 2 {
+        return out;
+    }
+    let r = s.rect;
+    let on_border = |x: f32, y: f32| {
+        let (cx, cy) = s.to_canvas(x, y);
+        let d = (cx - r[0]).abs().min((cx - r[0] - r[2]).abs()).min((cy - r[1]).abs()).min((cy - r[1] - r[3]).abs());
+        d <= 4.0
+    };
+    let n = out.points.len();
+    for k in [0, n - 1] {
+        let (x, y) = (out.points[k].x, out.points[k].y);
+        if !on_border(x, y) {
+            continue;
+        }
+        let best = ends.iter().map(|&(ex, ey)| ((ex - x).hypot(ey - y), ex, ey)).min_by(|a, b| a.0.total_cmp(&b.0));
+        if let Some((d, ex, ey)) = best.filter(|b| b.0 <= 10.0) {
+            if d > 0.0 {
+                out.points[k].x = ex;
+                out.points[k].y = ey;
+                out.points[k].handle = None;
+            }
+        }
+    }
+    out
 }
 
 /// Onde os traços aceitos entram.

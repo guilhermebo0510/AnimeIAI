@@ -504,3 +504,23 @@ fn a_line_drawn_at_the_edge_of_the_canvas_on_a_moved_cel_is_read_as_context() {
     let ink = img.pixels().filter(|q| q.0[0] < 128).count();
     assert!(ink > 50, "o traço aparece no contexto: {ink} px de tinta, janela {win:?}");
 }
+
+
+#[test]
+fn the_clean_line_welds_to_the_rough_piece_left_outside_the_box() {
+    // continuidade na borda (régua do CP-CX02 §8): o rascunho vai de x 0 a 1000 em y 50; a caixa cobre x até 810; a
+    // linha limpa sai 3 px acima e termina na borda. Depois de aceitar, a ponta dela está na ponta do pedaço de fora.
+    use aiai_tools::copilot::{AcceptWhich, accept_command};
+    let rough = stroke("r", &[(0.0, 50.0), (500.0, 50.0), (1000.0, 50.0)], 3.0);
+    let clean = stroke("", &[(2.0, 47.0), (400.0, 47.0), (808.0, 47.0)], 3.0);
+    let rect = [-10.0, 0.0, 820.0, 100.0];
+    let (mut s, cut, lay) = doc(vec![rough]);
+    s.apply(accept_command(&s.project, &sug(&cut, &lay, rect, vec![clean]), AcceptWhich::All, None, true).unwrap()).unwrap();
+    let now = cel_of(&s, &lay);
+    // o pedaço de fora começa na borda (x ~810); a linha limpa termina exatamente lá
+    let outside = now.iter().find(|st| st.points.iter().all(|q| q.x > 805.0)).expect("pedaço de fora");
+    let start = outside.points[0];
+    let accepted = now.iter().find(|st| st.points.iter().any(|q| q.x < 100.0)).expect("linha limpa");
+    let end = accepted.points[accepted.points.len() - 1];
+    assert!((end.x - start.x).hypot(end.y - start.y) < 0.5, "solda: fim da limpa ({}, {}) × início do pedaço ({}, {})", end.x, end.y, start.x, start.y);
+}
