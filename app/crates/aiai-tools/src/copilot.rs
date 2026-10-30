@@ -664,16 +664,12 @@ pub fn source_signature(p: &Project, cut: &Id, layer: &Id, frame: u32, region: O
     h.finish()
 }
 
-/// O traço (pontos de controle mais a largura e uma folga para a curva) toca o retângulo?
+/// O que o traço pinta toca o retângulo? Limites conservadores da curva inteira (âncoras, alças explícitas ou
+/// automáticas, largura por ponto e perfil; `aiai_paint::stroke_bounds`), mais 2 px: uma curva com as âncoras fora e
+/// a barriga dentro da caixa conta (CP3-01); um traço que nem chega perto, não.
 fn stroke_touches(st: &Stroke, r: [f32; 4]) -> bool {
-    let pad = st.width * 2.0 + 12.0;
-    let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-    for q in &st.points {
-        x0 = x0.min(q.x);
-        y0 = y0.min(q.y);
-        x1 = x1.max(q.x);
-        y1 = y1.max(q.y);
-    }
+    let Some([x0, y0, x1, y1]) = aiai_paint::stroke_bounds(st) else { return false };
+    let pad = 2.0;
     x1 + pad >= r[0] && x0 - pad <= r[0] + r[2] && y1 + pad >= r[1] && y0 - pad <= r[1] + r[3]
 }
 
@@ -794,7 +790,7 @@ pub fn finish(prep: Prepared) -> ToolResult<Suggestion> {
         for piece in clip_to_box(path, scale, [win[0] as f32, win[1] as f32], [bx0, by0, bx1, by1]) {
             // o corte reamostra a cada ~2 px: simplifica de novo (traço editável, com poucos pontos de controle)
             let piece = piece.simplified(1.0);
-            let st = path_to_stroke(&piece, req.tip, req.color.clone(), scale, [win[0] as f32, win[1] as f32]);
+            let st = even_width(path_to_stroke(&piece, req.tip, req.color.clone(), scale, [win[0] as f32, win[1] as f32]));
             // a curva final (spline) pode sair da caixa mesmo com os pontos de controle dentro: corta a curva desenhada
             let (ins, _) = split_stroke(&st, |x, y| inside_box(x, y));
             for mut st in ins {
@@ -860,6 +856,19 @@ pub fn finish(prep: Prepared) -> ToolResult<Suggestion> {
         reduced: r["reduced"].as_bool().unwrap_or(false),
         throttled: r["gpu"]["throttled"].as_bool().unwrap_or(false),
     })
+}
+
+/// Largura de linha limpa (CP1-10): a medida no encontro de duas linhas ou numa mancha sai bem mais grossa que o resto
+/// e vira um "nó" no traço aceito. O multiplicador de cada ponto fica entre 0,6 e 1,35 da largura do traço (a mediana)
+/// e é suavizado com os vizinhos: a linha continua variando como no desenho, sem caroço.
+pub fn even_width(mut st: Stroke) -> Stroke {
+    let n = st.points.len();
+    let w: Vec<f32> = st.points.iter().map(|q| q.width.clamp(0.6, 1.35)).collect();
+    for i in 0..n {
+        let (a, b) = (if i == 0 { if st.closed { n - 1 } else { 0 } } else { i - 1 }, if i + 1 == n { if st.closed { 0 } else { i } } else { i + 1 });
+        st.points[i].width = (w[a] + 2.0 * w[i] + w[b]) / 4.0;
+    }
+    st
 }
 
 /// Pedaços de um traço pelas amostras da curva desenhada (a forma não muda): os de dentro de `inside` e os de fora.

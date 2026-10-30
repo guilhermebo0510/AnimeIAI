@@ -29,7 +29,7 @@ pub mod userdirs;
 pub mod warp;
 
 pub use crate::image::Image;
-pub use curve::{StrokeSample, flatten_points, point_handle, point_width_for, sample_count, sample_stroke, width_at_point};
+pub use curve::{StrokeSample, flatten_points, point_handle, point_width_for, sample_count, sample_stroke, stroke_bounds, width_at_point};
 pub use mask::Mask;
 pub use transform::{Affine, transform_image};
 pub use stroke_raster::{rasterize_stroke, StrokeCoverage};

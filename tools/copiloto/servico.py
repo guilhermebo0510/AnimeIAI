@@ -116,6 +116,30 @@ def only_outline(lines, W, H):
     return out
 
 
+def consolidate(lines, W, H):
+    """Linha "tubo" (o modelo pinta o traço com o miolo mais claro, ou deixa duas passadas do rascunho lado a lado):
+    vira uma linha só antes de vetorizar, senão sai como dois contornos paralelos (CP1-10). Um fechamento leve (3 px a
+    512) junta o que está a ~2 px; depois, todo buraco de papel fino (raio inscrito até 2 px a 512) cercado de tinta é
+    preenchido. Buraco de verdade (pupila, boca aberta, brilho do olho) é mais largo e fica."""
+    import numpy as np
+    from PIL import Image, ImageFilter
+    from scipy import ndimage as nd
+    s = min(W, H) / 512
+    k = max(3, int(round(3 * s)) | 1)
+    out = np.asarray(Image.fromarray(lines).filter(ImageFilter.MinFilter(k)).filter(ImageFilter.MaxFilter(k))).copy()
+    paper = out >= int(255 * 0.7)
+    lab, n = nd.label(paper)
+    if n:
+        idx = np.arange(1, n + 1)
+        mx = nd.maximum(nd.distance_transform_edt(paper), lab, index=idx)
+        area = nd.sum(paper, lab, index=idx)
+        thin = np.zeros(n + 1, bool)
+        thin[1:] = (mx <= 2.0 * s) & (area <= 4000 * s * s)
+        fill = thin[lab]
+        out[fill] = np.minimum(out[fill], 60)
+    return out
+
+
 def img2img(pipe):
     """O mesmo modelo partindo do próprio desenho (img2img com o ControlNet): limpa o que existe em vez de redesenhar.
     Feito uma vez, com os mesmos componentes (sem memória de vídeo a mais)."""
@@ -263,6 +287,7 @@ def generate(pipe, a2s, req):
             torch.cuda.synchronize()
             t2 = time.perf_counter()
             lines = (g * 255).round().byte().cpu().numpy()
+            lines = consolidate(lines, W, H)
             # só na Intensidade alta (o modelo redesenha e pode encher sombra): embaixo disso a mancha é do artista
             # (cílio, cabelo preto) e fica
             if init >= 0.8:

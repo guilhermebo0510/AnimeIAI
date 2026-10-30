@@ -345,6 +345,10 @@ pub(crate) fn load_project_state(c: &mut CopilotUi, dir: Option<&std::path::Path
     c.boxes.clear();
     c.global_prompt.clear();
     c.next_box = 1;
+    // os ajustes que o copilot.json guarda são do projeto: voltam ao padrão antes de ler (projeto sem arquivo não herda
+    // os do anterior, CP3-07)
+    let d = CopilotUi::default();
+    (c.global_on, c.improve, c.complete, c.change, c.res, c.steps) = (d.global_on, d.improve, d.complete, d.change, d.res, d.steps);
     // o estado recém-aberto é o "salvo" (abrir não deixa o projeto sujo)
     let warn = load_project_file(c, dir);
     c.saved_sig = project_sig(c);
@@ -353,7 +357,12 @@ pub(crate) fn load_project_state(c: &mut CopilotUi, dir: Option<&std::path::Path
 
 fn load_project_file(c: &mut CopilotUi, dir: Option<&std::path::Path>) -> Option<String> {
     let path = dir?.join(SIDECAR);
-    let bytes = std::fs::read(&path).ok()?;
+    // sem arquivo é o normal (nenhuma caixa); arquivo que existe e não se lê (acesso negado, disco) avisa (CP3-07)
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => return Some(format!("{}: {e}", path.display())),
+    };
     let v: serde_json::Value = match serde_json::from_slice(&bytes) {
         Ok(v) => v,
         Err(e) => return Some(format!("{}: {e}", path.display())),
@@ -378,8 +387,10 @@ fn load_project_file(c: &mut CopilotUi, dir: Option<&std::path::Path>) -> Option
     }
     for b in f("boxes").and_then(|x| x.as_array()).into_iter().flatten() {
         let rect: Option<[f32; 4]> = serde_json::from_value(b.get("rect").cloned().unwrap_or_default()).ok();
-        let (Some(id), Some(cut), Some(rect)) = (b.get("id").and_then(|x| x.as_u64()), b.get("cut").and_then(|x| x.as_str()), rect) else { continue };
-        if !rect.iter().all(|x| x.is_finite()) || rect[2] < 4.0 || rect[3] < 4.0 || c.boxes.iter().any(|x| x.id as u64 == id) {
+        // id no domínio u32 (menos o último, para o próximo id não estourar): sem truncar nem colidir (CP3-06)
+        let id = b.get("id").and_then(|x| x.as_u64()).and_then(|x| u32::try_from(x).ok()).filter(|x| *x >= 1 && *x < u32::MAX);
+        let (Some(id), Some(cut), Some(rect)) = (id, b.get("cut").and_then(|x| x.as_str()), rect) else { continue };
+        if !rect.iter().all(|x| x.is_finite()) || rect[2] < 4.0 || rect[3] < 4.0 || c.boxes.iter().any(|x| x.id == id) {
             continue;
         }
         let state = match b.get("state").and_then(|x| x.as_str()) {
@@ -388,7 +399,7 @@ fn load_project_file(c: &mut CopilotUi, dir: Option<&std::path::Path>) -> Option
             _ => BoxState::On,
         };
         c.boxes.push(CBox {
-            id: id as u32,
+            id,
             cut: Id::from(cut),
             rect,
             prompt: b.get("prompt").and_then(|x| x.as_str()).unwrap_or_default().to_owned(),
@@ -404,15 +415,23 @@ fn load_project_file(c: &mut CopilotUi, dir: Option<&std::path::Path>) -> Option
             src_region: None,
         });
     }
-    // no máximo um foco por corte (arquivo editado à mão)
-    let mut seen = std::collections::HashSet::new();
-    for b in c.boxes.iter_mut().filter(|b| b.auto) {
-        if !seen.insert(b.cut.clone()) {
-            b.auto = false;
+    // uma caixa por vez: arquivo antigo (várias caixas, foco + fixas) fica só com a primeira; as outras não ficam
+    // escondidas na fila nem no fantasma
+    let dropped = c.boxes.len().saturating_sub(1);
+    c.boxes.truncate(1);
+    c.next_box = c.boxes.iter().map(|b| b.id.saturating_add(1)).max().unwrap_or(1);
+    (dropped > 0).then(|| format!("{}: {dropped} caixa(s) a mais do formato antigo (uma caixa por vez) não foram abertas", path.display()))
+}
+
+/// Próximo id de caixa: sem estourar no fim do u32 (volta a 1) e sem repetir um id em uso (CP3-06).
+fn new_box_id(c: &mut CopilotUi) -> u32 {
+    loop {
+        let id = c.next_box.max(1);
+        c.next_box = if id >= u32::MAX - 1 { 1 } else { id + 1 };
+        if !c.boxes.iter().any(|b| b.id == id) {
+            return id;
         }
     }
-    c.next_box = c.boxes.iter().map(|b| b.id + 1).max().unwrap_or(1);
-    None
 }
 
 /// Responde (com erro) os pedidos do MCP que esperavam uma caixa.
@@ -479,8 +498,7 @@ pub(crate) fn on_stroke(env: &mut Env, cut: &Id, bbox: [f32; 4], traced: bool, m
     let Some(b) = c.boxes.first().cloned() else {
         if make_box {
             let min = bbox[2].max(bbox[3]).max(256.0);
-            let id = c.next_box;
-            c.next_box += 1;
+            let id = new_box_id(c);
             c.boxes.push(CBox { id, cut: cut.clone(), rect: [cx - min / 2.0, cy - min / 2.0, min, min], prompt: String::new(), state: BoxState::On, seed: 1, auto: true, layer, use_global: true, geo: 0, content: 0, llm: false, src: 0, src_region: None });
             requeue(c, id, frame);
         }
@@ -808,7 +826,7 @@ pub(crate) fn paint(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &Id) {
         let gc = c.ghost_color;
         let col = Color32::from_rgba_unmultiplied(gc.r(), gc.g(), gc.b(), a);
         for st in g.vis_improve.iter().chain(&g.vis_complete) {
-            ghost_line(painter, xf, &g.s, st, col, c.width_mode, env.ed.opts.pen_width);
+            ghost_line(painter, xf, &g.s, st, col, c.width_mode, env.ed.opts.pen_width, env.ed.opts.pen_tip);
         }
     }
     if !c.on {
@@ -849,29 +867,52 @@ pub(crate) fn paint(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &Id) {
 
 /// O fantasma com a largura que o traço terá ao aceitar (o modo de Largura do painel e a caneta ativa) e na escala do
 /// movimento da camada.
-fn ghost_line(painter: &egui::Painter, xf: &Xf, s: &Suggestion, st: &Stroke, col: Color32, mode: WidthMode, pen_width: f32) {
-    let smp = aiai_paint::sample_stroke(st);
+fn ghost_line(painter: &egui::Painter, xf: &Xf, s: &Suggestion, st: &Stroke, col: Color32, mode: WidthMode, pen_width: f32, tip: aiai_core::VectorTip) {
+    // a prévia é o traço que o aceite grava (mesma caneta, largura, perfil e ponta: CP2-10); só a cor e a opacidade
+    // são do fantasma
+    let mut st = st.clone();
+    cp::apply_pen(&mut st, mode, pen_width, tip, &aiai_core::ColorRef::default());
+    let smp = aiai_paint::sample_stroke(&st);
     if smp.len() < 2 {
         return;
     }
-    let avg = smp.iter().map(|q| q.r).sum::<f32>() / smp.len() as f32 * 2.0;
-    let doc_w = match mode {
-        WidthMode::Drawing => avg,
-        WidthMode::Pen => avg * pen_width.max(0.1) / st.width.max(0.1),
-        WidthMode::Fixed => pen_width.max(0.1),
-    };
     let [a, b, _, d, e, _] = s.placement;
     let layer_scale = (a * e - b * d).abs().sqrt();
-    let w = (doc_w * if layer_scale.is_finite() && layer_scale > 0.0 { layer_scale } else { 1.0 } * xf.scale).max(1.0);
-    painter.add(egui::Shape::line(
-        smp.iter()
-            .map(|q| {
-                let (x, y) = s.to_canvas(q.x, q.y);
-                xf.to_screen(Vec2::new(x, y))
-            })
-            .collect(),
-        egui::Stroke::new(w, col),
-    ));
+    let k = if layer_scale.is_finite() && layer_scale > 0.0 { layer_scale } else { 1.0 } * xf.scale;
+    let pts: Vec<(Pos2, f32)> = smp
+        .iter()
+        .map(|q| {
+            let (x, y) = s.to_canvas(q.x, q.y);
+            (xf.to_screen(Vec2::new(x, y)), q.r * k)
+        })
+        .collect();
+    // faixa de largura variável com 1 px de borda suave (o mesh do egui não tem antisserrilhado próprio)
+    let clear = Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 0);
+    let mut mesh = egui::Mesh::default();
+    let n = pts.len();
+    for i in 0..n {
+        let prev = pts[i.saturating_sub(1)].0;
+        let next = pts[(i + 1).min(n - 1)].0;
+        let dir = (next - prev).normalized();
+        let nrm = if dir.x.is_finite() && dir.length_sq() > 0.0 { egui::vec2(-dir.y, dir.x) } else { egui::vec2(0.0, 1.0) };
+        let (p, r) = pts[i];
+        // linha mais fina que 1 px na tela: fica 1 px, mais clara na proporção (como o antisserrilhado faria)
+        let (r, c) = if r < 0.5 { (0.5, col.gamma_multiply((r * 2.0).clamp(0.15, 1.0))) } else { (r, col) };
+        let inner = (r - 0.5).max(0.0);
+        let outer = r + 0.5;
+        mesh.colored_vertex(p + nrm * outer, clear);
+        mesh.colored_vertex(p + nrm * inner, c);
+        mesh.colored_vertex(p - nrm * inner, c);
+        mesh.colored_vertex(p - nrm * outer, clear);
+    }
+    for i in 0..(n as u32 - 1) {
+        let (a0, b0) = (i * 4, (i + 1) * 4);
+        for s in 0..3 {
+            mesh.add_triangle(a0 + s, a0 + s + 1, b0 + s);
+            mesh.add_triangle(a0 + s + 1, b0 + s + 1, b0 + s);
+        }
+    }
+    painter.add(egui::Shape::mesh(mesh));
 }
 
 /// Clique no canvas: alças das caixas (mover pela etiqueta, redimensionar pelos cantos) e o modo "nova caixa".
@@ -945,8 +986,7 @@ pub(crate) fn release(env: &mut Env, xf: &Xf, pos: Pos2) -> bool {
                 for o in old {
                     remove_box(c, o);
                 }
-                let id = c.next_box;
-                c.next_box += 1;
+                let id = new_box_id(c);
                 c.boxes.push(CBox { id, cut, rect: r, prompt, state: BoxState::On, seed: 1, auto: false, layer, use_global, geo: 0, content: 0, llm: false, src: 0, src_region: None });
                 requeue(c, id, frame);
                 c.vis_dirty = true;
@@ -1198,8 +1238,7 @@ pub(crate) fn bridge(env: &mut Env, r: HostRequest) {
                     b.id
                 }
                 None => {
-                    let id = c.next_box;
-                    c.next_box += 1;
+                    let id = new_box_id(c);
                     c.boxes.push(CBox { id, cut: s.cut.clone(), rect: s.rect, prompt: s.prompt.clone(), state: BoxState::On, seed: s.seed.unwrap_or(1), auto: false, layer: Some(s.layer.clone()), use_global: false, geo: 0, content: 1, llm: true, src: 0, src_region: None });
                     id
                 }
@@ -1226,6 +1265,8 @@ pub(crate) fn bridge(env: &mut Env, r: HostRequest) {
                 Ok(_) => {
                     // só sai o que foi aceito (categoria ou índices); o resto fica, com as assinaturas novas (CP2-05)
                     let all_gone = strip_ghost(&env.core.project, &mut g, req.which, req.only.as_deref());
+                    // o corte/quadro da sugestão aceita, não o que o editor mostra agora (CP3-08)
+                    let (cut, frame) = (g.s.cut.clone(), g.s.frame);
                     let left = serde_json::json!({"improve": g.vis_improve.len(), "complete": g.vis_complete.len()});
                     if !all_gone {
                         env.ed.copilot.ghosts.push(g);
@@ -1235,10 +1276,7 @@ pub(crate) fn bridge(env: &mut Env, r: HostRequest) {
                     }
                     env.ed.copilot.vis_dirty = true;
                     env.ed.copilot.seen_change = env.core.change_counter;
-                    let (cut, frame) = (env.ed.cut.clone(), env.ed.frame);
-                    if let Some(cut) = cut.as_ref() {
-                        drop_inflight_after_accept(&mut env.ed.copilot, cut, frame);
-                    }
+                    drop_inflight_after_accept(&mut env.ed.copilot, &cut, frame);
                     r.respond(Ok(serde_json::json!({"accepted": sid, "revision": env.core.project.revision, "remaining": left})));
                 }
                 Err(e) => {
@@ -1491,8 +1529,13 @@ pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
             let active = env.ed.layer.clone();
             let src_name = src.as_ref().and_then(|l| env.core.project.node(l)).map(|n| n.name.clone()).unwrap_or_else(|| tr("copilot.src.none").to_string());
             let src_info = src.as_ref().and_then(|l| aiai_tools::context::layer_data(&env.core.project, l).ok()).map(|l| (l.kind, l.visible, l.locked));
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("{} {src_name}", tr("copilot.src"))).size(11.0).color(t.text_dim)).on_hover_text(tr("copilot.src.tip"));
+            // nome longo (CP3-05): a linha quebra dentro da largura do painel e o nome é cortado com "…" (o inteiro na dica)
+            ui.horizontal_wrapped(|ui| {
+                let full = format!("{} {src_name}", tr("copilot.src"));
+                let short: String = if full.chars().count() > 34 { format!("{}…", full.chars().take(33).collect::<String>()) } else { full.clone() };
+                ui.add(egui::Label::new(RichText::new(short).size(11.0).color(t.text_dim))).on_hover_text(format!("{full}
+
+{}", tr("copilot.src.tip")));
                 if let Some((kind, visible, locked)) = src_info {
                     if kind != aiai_core::LayerType::Vector {
                         ui.label(RichText::new(tr("copilot.src.raster")).size(11.0).color(t.text_dim)).on_hover_text(tr("copilot.src.raster.tip"));
@@ -1740,7 +1783,13 @@ impl Magnet {
 /// Fim do traço com ímã: o trecho de fantasma coberto pelo caminho puxado sai (o traço desenhado entrou no lugar dele);
 /// o resto fica. O corte é geométrico (perto do caminho), nos dados do fantasma, não só no que aparece.
 /// `true` = o traço seguiu o fantasma quase todo (então não pede sugestão nova).
-pub(crate) fn magnet_done(env: &mut Env, m: Magnet) -> bool {
+/// Caixas cujo fantasma está fresco agora (antes de gravar o traço com ímã): só essas têm o restante renovado depois
+/// (CP3-03b); uma edição alheia anterior continua deixando o fantasma velho.
+pub(crate) fn fresh_ghosts(env: &Env) -> Vec<u32> {
+    env.ed.copilot.ghosts.iter().filter(|g| cp::check_fresh(&env.core.project, &g.s).is_ok()).map(|g| g.box_id).collect()
+}
+
+pub(crate) fn magnet_done(env: &mut Env, m: Magnet, fresh: &[u32]) -> bool {
     let mostly = m.total > 0 && m.pulled * 10 >= m.total * 7;
     if m.path.is_empty() {
         return mostly;
@@ -1765,6 +1814,10 @@ pub(crate) fn magnet_done(env: &mut Env, m: Magnet) -> bool {
         let cut_v = |v: &Vec<Stroke>| v.iter().flat_map(|st| cp::split_stroke(st, &inside).1).filter(|st| aiai_paint::sample_stroke(st).len() >= 3).collect::<Vec<_>>();
         g.s.improve = cut_v(&s.improve);
         g.s.complete = cut_v(&s.complete);
+        // o traço que seguiu o fantasma é mudança da própria sugestão: o restante continua aceitável (Tab sem forçar)
+        if mostly && fresh.contains(&g.box_id) {
+            cp::refresh_after_own_accept(&env.core.project, &mut g.s);
+        }
     }
     let gone: Vec<u32> = env.ed.copilot.ghosts.iter().filter(|g| g.s.improve.is_empty() && g.s.complete.is_empty()).map(|g| g.box_id).collect();
     env.ed.copilot.ghosts.retain(|g| !g.s.improve.is_empty() || !g.s.complete.is_empty());

@@ -224,6 +224,41 @@ fn segment_controls(pts: &[P], corners: &[bool], handles: &[Option<[f32; 2]>], c
     }
 }
 
+/// Limites conservadores do que o traço pinta (x0, y0, x1, y1), sem amostrar: a curva fica dentro do fecho convexo
+/// dos controles de cada segmento (alças explícitas ou automáticas da spline), mais o maior raio possível (largura ×
+/// multiplicador do ponto × perfil; a ponta e o afinamento só afinam) e 1 px de antisserrilhado. `None` sem pontos.
+pub fn stroke_bounds(stroke: &Stroke) -> Option<[f32; 4]> {
+    let first = stroke.points.first()?;
+    let (mut x0, mut y0, mut x1, mut y1) = (first.x, first.y, first.x, first.y);
+    let mut add = |x: f32, y: f32| {
+        if x.is_finite() && y.is_finite() {
+            x0 = x0.min(x);
+            y0 = y0.min(y);
+            x1 = x1.max(x);
+            y1 = y1.max(y);
+        }
+    };
+    for q in &stroke.points {
+        add(q.x, q.y);
+    }
+    if matches!(stroke.geometry, StrokeGeometry::Spline | StrokeGeometry::Freehand) && stroke.points.len() >= 2 {
+        let pts: Vec<P> = stroke.points.iter().map(|q| P { x: q.x, y: q.y, p: q.pressure, w: q.width }).collect();
+        let corners: Vec<bool> = stroke.points.iter().map(|q| q.corner).collect();
+        let handles: Vec<Option<[f32; 2]>> = stroke.points.iter().map(|q| q.handle.filter(|_| !q.corner)).collect();
+        let n = pts.len();
+        let segs = if stroke.closed { n } else { n - 1 };
+        for i in 0..segs {
+            let (_, b1, b2, _) = segment_controls(&pts, &corners, &handles, stroke.closed, stroke.tension, i);
+            add(b1.x, b1.y);
+            add(b2.x, b2.y);
+        }
+    }
+    let wmax = stroke.points.iter().map(|q| q.width.max(0.0)).fold(0.0f32, f32::max);
+    let kmax = stroke.profile.0.iter().map(|m| m[1]).fold(1.0f32, f32::max);
+    let r = (0.5 * stroke.width.max(0.0) * wmax * kmax).max(0.5) + 1.0;
+    Some([x0 - r, y0 - r, x1 + r, y1 + r])
+}
+
 /// Alça (tangente) do ponto `i` como o motor usa: a explícita, ou a automática da spline (o controle de saída menos o
 /// ponto; no último ponto de um traço aberto, o ponto menos o controle de chegada). `None` fora de Spline/Freehand.
 pub fn point_handle(stroke: &Stroke, i: usize) -> Option<[f32; 2]> {

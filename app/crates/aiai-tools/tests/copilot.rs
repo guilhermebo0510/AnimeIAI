@@ -524,3 +524,68 @@ fn the_clean_line_welds_to_the_rough_piece_left_outside_the_box() {
     let end = accepted.points[accepted.points.len() - 1];
     assert!((end.x - start.x).hypot(end.y - start.y) < 0.5, "solda: fim da limpa ({}, {}) × início do pedaço ({}, {})", end.x, end.y, start.x, start.y);
 }
+
+#[test]
+fn clean_width_has_no_knots() {
+    let mut st = stroke("k", &[(0.0, 0.0), (10.0, 0.0), (20.0, 0.0), (30.0, 0.0), (40.0, 0.0)], 3.0);
+    st.points[2].width = 3.0; // encontro de linhas: o vetorizador mediu o triplo
+    let st = aiai_tools::copilot::even_width(st);
+    assert!(st.points.iter().all(|q| q.width <= 1.35 && q.width >= 0.6), "{:?}", st.points.iter().map(|q| q.width).collect::<Vec<_>>());
+}
+
+#[test]
+fn curve_with_anchors_outside_and_belly_inside_touches_the_box() {
+    // CP3-01: âncoras em x 1000, alças de ±800: o meio da curva passa em x ~400, dentro da janela [0, 0, 512, 512]
+    let mut st = stroke("c", &[(1000.0, 100.0), (1000.0, 400.0)], 3.0);
+    st.points[0].handle = Some([-800.0, 0.0]);
+    st.points[1].handle = Some([800.0, 0.0]);
+    let b = aiai_paint::stroke_bounds(&st).unwrap();
+    assert!(b[0] < 512.0, "{b:?}");
+    // a curva inteiramente longe não toca
+    let far = stroke("f", &[(1000.0, 100.0), (1000.0, 400.0)], 3.0);
+    assert!(aiai_paint::stroke_bounds(&far).unwrap()[0] > 512.0);
+}
+
+#[test]
+fn a_cel_moved_1200_px_reads_the_same_ink_as_the_identity_control() {
+    // CP3-02 (fixture do CP-CX03): linha local (-1000, 200)→(-900, 200), largura 8, cel +1200 em x: no canvas,
+    // (200, 200)→(300, 200). Caixa [100, 100, 400, 400]. O contexto lido tem a mesma tinta que o controle com a linha
+    // já em (200, 200)→(300, 200) e transformação identidade.
+    use aiai_tools::copilot::{SuggestRequest, prepare};
+    let req = |cut: &aiai_core::Id, lay: &aiai_core::Id| SuggestRequest {
+        cut: cut.clone(),
+        frame: 0,
+        layer: lay.clone(),
+        rect: [100.0, 100.0, 400.0, 400.0],
+        prompt: String::new(),
+        improve: true,
+        complete: true,
+        steps: None,
+        res: None,
+        change: None,
+        strength: None,
+        control_end: None,
+        cfg: None,
+        init: None,
+        seed: None,
+        context: None,
+        tip: aiai_core::VectorTip::Marker,
+        color: aiai_core::ColorRef::default(),
+    };
+    let (mut s, cut, lay) = doc(vec![stroke("a", &[(-1000.0, 200.0), (-900.0, 200.0)], 8.0)]);
+    let cel = s.project.cel_by_number(&lay, 1).unwrap().id.clone();
+    s.apply(aiai_core::Command::SetProps { id: cel, name: None, data: serde_json::json!({"transform": [1200.0, 0.0, 1.0, 0.0]}) }).unwrap();
+    let moved = prepare(&s.project, &s.blobs, &req(&cut, &lay)).unwrap();
+    let (c, cut2, lay2) = doc(vec![stroke("a", &[(200.0, 200.0), (300.0, 200.0)], 8.0)]);
+    let ident = prepare(&c.project, &c.blobs, &req(&cut2, &lay2)).unwrap();
+    let ink = |p: &aiai_tools::copilot::Prepared| {
+        let (img, win) = p.context();
+        let v: Vec<(u32, u32)> = img.enumerate_pixels().filter(|q| q.2.0[0] < 128).map(|q| (q.0, q.1)).collect();
+        (v, win)
+    };
+    let ((a, wa), (b, wb)) = (ink(&moved), ink(&ident));
+    assert!(b.len() > 400, "controle tem a linha: {} px", b.len());
+    assert_eq!(a.len(), b.len(), "mesma tinta: janela deslocada {wa:?} × identidade {wb:?}");
+    assert_eq!(a, b, "mesma posição na imagem de entrada");
+    assert_eq!(wa[2..], wb[2..], "mesmo tamanho de janela");
+}

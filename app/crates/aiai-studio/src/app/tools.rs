@@ -253,10 +253,11 @@ pub(crate) fn finish_stroke(env: &mut Env, mut g: Box<StrokeGesture>, released_a
     }
     let Some(t) = target_for_commit(env, &g) else { return };
     let before = env.core.change_counter;
+    let fresh = if g.magnet.is_some() { super::copilot_ui::fresh_ghosts(env) } else { Vec::new() };
     finish_commit(env, &t, &g, released_at);
     // copiloto: um traço gravado (qualquer pincel ou a borracha) põe a caixa onde ele caiu na fila
     let traced = match g.magnet.take() {
-        Some(m) if env.core.change_counter != before => super::copilot_ui::magnet_done(env, m),
+        Some(m) if env.core.change_counter != before => super::copilot_ui::magnet_done(env, m, &fresh),
         _ => false,
     };
     if env.core.change_counter != before && !g.samples.is_empty() {
