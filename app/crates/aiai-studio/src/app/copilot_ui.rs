@@ -1775,10 +1775,13 @@ impl Magnet {
         top.sort_unstable_by(|a, b| b.cmp(a));
         let top2 = top.iter().take(2).sum::<usize>();
         let along = switches <= 3 && top2 * 10 >= self.pulled * 8;
-        let mostly = self.total > 0 && self.pulled * 10 >= self.total * 7 && along;
+        // distância média (no desenho, antes de puxar) até o fantasma: o raio é de tela e, com o zoom afastado, passa de
+        // 30 px do canvas; seguir é ficar perto NO DESENHO (até 8 px; para o restante continuar valendo, até 4 px)
+        let avg = if self.pulled > 0 { self.dsum / self.pulled as f32 } else { f32::MAX };
+        let mostly = self.total > 0 && self.pulled * 10 >= self.total * 7 && along && avg <= (self.radius * 0.5).min(8.0);
         // seguiu o fantasma de verdade (para o restante continuar aceitável): quase todo o traço no ímã e, em média, bem
         // perto da linha. Um traço novo que só cruza linhas do fantasma (rosto cheio de linhas) não conta.
-        let traced = mostly && self.pulled * 20 >= self.total * 19 && self.dsum <= self.pulled as f32 * self.radius * 0.4;
+        let traced = mostly && self.pulled * 20 >= self.total * 19 && avg <= (self.radius * 0.4).min(4.0);
         (mostly, traced)
     }
 
@@ -1990,5 +1993,11 @@ mod tests {
             m.pull(Vec2::new(20.0 + i as f32 * 3.0, i as f32 * 2.0));
         }
         assert!(!m.verdict().0, "cruzar o desenho não é seguir o fantasma");
+        // paralelo a 10 px das linhas (no meio entre duas, com o zoom afastado o ímã alcança): é outra linha
+        let mut m = mk();
+        for i in 0..40 {
+            m.pull(Vec2::new(10.0 + i as f32 * 4.0, 50.0));
+        }
+        assert!(!m.verdict().0, "uma linha nova ao lado não é seguir o fantasma");
     }
 }
