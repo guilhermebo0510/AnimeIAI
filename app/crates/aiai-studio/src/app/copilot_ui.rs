@@ -426,7 +426,8 @@ fn load_project_file(c: &mut CopilotUi, dir: Option<&std::path::Path>) -> Option
 /// Próximo id de caixa: sem estourar no fim do u32 (volta a 1) e sem repetir um id em uso (CP3-06).
 fn new_box_id(c: &mut CopilotUi) -> u32 {
     loop {
-        let id = c.next_box.max(1);
+        // ids válidos: 1 ..= u32::MAX − 1 (os mesmos que o copilot.json aceita ao abrir)
+        let id = if c.next_box == 0 || c.next_box == u32::MAX { 1 } else { c.next_box };
         c.next_box = if id >= u32::MAX - 1 { 1 } else { id + 1 };
         if !c.boxes.iter().any(|b| b.id == id) {
             return id;
@@ -1721,6 +1722,11 @@ pub(crate) struct Magnet {
     strength: f32,
     pulled: usize,
     total: usize,
+    /// Soma das distâncias (antes de puxar) dos pontos puxados: traço que segue o fantasma fica bem perto dele.
+    dsum: f32,
+    /// Linha do fantasma que puxou cada ponto puxado, em ordem: seguir uma linha fica nela; um traço novo que cruza o
+    /// desenho pula de linha em linha.
+    seq: Vec<u32>,
     /// Pontos (canvas) que foram puxados: o trecho do fantasma perto deles sai no fim do traço.
     path: Vec<Vec2>,
 }
@@ -1750,15 +1756,37 @@ pub(crate) fn magnet_for(env: &Env, scale: f32) -> Option<Magnet> {
             }
         }
     }
-    (!lines.is_empty()).then(|| Magnet { lines, radius: 12.0 / scale.max(1e-3), strength: c.magnet, pulled: 0, total: 0, path: Vec::new() })
+    (!lines.is_empty()).then(|| Magnet { lines, radius: 12.0 / scale.max(1e-3), strength: c.magnet, pulled: 0, total: 0, dsum: 0.0, seq: Vec::new(), path: Vec::new() })
 }
 
 impl Magnet {
+    /// (seguiu o fantasma, seguiu de perto o bastante para o restante continuar valendo). Seguir: 70% dos pontos no
+    /// ímã, no máximo 3 trocas de linha e duas linhas com 80% deles. De perto: 95% no ímã e distância média até 40% do
+    /// raio.
+    fn verdict(&self) -> (bool, bool) {
+        // o traço seguiu linhas do fantasma (no máximo 3 trocas de linha e duas linhas com 80% dos pontos)? Com o zoom
+        // afastado o raio do ímã cobre o rosto inteiro, e um traço novo que o cruza não pode contar como seguir
+        let switches = self.seq.windows(2).filter(|w| w[0] != w[1]).count();
+        let mut counts: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+        for &li in &self.seq {
+            *counts.entry(li).or_default() += 1;
+        }
+        let mut top: Vec<usize> = counts.into_values().collect();
+        top.sort_unstable_by(|a, b| b.cmp(a));
+        let top2 = top.iter().take(2).sum::<usize>();
+        let along = switches <= 3 && top2 * 10 >= self.pulled * 8;
+        let mostly = self.total > 0 && self.pulled * 10 >= self.total * 7 && along;
+        // seguiu o fantasma de verdade (para o restante continuar aceitável): quase todo o traço no ímã e, em média, bem
+        // perto da linha. Um traço novo que só cruza linhas do fantasma (rosto cheio de linhas) não conta.
+        let traced = mostly && self.pulled * 20 >= self.total * 19 && self.dsum <= self.pulled as f32 * self.radius * 0.4;
+        (mostly, traced)
+    }
+
     /// O ponto (canvas) puxado para a linha fantasma mais perto, com força que cai com a distância.
     pub(crate) fn pull(&mut self, p: Vec2) -> Vec2 {
         self.total += 1;
-        let mut best: Option<(f32, Vec2)> = None;
-        for l in &self.lines {
+        let mut best: Option<(f32, Vec2, u32)> = None;
+        for (li, l) in self.lines.iter().enumerate() {
             for k in 0..l.pts.len() - 1 {
                 let (a, b) = (l.pts[k], l.pts[k + 1]);
                 let ab = b - a;
@@ -1766,12 +1794,14 @@ impl Magnet {
                 let q = a + ab * t;
                 let d = (p - q).length();
                 if d <= self.radius && best.is_none_or(|x| d < x.0) {
-                    best = Some((d, q));
+                    best = Some((d, q, li as u32));
                 }
             }
         }
-        let Some((d, q)) = best else { return p };
+        let Some((d, q, li)) = best else { return p };
         self.pulled += 1;
+        self.dsum += d;
+        self.seq.push(li);
         let u = d / self.radius;
         let w = self.strength * (1.0 - u * u).powi(2);
         let out = p + (q - p) * w;
@@ -1790,12 +1820,15 @@ pub(crate) fn fresh_ghosts(env: &Env) -> Vec<u32> {
 }
 
 pub(crate) fn magnet_done(env: &mut Env, m: Magnet, fresh: &[u32]) -> bool {
-    let mostly = m.total > 0 && m.pulled * 10 >= m.total * 7;
-    if m.path.is_empty() {
+    let (mostly, traced) = m.verdict();
+    // traço que não seguiu o fantasma é desenho novo: o fantasma fica inteiro (fica velho e a caixa pede outro)
+    if m.path.is_empty() || !mostly {
         return mostly;
     }
     let (cut, frame) = (env.ed.cut.clone(), env.ed.frame);
-    let rad = m.radius;
+    // sai do fantasma só o trecho por onde a caneta passou (até 8 px do caminho), não tudo o que o ímã alcança (com o
+    // zoom afastado o raio dele passa de 30 px do canvas e levava linhas vizinhas)
+    let rad = m.radius.min(8.0);
     let path = &m.path;
     let near_path = |x: f32, y: f32| {
         let p = Vec2::new(x, y);
@@ -1815,7 +1848,7 @@ pub(crate) fn magnet_done(env: &mut Env, m: Magnet, fresh: &[u32]) -> bool {
         g.s.improve = cut_v(&s.improve);
         g.s.complete = cut_v(&s.complete);
         // o traço que seguiu o fantasma é mudança da própria sugestão: o restante continua aceitável (Tab sem forçar)
-        if mostly && fresh.contains(&g.box_id) {
+        if traced && fresh.contains(&g.box_id) {
             cp::refresh_after_own_accept(&env.core.project, &mut g.s);
         }
     }
@@ -1881,7 +1914,7 @@ mod tests {
         // sem caixa nem prompt, não cria arquivo
         save_project_state(&mut a, &dir).unwrap();
         assert!(!dir.join(SIDECAR).exists());
-        a.boxes = vec![cbox(2, true, false), cbox(5, false, false), cbox(6, false, true)];
+        a.boxes = vec![cbox(2, true, false), cbox(6, false, true)];
         a.global_prompt = "boy, black hair".into();
         a.change = 0.62;
         a.res = 512;
@@ -1891,19 +1924,25 @@ mod tests {
         let mut b = CopilotUi::default();
         b.boxes = vec![cbox(40, false, false)];
         assert!(load_project_state(&mut b, Some(&dir)).is_none());
-        assert_eq!(b.boxes.iter().map(|x| x.id).collect::<Vec<_>>(), vec![2, 5], "a caixa do agente não volta; a antiga sai");
+        assert_eq!(b.boxes.iter().map(|x| x.id).collect::<Vec<_>>(), vec![2], "a caixa do agente não volta; a antiga sai");
         let x = &b.boxes[0];
         assert_eq!((x.rect, x.prompt.as_str(), x.state, x.seed, x.auto, x.layer.clone(), x.use_global), ([10.0, 20.0, 300.0, 200.0], "p2", BoxState::Paused, 7, true, Some(Id::from("L")), false));
         assert_eq!((b.global_prompt.as_str(), b.res, b.steps, b.improve), ("boy, black hair", 512, 8, false));
         assert!((b.change - 0.62).abs() < 1e-6);
-        assert_eq!(b.next_box, 6);
-        // projeto sem arquivo: nenhuma caixa
+        assert_eq!(b.next_box, 3);
+        // projeto sem arquivo: nenhuma caixa, e os ajustes do projeto anterior não passam (CP3-07)
         assert!(load_project_state(&mut b, Some(&dir.join("nada"))).is_none());
         assert!(b.boxes.is_empty() && b.global_prompt.is_empty());
-        // arquivo editado à mão: dois focos no mesmo corte, id repetido, caixa sem tamanho → só o que vale
-        std::fs::write(dir.join(SIDECAR), r#"{"version":1,"boxes":[{"id":1,"cut":"c","rect":[0,0,100,100],"auto":true},{"id":1,"cut":"c","rect":[0,0,50,50]},{"id":2,"cut":"c","rect":[0,0,300,300],"auto":true},{"id":3,"cut":"c","rect":[0,0,0,10]}]}"#).unwrap();
-        assert!(load_project_state(&mut b, Some(&dir)).is_none());
-        assert_eq!(b.boxes.iter().map(|x| (x.id, x.auto)).collect::<Vec<_>>(), vec![(1, true), (2, false)]);
+        let d = CopilotUi::default();
+        assert_eq!((b.res, b.steps, b.improve, b.change), (d.res, d.steps, d.improve, d.change));
+        // formato antigo (várias caixas): abre só a primeira válida e avisa; id repetido, sem tamanho e fora do u32 saem
+        std::fs::write(dir.join(SIDECAR), r#"{"version":1,"boxes":[{"id":4294967297,"cut":"c","rect":[0,0,100,100]},{"id":1,"cut":"c","rect":[0,0,100,100],"auto":true},{"id":1,"cut":"c","rect":[0,0,50,50]},{"id":2,"cut":"c","rect":[0,0,300,300]},{"id":3,"cut":"c","rect":[0,0,0,10]}]}"#).unwrap();
+        assert!(load_project_state(&mut b, Some(&dir)).is_some(), "avisa as caixas a mais");
+        assert_eq!(b.boxes.iter().map(|x| (x.id, x.auto)).collect::<Vec<_>>(), vec![(1, true)]);
+        // o próximo id não estoura nem repete (CP3-06)
+        b.next_box = u32::MAX;
+        b.boxes[0].id = 1;
+        assert_eq!(new_box_id(&mut b), 2, "volta ao começo e pula o id em uso");
         // arquivo estragado: aviso, nenhuma caixa
         std::fs::write(dir.join(SIDECAR), b"{nao e json").unwrap();
         assert!(load_project_state(&mut b, Some(&dir)).is_some());
@@ -1932,5 +1971,24 @@ mod tests {
         assert!(save_project_state(&mut c, &dir).is_err());
         assert!(project_state_dirty(&c), "a falha não pode limpar");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn magnet_follows_one_line_but_not_a_stroke_crossing_many() {
+        // cinco linhas horizontais a cada 20 px, raio do ímã de 34 px (zoom afastado, como na bateria R3)
+        let lines: Vec<MLine> = (0..5).map(|k| MLine { pts: vec![Vec2::new(0.0, k as f32 * 20.0), Vec2::new(200.0, k as f32 * 20.0)] }).collect();
+        let mk = || Magnet { lines: lines.iter().map(|l| MLine { pts: l.pts.clone() }).collect(), radius: 34.0, strength: 0.7, pulled: 0, total: 0, dsum: 0.0, seq: Vec::new(), path: Vec::new() };
+        // seguir a linha y=40 a 3 px
+        let mut m = mk();
+        for i in 0..40 {
+            m.pull(Vec2::new(10.0 + i as f32 * 4.0, 43.0));
+        }
+        assert_eq!(m.verdict(), (true, true));
+        // um traço novo na diagonal, cruzando as cinco
+        let mut m = mk();
+        for i in 0..40 {
+            m.pull(Vec2::new(20.0 + i as f32 * 3.0, i as f32 * 2.0));
+        }
+        assert!(!m.verdict().0, "cruzar o desenho não é seguir o fantasma");
     }
 }
