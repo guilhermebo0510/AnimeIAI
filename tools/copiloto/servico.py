@@ -97,22 +97,50 @@ def load():
 
 _EMB = {}
 _GPU = {"t": 0.0, "info": {}}
+_I2I = {}
+
+
+def only_outline(lines, W, H):
+    """Mancha preta mais grossa que uma linha (sombra, boca ou pescoço pintados, que o modelo às vezes enche na
+    Intensidade alta) vira só o contorno dela: o vetorizador não tem o que fazer com um borrão. As linhas (até ~13 px a
+    512: a de um rascunho de três passadas sai grossa) ficam como estão."""
+    import numpy as np
+    from PIL import Image, ImageFilter
+    k = max(9, int(round(min(W, H) / 512 * 13)) | 1)
+    ink = Image.fromarray(np.where(lines < 128, 255, 0).astype(np.uint8))
+    core = ink.filter(ImageFilter.MinFilter(k))          # só sobra o miolo do que é mais largo que k
+    fill = core.filter(ImageFilter.MaxFilter(k))         # a mancha de volta ao tamanho
+    inner = np.asarray(fill.filter(ImageFilter.MinFilter(5))) > 0  # tudo menos um anel de ~2 px na borda
+    out = lines.copy()
+    out[inner] = 255
+    return out
+
+
+def img2img(pipe):
+    """O mesmo modelo partindo do próprio desenho (img2img com o ControlNet): limpa o que existe em vez de redesenhar.
+    Feito uma vez, com os mesmos componentes (sem memória de vídeo a mais)."""
+    if "p" not in _I2I:
+        from diffusers import StableDiffusionControlNetImg2ImgPipeline
+        p2 = StableDiffusionControlNetImg2ImgPipeline(**pipe.components)
+        p2.set_progress_bar_config(disable=True)
+        _I2I["p"] = p2
+    return _I2I["p"]
 
 
 def encode(pipe, text):
-    """Embeddings do prompt (na CPU, com cache). Devolve (embeds na GPU, tokens usados, cortado?)."""
+    """Embeddings do prompt (calculados na CPU, com cache NA CPU: a memória de vídeo fica só para gerar). Devolve
+    (embeds na GPU para este pedido, tokens usados, cortado?)."""
     import torch
-    if text in _EMB:
-        return _EMB[text]
-    ids = pipe.tokenizer(text, truncation=False).input_ids
-    tok = pipe.tokenizer(text, padding="max_length", max_length=MAX_TOKENS, truncation=True, return_tensors="pt")
-    with torch.no_grad():
-        emb = pipe.text_encoder(tok.input_ids)[0]
-    out = (emb.to("cuda"), len(ids), len(ids) > MAX_TOKENS)
-    if len(_EMB) > 64:
-        _EMB.clear()
-    _EMB[text] = out
-    return out
+    if text not in _EMB:
+        ids = pipe.tokenizer(text, truncation=False).input_ids
+        tok = pipe.tokenizer(text, padding="max_length", max_length=MAX_TOKENS, truncation=True, return_tensors="pt")
+        with torch.no_grad():
+            emb = pipe.text_encoder(tok.input_ids)[0]
+        if len(_EMB) > 64:
+            _EMB.clear()
+        _EMB[text] = (emb.cpu(), len(ids), len(ids) > MAX_TOKENS)
+    emb, n, cut = _EMB[text]
+    return emb.to("cuda"), n, cut
 
 
 def prompt_of(pipe, user):
@@ -204,10 +232,20 @@ def generate(pipe, a2s, req):
     kw = {"prompt_embeds": emb}
     if cfg > 1.0:
         kw["negative_prompt_embeds"] = encode(pipe, NEG)[0]
+    steps = int(req.get("steps", 4))
+    init = float(req.get("init", 0.0) or 0.0)
     try:
-        lat = pipe(image=ctrl, num_inference_steps=int(req.get("steps", 4)), guidance_scale=cfg, width=W, height=H, generator=g,
-                   controlnet_conditioning_scale=float(req.get("strength", 0.8)), control_guidance_end=float(req.get("control_end", 1.0)),
-                   output_type="latent", **kw).images
+        if 0.0 < init < 1.0:
+            # parte do próprio desenho: `init` é quanto do ruído entra (pouco = limpa o traço que existe; muito = redesenha);
+            # o LCM roda `passos × init` passos, então os passos sobem para dar pelo menos 2
+            n = max(steps, int(-(-2 // init)))
+            lat = img2img(pipe)(image=board.convert("RGB"), control_image=ctrl, strength=init, num_inference_steps=n, guidance_scale=cfg,
+                                generator=g, controlnet_conditioning_scale=float(req.get("strength", 0.8)),
+                                control_guidance_end=float(req.get("control_end", 1.0)), output_type="latent", **kw).images
+        else:
+            lat = pipe(image=ctrl, num_inference_steps=steps, guidance_scale=cfg, width=W, height=H, generator=g,
+                       controlnet_conditioning_scale=float(req.get("strength", 0.8)), control_guidance_end=float(req.get("control_end", 1.0)),
+                       output_type="latent", **kw).images
         finite(lat, "latentes")
         with torch.no_grad():
             x = pipe.vae.decode((lat.float() if FP32 else lat) / pipe.vae.config.scaling_factor).sample
@@ -216,16 +254,29 @@ def generate(pipe, a2s, req):
         t1 = time.perf_counter()
         if req.get("raw_out"):
             Image.fromarray(((x[0].float().clamp(-1, 1) + 1) * 127.5).permute(1, 2, 0).round().byte().cpu().numpy()).save(req["raw_out"])
-        # Anime2Sketch: tira preenchimento e sombra, fica a linha (no múltiplo de 256 que a rede pede, perto do gerado)
         img = ((x.float().clamp(-1, 1) + 1) / 2)  # 0..1, [1,3,H,W]
-        aw, ah = max(512, -(-W // 256) * 256), max(512, -(-H // 256) * 256)
-        a = T.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))(T.functional.resize(img, [ah, aw], antialias=True))
-        with torch.no_grad():
-            y = a2s(a.cuda())
-        finite(y, "Anime2Sketch")
-        torch.cuda.synchronize()
-        t2 = time.perf_counter()
-        lines = ((y[0, 0].clamp(-1, 1) + 1) * 127.5).round().byte().cpu().numpy()
+        if 0.0 < init < 1.0 and req.get("extract", "auto") != "a2s":
+            # partindo do desenho, a saída já é linha limpa e sólida: o Anime2Sketch a transformaria em dois contornos
+            # finos (um "tubo" por traço). Fica a luminância, com o papel levado ao branco.
+            g = img[0].mean(0)
+            g = ((g - 0.25) / 0.6).clamp(0, 1)
+            torch.cuda.synchronize()
+            t2 = time.perf_counter()
+            lines = (g * 255).round().byte().cpu().numpy()
+            # só na Intensidade alta (o modelo redesenha e pode encher sombra): embaixo disso a mancha é do artista
+            # (cílio, cabelo preto) e fica
+            if init >= 0.8:
+                lines = only_outline(lines, W, H)
+        else:
+            # Anime2Sketch: tira preenchimento e sombra, fica a linha (no múltiplo de 256 que a rede pede, perto do gerado)
+            aw, ah = max(512, -(-W // 256) * 256), max(512, -(-H // 256) * 256)
+            a = T.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))(T.functional.resize(img, [ah, aw], antialias=True))
+            with torch.no_grad():
+                y = a2s(a.cuda())
+            finite(y, "Anime2Sketch")
+            torch.cuda.synchronize()
+            t2 = time.perf_counter()
+            lines = ((y[0, 0].clamp(-1, 1) + 1) * 127.5).round().byte().cpu().numpy()
     finally:
         torch.cuda.empty_cache()
     out = Image.fromarray(lines).resize((W, H), Image.BICUBIC).crop((ox, oy, ox + nw, oy + nh)).resize(src.size, Image.BICUBIC)

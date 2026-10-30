@@ -164,6 +164,8 @@ fn sug(cut: &aiai_core::Id, lay: &aiai_core::Id, rect: [f32; 4], improve: Vec<ai
         placement: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
         cel: None,
         cel_sig: 0,
+        src_sig: 0,
+        src_region: [0.0; 4],
         prompt_tokens: 0,
         prompt_truncated: false,
         reduced: false,
@@ -301,6 +303,7 @@ fn a_request_with_a_foreign_layer_a_frame_out_of_the_cut_or_a_box_off_canvas_is_
         strength: None,
         control_end: None,
         cfg: None,
+        init: None,
         seed: None,
         context: None,
         tip: aiai_core::VectorTip::Marker,
@@ -319,7 +322,7 @@ fn a_box_signature_ignores_a_rename_and_changes_when_its_cel_is_drawn_on_or_move
     // I-08: só as caixas cujo desenho lido mudou voltam para a fila
     use aiai_tools::copilot::source_signature;
     let (mut s, cut, lay) = doc(vec![stroke("a", &[(0.0, 0.0), (10.0, 10.0)], 2.0)]);
-    let sig = |s: &aiai_core::CoreSession| source_signature(&s.project, &cut, &lay, 0);
+    let sig = |s: &aiai_core::CoreSession| source_signature(&s.project, &cut, &lay, 0, None);
     let s0 = sig(&s);
     s.apply(aiai_core::Command::SetProps { id: lay.clone(), name: Some("outro nome".into()), data: serde_json::Value::Null }).unwrap();
     assert_eq!(sig(&s), s0, "renomear a camada não muda o desenho");
@@ -329,4 +332,140 @@ fn a_box_signature_ignores_a_rename_and_changes_when_its_cel_is_drawn_on_or_move
     assert_ne!(s1, s0, "apagar um traço muda");
     s.apply(aiai_core::Command::SetProps { id: cel, name: None, data: serde_json::json!({"transform": [50.0, 0.0, 1.0, 0.0]}) }).unwrap();
     assert_ne!(sig(&s), s1, "mover o cel muda");
+}
+
+/// Sugestão "de verdade" para a guarda: cel, assinaturas e a janela lida, como o `prepare` deixa.
+fn fresh_sug(s: &aiai_core::CoreSession, cut: &aiai_core::Id, lay: &aiai_core::Id, rect: [f32; 4], region: [f32; 4], placement: [f32; 6]) -> aiai_tools::copilot::Suggestion {
+    use aiai_tools::copilot::{cel_signature, source_signature};
+    let mut g = sug(cut, lay, rect, vec![stroke("", &[(rect[0] + 10.0, rect[1] + 10.0), (rect[0] + 40.0, rect[1] + 30.0)], 2.0)]);
+    let cel = s.project.cel_by_number(lay, 1).unwrap().id.clone();
+    g.cel_sig = cel_signature(&s.project, &cel);
+    g.cel = Some(cel);
+    g.placement = placement;
+    g.src_region = region;
+    g.src_sig = source_signature(&s.project, cut, lay, 0, Some(region));
+    g
+}
+
+#[test]
+fn a_stroke_far_from_the_box_keeps_the_suggestion_fresh_and_one_inside_the_window_makes_it_stale() {
+    // CP2-01/CP2-04: a guarda olha o que a sugestão leu (a janela), não o cel inteiro
+    use aiai_tools::copilot::check_fresh;
+    let (mut s, cut, lay) = doc(vec![stroke("a", &[(100.0, 100.0), (150.0, 140.0)], 2.0)]);
+    let g = fresh_sug(&s, &cut, &lay, [80.0, 80.0, 100.0, 100.0], [0.0, 0.0, 400.0, 400.0], [1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
+    assert!(check_fresh(&s.project, &g).is_ok());
+    let cel = s.project.cel_by_number(&lay, 1).unwrap().id.clone();
+    let ins = |st| aiai_core::Command::InsertStrokes { cel: cel.clone(), items: vec![aiai_core::command::IndexedStroke { index: 1, stroke: st }] };
+    s.apply(ins(stroke("longe", &[(1500.0, 900.0), (1600.0, 950.0)], 2.0))).unwrap();
+    assert!(check_fresh(&s.project, &g).is_ok(), "traço longe da janela não deixa a sugestão velha");
+    s.apply(ins(stroke("perto", &[(200.0, 200.0), (260.0, 230.0)], 2.0))).unwrap();
+    assert!(check_fresh(&s.project, &g).unwrap_err().to_string().contains("velha"), "traço na janela deixa");
+}
+
+#[test]
+fn moving_the_layer_or_changing_a_palette_makes_the_suggestion_stale() {
+    // CP2-04: deslocar a camada (sem mexer no cel) muda o que o modelo leu; CP2-09: a cor de paleta também
+    use aiai_tools::copilot::check_fresh;
+    let (mut s, cut, lay) = doc(vec![stroke("a", &[(100.0, 100.0), (150.0, 140.0)], 2.0)]);
+    let g = fresh_sug(&s, &cut, &lay, [80.0, 80.0, 100.0, 100.0], [0.0, 0.0, 400.0, 400.0], [1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
+    s.apply(aiai_core::Command::SetProps { id: lay.clone(), name: None, data: serde_json::json!({"offset": [40.0, 0.0]}) }).unwrap();
+    assert!(check_fresh(&s.project, &g).is_err(), "camada deslocada");
+    s.undo().unwrap();
+    assert!(check_fresh(&s.project, &g).is_ok());
+    let pal = s.ids.next();
+    s.apply(aiai_core::Command::CreateNode { id: Some(pal), parent: None, index: None, name: "P".into(), data: aiai_core::NodeKind::Palette(Default::default()) }).unwrap();
+    assert!(check_fresh(&s.project, &g).is_err(), "paleta nova/alterada");
+}
+
+#[test]
+fn with_a_rotated_layer_the_box_is_its_exact_shape_not_the_bounding_rectangle() {
+    // CP2-03 (contraprova do Codex): caixa [450,450,100,100] no canvas, camada girada 45 graus em volta de (500,500);
+    // o ponto do cel (568,568) está no retângulo que envolve, mas no canvas fica 46 px fora da caixa
+    let a = std::f32::consts::FRAC_PI_4;
+    let (c, sn) = (a.cos(), a.sin());
+    let placement = [c, -sn, 500.0 - c * 500.0 + sn * 500.0, sn, c, 500.0 - sn * 500.0 - c * 500.0];
+    let mut g = sug(&aiai_core::Id::from("c"), &aiai_core::Id::from("l"), [450.0, 450.0, 100.0, 100.0], vec![]);
+    g.placement = placement;
+    let (cx, cy) = g.to_canvas(568.0, 568.0);
+    assert!(cy > 550.0 + 40.0, "o ponto cai fora da caixa no canvas: ({cx}, {cy})");
+    assert!(!g.inside(568.0, 568.0), "fora da forma exata");
+    assert!(g.inside(500.0, 500.0), "o centro está dentro");
+}
+
+#[test]
+fn a_box_entirely_off_the_canvas_is_refused_even_when_the_layer_is_moved() {
+    // CP2-03: o domínio é conferido no canvas (antes, a caixa levada ao cel por um deslocamento passava)
+    use aiai_tools::copilot::{SuggestRequest, prepare};
+    let (mut s, cut, lay) = doc(vec![stroke("a", &[(10.0, 10.0), (90.0, 90.0)], 2.0)]);
+    let cel = s.project.cel_by_number(&lay, 1).unwrap().id.clone();
+    s.apply(aiai_core::Command::SetProps { id: cel, name: None, data: serde_json::json!({"transform": [200.0, 0.0, 1.0, 0.0]}) }).unwrap();
+    let w = s.project.settings.width as f32;
+    let req = SuggestRequest {
+        cut: cut.clone(),
+        frame: 0,
+        layer: lay.clone(),
+        rect: [w + 30.0, 100.0, 100.0, 100.0],
+        prompt: String::new(),
+        improve: true,
+        complete: true,
+        steps: None,
+        res: None,
+        change: None,
+        strength: None,
+        control_end: None,
+        cfg: None,
+        init: None,
+        seed: None,
+        context: None,
+        tip: aiai_core::VectorTip::Marker,
+        color: aiai_core::ColorRef::default(),
+    };
+    assert!(prepare(&s.project, &s.blobs, &req).err().map(|e| e.to_string()).unwrap_or_default().contains("fora do desenho"));
+}
+
+#[test]
+fn accepting_into_the_clean_layer_keeps_the_strokes_where_the_ghost_was() {
+    // CP2-02: o rascunho com o cel deslocado 200 px; a sugestão está no espaço do cel dele; a camada limpa nasce sem
+    // movimento, então os traços entram 200 px à direita (onde o fantasma aparecia no canvas)
+    use aiai_tools::copilot::{AcceptTarget, AcceptWhich, accept_command_to};
+    let (mut s, cut, lay) = doc(vec![stroke("a", &[(100.0, 100.0), (150.0, 140.0)], 2.0)]);
+    let cel = s.project.cel_by_number(&lay, 1).unwrap().id.clone();
+    s.apply(aiai_core::Command::SetProps { id: cel, name: None, data: serde_json::json!({"transform": [200.0, 0.0, 1.0, 0.0]}) }).unwrap();
+    let placement = aiai_tools::copilot::placement_of(&s.project, aiai_tools::context::cut_data(&s.project, &cut).unwrap(), &lay, 0).unwrap();
+    assert!((placement.apply(0.0, 0.0).0 - 200.0).abs() < 1e-3);
+    let mut g = sug(&cut, &lay, [280.0, 80.0, 100.0, 100.0], vec![stroke("", &[(100.0, 100.0), (150.0, 140.0)], 2.0)]);
+    g.placement = placement.0;
+    let cmd = {
+        let ss = &mut s;
+        accept_command_to(&ss.project, &g, AcceptWhich::All, None, AcceptTarget::Clean, false, &mut ss.ids).unwrap()
+    };
+    s.apply(cmd).unwrap();
+    let clean = aiai_tools::copilot::clean_layer_of(&s.project, &lay).unwrap();
+    let now = cel_of(&s, &clean);
+    assert_eq!(now.len(), 1);
+    assert!((now[0].points[0].x - 300.0).abs() < 1e-3 && (now[0].points[0].y - 100.0).abs() < 1e-3, "{:?}", (now[0].points[0].x, now[0].points[0].y));
+}
+
+#[test]
+fn a_partial_accept_removes_only_what_was_accepted() {
+    // CP2-05: índices na ordem de `which` (All = Melhorar e depois Completar)
+    use aiai_tools::copilot::{AcceptWhich, strip_accepted};
+    let st = |id: &str| stroke(id, &[(0.0, 0.0), (10.0, 10.0)], 2.0);
+    let base = || {
+        let mut g = sug(&aiai_core::Id::from("c"), &aiai_core::Id::from("l"), [0.0; 4], vec![st("i0"), st("i1")]);
+        g.complete = vec![st("c0"), st("c1")];
+        g
+    };
+    let ids = |g: &aiai_tools::copilot::Suggestion| (g.improve.iter().map(|x| x.id.0.clone()).collect::<Vec<_>>(), g.complete.iter().map(|x| x.id.0.clone()).collect::<Vec<_>>());
+    let mut g = base();
+    assert!(!strip_accepted(&mut g, AcceptWhich::Improve, None));
+    assert_eq!(ids(&g), (vec![], vec!["c0".to_string(), "c1".to_string()]));
+    let mut g = base();
+    assert!(!strip_accepted(&mut g, AcceptWhich::Complete, Some(&[1])));
+    assert_eq!(ids(&g), (vec!["i0".to_string(), "i1".to_string()], vec!["c0".to_string()]));
+    let mut g = base();
+    assert!(!strip_accepted(&mut g, AcceptWhich::All, Some(&[1, 2])));
+    assert_eq!(ids(&g), (vec!["i0".to_string()], vec!["c1".to_string()]));
+    let mut g = base();
+    assert!(strip_accepted(&mut g, AcceptWhich::All, None));
 }

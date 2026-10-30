@@ -120,8 +120,22 @@ pub fn handle_tool_action(session: &mut CoreSession, action: &str, params: &Valu
                         let s = &mut *session;
                         cp::accept_command_to(&s.project, &sg, r.which, r.only.as_deref(), r.target, r.replace, &mut s.ids).map_err(tool_error)?
                     };
-                    let out = apply(session, params, cmd)?;
-                    cp::discard(id);
+                    let mut out = apply(session, params, cmd)?;
+                    // aceite parcial: o resto da sugestão continua guardado (com as assinaturas do documento novo, que a
+                    // própria mudança alterou); só sai quando não sobra nada
+                    let mut rest = sg;
+                    let left = if cp::strip_accepted(&mut rest, r.which, r.only.as_deref()) {
+                        cp::discard(id);
+                        serde_json::json!({"improve": 0, "complete": 0})
+                    } else {
+                        cp::refresh_after_own_accept(&session.project, &mut rest);
+                        let v = serde_json::json!({"improve": rest.improve.len(), "complete": rest.complete.len()});
+                        cp::keep(rest);
+                        v
+                    };
+                    if let Some(o) = out.as_object_mut() {
+                        o.insert("remaining".into(), left);
+                    }
                     Ok(out)
                 }
                 "discard" => Ok(serde_json::json!({"discarded": r.id.is_some_and(cp::discard)})),
