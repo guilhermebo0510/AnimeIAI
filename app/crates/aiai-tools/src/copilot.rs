@@ -158,7 +158,7 @@ pub struct Suggestion {
     pub gen_ms: u64,
     pub vec_ms: u64,
     /// Janela de contexto que o modelo viu [x, y, w, h] (no espaço do cel) e o tamanho em que gerou [w, h].
-    pub window: [u32; 4],
+    pub window: [i32; 4],
     pub gen_size: [u32; 2],
     /// A caixa no espaço do cel (o retângulo que envolve a caixa do canvas levada pelo movimento inverso da camada).
     /// Os traços de `improve`/`complete` estão neste espaço, o mesmo do cel onde serão gravados.
@@ -514,21 +514,55 @@ pub fn plan(p: &Project, cut: &Id, rect: [f32; 4], margin: Option<f32>, res: Opt
 }
 
 /// Linha da camada no quadro, em escala de cinza sobre branco, na janela [x, y, w, h] do canvas.
-fn layer_lines(p: &Project, blobs: &aiai_core::BlobStore, cut_id: &Id, layer: &Id, frame: u32, win: [u32; 4]) -> ToolResult<image::GrayImage> {
+fn layer_lines(p: &Project, blobs: &aiai_core::BlobStore, cut_id: &Id, layer: &Id, frame: u32, win: [i32; 4]) -> ToolResult<image::GrayImage> {
     let cut = cut_data(p, cut_id)?;
-    let (w, h) = canvas_size(p, cut);
-    let mut out = image::GrayImage::from_pixel(win[2], win[3], image::Luma([255]));
+    let (ww, wh) = (win[2].max(1) as u32, win[3].max(1) as u32);
+    let mut out = image::GrayImage::from_pixel(ww, wh, image::Luma([255]));
     let Some(node) = exposed_cel(p, cut, layer, frame) else { return Ok(out) };
     let NodeKind::Cel(cd) = &node.data else { return Ok(out) };
     let name = p.node(layer).map(|n| n.name.clone()).unwrap_or_default();
-    let (img, _) = aiai_render::compose::render_cel_image(p, blobs, cd, true, (w, h), &name);
+    // A janela é do cel e pode sair de [0, w] × [0, h] (cel ou camada deslocados: o que se desenhou na beira do canvas
+    // mora em coordenada negativa do cel). O render do cel só desenha a partir de (0, 0): o conteúdo é deslocado por
+    // tiles inteiros (traços, tiles e preenchimentos juntos, sem reamostrar) até a janela cair dentro.
+    let t = aiai_core::TILE_SIZE as i32;
+    let (kx, ky) = (win[0].div_euclid(t), win[1].div_euclid(t));
+    let (ox, oy) = (win[0] - kx * t, win[1] - ky * t);
+    let shifted: aiai_core::CelData;
+    let (cel, ox, oy) = if (kx, ky) != (0, 0) && cd.image.is_none() {
+        let mut c2 = cd.clone();
+        let (dx, dy) = ((kx * t) as f32, (ky * t) as f32);
+        for st in &mut c2.strokes {
+            for q in &mut st.points {
+                q.x -= dx;
+                q.y -= dy;
+            }
+        }
+        for tile in &mut c2.tiles {
+            tile.x -= kx;
+            tile.y -= ky;
+        }
+        for f in &mut c2.fills {
+            f.seed = [f.seed[0] - dx, f.seed[1] - dy];
+            f.bounds[0] -= kx * t;
+            f.bounds[1] -= ky * t;
+        }
+        shifted = c2;
+        (&shifted, ox, oy)
+    } else {
+        // cel com imagem importada (presa na origem) ou janela já dentro do cel: sem deslocar
+        (cd, win[0], win[1])
+    };
+    let (rw, rh) = ((ox + win[2]).max(1) as u32, (oy + win[3]).max(1) as u32);
+    let (img, _) = aiai_render::compose::render_cel_image(p, blobs, cel, true, (rw, rh), &name);
+    let (w, h) = (img.width, img.height);
     let rgba = img.to_rgba8();
-    for y in 0..win[3] {
-        for x in 0..win[2] {
-            let (sx, sy) = (win[0] + x, win[1] + y);
-            if sx >= w || sy >= h {
+    for y in 0..wh {
+        for x in 0..ww {
+            let (sx, sy) = (ox + x as i32, oy + y as i32);
+            if sx < 0 || sy < 0 || sx as u32 >= w || sy as u32 >= h {
                 continue;
             }
+            let (sx, sy) = (sx as u32, sy as u32);
             let i = ((sy * w + sx) * 4) as usize;
             let (r, g, b, a) = (rgba[i] as f32, rgba[i + 1] as f32, rgba[i + 2] as f32, rgba[i + 3] as f32 / 255.0);
             let lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0;
@@ -542,7 +576,7 @@ fn layer_lines(p: &Project, blobs: &aiai_core::BlobStore, cut_id: &Id, layer: &I
 /// O que a interface prepara (rápido, com o documento) para a thread de geração.
 pub struct Prepared {
     pub req: SuggestRequest,
-    win: [u32; 4],
+    win: [i32; 4],
     lines: image::GrayImage,
     cel_rect: [f32; 4],
     placement: [f32; 6],
@@ -553,6 +587,13 @@ pub struct Prepared {
     pub src: u64,
     /// A janela de contexto no espaço do cel (a região que `src` assina).
     pub region: [f32; 4],
+}
+
+impl Prepared {
+    /// A imagem de contexto (a linha que o modelo vai ler) e a janela dela no espaço do cel.
+    pub fn context(&self) -> (&image::GrayImage, [i32; 4]) {
+        (&self.lines, self.win)
+    }
 }
 
 /// Assinatura do conteúdo de um cel (traços, tiles e preenchimentos): muda a cada edição dele.
@@ -676,7 +717,13 @@ pub fn prepare(p: &Project, blobs: &aiai_core::BlobStore, req: &SuggestRequest) 
     let (x0, y0) = cs.iter().fold((f32::MAX, f32::MAX), |a, c| (a.0.min(c.0), a.1.min(c.1)));
     let (x1, y1) = cs.iter().fold((f32::MIN, f32::MIN), |a, c| (a.0.max(c.0), a.1.max(c.1)));
     let cel_rect = [x0, y0, x1 - x0, y1 - y0];
-    let win = context_window(cel_rect, req.context.unwrap_or(2.0), canvas);
+    // a janela de contexto é a do CANVAS (o que o artista vê em volta da caixa, presa ao quadro); levada ao cel pela
+    // inversa do movimento, vira o retângulo que a envolve, que pode sair de [0, w] × [0, h] (cel deslocado)
+    let cw = context_window(req.rect, req.context.unwrap_or(2.0), canvas);
+    let wc = [(cw[0] as f32, cw[1] as f32), ((cw[0] + cw[2]) as f32, cw[1] as f32), ((cw[0] + cw[2]) as f32, (cw[1] + cw[3]) as f32), (cw[0] as f32, (cw[1] + cw[3]) as f32)].map(|(x, y)| inv.apply(x, y));
+    let (wx0, wy0) = wc.iter().fold((f32::MAX, f32::MAX), |a, c| (a.0.min(c.0), a.1.min(c.1)));
+    let (wx1, wy1) = wc.iter().fold((f32::MIN, f32::MIN), |a, c| (a.0.max(c.0), a.1.max(c.1)));
+    let win = [wx0.floor() as i32, wy0.floor() as i32, ((wx1 - wx0).ceil() as i32).max(1), ((wy1 - wy0).ceil() as i32).max(1)];
     let lines = layer_lines(p, blobs, &req.cut, &req.layer, req.frame, win)?;
     let cel = exposed_cel(p, cut, &req.layer, req.frame).map(|n| n.id.clone());
     let cel_sig = cel.as_ref().map(|c| cel_signature(p, c)).unwrap_or(0);
@@ -712,7 +759,7 @@ pub fn finish(prep: Prepared) -> ToolResult<Suggestion> {
     let _tmp = Tmp(vec![inp.clone(), outp.clone()]);
     lines.save(&inp).map_err(|e| ToolError::Invalid(format!("não gravei o contexto: {e}")))?;
     // no formato da janela; 1:1 quando ela cabe na faixa do modelo, acima disso reduz (blocos ficam para depois)
-    let gsz = gen_size(win, req.res);
+    let gsz = gen_size([0, 0, win[2].max(1) as u32, win[3].max(1) as u32], req.res);
     let r = request_generation(&inp, &outp, &req.prompt, gsz, req.gen_params(), req.seed.unwrap_or(1), Duration::from_secs(300))?;
     let t_gen = t0.elapsed();
     let generated = image::open(&outp).map_err(|e| ToolError::Invalid(format!("saída do gerador ilegível: {e}")))?.to_luma8();
@@ -1362,7 +1409,7 @@ pub struct CopilotRequest {
 pub fn summary(s: &Suggestion) -> serde_json::Value {
     let pts = |v: &Vec<Stroke>| v.iter().map(|st| st.points.iter().map(|q| [q.x.round(), q.y.round()]).collect::<Vec<_>>()).collect::<Vec<_>>();
     serde_json::json!({"id": s.id, "improve": s.improve.len(), "complete": s.complete.len(), "ms": s.ms, "gen_ms": s.gen_ms, "vec_ms": s.vec_ms,
-        "window": s.window, "gen_size": s.gen_size, "zoom": gen_zoom(s.window, s.gen_size),
+        "window": s.window, "gen_size": s.gen_size, "zoom": gen_zoom([0, 0, s.window[2].max(1) as u32, s.window[3].max(1) as u32], s.gen_size),
         "rect": s.rect, "cel_rect": s.cel_rect, "cel": s.cel, "frame": s.frame, "cut": s.cut, "layer": s.layer,
         "prompt_tokens": s.prompt_tokens, "prompt_truncated": s.prompt_truncated, "reduced": s.reduced, "throttled": s.throttled,
         "improve_points": pts(&s.improve), "complete_points": pts(&s.complete), "points_space": "cel"})

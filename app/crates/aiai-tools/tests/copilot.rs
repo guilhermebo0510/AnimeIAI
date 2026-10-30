@@ -469,3 +469,38 @@ fn a_partial_accept_removes_only_what_was_accepted() {
     let mut g = base();
     assert!(strip_accepted(&mut g, AcceptWhich::All, None));
 }
+
+#[test]
+fn a_line_drawn_at_the_edge_of_the_canvas_on_a_moved_cel_is_read_as_context() {
+    // CP-CX03 (parcial): cel deslocado +300 px; o traço desenhado na beira esquerda do canvas (x 100..200) mora em
+    // x −200..−100 do cel. Antes, o contexto só lia [0, w] do cel e a caixa ali via papel em branco.
+    use aiai_tools::copilot::{SuggestRequest, prepare};
+    let (mut s, cut, lay) = doc(vec![stroke("a", &[(-200.0, 120.0), (-100.0, 180.0)], 4.0)]);
+    let cel = s.project.cel_by_number(&lay, 1).unwrap().id.clone();
+    s.apply(aiai_core::Command::SetProps { id: cel, name: None, data: serde_json::json!({"transform": [300.0, 0.0, 1.0, 0.0]}) }).unwrap();
+    let req = SuggestRequest {
+        cut: cut.clone(),
+        frame: 0,
+        layer: lay.clone(),
+        rect: [60.0, 60.0, 200.0, 200.0],
+        prompt: String::new(),
+        improve: true,
+        complete: true,
+        steps: None,
+        res: None,
+        change: None,
+        strength: None,
+        control_end: None,
+        cfg: None,
+        init: None,
+        seed: None,
+        context: None,
+        tip: aiai_core::VectorTip::Marker,
+        color: aiai_core::ColorRef::default(),
+    };
+    let prep = prepare(&s.project, &s.blobs, &req).unwrap();
+    let (img, win) = prep.context();
+    assert!(win[0] < 0, "a janela do cel começa em x negativo: {win:?}");
+    let ink = img.pixels().filter(|q| q.0[0] < 128).count();
+    assert!(ink > 50, "o traço aparece no contexto: {ink} px de tinta, janela {win:?}");
+}

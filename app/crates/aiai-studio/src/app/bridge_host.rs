@@ -166,7 +166,9 @@ impl StudioApp {
                         super::copilot_ui::load_project_state(&mut self.ed.copilot, None);
                     }
                     "SAVE_PROJECT" => {
-                        self.copilot_after_save();
+                        if !self.copilot_after_save() {
+                            return Err(aiai_bridge::BridgeError::invalid_params("o desenho foi salvo, mas as caixas e os prompts do Copiloto não (veja o aviso no app)"));
+                        }
                         self.spawn_thumbnail();
                     }
                     _ => {}

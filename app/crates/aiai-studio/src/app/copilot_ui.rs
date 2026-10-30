@@ -157,6 +157,8 @@ pub(crate) struct CopilotUi {
     pub panel_req: Option<bool>,
     /// Um campo de texto tinha o teclado no quadro anterior (lido em `keys`).
     typing: bool,
+    /// `project_sig` no último Salvar/Abrir: diferente = caixas ou prompts não salvos.
+    saved_sig: u64,
 }
 
 impl Default for CopilotUi {
@@ -199,6 +201,7 @@ impl Default for CopilotUi {
             drop_focus: false,
             panel_req: None,
             typing: false,
+            saved_sig: 0,
         }
     }
 }
@@ -280,8 +283,32 @@ fn state_name(s: BoxState) -> &'static str {
     }
 }
 
+/// Assinatura do que vai para o `copilot.json` (as caixas que não são de agente, os prompts e os ajustes).
+fn project_sig(c: &CopilotUi) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for b in c.boxes.iter().filter(|b| !b.llm) {
+        (b.id, &b.cut, &b.prompt, state_name(b.state), b.seed, b.auto, &b.layer, b.use_global).hash(&mut h);
+        b.rect.map(f32::to_bits).hash(&mut h);
+    }
+    (&c.global_prompt, c.global_on, c.improve, c.complete, c.change.to_bits(), c.res, c.steps).hash(&mut h);
+    h.finish()
+}
+
+/// As caixas, os prompts ou os ajustes mudaram desde o último Salvar ou Abrir (o projeto tem trabalho não salvo)?
+pub(crate) fn project_state_dirty(c: &CopilotUi) -> bool {
+    // 0 = ainda sem projeto aberto ou novo (a referência nasce ao abrir ou criar)
+    c.saved_sig != 0 && project_sig(c) != c.saved_sig
+}
+
 /// Grava as caixas e os ajustes do projeto. Sem caixa nem prompt e sem arquivo anterior, não cria nada.
-pub(crate) fn save_project_state(c: &CopilotUi, dir: &std::path::Path) -> std::io::Result<()> {
+pub(crate) fn save_project_state(c: &mut CopilotUi, dir: &std::path::Path) -> std::io::Result<()> {
+    save_project_file(c, dir)?;
+    c.saved_sig = project_sig(c);
+    Ok(())
+}
+
+fn save_project_file(c: &CopilotUi, dir: &std::path::Path) -> std::io::Result<()> {
     let path = dir.join(SIDECAR);
     let boxes: Vec<serde_json::Value> = c
         .boxes
@@ -318,6 +345,13 @@ pub(crate) fn load_project_state(c: &mut CopilotUi, dir: Option<&std::path::Path
     c.boxes.clear();
     c.global_prompt.clear();
     c.next_box = 1;
+    // o estado recém-aberto é o "salvo" (abrir não deixa o projeto sujo)
+    let warn = load_project_file(c, dir);
+    c.saved_sig = project_sig(c);
+    warn
+}
+
+fn load_project_file(c: &mut CopilotUi, dir: Option<&std::path::Path>) -> Option<String> {
     let path = dir?.join(SIDECAR);
     let bytes = std::fs::read(&path).ok()?;
     let v: serde_json::Value = match serde_json::from_slice(&bytes) {
@@ -1758,7 +1792,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let mut a = CopilotUi::default();
         // sem caixa nem prompt, não cria arquivo
-        save_project_state(&a, &dir).unwrap();
+        save_project_state(&mut a, &dir).unwrap();
         assert!(!dir.join(SIDECAR).exists());
         a.boxes = vec![cbox(2, true, false), cbox(5, false, false), cbox(6, false, true)];
         a.global_prompt = "boy, black hair".into();
@@ -1766,7 +1800,7 @@ mod tests {
         a.res = 512;
         a.steps = 8;
         a.improve = false;
-        save_project_state(&a, &dir).unwrap();
+        save_project_state(&mut a, &dir).unwrap();
         let mut b = CopilotUi::default();
         b.boxes = vec![cbox(40, false, false)];
         assert!(load_project_state(&mut b, Some(&dir)).is_none());
@@ -1787,6 +1821,29 @@ mod tests {
         std::fs::write(dir.join(SIDECAR), b"{nao e json").unwrap();
         assert!(load_project_state(&mut b, Some(&dir)).is_some());
         assert!(b.boxes.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn copilot_edits_count_as_unsaved_and_a_failed_save_keeps_them_unsaved() {
+        // CP-CX03 (parcial): mudar só o prompt deixa o projeto sujo; o Salvar que não grava o copilot.json não limpa
+        let dir = std::env::temp_dir().join(format!("aiai-copilot-dirty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut c = CopilotUi::default();
+        assert!(!project_state_dirty(&c), "sem projeto aberto, nada conta");
+        load_project_state(&mut c, Some(&dir));
+        assert!(!project_state_dirty(&c), "recém-aberto");
+        c.global_prompt = "boy".into();
+        assert!(project_state_dirty(&c), "prompt novo");
+        save_project_state(&mut c, &dir).unwrap();
+        assert!(!project_state_dirty(&c), "salvo");
+        c.boxes.push(cbox(3, false, false));
+        // o arquivo vira pasta: gravar falha e o estado continua sujo
+        let _ = std::fs::remove_file(dir.join(SIDECAR));
+        std::fs::create_dir_all(dir.join(SIDECAR)).unwrap();
+        assert!(save_project_state(&mut c, &dir).is_err());
+        assert!(project_state_dirty(&c), "a falha não pode limpar");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

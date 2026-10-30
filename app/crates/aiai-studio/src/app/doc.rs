@@ -134,6 +134,10 @@ impl StudioApp {
         if super::modeling::pending(&self.ed) {
             return true;
         }
+        // caixas e prompts do Copiloto mudados desde o último Salvar/Abrir (vão para o `copilot.json`)
+        if super::copilot_ui::project_state_dirty(&self.ed.copilot) {
+            return true;
+        }
         let log = self.core.log();
         if log.len() < self.saved_log_len {
             return true;
@@ -506,7 +510,11 @@ impl StudioApp {
         match handle_core_action(&mut self.core, "SAVE_PROJECT", &params) {
             Some(Ok(_)) => {
                 self.mark_saved();
-                self.copilot_after_save();
+                // o Copiloto que não gravou deixa o Salvar como falho: fechar depois disso perderia as caixas e os
+                // prompts (CP-CX03); o desenho já está gravado
+                if !self.copilot_after_save() {
+                    return false;
+                }
                 self.note_recent();
                 self.notice(tr("msg.saved").to_owned());
                 self.spawn_thumbnail();
@@ -533,10 +541,15 @@ impl StudioApp {
     }
 
     /// Salvar grava também as caixas e os prompts do Copiloto (só com a trava: aberto só para leitura não grava).
-    pub(crate) fn copilot_after_save(&mut self) {
-        let Some(dir) = self.core.path.clone().filter(|_| self.core.lock().is_some()) else { return };
-        if let Err(e) = super::copilot_ui::save_project_state(&self.ed.copilot, &dir) {
-            self.doc_error("salvar as caixas do Copiloto", e);
+    /// `false` = não gravou (o erro já foi mostrado).
+    pub(crate) fn copilot_after_save(&mut self) -> bool {
+        let Some(dir) = self.core.path.clone().filter(|_| self.core.lock().is_some()) else { return true };
+        match super::copilot_ui::save_project_state(&mut self.ed.copilot, &dir) {
+            Ok(()) => true,
+            Err(e) => {
+                self.doc_error("salvar as caixas e os prompts do Copiloto (o desenho foi salvo)", e);
+                false
+            }
         }
     }
 
