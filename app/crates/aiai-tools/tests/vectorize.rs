@@ -410,3 +410,20 @@ fn vectorize_command_puts_the_found_strokes_in_the_vector_cel() {
     assert!(e.contains("raster"), "{e}");
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+fn a_resampled_path_simplifies_back_to_few_control_points() {
+    use aiai_tools::vectorize::InkPath;
+    // reta amostrada a cada 2 px (como o corte na caixa deixa): volta a 2 pontos
+    let pts: Vec<[f32; 2]> = (0..101).map(|i| [i as f32 * 2.0, 50.0]).collect();
+    let p = InkPath { widths: vec![3.0; pts.len()], points: pts, closed: false };
+    assert_eq!(p.simplified(1.0).points.len(), 2);
+    // quarto de círculo de raio 150 amostrado a cada ~2 px: poucos pontos, todos a menos de 1 px da curva
+    let pts: Vec<[f32; 2]> = (0..=118).map(|i| {
+        let a = i as f32 / 118.0 * std::f32::consts::FRAC_PI_2;
+        [150.0 * a.cos(), 150.0 * a.sin()]
+    }).collect();
+    let q = InkPath { widths: vec![3.0; pts.len()], points: pts, closed: false }.simplified(1.0);
+    assert!(q.points.len() >= 4 && q.points.len() <= 14, "{}", q.points.len());
+    assert!(q.points.iter().all(|p| ((p[0] * p[0] + p[1] * p[1]).sqrt() - 150.0).abs() < 1e-3));
+}

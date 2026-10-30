@@ -1,9 +1,9 @@
 //! Copiloto de traço: as partes que não dependem do gerador (janela de contexto, corte na caixa).
-use aiai_tools::copilot::{clip_to_box, context_window};
+use aiai_tools::copilot::{clip_to_box, context_window, gen_size, gen_zoom};
 use aiai_tools::vectorize::InkPath;
 
 #[test]
-fn context_window_is_square_at_least_384_and_inside_the_canvas() {
+fn context_window_follows_the_box_shape_at_least_384_inside_the_canvas_and_never_cuts_the_box() {
     // caixa pequena: a janela cresce até 384 em volta dela
     let w = context_window([100.0, 100.0, 50.0, 50.0], 2.0, (1920, 1080));
     assert_eq!((w[2], w[3]), (384, 384));
@@ -11,9 +11,33 @@ fn context_window_is_square_at_least_384_and_inside_the_canvas() {
     // perto da borda: empurrada para dentro
     let w = context_window([1900.0, 1060.0, 10.0, 10.0], 2.0, (1920, 1080));
     assert!(w[0] + w[2] <= 1920 && w[1] + w[3] <= 1080);
-    // caixa grande: margem ×2, limitada ao canvas
+    // caixa retangular: a janela tem o formato dela (cada lado dobra; nunca menos de 384)
+    let w = context_window([500.0, 300.0, 400.0, 250.0], 2.0, (1920, 1080));
+    assert_eq!((w[2], w[3]), (800, 500));
+    // caixa grande: cada lado dobra; uma maior que o canvas fica limitada a ele
     let w = context_window([500.0, 200.0, 400.0, 300.0], 2.0, (1920, 1080));
-    assert_eq!(w[2], 800);
+    assert_eq!((w[2], w[3]), (800, 600));
+    let w = context_window([100.0, 100.0, 900.0, 800.0], 2.0, (1920, 1080));
+    assert_eq!(w[3], 1080);
+    // caixa mais larga que a altura do canvas: antes (quadrado de 1080) as pontas ficavam de fora
+    let b = [200.0, 400.0, 1500.0, 300.0];
+    let w = context_window(b, 2.0, (1920, 1080));
+    assert!(w[0] as f32 <= b[0] && (w[0] + w[2]) as f32 >= b[0] + b[2], "{w:?}");
+    assert!(w[1] as f32 <= b[1] && (w[1] + w[3]) as f32 >= b[1] + b[3], "{w:?}");
+}
+
+#[test]
+fn generation_keeps_the_window_shape_in_multiples_of_64() {
+    // automático: 1:1 até 512 no lado maior
+    assert_eq!(gen_size([0, 0, 384, 384], None), [384, 384]);
+    assert_eq!(gen_size([0, 0, 900, 700], None), [512, 384]);
+    // pedido 768 no lado maior, o menor na proporção
+    assert_eq!(gen_size([0, 0, 900, 700], Some(768)), [768, 576]);
+    // caixa pequena em 768: o modelo vê o desenho ampliado 2×
+    assert!((gen_zoom([0, 0, 384, 384], gen_size([0, 0, 384, 384], Some(768))) - 2.0).abs() < 1e-3);
+    // nunca abaixo de 256 nem acima de 768
+    let g = gen_size([0, 0, 1920, 400], Some(768));
+    assert!(g[0] == 768 && g[1] >= 256, "{g:?}");
 }
 
 #[test]
@@ -87,7 +111,7 @@ fn accepting_improve_replaces_the_rough_strokes_it_covers() {
     mk(&mut s, Some(&lay), "V1", NodeKind::Cel(cd));
     s.apply(Command::AddTrack { cut: cut.clone(), index: None, track: Track::new(Id::from("t"), "t", TrackKind::Drawing, Some(lay.clone())) }).unwrap();
     s.apply(Command::SetCells { cut: cut.clone(), track: Id::from("t"), cells: vec![CellEdit { frame: 0, cell: Some(CellRef::Cel { number: 1 }) }] }).unwrap();
-    let sg = Suggestion { id: 1, cut: cut.clone(), frame: 0, layer: lay.clone(), rect, improve: vec![clean.clone()], complete: vec![], ms: 0, gen_ms: 0, vec_ms: 0 };
+    let sg = Suggestion { id: 1, cut: cut.clone(), frame: 0, layer: lay.clone(), rect, improve: vec![clean.clone()], complete: vec![], ms: 0, gen_ms: 0, vec_ms: 0, window: [0, 0, 384, 384], gen_size: [384, 384] };
     let undo0 = s.history().0.len();
     s.apply(accept_command(&s.project, &sg, AcceptWhich::All, None, true).unwrap()).unwrap();
     assert_eq!(s.history().0.len(), undo0 + 1, "um passo só");
@@ -103,4 +127,20 @@ fn accepting_improve_replaces_the_rough_strokes_it_covers() {
     // replace = false: o rascunho fica e o limpo entra por cima
     s.apply(accept_command(&s.project, &sg, AcceptWhich::All, None, false).unwrap()).unwrap();
     assert_eq!(ids_now(&s).len(), 5);
+}
+
+#[test]
+fn more_change_means_less_drawing_control_and_more_prompt_weight() {
+    use aiai_tools::copilot::change_params;
+    let (low, mid, high) = (change_params(0.1), change_params(0.5), change_params(0.9));
+    // Pouca: quase copia (sem peso de prompt, controle até quase o fim); Muita: o desenho só guia o começo
+    assert!(low.cfg <= 1.0 && low.strength >= 0.8 && low.control_end >= 0.85, "{low:?}");
+    assert!(high.cfg > 2.0 && high.strength < 0.5 && high.control_end < 0.5, "{high:?}");
+    assert!(low.strength > mid.strength && mid.strength > high.strength);
+    assert!(low.control_end > mid.control_end && mid.control_end > high.control_end);
+    assert!(low.cfg < mid.cfg && mid.cfg < high.cfg);
+    // fora da faixa e NaN não quebram
+    assert_eq!(change_params(-1.0), change_params(0.0));
+    assert_eq!(change_params(5.0), change_params(1.0));
+    assert!(change_params(f32::NAN).steps >= 1);
 }

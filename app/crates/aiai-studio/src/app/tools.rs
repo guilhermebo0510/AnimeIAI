@@ -254,12 +254,12 @@ pub(crate) fn finish_stroke(env: &mut Env, mut g: Box<StrokeGesture>, released_a
     let Some(t) = target_for_commit(env, &g) else { return };
     let before = env.core.change_counter;
     finish_commit(env, &t, &g, released_at);
-    // copiloto: um traço de caneta gravado põe a caixa onde ele caiu na fila
+    // copiloto: um traço gravado (qualquer pincel ou a borracha) põe a caixa onde ele caiu na fila
     let traced = match g.magnet.take() {
         Some(m) if env.core.change_counter != before => super::copilot_ui::magnet_done(env, m),
         _ => false,
     };
-    if g.tool == ToolId::Pen && env.core.change_counter != before && !g.samples.is_empty() {
+    if env.core.change_counter != before && !g.samples.is_empty() {
         let pts: Vec<Vec2> = g.samples.iter().map(|q| g.to_canvas(q.p)).collect();
         let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         for p in &pts {
@@ -268,7 +268,8 @@ pub(crate) fn finish_stroke(env: &mut Env, mut g: Box<StrokeGesture>, released_a
             x1 = x1.max(p.x);
             y1 = y1.max(p.y);
         }
-        super::copilot_ui::on_stroke(env, &t.cut, [x0, y0, x1 - x0, y1 - y0], traced);
+        // a borracha não cria caixa (só refaz a caixa onde apagou)
+        super::copilot_ui::on_stroke(env, &t.cut, [x0, y0, x1 - x0, y1 - y0], traced, g.tool != ToolId::Eraser);
     }
     // gesto que não gravou nada (clique sem traço, erro): a camada criada sozinha para ele não fica para trás
     if let Some(c) = env.ed.auto_layer.take() {

@@ -962,6 +962,11 @@ impl StudioApp {
             tree_ui(&mut f.tree, &mut behavior, ui);
         });
         if let Some(id) = behavior.close_req.take() {
+            // fechar o painel Copiloto (X) desliga o copiloto: os fantasmas somem junto
+            if matches!(f.tree.tiles.get(id), Some(egui_tiles::Tile::Pane(layout::PanelKind::Copilot))) && behavior.env.ed.copilot.on {
+                super::copilot_ui::set_on(&mut behavior.env, false);
+                behavior.env.ed.copilot.panel_req = None;
+            }
             f.tree.tiles.set_visible(id, false);
         }
         let PaneDock { reqs, hovered, .. } = behavior.dock;

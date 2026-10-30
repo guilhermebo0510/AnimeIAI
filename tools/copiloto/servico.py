@@ -11,7 +11,9 @@ para voltar à conta em fp16 (placas com fp16 rápido).
 Mensagens:
   ← {"ready": true, "load_s": ..., "device": "cuda"}                    (uma vez, quando os modelos carregam)
   → {"id": 7, "image": "<png de contexto: linha preta sobre branco>", "out": "<png de saída>", "prompt": "...",
-     "res": 384, "steps": 4, "strength": 0.8, "seed": 1}
+     "width": 512, "height": 384 (ou "res": 384, quadrado), "steps": 4, "strength": 0.8, "seed": 1,
+     "cfg": 1.0 (>1 = o prompt pesa mais, com prompt negativo; dobra o custo do passo),
+     "control_end": 1.0 (fração dos passos em que o desenho controla; menos = mais liberdade), "raw_out": "<png opcional>"}
   ← {"id": 7, "ok": true, "out": "...", "ms": 7650, "gen_ms": ..., "lines_ms": ...}   ou   {"id": 7, "ok": false, "error": "..."}
   → {"quit": true}
 
@@ -23,6 +25,8 @@ HF = r"C:\AnimeIAI\calibracao\copiloto-modelos\hf"
 os.environ.setdefault("HF_HOME", HF)
 os.environ.setdefault("HF_HUB_OFFLINE", "1")  # nada de rede durante o uso: só o que a bancada já baixou
 A2S = r"C:\AnimeIAI\calibracao\copiloto-modelos\Anime2Sketch"
+NEG = ("color, colored, shading, gradient, gray fill, screentone, hatching, background, scenery, speed lines, radial lines, motion lines, "
+       "frame, border, text, watermark, blurry, sketchy double lines, lowres, bad anatomy")
 POS = "monochrome, greyscale, lineart, clean anime line art, black ink lines on pure white background, no color, crisp outlines, professional genga cleanup"
 
 
@@ -84,25 +88,41 @@ def generate(pipe, a2s, req):
     import torch
     from PIL import Image, ImageOps
     import torchvision.transforms as T
-    res = int(req.get("res", 384))
-    res = max(256, min(768, (res // 64) * 64))
+    # tamanho de geração: width × height (no formato da janela de contexto); `res` = quadrado (compatível)
+    def r64(v):
+        return max(256, min(768, int(round(int(v) / 64)) * 64))
+    if "width" in req and "height" in req:
+        W, H = r64(req["width"]), r64(req["height"])
+    else:
+        W = H = r64(req.get("res", 384))
     src = Image.open(req["image"]).convert("L")
-    ctrl = ImageOps.invert(src.resize((res, res), Image.LANCZOS)).convert("RGB")
-    prompt = POS + (", " + req["prompt"].strip() if req.get("prompt", "").strip() else "")
+    ctrl = ImageOps.invert(src.resize((W, H), Image.LANCZOS)).convert("RGB")
+    # o pedido do usuário vem primeiro (o CLIP pesa mais o começo; o resto só garante linha preta sobre branco)
+    user = req.get("prompt", "").strip()
+    prompt = (user + ", " + POS) if user else POS
+    cfg = float(req.get("cfg", 1.0))
     g = torch.Generator("cpu").manual_seed(int(req.get("seed", 1)))
     torch.cuda.synchronize()
     t0 = time.perf_counter()
-    lat = pipe(prompt=prompt, image=ctrl, num_inference_steps=int(req.get("steps", 4)), guidance_scale=1.0, width=res, height=res, generator=g,
-               controlnet_conditioning_scale=float(req.get("strength", 0.8)), output_type="latent").images
+    kw = {}
+    if cfg > 1.0:
+        kw["negative_prompt"] = NEG
+    lat = pipe(prompt=prompt, image=ctrl, num_inference_steps=int(req.get("steps", 4)), guidance_scale=cfg, width=W, height=H, generator=g,
+               controlnet_conditioning_scale=float(req.get("strength", 0.8)), control_guidance_end=float(req.get("control_end", 1.0)),
+               output_type="latent", **kw).images
     with torch.no_grad():
         x = pipe.vae.decode((lat.float() if FP32 else lat) / pipe.vae.config.scaling_factor).sample
     if torch.isnan(x).any():
         raise RuntimeError("a geração saiu com valores inválidos (NaN) nesta resolução")
     torch.cuda.synchronize()
     t1 = time.perf_counter()
+    if req.get("raw_out"):
+        Image.fromarray(((x[0].float().clamp(-1, 1) + 1) * 127.5).permute(1, 2, 0).round().byte().cpu().numpy()).save(req["raw_out"])
     # Anime2Sketch: tira preenchimento e sombra, fica a linha
     img = ((x.float().clamp(-1, 1) + 1) / 2)  # 0..1, [1,3,H,W]
-    a = T.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))(T.functional.resize(img, [512, 512], antialias=True))
+    # no tamanho gerado (múltiplo de 256, que a rede pede): antes era sempre 512, e o detalhe de 640/768 se perdia
+    aw, ah = max(512, -(-W // 256) * 256), max(512, -(-H // 256) * 256)
+    a = T.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))(T.functional.resize(img, [ah, aw], antialias=True))
     with torch.no_grad():
         y = a2s(a.cuda())
     torch.cuda.synchronize()

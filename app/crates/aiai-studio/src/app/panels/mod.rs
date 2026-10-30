@@ -26,6 +26,7 @@ pub(crate) mod particles_ed;
 pub(crate) mod layers;
 pub(crate) mod library;
 pub(crate) mod light_table;
+pub(crate) mod copilot;
 pub(crate) mod modeling;
 pub(crate) mod navigator;
 pub(crate) mod outline;

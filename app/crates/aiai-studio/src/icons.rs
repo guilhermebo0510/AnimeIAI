@@ -219,6 +219,16 @@ pub enum IconId {
     SelShrink,
     /// Copiar a seleção para uma camada nova.
     CopyToLayer,
+    /// Confirmar / aceitar.
+    Check,
+    /// Fechar / descartar.
+    Close,
+    /// Gerar de novo (outra versão).
+    Refresh,
+    /// Copiloto (sugestão do modelo).
+    Sparkle,
+    /// Fixar.
+    Pin,
     /// Marca do app (colorida, não é recolorida).
     Logo,
     /// A marca para o tema claro.
@@ -226,7 +236,7 @@ pub enum IconId {
 }
 
 impl IconId {
-    pub const ALL: [IconId; 143] = [
+    pub const ALL: [IconId; 148] = [
         IconId::WsRoteiro,
         IconId::WsPersonagens,
         IconId::WsStoryboard,
@@ -368,6 +378,11 @@ impl IconId {
         IconId::SelGrow,
         IconId::SelShrink,
         IconId::CopyToLayer,
+        IconId::Check,
+        IconId::Close,
+        IconId::Refresh,
+        IconId::Sparkle,
+        IconId::Pin,
         IconId::Logo,
         IconId::LogoLight,
     ];
@@ -520,6 +535,11 @@ impl IconId {
             IconId::SelGrow => include_str!("../assets/icons/sel-grow.svg"),
             IconId::SelShrink => include_str!("../assets/icons/sel-shrink.svg"),
             IconId::CopyToLayer => include_str!("../assets/icons/copy-to-layer.svg"),
+            IconId::Check => include_str!("../assets/icons/check.svg"),
+            IconId::Close => include_str!("../assets/icons/close.svg"),
+            IconId::Refresh => include_str!("../assets/icons/refresh.svg"),
+            IconId::Sparkle => include_str!("../assets/icons/sparkle.svg"),
+            IconId::Pin => include_str!("../assets/icons/pin.svg"),
             IconId::Logo => include_str!("../assets/brand/logo.svg"),
             IconId::LogoLight => include_str!("../assets/brand/logo-light.svg"),
         }

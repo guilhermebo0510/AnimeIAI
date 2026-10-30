@@ -1153,6 +1153,18 @@ impl StudioApp {
         if let Some(want) = self.ed.draw_ui.insert_panel.take() {
             layout::insert_panel(tree, want);
         }
+        // o Copiloto ligou/desligou: o painel dele aparece (coluna própria à direita, altura inteira) ou some
+        match self.ed.copilot.panel_req.take() {
+            Some(true) => {
+                layout::insert_panel_column(tree, PanelKind::Copilot, 0.2);
+            }
+            Some(false) => {
+                if let Some(id) = layout::find_pane(tree, PanelKind::Copilot) {
+                    tree.tiles.set_visible(id, false);
+                }
+            }
+            None => {}
+        }
         let mut notes: Vec<(String, Rect)> = Vec::new();
         let env = ui_kit::Env { t, core: &mut self.core, ed: &mut self.ed, icons: &mut self.icons, notes: &mut notes, tool: &mut self.tool, ws };
         let mut behavior = DockBehavior { t, in_tabs: layout::panes_in_tabs(tree), env, close_req: None, dock: pane_dock };
@@ -1160,6 +1172,11 @@ impl StudioApp {
             dock_ui::tree_ui(tree, &mut behavior, ui);
         });
         if let Some(id) = behavior.close_req.take() {
+            // fechar o painel Copiloto (X) desliga o copiloto: os fantasmas somem junto
+            if matches!(tree.tiles.get(id), Some(egui_tiles::Tile::Pane(PanelKind::Copilot))) && behavior.env.ed.copilot.on {
+                copilot_ui::set_on(&mut behavior.env, false);
+                behavior.env.ed.copilot.panel_req = None;
+            }
             tree.tiles.set_visible(id, false);
         }
         let pane_dock = behavior.dock;
@@ -1526,6 +1543,7 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
             PanelKind::BrushSize => panels::brush_size::show(&mut self.env, ui, body),
             PanelKind::Text => panels::text::show(&mut self.env, ui, body),
             PanelKind::LightTable => panels::light_table::show(&mut self.env, ui, body),
+            PanelKind::Copilot => panels::copilot::show(&mut self.env, ui, body),
             PanelKind::SceneInfo => panels::scene_info::show(&mut self.env, ui, body),
             PanelKind::CharRef => panels::char_ref::show(&mut self.env, ui, body),
             PanelKind::Rulers => panels::rulers::show(&mut self.env, ui, body),
@@ -1594,6 +1612,11 @@ impl Behavior<PanelKind> for DockBehavior<'_> {
 
     /// Fechar uma aba só esconde o painel (Exibir > Painéis traz de volta, no mesmo lugar).
     fn on_tab_close(&mut self, tiles: &mut Tiles<PanelKind>, tile_id: TileId) -> bool {
+        // fechar a aba do Copiloto desliga o copiloto: os fantasmas somem junto
+        if matches!(tiles.get(tile_id), Some(egui_tiles::Tile::Pane(PanelKind::Copilot))) && self.env.ed.copilot.on {
+            copilot_ui::set_on(&mut self.env, false);
+            self.env.ed.copilot.panel_req = None;
+        }
         tiles.set_visible(tile_id, false);
         false
     }

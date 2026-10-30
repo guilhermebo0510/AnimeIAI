@@ -115,7 +115,6 @@ pub(crate) fn show_with_header(env: &mut Env, ui: &mut Ui, body: Rect, reserve: 
     paint_canvas(env, &painter, rect, &xf, &cut, canvas, ppp);
     // prévia de intercalação: barra com Aceitar/Descartar/Atualizar (só com prévia viva neste corte)
     super::ibp_ui::bar(env, &ctx, rect, &cut);
-    super::copilot_ui::window(env, &ctx, rect);
     // S25: lançador da seleção (some enquanto se desenha) e Delete limpa a seleção
     super::sel_ops::launcher(env, &ctx, &xf, rect);
     super::sel_ops::shortcuts(env, &ctx, rect);

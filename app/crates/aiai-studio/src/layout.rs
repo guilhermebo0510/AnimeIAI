@@ -78,6 +78,8 @@ pub enum PanelKind {
     Text,
     /// Mesa de luz (papel cebola): desenhos vizinhos por baixo do atual no canvas.
     LightTable,
+    /// Copiloto de traço: caixas, prompt, quanto mudar e aceitar (entra como coluna própria à direita quando o Copiloto liga).
+    Copilot,
     /// Cena do corte: texto e falas do roteiro, painel do storyboard e tempo (só leitura).
     SceneInfo,
     /// Referências do personagem: folhas de modelo e paleta de settei dos personagens do corte.
@@ -183,7 +185,7 @@ const DRAWING_WS: &[WorkspaceId] = &[W::Personagens, W::Layout, W::Cenario, W::A
 const LIBRARY_WS: &[WorkspaceId] = &[W::Biblioteca, W::Modelagem, W::Personagens, W::Layout, W::Cenario, W::Animacao, W::Pintura, W::Composicao];
 
 impl PanelKind {
-    pub const ALL: [PanelKind; 58] = [
+    pub const ALL: [PanelKind; 59] = [
         PanelKind::Canvas,
         PanelKind::Layers,
         PanelKind::Properties,
@@ -229,6 +231,7 @@ impl PanelKind {
         PanelKind::ModelUv,
         PanelKind::Text,
         PanelKind::LightTable,
+        PanelKind::Copilot,
         PanelKind::SceneInfo,
         PanelKind::CharRef,
         PanelKind::Rulers,
@@ -301,6 +304,7 @@ impl PanelKind {
             PanelKind::ModelUv => "panel.model_uv.title",
             PanelKind::Text => "panel.text.title",
             PanelKind::LightTable => "panel.light_table.title",
+            PanelKind::Copilot => "panel.copilot.title",
             PanelKind::SceneInfo => "panel.scene_info.title",
             PanelKind::CharRef => "panel.char_ref.title",
             PanelKind::Rulers => "panel.rulers.title",
@@ -365,6 +369,7 @@ impl PanelKind {
             PanelKind::ModelUv => "panel.model_uv.empty",
             PanelKind::Text => "panel.text.empty",
             PanelKind::LightTable => "panel.light_table.empty",
+            PanelKind::Copilot => "panel.copilot.empty",
             PanelKind::SceneInfo => "panel.scene_info.empty",
             PanelKind::CharRef => "panel.char_ref.empty",
             PanelKind::Rulers => "panel.rulers.empty",
@@ -431,6 +436,7 @@ impl PanelKind {
             PanelKind::ModelUv => (C::Resources, Right, &[W::Modelagem], false),
             PanelKind::Text => (C::Drawing, Right, &[W::Layout, W::Cenario, W::Animacao, W::Composicao, W::Edicao], false),
             PanelKind::LightTable => (C::Drawing, Right, &[W::Animacao, W::Pintura], false),
+            PanelKind::Copilot => (C::Drawing, Right, DRAWING_WS, true),
             PanelKind::SceneInfo => (C::PreProduction, Left, &[W::Storyboard, W::Layout, W::Cenario, W::Animacao, W::Pintura], false),
             PanelKind::CharRef => (C::Character, Left, &[W::Storyboard, W::Layout, W::Animacao, W::Pintura], false),
             PanelKind::Rulers => (C::Drawing, Left, &[W::Layout, W::Cenario, W::Animacao], true),
@@ -784,6 +790,23 @@ fn wrap_root(tree: &mut Tree<PanelKind>, dir: LinearDir, new: TileId, new_first:
 
 /// Liga um painel que não está na árvore: entra como aba junto de um painel visível da mesma categoria; sem ele, segundo
 /// `dock_hint` (coluna à esquerda/direita da linha principal, faixa embaixo, ou coluna ao lado do centro). Devolve o tile.
+/// Insere `kind` como uma coluna própria, de altura inteira, na ponta direita da linha principal (`share` da largura):
+/// para um painel comprido que precisa ficar à vista enquanto se desenha (o Copiloto). Já no layout: só reaparece.
+pub fn insert_panel_column(tree: &mut Tree<PanelKind>, kind: PanelKind, share: f32) -> TileId {
+    if let Some(id) = find_pane(tree, kind) {
+        tree.tiles.set_visible(id, true);
+        tree.make_active(|tid, _| tid == id);
+        return id;
+    }
+    let new = tree.tiles.insert_pane(kind);
+    match main_row(tree) {
+        Some(r) => insert_into_linear(tree, r, usize::MAX, new, share),
+        None => wrap_root(tree, LinearDir::Horizontal, new, false, share),
+    }
+    tree.make_active(|tid, _| tid == new);
+    new
+}
+
 pub fn insert_panel(tree: &mut Tree<PanelKind>, kind: PanelKind) -> TileId {
     if let Some(id) = find_pane(tree, kind) {
         tree.tiles.set_visible(id, true);

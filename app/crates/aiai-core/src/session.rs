@@ -91,6 +91,9 @@ pub struct CoreSession {
     wal: Option<Wal>,
     /// Sobe a cada mudança no documento (apply/undo/redo) e também quando o projeto é trocado — para caches.
     pub change_counter: u64,
+    /// Sobe a cada desfazer/refazer que deu certo (por qualquer caminho: teclado, menu, ponte, MCP) — para quem guarda
+    /// algo calculado sobre o documento e precisa jogar fora quando o usuário volta no tempo (fantasmas do copiloto).
+    pub history_moves: u64,
     /// Pasta `.aiai` do projeto (definida por abrir/salvar).
     pub path: Option<std::path::PathBuf>,
     /// Ações que saíram do histórico (limite do undo, redo descartado) desde a última coleta de blobs.
@@ -142,6 +145,7 @@ impl CoreSession {
             undo_limit: 500,
             wal: None,
             change_counter: 0,
+            history_moves: 0,
             path: None,
             dropped_since_gc: 0,
             lock: None,
@@ -472,6 +476,7 @@ impl CoreSession {
             return Err(e);
         }
         self.cut_locks.extend(fresh);
+        self.history_moves += 1;
         self.redo.push(Applied { command: r.inverse, inverse: a.inverse, created: a.created, affected: r.affected });
         Ok(outcome)
     }
@@ -516,6 +521,7 @@ impl CoreSession {
             return Err(e);
         }
         self.cut_locks.extend(fresh);
+        self.history_moves += 1;
         self.undo.push(r);
         Ok(outcome)
     }

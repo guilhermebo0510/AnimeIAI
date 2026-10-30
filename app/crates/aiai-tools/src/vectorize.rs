@@ -41,6 +41,16 @@ pub struct InkPath {
 }
 
 impl InkPath {
+    /// O mesmo caminho só com os pontos que a simplificação (Ramer-Douglas-Peucker, posição e largura) precisa, com
+    /// tolerância `tol` px. Para quem reamostrou o caminho (cortar na borda de uma caixa) e quer devolver poucos pontos.
+    pub fn simplified(&self, tol: f32) -> InkPath {
+        if self.points.len() <= 2 {
+            return self.clone();
+        }
+        let keep = rdp(&self.points, &self.widths, tol, self.closed);
+        InkPath { points: keep.iter().map(|&k| self.points[k]).collect(), widths: keep.iter().map(|&k| self.widths[k]).collect(), closed: self.closed }
+    }
+
     pub fn length(&self) -> f32 {
         let mut l: f32 = self.points.windows(2).map(|w| dist(w[0], w[1])).sum();
         if self.closed && self.points.len() > 2 {
