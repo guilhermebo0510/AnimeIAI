@@ -11,6 +11,7 @@ Add-Type @"
 using System;
 using System.Runtime.InteropServices;
 public class W {
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int c);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
@@ -20,6 +21,7 @@ public class W {
   [DllImport("user32.dll")] public static extern void keybd_event(byte k, byte s, int f, int e);
 }
 "@
+[W]::SetProcessDPIAware() | Out-Null  # coordenadas e capturas em pixels reais (tela a 125%)
 function Focus($name) {
     $p = Get-Process $name -ErrorAction Stop | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
     if ([W]::IsIconic($p.MainWindowHandle)) { [W]::ShowWindow($p.MainWindowHandle, 9) | Out-Null }

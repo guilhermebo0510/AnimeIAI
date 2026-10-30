@@ -141,9 +141,32 @@ pub struct Suggestion {
     pub ms: u64,
     pub gen_ms: u64,
     pub vec_ms: u64,
-    /// Janela de contexto que o modelo viu [x, y, w, h] (canvas) e o tamanho em que gerou [w, h].
+    /// Janela de contexto que o modelo viu [x, y, w, h] (no espaço do cel) e o tamanho em que gerou [w, h].
     pub window: [u32; 4],
     pub gen_size: [u32; 2],
+    /// A caixa no espaço do cel (o retângulo que envolve a caixa do canvas levada pelo movimento inverso da camada).
+    /// Os traços de `improve`/`complete` estão neste espaço, o mesmo do cel onde serão gravados.
+    pub cel_rect: [f32; 4],
+    /// Do cel para o canvas (movimento da camada e transformação do cel, `layer_placement_in`): para desenhar o
+    /// fantasma e o ímã no lugar certo. Identidade quando a camada não se move.
+    pub placement: [f32; 6],
+    /// O cel exposto quando o pedido saiu e a assinatura do conteúdo dele: aceitar pelo MCP recusa uma sugestão velha.
+    pub cel: Option<Id>,
+    pub cel_sig: u64,
+    /// Tokens que o prompt usou e se passou do limite do codificador (o fim é cortado).
+    pub prompt_tokens: u32,
+    pub prompt_truncated: bool,
+    /// A resolução baixou para caber na memória de vídeo livre (o pedido era maior que `gen_size`).
+    pub reduced: bool,
+    /// A GPU estava com o limite de potência reduzido (notebook na bateria/economia): tudo fica várias vezes mais lento.
+    pub throttled: bool,
+}
+
+impl Suggestion {
+    /// Ponto do espaço do cel levado ao canvas.
+    pub fn to_canvas(&self, x: f32, y: f32) -> (f32, f32) {
+        aiai_paint::Affine(self.placement).apply(x, y)
+    }
 }
 
 // ------------------------------------------------------------------------------------------------ serviço
@@ -153,7 +176,6 @@ struct Service {
     child: Child,
     stdin: ChildStdin,
     lines: Receiver<String>,
-    ready: bool,
     next_id: u64,
 }
 
@@ -171,6 +193,43 @@ fn service() -> &'static Mutex<Option<Service>> {
     S.get_or_init(|| Mutex::new(None))
 }
 
+// Estado real do serviço, fora da trava (a interface lê sem esperar): 0 parado, 1 carregando, 2 pronto, 3 gerando,
+// 4 falhou. A geração em si segura a trava; ninguém da interface espera por ela.
+const ST_STOPPED: u8 = 0;
+const ST_LOADING: u8 = 1;
+const ST_READY: u8 = 2;
+const ST_BUSY: u8 = 3;
+const ST_FAILED: u8 = 4;
+static STATE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(ST_STOPPED);
+
+fn set_state(v: u8) {
+    STATE.store(v, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn last_error() -> &'static Mutex<String> {
+    static E: OnceLock<Mutex<String>> = OnceLock::new();
+    E.get_or_init(|| Mutex::new(String::new()))
+}
+
+/// O serviço falhou: guarda a mensagem para o painel (e o MCP) mostrar.
+fn fail(msg: &str) {
+    if let Ok(mut e) = last_error().lock() {
+        *e = msg.to_string();
+    }
+    set_state(ST_FAILED);
+}
+
+/// A última falha do serviço (vazio se nenhuma).
+pub fn service_error() -> String {
+    last_error().lock().map(|e| e.clone()).unwrap_or_default()
+}
+
+/// Onde o serviço escreve o diagnóstico (stderr do Python: avisos do modelo, CUDA): `%TEMP%\aiai-copiloto\servico.log`
+/// (o da sessão anterior fica em `servico.1.log`).
+pub fn service_log_path() -> std::path::PathBuf {
+    std::env::temp_dir().join("aiai-copiloto").join("servico.log")
+}
+
 /// Caminho do script do serviço e do Python (variáveis de ambiente ou o padrão do repositório).
 fn service_cmd() -> (String, String) {
     let py = std::env::var("AIAI_PYTHON").unwrap_or_else(|_| "python".into());
@@ -183,8 +242,12 @@ fn spawn() -> ToolResult<Service> {
     if !std::path::Path::new(&script).is_file() {
         return Err(ToolError::Invalid(format!("serviço do copiloto não encontrado: {script} (AIAI_COPILOT_SERVICE)")));
     }
+    let log = service_log_path();
+    let _ = std::fs::create_dir_all(log.parent().unwrap_or(std::path::Path::new(".")));
+    let _ = std::fs::rename(&log, log.with_file_name("servico.1.log"));
+    let err = std::fs::File::create(&log).map(Stdio::from).unwrap_or_else(|_| Stdio::null());
     let mut cmd = Proc::new(&py);
-    cmd.arg(&script).env("PYTHONIOENCODING", "utf-8").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
+    cmd.arg(&script).env("PYTHONIOENCODING", "utf-8").stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(err);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -193,75 +256,137 @@ fn spawn() -> ToolResult<Service> {
     let mut child = cmd.spawn().map_err(|e| ToolError::Invalid(format!("não consegui iniciar o serviço do copiloto ({py} {script}): {e}")))?;
     let stdin = child.stdin.take().ok_or_else(|| ToolError::Invalid("serviço sem stdin".into()))?;
     let stdout = child.stdout.take().ok_or_else(|| ToolError::Invalid("serviço sem stdout".into()))?;
+    // carregando ANTES do leitor existir (senão a linha de pronto podia chegar antes e ser sobrescrita)
+    set_state(ST_LOADING);
+    if let Ok(mut e) = last_error().lock() {
+        e.clear();
+    }
     let (tx, rx) = channel();
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines() {
-            match line {
-                Ok(l) => {
-                    if tx.send(l).is_err() {
-                        break;
+            let Ok(l) = line else { break };
+            // a linha de "pronto" muda o estado já (o painel deixa de dizer "carregando" sem esperar um pedido)
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&l) {
+                if v.get("ready").is_some() {
+                    if v["ready"] == true {
+                        set_state(ST_READY);
+                    } else {
+                        fail(v["error"].as_str().unwrap_or("o serviço não carregou"));
                     }
+                    continue;
                 }
-                Err(_) => break,
+            }
+            if tx.send(l).is_err() {
+                break;
             }
         }
+        // o processo fechou a saída: morreu (ou saiu); quem estiver esperando recebe "desconectado"
+        if STATE.load(std::sync::atomic::Ordering::SeqCst) != ST_STOPPED {
+            fail("o serviço do copiloto fechou (veja o servico.log)");
+        }
     });
-    Ok(Service { child, stdin, lines: rx, ready: false, next_id: 1 })
+    Ok(Service { child, stdin, lines: rx, next_id: 1 })
 }
 
-/// Estado do serviço: "parado", "carregando" ou "pronto" (não bloqueia).
+/// Estado do serviço: "parado", "carregando", "pronto", "gerando" ou "falhou" (não bloqueia).
 pub fn service_state() -> &'static str {
-    // sem esperar: com a trava presa, o serviço está atendendo um pedido
-    match service().try_lock() {
-        Ok(g) => match g.as_ref() {
-            Some(s) if s.ready => "pronto",
-            Some(_) => "carregando",
-            None => "parado",
-        },
-        Err(_) => "gerando",
+    match STATE.load(std::sync::atomic::Ordering::SeqCst) {
+        ST_LOADING => "carregando",
+        ST_READY => "pronto",
+        ST_BUSY => "gerando",
+        ST_FAILED => "falhou",
+        _ => "parado",
     }
 }
 
-/// Inicia o serviço se preciso (não espera a carga).
+/// Inicia o serviço se preciso, sem esperar a carga e SEM BLOQUEAR: com a trava ocupada (um pedido em andamento), o
+/// serviço já existe. Um serviço morto (processo encerrado) é trocado por um novo.
 pub fn start_service() -> ToolResult<()> {
-    let mut g = service().lock().map_err(|_| ToolError::Invalid("serviço do copiloto travado".into()))?;
+    let Ok(mut g) = service().try_lock() else { return Ok(()) };
+    if let Some(s) = g.as_mut() {
+        if !matches!(s.child.try_wait(), Ok(None)) {
+            *g = None;
+        }
+    }
     if g.is_none() {
         *g = Some(spawn()?);
     }
     Ok(())
 }
 
-/// Pede uma geração e espera a resposta (até `timeout`). Carrega os modelos na primeira vez.
-fn request_generation(image: &std::path::Path, out: &std::path::Path, prompt: &str, gsz: [u32; 2], gp: GenParams, seed: u64, timeout: Duration) -> ToolResult<serde_json::Value> {
-    start_service()?;
-    let mut g = service().lock().map_err(|_| ToolError::Invalid("serviço do copiloto travado".into()))?;
-    let s = g.as_mut().unwrap();
-    let t0 = Instant::now();
-    let wait_line = |s: &mut Service, left: Duration| -> ToolResult<serde_json::Value> {
-        let line = s.lines.recv_timeout(left).map_err(|_| ToolError::Invalid("o serviço do copiloto não respondeu a tempo (ou fechou)".into()))?;
-        serde_json::from_str(&line).map_err(|e| ToolError::Invalid(format!("resposta inválida do serviço: {e}: {line}")))
-    };
-    if !s.ready {
-        let v = wait_line(s, timeout.saturating_sub(t0.elapsed()))?;
-        if v["ready"] != true {
-            let err = v["error"].as_str().unwrap_or("erro desconhecido").to_string();
-            *g = None;
-            return Err(ToolError::Invalid(format!("o serviço do copiloto não carregou: {err}")));
-        }
-        s.ready = true;
+/// Para o serviço (o próximo pedido inicia outro): o "Reiniciar" do painel depois de uma falha.
+pub fn stop_service() {
+    if let Ok(mut g) = service().try_lock() {
+        set_state(ST_STOPPED);
+        *g = None;
     }
+}
+
+/// Pede uma geração e espera a resposta (até `timeout`). Carrega os modelos na primeira vez. Qualquer falha de
+/// comunicação (processo morto, cano quebrado, prazo estourado) descarta o serviço: o próximo pedido inicia outro.
+fn request_generation(image: &std::path::Path, out: &std::path::Path, prompt: &str, gsz: [u32; 2], gp: GenParams, seed: u64, timeout: Duration) -> ToolResult<serde_json::Value> {
+    let mut g = service().lock().map_err(|_| ToolError::Invalid("serviço do copiloto travado".into()))?;
+    if let Some(s) = g.as_mut() {
+        if !matches!(s.child.try_wait(), Ok(None)) {
+            *g = None;
+        }
+    }
+    if g.is_none() {
+        *g = Some(spawn()?);
+    }
+    let t0 = Instant::now();
+    // espera a carga (o leitor do stdout marca pronto ou falhou)
+    loop {
+        match STATE.load(std::sync::atomic::Ordering::SeqCst) {
+            ST_READY | ST_BUSY => break,
+            ST_FAILED => {
+                *g = None;
+                return Err(ToolError::Invalid(format!("o serviço do copiloto não carregou: {}", service_error())));
+            }
+            _ => {}
+        }
+        let alive = g.as_mut().is_some_and(|s| matches!(s.child.try_wait(), Ok(None)));
+        if !alive || t0.elapsed() >= timeout {
+            *g = None;
+            let msg = if alive { "o serviço do copiloto não carregou a tempo" } else { "o serviço do copiloto fechou durante a carga (veja o servico.log)" };
+            fail(msg);
+            return Err(ToolError::Invalid(msg.into()));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let s = g.as_mut().unwrap();
     let id = s.next_id;
     s.next_id += 1;
     let req = serde_json::json!({"id": id, "image": image, "out": out, "prompt": prompt, "width": gsz[0], "height": gsz[1], "steps": gp.steps, "strength": gp.strength,
         "control_end": gp.control_end, "cfg": gp.cfg, "seed": seed});
-    writeln!(s.stdin, "{req}").and_then(|_| s.stdin.flush()).map_err(|e| ToolError::Invalid(format!("o serviço do copiloto fechou: {e}")))?;
-    loop {
-        let v = wait_line(s, timeout.saturating_sub(t0.elapsed()))?;
-        if v["id"].as_u64() == Some(id) {
+    set_state(ST_BUSY);
+    let res = (|| -> ToolResult<serde_json::Value> {
+        writeln!(s.stdin, "{req}").and_then(|_| s.stdin.flush()).map_err(|e| ToolError::Invalid(format!("o serviço do copiloto fechou: {e}")))?;
+        loop {
+            let line = s.lines.recv_timeout(timeout.saturating_sub(t0.elapsed())).map_err(|e| match e {
+                std::sync::mpsc::RecvTimeoutError::Timeout => ToolError::Invalid("o serviço do copiloto não respondeu a tempo".into()),
+                std::sync::mpsc::RecvTimeoutError::Disconnected => ToolError::Invalid("o serviço do copiloto fechou (veja o servico.log)".into()),
+            })?;
+            let v: serde_json::Value = serde_json::from_str(&line).map_err(|e| ToolError::Invalid(format!("resposta inválida do serviço: {e}: {line}")))?;
+            if v["id"].as_u64() == Some(id) {
+                return Ok(v);
+            }
+        }
+    })();
+    match res {
+        Ok(v) => {
+            set_state(ST_READY);
             if v["ok"] != true {
+                // erro do modelo (ex.: sem memória): o serviço continua vivo e atende o próximo
                 return Err(ToolError::Invalid(format!("o gerador falhou: {}", v["error"].as_str().unwrap_or("?"))));
             }
-            return Ok(v);
+            Ok(v)
+        }
+        Err(e) => {
+            // comunicação perdida: fora com este serviço (o Drop mata o processo); o próximo pedido inicia outro
+            *g = None;
+            fail(&e.to_string());
+            Err(e)
         }
     }
 }
@@ -337,19 +462,105 @@ pub struct Prepared {
     pub req: SuggestRequest,
     win: [u32; 4],
     lines: image::GrayImage,
+    cel_rect: [f32; 4],
+    placement: [f32; 6],
+    cel: Option<Id>,
+    cel_sig: u64,
+    /// `source_signature` no momento do pedido (a interface guarda na caixa para saber se uma edição a afeta).
+    pub src: u64,
+}
+
+/// Assinatura do conteúdo de um cel (traços, tiles e preenchimentos): muda a cada edição dele.
+pub fn cel_signature(p: &Project, cel: &Id) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    if let Some(n) = p.node(cel) {
+        if let NodeKind::Cel(c) = &n.data {
+            serde_json::to_string(c).unwrap_or_default().hash(&mut h);
+        }
+    }
+    h.finish()
+}
+
+/// A camada pertence ao corte (é descendente dele)?
+fn layer_in_cut(p: &Project, layer: &Id, cut: &Id) -> bool {
+    let mut cur = p.node(layer).and_then(|n| n.parent.clone());
+    while let Some(id) = cur {
+        if &id == cut {
+            return true;
+        }
+        cur = p.node(&id).and_then(|n| n.parent.clone());
+    }
+    false
+}
+
+/// Do cel ao canvas para a camada no quadro (movimento da camada, pais e transformação do cel exposto).
+pub fn placement_of(p: &Project, cut: &aiai_core::model::CutData, layer: &Id, frame: u32) -> ToolResult<aiai_paint::Affine> {
+    let l = layer_data(p, layer)?;
+    let ct = exposed_cel(p, cut, layer, frame).and_then(|n| match &n.data {
+        NodeKind::Cel(c) => Some(c.transform),
+        _ => None,
+    });
+    let (w, h) = canvas_size(p, cut);
+    Ok(aiai_render::compose::layer_placement_in(p, l, ct.unwrap_or([0.0, 0.0, 1.0, 0.0]), frame, w, h))
+}
+
+/// Assinatura do que uma caixa lê: o cel exposto da camada no quadro, o conteúdo dele e o movimento da camada. Uma
+/// edição que não muda isto (outra camada, outro corte, renomear) não precisa gerar de novo.
+pub fn source_signature(p: &Project, cut: &Id, layer: &Id, frame: u32) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let Ok(cd) = cut_data(p, cut) else { return 0 };
+    match exposed_cel(p, cd, layer, frame) {
+        Some(n) => {
+            n.id.hash(&mut h);
+            cel_signature(p, &n.id).hash(&mut h);
+        }
+        None => 1u8.hash(&mut h),
+    }
+    if let Ok(a) = placement_of(p, cd, layer, frame) {
+        for v in a.0 {
+            v.to_bits().hash(&mut h);
+        }
+    }
+    h.finish()
 }
 
 /// Parte 1 (com o documento, rápida): a janela de contexto e a linha da camada nela.
 pub fn prepare(p: &Project, blobs: &aiai_core::BlobStore, req: &SuggestRequest) -> ToolResult<Prepared> {
     let cut = cut_data(p, &req.cut)?;
     layer_data(p, &req.layer)?;
-    let canvas = canvas_size(p, cut);
-    if req.rect[2] < 4.0 || req.rect[3] < 4.0 {
+    // validação antes de gastar GPU: a camada é do corte, o quadro existe, a caixa tem tamanho e toca o canvas
+    if !layer_in_cut(p, &req.layer, &req.cut) {
+        return Err(ToolError::Invalid("a camada não é deste corte".into()));
+    }
+    if cut.duration > 0 && req.frame >= cut.duration {
+        return Err(ToolError::Invalid(format!("quadro {} fora do corte (duração {})", req.frame + 1, cut.duration)));
+    }
+    if !req.rect.iter().all(|v| v.is_finite()) || req.rect[2] < 4.0 || req.rect[3] < 4.0 {
         return Err(ToolError::Invalid("caixa pequena demais".into()));
     }
-    let win = context_window(req.rect, req.context.unwrap_or(2.0), canvas);
+    if !(req.improve || req.complete) {
+        return Err(ToolError::Invalid("nem Melhorar nem Completar estão ligados".into()));
+    }
+    let canvas = canvas_size(p, cut);
+    // a caixa é do canvas; o desenho mora no espaço do cel (camada com movimento): leva os quatro cantos pela inversa
+    let fwd = placement_of(p, cut, &req.layer, req.frame)?;
+    let inv = fwd.inverse().ok_or_else(|| ToolError::Invalid("o movimento da camada neste quadro não tem inversa (escala zero?)".into()))?;
+    let r = req.rect;
+    let cs = [(r[0], r[1]), (r[0] + r[2], r[1]), (r[0] + r[2], r[1] + r[3]), (r[0], r[1] + r[3])].map(|(x, y)| inv.apply(x, y));
+    let (x0, y0) = cs.iter().fold((f32::MAX, f32::MAX), |a, c| (a.0.min(c.0), a.1.min(c.1)));
+    let (x1, y1) = cs.iter().fold((f32::MIN, f32::MIN), |a, c| (a.0.max(c.0), a.1.max(c.1)));
+    let cel_rect = [x0, y0, x1 - x0, y1 - y0];
+    if x1 <= 0.0 || y1 <= 0.0 || x0 >= canvas.0 as f32 || y0 >= canvas.1 as f32 {
+        return Err(ToolError::Invalid("a caixa está fora do desenho".into()));
+    }
+    let win = context_window(cel_rect, req.context.unwrap_or(2.0), canvas);
     let lines = layer_lines(p, blobs, &req.cut, &req.layer, req.frame, win)?;
-    Ok(Prepared { req: req.clone(), win, lines })
+    let cel = exposed_cel(p, cut, &req.layer, req.frame).map(|n| n.id.clone());
+    let cel_sig = cel.as_ref().map(|c| cel_signature(p, c)).unwrap_or(0);
+    let src = source_signature(p, &req.cut, &req.layer, req.frame);
+    Ok(Prepared { req: req.clone(), win, lines, cel_rect, placement: fwd.0, cel, cel_sig, src })
 }
 
 /// Gera uma sugestão (bloqueia até o serviço responder).
@@ -361,20 +572,28 @@ pub fn suggest(p: &Project, blobs: &aiai_core::BlobStore, req: &SuggestRequest) 
 pub fn finish(prep: Prepared) -> ToolResult<Suggestion> {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let t0 = Instant::now();
-    let Prepared { req, win, lines } = prep;
+    let Prepared { req, win, lines, cel_rect, placement, cel, cel_sig, .. } = prep;
     let req = &req;
     let dir = std::env::temp_dir().join("aiai-copiloto");
     std::fs::create_dir_all(&dir).map_err(|e| ToolError::Invalid(format!("pasta temporária: {e}")))?;
     let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let (inp, outp) = (dir.join(format!("ctx-{}-{id}.png", std::process::id())), dir.join(format!("out-{}-{id}.png", std::process::id())));
+    // os dois PNG saem em qualquer caminho, inclusive de erro (o disco é apertado)
+    struct Tmp(Vec<std::path::PathBuf>);
+    impl Drop for Tmp {
+        fn drop(&mut self) {
+            for f in &self.0 {
+                let _ = std::fs::remove_file(f);
+            }
+        }
+    }
+    let _tmp = Tmp(vec![inp.clone(), outp.clone()]);
     lines.save(&inp).map_err(|e| ToolError::Invalid(format!("não gravei o contexto: {e}")))?;
     // no formato da janela; 1:1 quando ela cabe na faixa do modelo, acima disso reduz (blocos ficam para depois)
     let gsz = gen_size(win, req.res);
     let r = request_generation(&inp, &outp, &req.prompt, gsz, req.gen_params(), req.seed.unwrap_or(1), Duration::from_secs(300))?;
     let t_gen = t0.elapsed();
     let generated = image::open(&outp).map_err(|e| ToolError::Invalid(format!("saída do gerador ilegível: {e}")))?.to_luma8();
-    let _ = std::fs::remove_file(&inp);
-    let _ = std::fs::remove_file(&outp);
     // vetoriza a linha gerada (no tamanho da janela)
     let ink: Vec<f32> = generated.pixels().map(|q| 1.0 - q.0[0] as f32 / 255.0).collect();
     // simplificação de 1 px (o padrão do vetorizador, 0,4, guarda um ponto a cada poucos px: fiel, mas difícil de
@@ -384,41 +603,62 @@ pub fn finish(prep: Prepared) -> ToolResult<Suggestion> {
     // tinta que já existe (para separar Melhorar de Completar): distância até ela, na janela
     let have: Vec<bool> = lines.pixels().map(|q| q.0[0] < 160).collect();
     let near = dist_field(&have, win[2] as usize, win[3] as usize);
-    let (bx0, by0, bx1, by1) = (req.rect[0], req.rect[1], req.rect[0] + req.rect[2], req.rect[1] + req.rect[3]);
+    let (bx0, by0, bx1, by1) = (cel_rect[0], cel_rect[1], cel_rect[0] + cel_rect[2], cel_rect[1] + cel_rect[3]);
     let (mut improve, mut complete) = (Vec::new(), Vec::new());
-    // traço mais curto que isto não entra: 4% do lado maior da caixa, de 8 a 30 px
-    let min_len = (req.rect[2].max(req.rect[3]) * 0.04).clamp(8.0, 30.0);
+    // traço mais curto que isto não entra: 2,5% do lado maior da caixa, de 6 a 20 px (um laço fechado conta o perímetro
+    // inteiro e vale a metade: olho, narina e boca pequenos ficam)
+    let min_len = (cel_rect[2].max(cel_rect[3]) * 0.025).clamp(6.0, 20.0);
+    let near_ink = |x: f32, y: f32, tol: f32| {
+        let (ix, iy) = (x - win[0] as f32, y - win[1] as f32);
+        ix >= 0.0 && iy >= 0.0 && (ix as usize) < win[2] as usize && (iy as usize) < win[3] as usize && near[iy as usize * win[2] as usize + ix as usize] <= tol
+    };
+    let inside_box = |x: f32, y: f32| x >= bx0 && x <= bx1 && y >= by0 && y <= by1;
+    let change = req.change.unwrap_or(CHANGE_DEFAULT);
     for path in &paths {
         // só o que cai dentro da caixa: o traço é cortado na borda (o copiloto nunca mexe fora dela)
         for piece in clip_to_box(path, scale, [win[0] as f32, win[1] as f32], [bx0, by0, bx1, by1]) {
             // o corte reamostra a cada ~2 px: simplifica de novo (traço editável, com poucos pontos de controle)
             let piece = piece.simplified(1.0);
-            let on_ink = piece
-                .points
-                .iter()
-                .filter(|q| {
-                    let (x, y) = ((q[0] * scale) as usize, (q[1] * scale) as usize);
-                    x < win[2] as usize && y < win[3] as usize && near[y * win[2] as usize + x] <= 4.0
-                })
-                .count();
-            let mut st = path_to_stroke(&piece, req.tip, req.color.clone(), scale, [win[0] as f32, win[1] as f32]);
-            // risquinho (hachura de sombra, textura): não é linha que se aceite
-            let len: f32 = st.points.windows(2).map(|w| ((w[1].x - w[0].x).powi(2) + (w[1].y - w[0].y).powi(2)).sqrt()).sum();
-            if len < min_len {
-                continue;
-            }
-            if !piece.closed {
-                st.taper = Some(StrokeTaper::NONE);
-            }
-            if on_ink * 10 >= piece.points.len() * 6 {
-                if req.improve {
-                    improve.push(st);
+            let st = path_to_stroke(&piece, req.tip, req.color.clone(), scale, [win[0] as f32, win[1] as f32]);
+            // a curva final (spline) pode sair da caixa mesmo com os pontos de controle dentro: corta a curva desenhada
+            let (ins, _) = split_stroke(&st, |x, y| inside_box(x, y));
+            for mut st in ins {
+                let smp = aiai_paint::sample_stroke(&st);
+                if smp.len() < 2 {
+                    continue;
                 }
-            } else if req.complete {
-                complete.push(st);
+                let mut len: f32 = smp.windows(2).map(|w| (w[1].x - w[0].x).hypot(w[1].y - w[0].y)).sum();
+                if st.closed {
+                    len += (smp[0].x - smp[smp.len() - 1].x).hypot(smp[0].y - smp[smp.len() - 1].y);
+                }
+                // risquinho (hachura de sombra, textura): não é linha que se aceite
+                if len < if st.closed { min_len * 0.5 } else { min_len } {
+                    continue;
+                }
+                if !st.closed {
+                    st.taper = Some(StrokeTaper::NONE);
+                }
+                // Melhorar × Completar pelo COMPRIMENTO sobre a tinta que já existe (amostras da curva, ~1 px)
+                let on = smp.iter().filter(|q| near_ink(q.x, q.y, 4.0)).count();
+                if on * 10 >= smp.len() * 6 {
+                    if req.improve {
+                        improve.push(st);
+                    }
+                } else if req.complete {
+                    // pouca mudança = limpeza: o traço novo só entra perto do desenho (fecha falhas, não inventa longe)
+                    if change < 0.35 && !smp.iter().any(|q| near_ink(q.x, q.y, 40.0)) {
+                        continue;
+                    }
+                    complete.push(st);
+                }
             }
         }
     }
+    dedupe(&mut improve);
+    dedupe(&mut complete);
+    // um Completar que repete um Melhorar (linha dupla) sai
+    let keep: Vec<Stroke> = complete.into_iter().filter(|c| !duplicates(c, &improve)).collect();
+    let complete = keep;
     let ms = t0.elapsed().as_millis() as u64;
     Ok(Suggestion {
         id,
@@ -432,8 +672,90 @@ pub fn finish(prep: Prepared) -> ToolResult<Suggestion> {
         gen_ms: r["gen_ms"].as_u64().unwrap_or(t_gen.as_millis() as u64),
         vec_ms: (t0.elapsed() - t_gen).as_millis() as u64,
         window: win,
-        gen_size: gsz,
+        // o serviço pode ter baixado a resolução para caber na memória: vale o tamanho que ele usou
+        gen_size: r["size"].as_array().and_then(|a| Some([a.first()?.as_u64()? as u32, a.get(1)?.as_u64()? as u32])).unwrap_or(gsz),
+        cel_rect,
+        placement,
+        cel,
+        cel_sig,
+        prompt_tokens: r["tokens"].as_u64().unwrap_or(0) as u32,
+        prompt_truncated: r["truncated"].as_bool().unwrap_or(false),
+        reduced: r["reduced"].as_bool().unwrap_or(false),
+        throttled: r["gpu"]["throttled"].as_bool().unwrap_or(false),
     })
+}
+
+/// Pedaços de um traço pelas amostras da curva desenhada (a forma não muda): os de dentro de `inside` e os de fora.
+/// Um traço todo de um lado volta inteiro e intacto (mesmo id). Os pedaços novos não têm id (o núcleo dá um ao
+/// gravar), mantêm cor, opacidade e grupo, e a largura medida ponto a ponto; a ponta do corte é reta.
+pub fn split_stroke(st: &Stroke, inside: impl Fn(f32, f32) -> bool) -> (Vec<Stroke>, Vec<Stroke>) {
+    let smp = aiai_paint::sample_stroke(st);
+    if smp.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    let flags: Vec<bool> = smp.iter().map(|q| inside(q.x, q.y)).collect();
+    if flags.iter().all(|&f| f) {
+        return (vec![st.clone()], Vec::new());
+    }
+    if flags.iter().all(|&f| !f) {
+        return (Vec::new(), vec![st.clone()]);
+    }
+    let (mut ins, mut outs) = (Vec::new(), Vec::new());
+    let mut k = 0;
+    while k < smp.len() {
+        let f = flags[k];
+        let mut e = k;
+        while e + 1 < smp.len() && flags[e + 1] == f {
+            e += 1;
+        }
+        // o pedaço vai até a primeira amostra do seguinte (sem buraco na emenda)
+        let end = (e + 1).min(smp.len() - 1);
+        let pts: Vec<[f32; 2]> = smp[k..=end].iter().map(|q| [q.x, q.y]).collect();
+        let ws: Vec<f32> = smp[k..=end].iter().map(|q| (q.r * 2.0).max(0.2)).collect();
+        if pts.len() >= 2 {
+            let path = InkPath { points: pts, widths: ws, closed: false }.simplified(0.5);
+            let mut n = path_to_stroke(&path, st.tip, st.color.clone(), 1.0, [0.0, 0.0]);
+            n.opacity = st.opacity;
+            n.aliased = st.aliased;
+            n.group = st.group.clone();
+            n.color_trace = st.color_trace;
+            n.taper = Some(StrokeTaper::NONE);
+            if f {
+                ins.push(n);
+            } else {
+                outs.push(n);
+            }
+        }
+        k = e + 1;
+    }
+    (ins, outs)
+}
+
+/// `a` repete `b` (80% das amostras de `a` a até max(3 px, largura) de `b`, e `b` não é menor)?
+fn repeats(a: &Stroke, b: &Stroke) -> bool {
+    let (sa, sb) = (aiai_paint::sample_stroke(a), aiai_paint::sample_stroke(b));
+    if sa.is_empty() || sb.len() < sa.len() / 2 {
+        return false;
+    }
+    let tol = a.width.max(3.0);
+    let hit = sa.iter().filter(|q| sb.iter().any(|r| (r.x - q.x).hypot(r.y - q.y) <= tol)).count();
+    hit * 10 >= sa.len() * 8
+}
+
+fn duplicates(a: &Stroke, others: &[Stroke]) -> bool {
+    others.iter().any(|b| repeats(a, b))
+}
+
+/// Tira linhas duplas (o gerador às vezes traça a mesma linha duas vezes, lado a lado): fica a mais longa.
+fn dedupe(v: &mut Vec<Stroke>) {
+    v.sort_by(|a, b| aiai_paint::sample_stroke(b).len().cmp(&aiai_paint::sample_stroke(a).len()));
+    let mut out: Vec<Stroke> = Vec::new();
+    for st in v.drain(..) {
+        if !duplicates(&st, &out) {
+            out.push(st);
+        }
+    }
+    *v = out;
 }
 
 /// Corta o caminho (coordenadas da imagem gerada; `scale`/`offset` levam ao canvas) na caixa [x0, y0, x1, y1] do
@@ -542,9 +864,10 @@ pub enum AcceptWhich {
     Complete,
 }
 
-/// Traços do cel que a versão limpa cobre: dentro da caixa e com pelo menos 70% das amostras a até `tol` px de algum
-/// traço limpo (tol = 4 px ou a largura do traço, o maior). São o rascunho que o Melhorar substitui.
-pub fn covered_strokes(cel: &[Stroke], clean: &[&Stroke], rect: [f32; 4]) -> Vec<Id> {
+/// Traços do cel que a versão limpa cobre, dentro da caixa: o trecho de dentro de cada um tem pelo menos 70% das amostras
+/// a até `tol` px de algum traço limpo (tol = 4 px ou a largura do traço). Devolve os ids que saem e, de cada um, os
+/// pedaços de FORA da caixa, que voltam como traços próprios: o Melhorar nunca apaga desenho fora da caixa.
+pub fn covered_strokes(cel: &[Stroke], clean: &[&Stroke], rect: [f32; 4]) -> (Vec<Id>, Vec<Stroke>) {
     const CELL: f32 = 8.0;
     let mut grid: std::collections::HashMap<(i32, i32), Vec<[f32; 2]>> = std::collections::HashMap::new();
     for st in clean {
@@ -553,7 +876,7 @@ pub fn covered_strokes(cel: &[Stroke], clean: &[&Stroke], rect: [f32; 4]) -> Vec
         }
     }
     if grid.is_empty() {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
     let near = |x: f32, y: f32, tol: f32| {
         let (cx, cy) = ((x / CELL).floor() as i32, (y / CELL).floor() as i32);
@@ -570,23 +893,58 @@ pub fn covered_strokes(cel: &[Stroke], clean: &[&Stroke], rect: [f32; 4]) -> Vec
         false
     };
     let inside = |x: f32, y: f32| x >= rect[0] && x <= rect[0] + rect[2] && y >= rect[1] && y <= rect[1] + rect[3];
-    cel.iter()
-        .filter(|st| !st.id.0.is_empty())
-        .filter(|st| {
-            let smp = aiai_paint::sample_stroke(st);
-            if smp.is_empty() {
-                return false;
+    let (mut ids, mut pieces) = (Vec::new(), Vec::new());
+    for st in cel.iter().filter(|st| !st.id.0.is_empty()) {
+        let smp = aiai_paint::sample_stroke(st);
+        let ins: Vec<_> = smp.iter().filter(|q| inside(q.x, q.y)).collect();
+        // traço que mal entra na caixa (menos de 8 amostras dentro): não é rascunho desta caixa
+        if ins.len() < 8 {
+            continue;
+        }
+        let tol = (st.width).max(4.0);
+        let hit = ins.iter().filter(|q| near(q.x, q.y, tol)).count();
+        if hit * 10 < ins.len() * 7 {
+            continue;
+        }
+        ids.push(st.id.clone());
+        let (_, outs) = split_stroke(st, inside);
+        pieces.extend(outs.into_iter().filter(|o| aiai_paint::sample_stroke(o).len() >= 2));
+    }
+    (ids, pieces)
+}
+
+/// O traço aceito com a largura escolhida (seção 6 da proposta): `Drawing` mantém a largura medida no desenho gerado;
+/// `Pen` usa a largura da caneta ativa como base e guarda a variação relativa; `Fixed` usa a largura da caneta sem
+/// variação. A ponta e a cor são as da caneta ativa na hora de aceitar.
+pub fn apply_pen(st: &mut Stroke, mode: crate::vectorize::WidthMode, pen_width: f32, tip: VectorTip, color: &ColorRef) {
+    use crate::vectorize::WidthMode;
+    st.tip = tip;
+    st.color = color.clone();
+    match mode {
+        WidthMode::Drawing => {}
+        WidthMode::Pen => st.width = pen_width.max(0.1),
+        WidthMode::Fixed => {
+            st.width = pen_width.max(0.1);
+            for q in st.points.iter_mut() {
+                q.width = 1.0;
             }
-            let ins = smp.iter().filter(|q| inside(q.x, q.y)).count();
-            if ins * 2 < smp.len() {
-                return false; // o traço é mais de fora da caixa: o copiloto não mexe nele
-            }
-            let tol = (st.width).max(4.0);
-            let hit = smp.iter().filter(|q| near(q.x, q.y, tol)).count();
-            hit * 10 >= smp.len() * 7
-        })
-        .map(|st| st.id.clone())
-        .collect()
+        }
+    }
+}
+
+/// A sugestão ainda corresponde ao desenho? (mesmo cel exposto e o conteúdo dele não mudou desde o pedido)
+pub fn check_fresh(p: &Project, s: &Suggestion) -> ToolResult<()> {
+    let cut = cut_data(p, &s.cut)?;
+    let now = exposed_cel(p, cut, &s.layer, s.frame).map(|n| n.id.clone());
+    if now != s.cel {
+        return Err(ToolError::Invalid("sugestão velha: o cel exposto neste quadro mudou desde o pedido; gere de novo".into()));
+    }
+    if let Some(c) = &s.cel {
+        if cel_signature(p, c) != s.cel_sig {
+            return Err(ToolError::Invalid("sugestão velha: o desenho do cel mudou desde o pedido; gere de novo".into()));
+        }
+    }
+    Ok(())
 }
 
 /// O comando que põe os traços aceitos no cel exposto da camada vetorial (um passo de desfazer). Com `replace`, os
@@ -600,7 +958,7 @@ pub fn accept_command(p: &Project, s: &Suggestion, which: AcceptWhich, only: Opt
     if l.locked {
         return Err(ToolError::Invalid("camada travada".into()));
     }
-    let cel = exposed_cel(p, cut, &s.layer, s.frame).ok_or_else(|| ToolError::Invalid(format!("a camada não expõe cel no quadro {}", s.frame)))?;
+    let cel = exposed_cel(p, cut, &s.layer, s.frame).ok_or_else(|| ToolError::Invalid(format!("a camada não expõe cel no quadro {}", s.frame + 1)))?;
     let NodeKind::Cel(cd) = &cel.data else { unreachable!() };
     let all: Vec<(&Stroke, bool)> = match which {
         AcceptWhich::All => s.improve.iter().map(|x| (x, true)).chain(s.complete.iter().map(|x| (x, false))).collect(),
@@ -615,15 +973,17 @@ pub fn accept_command(p: &Project, s: &Suggestion, which: AcceptWhich, only: Opt
         return Err(ToolError::Invalid("nada para aceitar nesta sugestão".into()));
     }
     let clean: Vec<&Stroke> = picked.iter().filter(|x| x.1).map(|x| x.0).collect();
-    let removed = if replace && !clean.is_empty() { covered_strokes(&cd.strokes, &clean, s.rect) } else { Vec::new() };
+    let (removed, outside) = if replace && !clean.is_empty() { covered_strokes(&cd.strokes, &clean, s.cel_rect) } else { (Vec::new(), Vec::new()) };
     let start = cd.strokes.len() - removed.len();
-    let items: Vec<_> = picked.iter().enumerate().map(|(k, (st, _))| aiai_core::command::IndexedStroke { index: start + k, stroke: (*st).clone() }).collect();
+    // primeiro os pedaços de fora da caixa dos traços substituídos (o desenho de fora fica igual), depois os aceitos
+    let all_new: Vec<Stroke> = outside.into_iter().chain(picked.iter().map(|(st, _)| (*st).clone())).collect();
+    let items: Vec<_> = all_new.into_iter().enumerate().map(|(k, stroke)| aiai_core::command::IndexedStroke { index: start + k, stroke }).collect();
     let insert = aiai_core::Command::InsertStrokes { cel: cel.id.clone(), items };
     if removed.is_empty() {
         return Ok(insert);
     }
     Ok(aiai_core::Command::Batch {
-        label: Some(format!("Copiloto: melhorar {} traço(s) (substitui {} do rascunho)", clean.len(), removed.len())),
+        label: Some(format!("Copiloto: melhorar {} traço(s) (substitui {} do rascunho dentro da caixa)", clean.len(), removed.len())),
         commands: vec![aiai_core::Command::RemoveStrokes { cel: cel.id.clone(), ids: removed }, insert],
     })
 }
@@ -780,6 +1140,9 @@ pub struct CopilotRequest {
     /// Para `accept`: `same` (padrão, na camada da sugestão) ou `clean` (camada limpa acima, criada na 1ª vez).
     #[serde(default)]
     pub target: AcceptTarget,
+    /// Para `accept`: aceitar mesmo se o desenho mudou desde o pedido (padrão false: recusa sugestão velha).
+    #[serde(default)]
+    pub force: bool,
 }
 
 /// Resumo de uma sugestão para o agente: contagens, tempos e os pontos de cada traço.
@@ -787,5 +1150,7 @@ pub fn summary(s: &Suggestion) -> serde_json::Value {
     let pts = |v: &Vec<Stroke>| v.iter().map(|st| st.points.iter().map(|q| [q.x.round(), q.y.round()]).collect::<Vec<_>>()).collect::<Vec<_>>();
     serde_json::json!({"id": s.id, "improve": s.improve.len(), "complete": s.complete.len(), "ms": s.ms, "gen_ms": s.gen_ms, "vec_ms": s.vec_ms,
         "window": s.window, "gen_size": s.gen_size, "zoom": gen_zoom(s.window, s.gen_size),
-        "rect": s.rect, "improve_points": pts(&s.improve), "complete_points": pts(&s.complete)})
+        "rect": s.rect, "cel_rect": s.cel_rect, "cel": s.cel, "frame": s.frame, "cut": s.cut, "layer": s.layer,
+        "prompt_tokens": s.prompt_tokens, "prompt_truncated": s.prompt_truncated, "reduced": s.reduced, "throttled": s.throttled,
+        "improve_points": pts(&s.improve), "complete_points": pts(&s.complete), "points_space": "cel"})
 }

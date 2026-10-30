@@ -113,6 +113,9 @@ pub fn handle_tool_action(session: &mut CoreSession, action: &str, params: &Valu
                 "accept" => {
                     let id = r.id.ok_or_else(|| BridgeError::invalid_params("accept pede `id`"))?;
                     let sg = cp::get(id).ok_or_else(|| BridgeError::invalid_params(format!("sugestão {id} não existe (já aceita ou descartada?)")))?;
+                    if !r.force {
+                        cp::check_fresh(&session.project, &sg).map_err(tool_error)?;
+                    }
                     let cmd = {
                         let s = &mut *session;
                         cp::accept_command_to(&s.project, &sg, r.which, r.only.as_deref(), r.target, r.replace, &mut s.ids).map_err(tool_error)?

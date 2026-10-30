@@ -2,6 +2,6 @@ Rodada 1 da auditoria do Copiloto de traço do AnimeIAI (ferramenta nova, sem re
 
 Leia inteiro e siga: C:\AnimeIAI\ferramenta de Ia\copiloto\revisao\CP-R01-RODADA-1-AUDITORIA-COMPLETA.md
 
-Resumo do pedido: auditoria COMPLETA e profunda (código + uso real do app com mouse e teclado + QA com ferramentas cruzadas + interface + fluxo de trabalho + desempenho/tempos), tentando quebrar a ferramenta. O dono quer dezenas de itens verificados nesta rodada: não pare nos primeiros achados, entregue todos de uma vez com gravidade, prova (arquivo:linha ou passos no app) e correção esperada, e declare a cobertura por área (A–N). Respeite as regras de convivência do §1 (só os seus projetos de teste, app sem --bridge, não editar código, não rodar cargo build, um só Copiloto ligado na GPU).
+Resumo do pedido: auditoria COMPLETA e profunda (código + uso real do app com mouse e teclado + QA com ferramentas cruzadas + interface + fluxo de trabalho + desempenho/tempos), tentando quebrar a ferramenta. O dono quer dezenas de itens verificados nesta rodada: não pare nos primeiros achados, entregue todos de uma vez com gravidade, prova (arquivo:linha ou passos no app) e correção esperada, e declare a cobertura por área (A–N). Respeite as regras de convivência do §1 (só os seus projetos de teste, app sem --bridge, não editar código, não rodar cargo (nem build nem test: o disco está cheio), um só Copiloto ligado na GPU).
 
 Entrega: C:\AnimeIAI\ferramenta de Ia\copiloto\revisao\CP-CX01-RODADA-1-AUDITORIA.md com o veredito "NÍVEL PROFISSIONAL: SIM" ou "NÃO — bloqueios: …".

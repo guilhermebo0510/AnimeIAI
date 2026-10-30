@@ -31,9 +31,9 @@
 **Foco** (não perder): **geração parcial de IA que ajuda a desenhar**. O traço do usuário ou do LLM vira sugestões
 fantasma (Melhorar e Completar) em caixas, guiadas pelo prompt, e o usuário aceita. Não é ferramenta de intercalação.
 
-1. [ ] Fechar o trabalho em andamento: testes, commit e release (painel no dock, foco, sobreposição, intensidade,
+1. [x] Fechar o trabalho em andamento: testes, commit e release (painel no dock, foco, sobreposição, intensidade,
        camada limpa, Tab = um passo, cores, simplificação).
-2. [ ] Pacote da rodada 1 para o ChatGPT (`ferramenta de Ia/copiloto/revisao/CP-R01…`): auditoria completa (código,
+2. [x] Pacote da rodada 1 para o ChatGPT (`ferramenta de Ia/copiloto/revisao/CP-R01…`): auditoria completa (código,
        app, QA cruzado, UI, fluxo de trabalho, desempenho), com projetos de teste próprios dele.
 3. [ ] **Relatório de tempo das gerações:** por intensidade, tamanho de caixa, resolução e passos, a primeira carga e as
        seguintes, na GTX 1650 e estimado para uma GPU melhor. O dono notou "minutos" nas gerações completas: investigar
@@ -80,4 +80,8 @@ O que a fase 2 levantar, por prioridade (bloqueios primeiro). Já pedido pelo do
 
 | Item | Estado | Commit / arquivo |
 |---|---|---|
-| 1.1 | em andamento | — |
+| 1.1 | feito (bateria no app 38/39; a falha restante era do teste e foi confirmada à parte) | `2461b3d` |
+| 1.2 | enviado ao ChatGPT em 30/10 às 00:18 (GPT-6.1 Sol, esforço Extra alto) | `ferramenta de Ia/copiloto/revisao/CP-R01-…` |
+| 1.3 | tabela de tempos feita; Velocidade Rápido/Equilibrado/Qualidade no painel, aviso de memória (resolução reduzida) e de GPU limitada (R2) | `tools/copiloto/tempos.py`, COPILOTO-COMO-FUNCIONA.md |
+| 1.4 | rodada 1: o Codex fechou com 35 achados (15 bloqueios). **Limite de 5 h do ChatGPT esgotado às 01:17, volta às 04:47.** Até lá: corrigir os achados do CX01 e os da auditoria interna (I-01 a I-17). A rodada 2 sai às 04:47. | `CP-CX01-…`, `CP-CLAUDE-AUDITORIA-INTERNA.md` |
+| 1.5 | R2: correções de 32 dos 35 achados e de I-01 a I-17 (menos CP1-14, CP1-17 e CP1-34, declarados). Bateria R2 no app 12/13 (a 13ª era do teste, corrigida). | `CP-R02-…` |

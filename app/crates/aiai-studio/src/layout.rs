@@ -790,6 +790,11 @@ fn wrap_root(tree: &mut Tree<PanelKind>, dir: LinearDir, new: TileId, new_first:
 
 /// Liga um painel que não está na árvore: entra como aba junto de um painel visível da mesma categoria; sem ele, segundo
 /// `dock_hint` (coluna à esquerda/direita da linha principal, faixa embaixo, ou coluna ao lado do centro). Devolve o tile.
+/// Painéis que não entram em nenhum layout de fábrica: aparecem sob demanda (o Copiloto entra quando o usuário o liga e
+/// sai quando desliga). Pôr num layout de fábrica mudaria a assinatura dos padrões e mostraria a todos o aviso de
+/// "o padrão foi atualizado".
+pub const ON_DEMAND: &[PanelKind] = &[PanelKind::Copilot];
+
 /// Insere `kind` como uma coluna própria, de altura inteira, na ponta direita da linha principal (`share` da largura):
 /// para um painel comprido que precisa ficar à vista enquanto se desenha (o Copiloto). Já no layout: só reaparece.
 pub fn insert_panel_column(tree: &mut Tree<PanelKind>, kind: PanelKind, share: f32) -> TileId {
@@ -1114,7 +1119,8 @@ mod tests {
             }
         }
         for p in PanelKind::ALL {
-            assert!(used.contains(&p), "{p:?} não está em nenhum workspace");
+            assert!(used.contains(&p) || ON_DEMAND.contains(&p), "{p:?} não está em nenhum workspace (nem é sob demanda)");
+            assert!(!(used.contains(&p) && ON_DEMAND.contains(&p)), "{p:?} é sob demanda mas está numa fábrica");
             assert!(!p.meta().workspaces.is_empty(), "{p:?}");
         }
         let cats: HashSet<_> = PanelKind::ALL.iter().map(|p| p.meta().category).collect();

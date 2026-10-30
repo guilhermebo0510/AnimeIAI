@@ -608,7 +608,7 @@ impl StudioApp {
     }
 
     /// Ambiente dos painéis fora do dock (barra de comandos, menu Filtro, janela Filtro).
-    fn with_env<R>(&mut self, f: impl FnOnce(&mut Env) -> R) -> R {
+    pub(crate) fn with_env<R>(&mut self, f: impl FnOnce(&mut Env) -> R) -> R {
         let t = self.tokens();
         let ws = self.ws;
         let mut notes = Vec::new();

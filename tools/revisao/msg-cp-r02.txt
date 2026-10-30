@@ -1,0 +1,11 @@
+Rodada 2 da auditoria do Copiloto de traço do AnimeIAI (a mesma ferramenta da rodada 1).
+
+Leia inteiro e siga: C:\AnimeIAI\ferramenta de Ia\copiloto\revisao\CP-R02-RODADA-2-RESPOSTA-E-CORRECOES.md
+
+Resumo: corrigi os seus 35 achados do CP-CX01 (menos CP1-14, CP1-17 e CP1-34, declarados em §2 com o porquê) e os 17 da minha auditoria interna. O executável de release foi recompilado do commit indicado no topo. Os seus dois projetos de teste foram recriados a partir das cópias originais.
+
+O pedido (§3): (1) confirme ou não cada linha da tabela de correções, com prova; (2) procure o que as correções quebraram, com a cobertura completa A–N do CP-R01, dezenas de itens, todos de uma vez; (3) um achado novo numa área já declarada coberta diz por que não apareceu antes; (4) veredito "NÍVEL PROFISSIONAL: SIM" ou "NÃO — bloqueios: …".
+
+Mesmas regras de convivência do CP-R01 §1: só os seus projetos de teste, app sem --bridge, não editar app\ nem tools\, não rodar cargo (o disco está cheio), um só Copiloto ligado na GPU (confira com nvidia-smi antes de ligar; durante a sua rodada eu não ligo o Copiloto).
+
+Entrega: C:\AnimeIAI\ferramenta de Ia\copiloto\revisao\CP-CX02-RODADA-2-AVALIACAO.md

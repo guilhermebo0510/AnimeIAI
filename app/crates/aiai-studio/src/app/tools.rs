@@ -1259,6 +1259,11 @@ pub(crate) fn shortcuts(ctx: &egui::Context, env: &mut Env) {
     if ctx.egui_wants_keyboard_input() || egui::Popup::is_any_open(ctx) || super::text_tool::editing(env.ed) {
         return;
     }
+    // Copiloto: com fantasma à vista e nenhum traço em andamento, Esc descarta (antes do Esc geral, que cancela
+    // ferramentas e engolia a tecla, CP1-02)
+    if super::copilot_ui::escape(env, ctx) {
+        return;
+    }
     use crate::keymap::Action as A;
     use egui::{Key, Modifiers};
     // curva/linha por cliques: Enter termina, Esc/Backspace tiram o último ponto (antes dos atalhos gerais)

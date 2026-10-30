@@ -122,6 +122,13 @@ impl StudioApp {
         match r.action.as_str() {
             "SCREENSHOT" => self.bridge_screenshot(ctx, r),
             "INPUT" => self.bridge_input(ctx, r),
+            // Copiloto com o app aberto: a mesma fila e thread do painel (não congela a janela) e o fantasma no canvas;
+            // a resposta sai quando o resultado chegar (CP1-19/20)
+            "COPILOT" => {
+                let prev = std::mem::replace(&mut self.core.source, aiai_core::InputSource::DirectToolCall);
+                self.with_env(|env| super::copilot_ui::bridge(env, r));
+                self.core.source = prev;
+            }
             _ => {
                 // chamada direta da bridge/MCP: as ações gravadas por ela são `DirectToolCall`, e a fonte do quadro volta depois
                 let prev = std::mem::replace(&mut self.core.source, aiai_core::InputSource::DirectToolCall);

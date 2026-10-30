@@ -3,16 +3,24 @@
 //! O gerador roda num processo separado (aiai_tools::copilot); aqui a interface só prepara o contexto (rápido) e
 //! manda para uma thread que espera o serviço. Nunca duas caixas gerando ao mesmo tempo: a caixa onde se acabou de
 //! desenhar passa na frente; as outras esperam. Nada entra no documento até aceitar (um passo de desfazer).
+//!
+//! Versões (rodada CP-R02): cada pedido leva a versão da geometria da caixa, do conteúdo dela e do histórico. O
+//! resultado que chega depois de desfazer, desligar, descartar, mover, redimensionar ou apagar a caixa é descartado
+//! (nunca "ressuscita"); o que chega depois de um traço novo na caixa aparece esmaecido até chegar o novo.
+//! O MCP, com o app aberto, usa a mesma fila e a mesma thread, e o fantasma dele aparece no canvas (`bridge`).
 
 use super::editor::Xf;
 use super::ui_kit::Env;
+use aiai_bridge::host::HostRequest;
 use aiai_core::{Id, Stroke};
 use aiai_tools::copilot::{self as cp, AcceptWhich, Suggestion, SuggestRequest};
+use aiai_tools::vectorize::WidthMode;
 use egui::{Color32, Pos2, Rect, RichText, Vec2};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Instant;
 
-/// Estado de uma caixa: ligada (entra na fila), pausada (guarda o fantasma, não gera), desligada (nada).
+/// Estado de uma caixa: ligada (entra na fila), pausada (guarda o fantasma, não gera e o foco pausado não se move),
+/// desligada (sem fantasma e sem geração).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum BoxState {
     On,
@@ -33,19 +41,30 @@ pub(crate) struct CBox {
     /// Caixa de foco: a única automática do corte, que vai para onde você desenha. As outras são fixas (criadas
     /// com + ou fixadas a partir do foco) e ficam onde estão.
     pub auto: bool,
-    /// Camada de onde a caixa lê o desenho (a do traço que a criou ou moveu). Trocar de camada, ou um pincel que cria
-    /// uma camada sozinho, não muda o que a caixa lê.
+    /// Camada de onde a caixa lê o desenho (a do traço que a criou ou moveu; o cartão mostra e deixa trocar).
     pub layer: Option<Id>,
     /// Somar o prompt geral ao desta caixa (desligue numa caixa sobre a mão quando o geral descreve o rosto).
     pub use_global: bool,
+    /// Versão da geometria/estado (mover, redimensionar, desligar): resultado de outra versão é descartado.
+    pub geo: u64,
+    /// Versão do conteúdo (traço novo na caixa): resultado de versão anterior aparece esmaecido.
+    pub content: u64,
+    /// Caixa criada por um agente (MCP).
+    pub llm: bool,
+    /// Assinatura do que a caixa leu no último pedido (cel exposto, conteúdo, movimento da camada): uma edição só a
+    /// refaz se isto mudar.
+    pub src: u64,
 }
 
-/// O fantasma de uma caixa.
+/// O fantasma de uma caixa. `vis_*` é o que aparece de fato (sem o que uma caixa menor cobre), no espaço do cel: é o
+/// que a pintura, o ímã e o aceitar usam.
 pub(crate) struct Ghost {
     pub box_id: u32,
     pub s: Suggestion,
     /// Desenhou-se na caixa depois: fica mais claro até chegar o novo.
     pub stale: bool,
+    pub vis_improve: Vec<Stroke>,
+    pub vis_complete: Vec<Stroke>,
 }
 
 /// Arrasto de caixa no canvas.
@@ -59,10 +78,24 @@ enum Drag {
     Resize(u32, Vec2),
 }
 
+/// Caixa esperando a vez, com o quadro em que o pedido nasceu (o pedido é desse quadro, não do que estiver na tela).
+#[derive(Clone, Copy, Debug)]
+struct Pending {
+    id: u32,
+    at: Instant,
+    frame: u32,
+}
+
 struct Job {
     box_id: u32,
+    geo: u64,
+    content: u64,
+    hist: u64,
     prep: cp::Prepared,
 }
+
+/// Resultado da thread: caixa, versões do pedido e a sugestão (ou o erro).
+type Done = (u32, u64, u64, u64, Result<Suggestion, String>);
 
 pub(crate) struct CopilotUi {
     pub on: bool,
@@ -85,18 +118,31 @@ pub(crate) struct CopilotUi {
     /// Cor da caixa e do fantasma (opacas; a do fantasma recebe a opacidade `opacity`).
     pub box_color: Color32,
     pub ghost_color: Color32,
-    /// Aceitar Melhorar substitui os traços do rascunho que a versão limpa cobre (desligado: mantém o rascunho).
+    /// Aceitar Melhorar substitui os traços do rascunho que a versão limpa cobre, dentro da caixa (desligado: mantém o
+    /// rascunho).
     pub replace_rough: bool,
+    /// Largura do traço aceito: do desenho gerado, da caneta (com a variação do desenho) ou fixa.
+    pub width_mode: WidthMode,
     pub ghosts: Vec<Ghost>,
-    /// Caixas esperando a vez: (caixa, quando mudou por último).
-    dirty: Vec<(u32, Instant)>,
-    /// Pedido em andamento: (caixa, desde quando).
-    busy: Option<(u32, Instant)>,
+    /// Caixas esperando a vez.
+    dirty: Vec<Pending>,
+    /// Pedidos na thread (caixa, desde quando), na ordem.
+    inflight: Vec<(u32, Instant)>,
+    /// Versão do histórico: sobe ao desfazer/refazer, desligar e descartar (resultados em voo caem).
+    hist: u64,
+    /// Os `vis_*` dos fantasmas precisam ser refeitos (caixas ou fantasmas mudaram).
+    vis_dirty: bool,
+    /// Pedidos do MCP esperando o resultado de uma caixa (caixa, versão do conteúdo, pedido).
+    bridge_wait: Vec<(u32, u64, HostRequest)>,
     tx: Option<Sender<Job>>,
-    rx: Option<Receiver<(u32, Result<Suggestion, String>)>>,
+    rx: Option<Receiver<Done>>,
     pub new_box_mode: bool,
     drag: Option<Drag>,
     pub last: String,
+    /// Avisos da última sugestão: resolução baixada pela memória, GPU limitada, prompt cortado.
+    pub last_reduced: bool,
+    pub last_throttled: bool,
+    pub last_truncated: bool,
     /// Desfazer/refazer já vistos (`Session::history_moves`): mudou, os fantasmas caem.
     seen_moves: u64,
     /// Mudanças no documento já vistas (`Session::change_counter`): outra edição (transformar, preencher, colar…)
@@ -131,14 +177,21 @@ impl Default for CopilotUi {
             box_color: BOX_COLOR,
             ghost_color: GHOST_COLOR,
             replace_rough: true,
+            width_mode: WidthMode::Drawing,
             ghosts: Vec::new(),
             dirty: Vec::new(),
-            busy: None,
+            inflight: Vec::new(),
+            hist: 0,
+            vis_dirty: false,
+            bridge_wait: Vec::new(),
             tx: None,
             rx: None,
             new_box_mode: false,
             drag: None,
             last: String::new(),
+            last_reduced: false,
+            last_throttled: false,
+            last_truncated: false,
             seen_moves: 0,
             seen_change: 0,
             target: cp::AcceptTarget::Same,
@@ -157,13 +210,13 @@ pub(crate) const GHOST_COLOR: Color32 = Color32::from_rgb(214, 36, 160);
 fn worker(c: &mut CopilotUi) -> &Sender<Job> {
     if c.tx.is_none() {
         let (tx, jobs) = channel::<Job>();
-        let (done, rx) = channel();
+        let (done, rx) = channel::<Done>();
         std::thread::Builder::new()
             .name("copiloto".into())
             .spawn(move || {
                 for j in jobs {
                     let r = cp::finish(j.prep).map_err(|e| e.to_string());
-                    if done.send((j.box_id, r)).is_err() {
+                    if done.send((j.box_id, j.geo, j.content, j.hist, r)).is_err() {
                         break;
                     }
                 }
@@ -175,29 +228,60 @@ fn worker(c: &mut CopilotUi) -> &Sender<Job> {
     c.tx.as_ref().unwrap()
 }
 
-/// A caixa volta para a fila (o fantasma dela fica velho até chegar o novo). Só caixas ligadas.
-fn requeue(c: &mut CopilotUi, id: u32) {
-    if !c.boxes.iter().any(|b| b.id == id && b.state == BoxState::On) {
+/// A caixa volta para a fila, para o quadro `frame` (o fantasma dela fica velho até chegar o novo). Só caixas ligadas,
+/// e só com alguma sugestão pedida (Melhorar ou Completar).
+fn requeue(c: &mut CopilotUi, id: u32, frame: u32) {
+    if !(c.improve || c.complete) {
         return;
     }
+    let Some(b) = c.boxes.iter_mut().find(|b| b.id == id && b.state == BoxState::On) else { return };
+    b.content += 1;
     for g in c.ghosts.iter_mut().filter(|g| g.box_id == id) {
         g.stale = true;
     }
     // já esperando: só atualiza a hora (não entra duas vezes)
-    c.dirty.retain(|d| d.0 != id);
-    c.dirty.push((id, Instant::now()));
+    c.dirty.retain(|d| d.id != id);
+    c.dirty.push(Pending { id, at: Instant::now(), frame });
 }
 
 /// Todas as caixas ligadas do corte voltam para a fila (mudou um ajuste ou o prompt geral).
-fn requeue_cut(c: &mut CopilotUi, cut: Option<&Id>) {
+fn requeue_cut(c: &mut CopilotUi, cut: Option<&Id>, frame: u32) {
     let ids: Vec<u32> = c.boxes.iter().filter(|b| Some(&b.cut) == cut).map(|b| b.id).collect();
     for id in ids {
-        requeue(c, id);
+        requeue(c, id, frame);
     }
 }
 
-/// Liga/desliga. Ao ligar, o serviço começa a carregar os modelos (sem esperar). Ao desligar, os fantasmas e a fila
-/// somem (a geração em andamento termina no serviço, mas o resultado é descartado).
+/// A caixa mudou de lugar, de tamanho ou de estado: o pedido em voo e o fantasma dela não valem mais.
+fn invalidate_box(c: &mut CopilotUi, id: u32) {
+    if let Some(b) = c.boxes.iter_mut().find(|b| b.id == id) {
+        b.geo += 1;
+    }
+    c.ghosts.retain(|g| g.box_id != id);
+    c.vis_dirty = true;
+}
+
+/// Todos os pedidos em voo deixam de valer (desfazer/refazer, desligar, descartar).
+fn invalidate_all(c: &mut CopilotUi) {
+    c.hist += 1;
+    c.vis_dirty = true;
+}
+
+/// Responde (com erro) os pedidos do MCP que esperavam uma caixa.
+fn fail_waiters(c: &mut CopilotUi, id: Option<u32>, msg: &str) {
+    let mut keep = Vec::new();
+    for (bid, ver, r) in std::mem::take(&mut c.bridge_wait) {
+        if id.is_none_or(|x| x == bid) {
+            r.respond(Err(aiai_bridge::BridgeError::invalid_params(msg)));
+        } else {
+            keep.push((bid, ver, r));
+        }
+    }
+    c.bridge_wait = keep;
+}
+
+/// Liga/desliga. Ao ligar, o serviço começa a carregar os modelos (sem esperar e sem travar a interface). Ao desligar,
+/// os fantasmas e a fila somem e o resultado em andamento é descartado.
 pub(crate) fn set_on(env: &mut Env, on: bool) {
     env.ed.copilot.on = on;
     env.ed.copilot.panel_req = Some(on);
@@ -209,6 +293,8 @@ pub(crate) fn set_on(env: &mut Env, on: bool) {
         c.dirty.clear();
         c.new_box_mode = false;
         c.drag = None;
+        invalidate_all(c);
+        fail_waiters(c, None, "o Copiloto foi desligado");
     }
     if on {
         if let Err(e) = cp::start_service() {
@@ -218,52 +304,74 @@ pub(crate) fn set_on(env: &mut Env, on: bool) {
     }
 }
 
-/// Um traço terminou no corte: as caixas onde ele caiu entram na fila. Fora de todas, a caixa de FOCO (no máximo
-/// uma por corte) vai até ele (nasce na primeira vez); nunca nasce uma caixa por traço.
+/// Reinicia o serviço depois de uma falha (botão do painel).
+pub(crate) fn restart(env: &mut Env) {
+    cp::stop_service();
+    if let Err(e) = cp::start_service() {
+        env.ed.notify(format!("{}: {e}", crate::i18n::tr("copilot.title")));
+    }
+}
+
+/// Um traço terminou no corte: a MENOR caixa onde ele caiu entra na fila. Fora de todas, a caixa de FOCO (no máximo
+/// uma por corte) vai até ele (nasce na primeira vez), a não ser que o foco esteja pausado ou desligado; nunca nasce
+/// uma caixa por traço.
 pub(crate) fn on_stroke(env: &mut Env, cut: &Id, bbox: [f32; 4], traced: bool, make_box: bool) {
     // esta mudança já foi tratada aqui (o `tick` não precisa refazer o corte todo)
     env.ed.copilot.seen_change = env.core.change_counter;
     let layer = env.ed.layer.clone();
+    let frame = env.ed.frame;
     let c = &mut env.ed.copilot;
     if !c.on || !(c.improve || c.complete) || traced {
         return;
     }
     let (cx, cy) = (bbox[0] + bbox[2] / 2.0, bbox[1] + bbox[3] / 2.0);
     // caixas sobrepostas: o traço refaz só a MENOR que o contém (a mais específica), nunca várias de uma vez
-    let hit: Vec<u32> = c
+    let hit = c
         .boxes
         .iter()
         .filter(|b| &b.cut == cut && cx >= b.rect[0] && cx <= b.rect[0] + b.rect[2] && cy >= b.rect[1] && cy <= b.rect[1] + b.rect[3])
-        .min_by(|a, b| (a.rect[2] * a.rect[3]).total_cmp(&(b.rect[2] * b.rect[3])))
-        .map(|b| b.id)
-        .into_iter()
-        .collect();
-    let ids = if make_box && hit.is_empty() {
-        // fora das caixas: o foco vai até o traço, no tamanho que já tem (pelo menos 256 e cobrindo o traço)
-        let min = bbox[2].max(bbox[3]).max(256.0);
-        match c.boxes.iter_mut().find(|b| &b.cut == cut && b.auto) {
-            Some(b) => {
+        // uma caixa fixa lê uma camada só: traço em outra camada não muda o que ela lê (vai para o foco, que segue)
+        .filter(|b| b.auto || b.layer.is_none() || b.layer == layer)
+        .min_by(|a, b| (a.rect[2] * a.rect[3]).total_cmp(&(b.rect[2] * b.rect[3])).then(b.id.cmp(&a.id)))
+        .map(|b| b.id);
+    let id = match hit {
+        Some(id) => {
+            // o foco passa a ler a camada em que você está desenhando (o fantasma era da outra)
+            if let Some(b) = c.boxes.iter_mut().find(|b| b.id == id && b.auto && b.layer != layer) {
                 b.layer = layer.clone();
-                let (w, h) = (b.rect[2].max(bbox[2] + 32.0).max(256.0), b.rect[3].max(bbox[3] + 32.0).max(256.0));
-                b.rect = [cx - w / 2.0, cy - h / 2.0, w, h];
-                let id = b.id;
-                // o fantasma era de outro lugar
-                c.ghosts.retain(|g| g.box_id != id);
-                vec![id]
+                invalidate_box(c, id);
             }
-            None => {
-                let id = c.next_box;
-                c.next_box += 1;
-                c.boxes.push(CBox { id, cut: cut.clone(), rect: [cx - min / 2.0, cy - min / 2.0, min, min], prompt: String::new(), state: BoxState::On, seed: 1, auto: true, layer: layer.clone(), use_global: true });
-                vec![id]
+            id
+        }
+        None if make_box => {
+            // fora das caixas: o foco vai até o traço, no tamanho que já tem (pelo menos 256 e cobrindo o traço)
+            let min = bbox[2].max(bbox[3]).max(256.0);
+            match c.boxes.iter().position(|b| &b.cut == cut && b.auto) {
+                Some(k) => {
+                    // foco pausado ou desligado fica onde está (e guarda o fantasma, se pausado)
+                    if c.boxes[k].state != BoxState::On {
+                        return;
+                    }
+                    let b = &mut c.boxes[k];
+                    b.layer = layer.clone();
+                    let (w, h) = (b.rect[2].max(bbox[2] + 32.0).max(256.0), b.rect[3].max(bbox[3] + 32.0).max(256.0));
+                    b.rect = [cx - w / 2.0, cy - h / 2.0, w, h];
+                    let id = b.id;
+                    // o fantasma e o pedido em voo eram de outro lugar
+                    invalidate_box(c, id);
+                    id
+                }
+                None => {
+                    let id = c.next_box;
+                    c.next_box += 1;
+                    c.boxes.push(CBox { id, cut: cut.clone(), rect: [cx - min / 2.0, cy - min / 2.0, min, min], prompt: String::new(), state: BoxState::On, seed: 1, auto: true, layer: layer.clone(), use_global: true, geo: 0, content: 0, llm: false, src: 0 });
+                    id
+                }
             }
         }
-    } else {
-        hit
+        None => return,
     };
-    for id in ids {
-        requeue(c, id);
-    }
+    requeue(c, id, frame);
 }
 
 /// Uma vez por quadro: recebe o que ficou pronto e manda a próxima caixa quando a vez chegar.
@@ -275,6 +383,41 @@ pub(crate) fn tick(env: &mut Env, ctx: &egui::Context) {
             }
         });
     }
+    let moves = env.core.history_moves;
+    let change = env.core.change_counter;
+    let frame = env.ed.frame;
+    if moves != env.ed.copilot.seen_moves {
+        // desfazer/refazer: os fantasmas e os pedidos em voo foram calculados sobre um desenho que não existe mais (não
+        // gera de novo sozinho)
+        let c = &mut env.ed.copilot;
+        c.seen_moves = moves;
+        c.seen_change = change;
+        c.ghosts.clear();
+        invalidate_all(c);
+    } else if change != env.ed.copilot.seen_change {
+        // outra edição (transformar, preencher, colar, apagar camada…): geram de novo só as caixas ligadas do corte
+        // cujo desenho lido mudou (pintar outra camada, renomear ou mexer em outro corte não gasta GPU)
+        env.ed.copilot.seen_change = change;
+        if env.ed.copilot.on {
+            if let Some(cut) = env.ed.cut.clone() {
+                let hit: Vec<u32> = env
+                    .ed
+                    .copilot
+                    .boxes
+                    .iter()
+                    .filter(|b| b.cut == cut && b.state == BoxState::On)
+                    .filter(|b| {
+                        let layer = b.layer.clone().filter(|l| env.core.project.node(l).is_some()).or_else(|| env.ed.layer.clone());
+                        layer.is_none_or(|l| cp::source_signature(&env.core.project, &cut, &l, frame) != b.src)
+                    })
+                    .map(|b| b.id)
+                    .collect();
+                for id in hit {
+                    requeue(&mut env.ed.copilot, id, frame);
+                }
+            }
+        }
+    }
     // o que ficou pronto (recebe tudo primeiro, depois mexe no estado)
     let mut done = Vec::new();
     if let Some(rx) = env.ed.copilot.rx.as_ref() {
@@ -282,57 +425,35 @@ pub(crate) fn tick(env: &mut Env, ctx: &egui::Context) {
             done.push(x);
         }
     }
-    let moves = env.core.history_moves;
-    let change = env.core.change_counter;
-    if moves != env.ed.copilot.seen_moves {
-        // desfazer/refazer: os fantasmas foram calculados sobre um desenho que não existe mais (não gera de novo sozinho)
-        env.ed.copilot.seen_moves = moves;
-        env.ed.copilot.seen_change = change;
-        env.ed.copilot.ghosts.clear();
-    } else if change != env.ed.copilot.seen_change {
-        // outra edição (transformar, preencher, colar, apagar camada…): as caixas ligadas do corte geram de novo
-        env.ed.copilot.seen_change = change;
-        if env.ed.copilot.on {
-            let cut = env.ed.cut.clone();
-            requeue_cut(&mut env.ed.copilot, cut.as_ref());
-        }
+    for d in done {
+        receive(env, d);
     }
-    for (id, r) in done {
-        env.ed.copilot.busy = None;
-        // desligado: o que chegar é descartado (o painel fechado não deixa fantasma para trás)
-        if !env.ed.copilot.on {
-            continue;
-        }
-        match r {
-            Ok(s) => {
-                env.ed.copilot.last = format!("{:.1} s · {} + {}", s.ms as f32 / 1000.0, s.improve.len(), s.complete.len());
-                env.ed.copilot.ghosts.retain(|g| g.box_id != id);
-                env.ed.copilot.ghosts.push(Ghost { box_id: id, s, stale: false });
-            }
-            Err(e) => {
-                env.ed.copilot.last = e.clone();
-                env.ed.notify(format!("{}: {e}", crate::i18n::tr("copilot.title")));
-            }
-        }
+    if std::mem::take(&mut env.ed.copilot.vis_dirty) {
+        refresh_visible(&mut env.ed.copilot);
     }
     let c = &env.ed.copilot;
     if !c.on {
         return;
     }
-    if c.busy.is_some() || !c.dirty.is_empty() {
+    if !c.inflight.is_empty() || !c.dirty.is_empty() {
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
     }
-    if c.busy.is_some() {
+    if !c.inflight.is_empty() {
+        return;
+    }
+    // nada pedido: a fila não gera à toa
+    if !(c.improve || c.complete) {
+        env.ed.copilot.dirty.clear();
         return;
     }
     // a vez: a caixa que mudou por último, depois da pausa
     let pause = std::time::Duration::from_secs_f32(c.pause_s);
-    let Some(&(id, at)) = c.dirty.iter().max_by_key(|d| d.1) else { return };
-    if at.elapsed() < pause {
+    let Some(&p) = c.dirty.iter().max_by_key(|d| d.at) else { return };
+    if p.at.elapsed() < pause {
         return;
     }
-    env.ed.copilot.dirty.retain(|d| d.0 != id);
-    let Some(b) = env.ed.copilot.boxes.iter().find(|b| b.id == id).cloned() else { return };
+    env.ed.copilot.dirty.retain(|d| d.id != p.id);
+    let Some(b) = env.ed.copilot.boxes.iter().find(|b| b.id == p.id && b.state == BoxState::On).cloned() else { return };
     let Some(layer) = b.layer.clone().filter(|l| env.core.project.node(l).is_some()).or_else(|| env.ed.layer.clone()) else { return };
     let c = &env.ed.copilot;
     let mut prompt = b.prompt.clone();
@@ -342,7 +463,7 @@ pub(crate) fn tick(env: &mut Env, ctx: &egui::Context) {
     }
     let req = SuggestRequest {
         cut: b.cut.clone(),
-        frame: env.ed.frame,
+        frame: p.frame,
         layer,
         rect: b.rect,
         prompt,
@@ -360,45 +481,146 @@ pub(crate) fn tick(env: &mut Env, ctx: &egui::Context) {
         color: env.ed.color.clone(),
     };
     match cp::prepare(&env.core.project, &env.core.blobs, &req) {
-        Ok(prep) => {
-            let tx = worker(&mut env.ed.copilot).clone();
-            if tx.send(Job { box_id: id, prep }).is_ok() {
-                env.ed.copilot.busy = Some((id, Instant::now()));
-            }
+        Ok(prep) => send_job(&mut env.ed.copilot, &b, prep),
+        Err(e) => {
+            env.ed.copilot.last = e.to_string();
+            env.ed.notify(format!("{}: {e}", crate::i18n::tr("copilot.title")));
         }
-        Err(e) => env.ed.notify(format!("{}: {e}", crate::i18n::tr("copilot.title"))),
     }
 }
 
-/// O traço do fantasma da caixa `id` cai (pelo meio) dentro de uma caixa MENOR do mesmo corte, ligada ou pausada, que tem
-/// o próprio fantasma: na sobreposição vale o da caixa menor (o do outro não aparece nem entra ao aceitar).
-fn shadowed(c: &CopilotUi, id: u32, st: &Stroke) -> bool {
-    let Some(me) = c.boxes.iter().find(|b| b.id == id) else { return false };
-    let Some(m) = st.points.get(st.points.len() / 2) else { return false };
+fn send_job(c: &mut CopilotUi, b: &CBox, prep: cp::Prepared) {
+    if let Some(x) = c.boxes.iter_mut().find(|x| x.id == b.id) {
+        x.src = prep.src;
+    }
+    let job = Job { box_id: b.id, geo: b.geo, content: b.content, hist: c.hist, prep };
+    let tx = worker(c).clone();
+    if tx.send(job).is_ok() {
+        c.inflight.push((b.id, Instant::now()));
+    }
+}
+
+/// Um resultado chegou: só vira fantasma se ainda valer (Copiloto ligado, mesmo histórico, a caixa existe, não está
+/// desligada e não mudou de lugar). Responde o MCP que esperava esta caixa.
+fn receive(env: &mut Env, (id, geo, content, hist, r): Done) {
+    let c = &mut env.ed.copilot;
+    if let Some(k) = c.inflight.iter().position(|x| x.0 == id) {
+        c.inflight.remove(k);
+    }
+    let bx = c.boxes.iter().find(|b| b.id == id).cloned();
+    let stale_reason = if !c.on {
+        Some("o Copiloto foi desligado")
+    } else if hist != c.hist {
+        Some("o desenho voltou atrás (desfazer/refazer) ou as sugestões foram descartadas")
+    } else if bx.is_none() {
+        Some("a caixa foi apagada")
+    } else if bx.as_ref().is_some_and(|b| b.state == BoxState::Off) {
+        Some("a caixa foi desligada")
+    } else if bx.as_ref().is_some_and(|b| b.geo != geo) {
+        Some("a caixa mudou de lugar ou de tamanho")
+    } else {
+        None
+    };
+    // o MCP que esperava esta caixa (na versão deste pedido) recebe a resposta
+    let waiters: Vec<HostRequest> = {
+        let mut out = Vec::new();
+        let mut keep = Vec::new();
+        for (bid, ver, rq) in std::mem::take(&mut c.bridge_wait) {
+            if bid == id && ver == content {
+                out.push(rq);
+            } else {
+                keep.push((bid, ver, rq));
+            }
+        }
+        c.bridge_wait = keep;
+        out
+    };
+    match (&r, stale_reason) {
+        (Ok(s), None) => {
+            c.last = format!("{:.1} s · {} + {}", s.ms as f32 / 1000.0, s.improve.len(), s.complete.len());
+            c.last_reduced = s.reduced;
+            c.last_throttled = s.throttled;
+            c.last_truncated = s.prompt_truncated;
+            for rq in waiters {
+                let mut v = cp::summary(s);
+                v["box"] = serde_json::json!(id);
+                rq.respond(Ok(v));
+            }
+            let b = bx.unwrap();
+            c.ghosts.retain(|g| g.box_id != id);
+            c.vis_dirty = true;
+            if s.improve.is_empty() && s.complete.is_empty() {
+                // nada a mostrar: não fica fantasma vazio (o Esc/Tab dele não fariam nada e enganariam)
+                c.last = format!("{:.1} s · {}", s.ms as f32 / 1000.0, crate::i18n::tr("copilot.nothing"));
+                return;
+            }
+            c.ghosts.push(Ghost { box_id: id, s: s.clone(), stale: b.content != content, vis_improve: s.improve.clone(), vis_complete: s.complete.clone() });
+            c.vis_dirty = true;
+        }
+        (Ok(_), Some(why)) => {
+            for rq in waiters {
+                rq.respond(Err(aiai_bridge::BridgeError::invalid_params(format!("sugestão descartada: {why}"))));
+            }
+        }
+        (Err(e), _) => {
+            c.last = e.clone();
+            for rq in waiters {
+                rq.respond(Err(aiai_bridge::BridgeError::invalid_params(e.clone())));
+            }
+            if stale_reason.is_none() {
+                env.ed.notify(format!("{}: {e}", crate::i18n::tr("copilot.title")));
+            }
+        }
+    }
+}
+
+/// Retângulos (canvas) que têm prioridade sobre a caixa `id` no quadro: caixas menores do mesmo corte (empate: a de id
+/// maior), não desligadas e com fantasma neste quadro. Na sobreposição vale o fantasma delas.
+fn priority_rects(c: &CopilotUi, id: u32, frame: u32) -> Vec<[f32; 4]> {
+    let Some(me) = c.boxes.iter().find(|b| b.id == id) else { return Vec::new() };
     let area = me.rect[2] * me.rect[3];
-    c.boxes.iter().any(|b| {
-        b.id != id
-            && b.cut == me.cut
-            && b.state != BoxState::Off
-            && b.rect[2] * b.rect[3] < area
-            && m.x >= b.rect[0]
-            && m.x <= b.rect[0] + b.rect[2]
-            && m.y >= b.rect[1]
-            && m.y <= b.rect[1] + b.rect[3]
-            && c.ghosts.iter().any(|g| g.box_id == b.id)
-    })
+    c.boxes
+        .iter()
+        .filter(|b| b.id != id && b.cut == me.cut && b.state != BoxState::Off)
+        .filter(|b| {
+            let a = b.rect[2] * b.rect[3];
+            a < area || (a == area && b.id > id)
+        })
+        .filter(|b| c.ghosts.iter().any(|g| g.box_id == b.id && g.s.frame == frame))
+        .map(|b| b.rect)
+        .collect()
 }
 
-/// A sugestão de um fantasma sem os traços que outra caixa menor cobre.
-fn visible_suggestion(c: &CopilotUi, g: &Ghost) -> Suggestion {
-    let mut s = g.s.clone();
-    s.improve.retain(|st| !shadowed(c, g.box_id, st));
-    s.complete.retain(|st| !shadowed(c, g.box_id, st));
-    s
+/// Refaz o que cada fantasma mostra: os traços dele SEM os trechos que caem em caixas de prioridade (o corte é na
+/// curva desenhada, não por um ponto), no espaço do cel.
+fn refresh_visible(c: &mut CopilotUi) {
+    let prios: Vec<Vec<[f32; 4]>> = c.ghosts.iter().map(|g| priority_rects(c, g.box_id, g.s.frame)).collect();
+    for (g, pr) in c.ghosts.iter_mut().zip(prios) {
+        if pr.is_empty() {
+            g.vis_improve = g.s.improve.clone();
+            g.vis_complete = g.s.complete.clone();
+            continue;
+        }
+        let s = &g.s;
+        let inside = |x: f32, y: f32| {
+            let (cx, cy) = s.to_canvas(x, y);
+            pr.iter().any(|r| cx >= r[0] && cx <= r[0] + r[2] && cy >= r[1] && cy <= r[1] + r[3])
+        };
+        let cut = |v: &Vec<Stroke>| v.iter().flat_map(|st| cp::split_stroke(st, &inside).1).collect::<Vec<_>>();
+        g.vis_improve = cut(&s.improve);
+        g.vis_complete = cut(&s.complete);
+    }
 }
 
-fn rect_of(b: &CBox, xf: &Xf) -> Rect {
-    Rect::from_two_pos(xf.to_screen(Vec2::new(b.rect[0], b.rect[1])), xf.to_screen(Vec2::new(b.rect[0] + b.rect[2], b.rect[1] + b.rect[3])))
+/// Os quatro cantos da caixa na tela (sup. esq., sup. dir., inf. dir., inf. esq. do canvas): com a vista girada a
+/// caixa vira um losango, e é assim que ela é desenhada e pega.
+fn corners(b: &CBox, xf: &Xf) -> [Pos2; 4] {
+    let r = b.rect;
+    [(r[0], r[1]), (r[0] + r[2], r[1]), (r[0] + r[2], r[1] + r[3]), (r[0], r[1] + r[3])].map(|(x, y)| xf.to_screen(Vec2::new(x, y)))
+}
+
+fn tag_rect(cs: &[Pos2; 4]) -> Rect {
+    Rect::from_min_size(cs[0] - Vec2::new(0.0, 16.0), Vec2::new(54.0, 16.0))
 }
 
 /// Caixas e fantasmas por cima do canvas (só visão).
@@ -412,57 +634,65 @@ pub(crate) fn paint(env: &mut Env, painter: &egui::Painter, xf: &Xf, cut: &Id) {
         let a = (c.opacity * if g.stale { 0.45 } else { 1.0 } * 255.0) as u8;
         let gc = c.ghost_color;
         let col = Color32::from_rgba_unmultiplied(gc.r(), gc.g(), gc.b(), a);
-        for st in g.s.improve.iter().chain(&g.s.complete) {
-            if !shadowed(c, g.box_id, st) {
-                ghost_line(painter, xf, st, col);
-            }
+        for st in g.vis_improve.iter().chain(&g.vis_complete) {
+            ghost_line(painter, xf, &g.s, st, col);
         }
     }
     if !c.on {
         return;
     }
     for b in c.boxes.iter().filter(|b| &b.cut == cut) {
-        let r = rect_of(b, xf);
+        let cs = corners(b, xf);
         let col = match b.state {
             BoxState::On => c.box_color,
             BoxState::Paused => c.box_color.gamma_multiply(0.55),
             BoxState::Off => c.box_color.gamma_multiply(0.25),
         };
+        let pts = [cs[0], cs[1], cs[2], cs[3], cs[0]];
         if b.auto {
             // foco: tracejada (segue o desenho); fixas: contínuas
-            let pts = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
             painter.extend(egui::Shape::dashed_line(&pts, egui::Stroke::new(1.0, col), 6.0, 4.0));
         } else {
-            painter.rect_stroke(r, 0.0, egui::Stroke::new(1.0, col), egui::StrokeKind::Middle);
+            painter.add(egui::Shape::line(pts.to_vec(), egui::Stroke::new(1.0, col)));
         }
         // alça de mover (com o número e o estado) e as de redimensionar nos cantos
-        let tag = Rect::from_min_size(r.min - Vec2::new(0.0, 16.0), Vec2::new(54.0, 16.0));
+        let tag = tag_rect(&cs);
         painter.rect_filled(tag, 2.0, col);
-        let busy = c.busy.is_some_and(|x| x.0 == b.id);
-        let waiting = c.dirty.iter().any(|d| d.0 == b.id);
+        let busy = c.inflight.iter().any(|x| x.0 == b.id);
+        let waiting = c.dirty.iter().any(|d| d.id == b.id);
         let mark = if busy { "…" } else if waiting { "·" } else { "" };
         let st = match b.state {
             BoxState::On => "",
             BoxState::Paused => " ⏸",
             BoxState::Off => " ✕",
         };
-        painter.text(tag.left_center() + Vec2::new(4.0, 0.0), egui::Align2::LEFT_CENTER, format!("{}{st}{mark}", if b.auto { crate::i18n::tr("copilot.focus").to_string() } else { b.id.to_string() }), egui::FontId::proportional(11.0), Color32::WHITE);
-        for k in [r.right_bottom(), r.left_top(), r.right_top(), r.left_bottom()] {
+        let name = if b.auto { crate::i18n::tr("copilot.focus").to_string() } else if b.llm { format!("IA {}", b.id) } else { b.id.to_string() };
+        painter.text(tag.left_center() + Vec2::new(4.0, 0.0), egui::Align2::LEFT_CENTER, format!("{name}{st}{mark}"), egui::FontId::proportional(11.0), Color32::WHITE);
+        for k in cs {
             painter.rect_filled(Rect::from_center_size(k, Vec2::splat(6.0)), 0.0, col);
         }
     }
 }
 
-fn ghost_line(painter: &egui::Painter, xf: &Xf, st: &Stroke, col: Color32) {
+fn ghost_line(painter: &egui::Painter, xf: &Xf, s: &Suggestion, st: &Stroke, col: Color32) {
     let smp = aiai_paint::sample_stroke(st);
     if smp.len() < 2 {
         return;
     }
     let w = (smp.iter().map(|q| q.r).sum::<f32>() / smp.len() as f32 * 2.0 * xf.scale).max(1.0);
-    painter.add(egui::Shape::line(smp.iter().map(|q| xf.to_screen(Vec2::new(q.x, q.y))).collect(), egui::Stroke::new(w, col)));
+    painter.add(egui::Shape::line(
+        smp.iter()
+            .map(|q| {
+                let (x, y) = s.to_canvas(q.x, q.y);
+                xf.to_screen(Vec2::new(x, y))
+            })
+            .collect(),
+        egui::Stroke::new(w, col),
+    ));
 }
 
-/// Clique no canvas: alças das caixas (mover, redimensionar, estado) e o modo "nova caixa". `true` = consumido.
+/// Clique no canvas: alças das caixas (mover pela etiqueta, redimensionar pelos cantos) e o modo "nova caixa".
+/// `true` = consumido.
 pub(crate) fn press(env: &mut Env, xf: &Xf, pos: Pos2) -> bool {
     let c = &mut env.ed.copilot;
     if !c.on {
@@ -476,15 +706,18 @@ pub(crate) fn press(env: &mut Env, xf: &Xf, pos: Pos2) -> bool {
     let Some(cut) = env.ed.cut.clone() else { return false };
     let c = &mut env.ed.copilot;
     for b in c.boxes.iter().filter(|b| b.cut == cut) {
-        let r = rect_of(b, xf);
-        let tag = Rect::from_min_size(r.min - Vec2::new(0.0, 16.0), Vec2::new(54.0, 16.0));
-        if tag.contains(pos) {
+        let cs = corners(b, xf);
+        if tag_rect(&cs).contains(pos) {
             c.drag = Some(Drag::Move(b.id, cv - Vec2::new(b.rect[0], b.rect[1])));
             return true;
         }
-        for (k, opp) in [(r.right_bottom(), r.left_top()), (r.left_top(), r.right_bottom()), (r.right_top(), r.left_bottom()), (r.left_bottom(), r.right_top())] {
-            if (k - pos).length() <= 7.0 {
-                c.drag = Some(Drag::Resize(b.id, xf.to_canvas(opp)));
+        // cada canto e o oposto dele, no espaço do canvas (vale com a vista girada)
+        let r = b.rect;
+        let canvas_c = [(r[0], r[1]), (r[0] + r[2], r[1]), (r[0] + r[2], r[1] + r[3]), (r[0], r[1] + r[3])];
+        for k in 0..4 {
+            if (cs[k] - pos).length() <= 7.0 {
+                let o = canvas_c[(k + 2) % 4];
+                c.drag = Some(Drag::Resize(b.id, Vec2::new(o.0, o.1)));
                 return true;
             }
         }
@@ -516,54 +749,108 @@ pub(crate) fn drag(env: &mut Env, xf: &Xf, pos: Pos2) -> bool {
 pub(crate) fn release(env: &mut Env, xf: &Xf, pos: Pos2) -> bool {
     let Some(d) = env.ed.copilot.drag.take() else { return false };
     let cv = xf.to_canvas(pos);
+    let frame = env.ed.frame;
     if let Drag::New(a) = d {
         let r = [a.x.min(cv.x), a.y.min(cv.y), (cv.x - a.x).abs(), (cv.y - a.y).abs()];
         if r[2] >= 16.0 && r[3] >= 16.0 {
             if let Some(cut) = env.ed.cut.clone() {
+                let layer = env.ed.layer.clone();
                 let c = &mut env.ed.copilot;
                 let id = c.next_box;
                 c.next_box += 1;
-                let layer = env.ed.layer.clone();
-                let c = &mut env.ed.copilot;
-                c.boxes.push(CBox { id, cut, rect: r, prompt: String::new(), state: BoxState::On, seed: 1, auto: false, layer, use_global: true });
-                c.dirty.push((id, Instant::now()));
+                c.boxes.push(CBox { id, cut, rect: r, prompt: String::new(), state: BoxState::On, seed: 1, auto: false, layer, use_global: true, geo: 0, content: 0, llm: false, src: 0 });
+                requeue(c, id, frame);
+                c.vis_dirty = true;
             }
         }
         env.ed.copilot.new_box_mode = false;
     } else if let Drag::Move(id, _) | Drag::Resize(id, _) = d {
-        // caixa mudou de lugar: o fantasma dela fica velho e ela volta para a fila
-        requeue(&mut env.ed.copilot, id);
+        // caixa mudou de lugar: o fantasma e o pedido em voo dela não valem mais, e ela volta para a fila
+        let c = &mut env.ed.copilot;
+        invalidate_box(c, id);
+        requeue(c, id, frame);
     }
     true
 }
 
-/// Aceita os fantasmas do quadro (todos, ou só Melhorar/Completar) na camada de cada sugestão: um passo de desfazer
-/// por caixa.
+/// A sugestão como o artista a vê (sem o que caixas menores cobrem), com a caneta ativa aplicada (ponta, cor e a
+/// largura escolhida no painel).
+fn as_seen(env: &Env, g: &Ghost) -> Suggestion {
+    let mut s = g.s.clone();
+    s.improve = g.vis_improve.clone();
+    s.complete = g.vis_complete.clone();
+    let (mode, w, tip, color) = (env.ed.copilot.width_mode, env.ed.opts.pen_width, env.ed.opts.pen_tip, env.ed.color.clone());
+    for st in s.improve.iter_mut().chain(s.complete.iter_mut()) {
+        cp::apply_pen(st, mode, w, tip, &color);
+    }
+    s
+}
+
+/// O comando de aceitar um fantasma. Rascunho que não é vetorial não recebe traços: vai para a camada limpa.
+fn accept_cmd(env: &mut Env, g: &Ghost, which: AcceptWhich, only: Option<&[usize]>, target: cp::AcceptTarget, replace: bool) -> Result<aiai_core::Command, String> {
+    let s = as_seen(env, g);
+    let vector = aiai_tools::context::layer_data(&env.core.project, &s.layer).is_ok_and(|l| l.kind == aiai_core::LayerType::Vector);
+    let target = if target == cp::AcceptTarget::Same && !vector { cp::AcceptTarget::Clean } else { target };
+    cp::accept_command_to(&env.core.project, &s, which, only, target, replace, &mut env.core.ids).map_err(|e| e.to_string())
+}
+
+/// Tira de um fantasma o que foi aceito (a outra categoria continua à vista).
+fn strip_accepted(g: &mut Ghost, which: AcceptWhich) -> bool {
+    match which {
+        AcceptWhich::All => return true,
+        AcceptWhich::Improve => {
+            g.s.improve.clear();
+            g.vis_improve.clear();
+        }
+        AcceptWhich::Complete => {
+            g.s.complete.clear();
+            g.vis_complete.clear();
+        }
+    }
+    g.s.improve.is_empty() && g.s.complete.is_empty()
+}
+
+/// Aceita os fantasmas do quadro (todos, ou só Melhorar/Completar) na camada de cada sugestão. Várias caixas de uma
+/// vez = um passo só de desfazer. O que não foi aceito continua à vista.
 pub(crate) fn accept(env: &mut Env, which: AcceptWhich) -> usize {
     let frame = env.ed.frame;
     let cut = env.ed.cut.clone();
-    // o que cada fantasma mostra (sem o que uma caixa menor cobre) é o que entra
-    let shown: Vec<Suggestion> = env.ed.copilot.ghosts.iter().map(|g| visible_suggestion(&env.ed.copilot, g)).collect();
+    let (target, replace) = (env.ed.copilot.target, env.ed.copilot.replace_rough);
     let ghosts: Vec<Ghost> = std::mem::take(&mut env.ed.copilot.ghosts);
     let mut keep = Vec::new();
     let mut n = 0;
-    for (g, vis) in ghosts.into_iter().zip(shown) {
-        if Some(&g.s.cut) != cut.as_ref() || g.s.frame != frame {
+    for mut g in ghosts {
+        let here = Some(&g.s.cut) == cut.as_ref() && g.s.frame == frame;
+        let empty = match which {
+            AcceptWhich::All => g.vis_improve.is_empty() && g.vis_complete.is_empty(),
+            AcceptWhich::Improve => g.vis_improve.is_empty(),
+            AcceptWhich::Complete => g.vis_complete.is_empty(),
+        };
+        if !here || empty {
             keep.push(g);
             continue;
         }
-        match cp::accept_command_to(&env.core.project, &vis, which, None, env.ed.copilot.target, env.ed.copilot.replace_rough, &mut env.core.ids) {
+        match accept_cmd(env, &g, which, None, target, replace) {
             Ok(cmd) => match super::commands::run(env.core, cmd) {
-                Ok(_) => n += 1,
-                Err(e) => env.ed.notify(e),
+                Ok(_) => {
+                    n += 1;
+                    if !strip_accepted(&mut g, which) {
+                        keep.push(g);
+                    }
+                }
+                Err(e) => {
+                    env.ed.notify(e);
+                    keep.push(g);
+                }
             },
             Err(e) => {
-                env.ed.notify(e.to_string());
+                env.ed.notify(e);
                 keep.push(g);
             }
         }
     }
     env.ed.copilot.ghosts = keep;
+    env.ed.copilot.vis_dirty = true;
     // várias caixas aceitas de uma vez (Tab) = um passo só de desfazer: o Ctrl+Z volta tudo, inclusive a camada limpa
     // criada pela primeira delas
     if n >= 2 {
@@ -571,30 +858,48 @@ pub(crate) fn accept(env: &mut Env, which: AcceptWhich) -> usize {
     }
     // o próprio aceitar mudou o documento: não é motivo para gerar de novo
     env.ed.copilot.seen_change = env.core.change_counter;
+    env.ed.copilot.seen_moves = env.core.history_moves;
     n
 }
 
-/// Descarta os fantasmas do quadro.
+/// Descarta os fantasmas do quadro (e o que estiver em voo deixa de valer).
 pub(crate) fn discard(env: &mut Env) -> usize {
     let frame = env.ed.frame;
     let cut = env.ed.cut.clone();
-    let before = env.ed.copilot.ghosts.len();
-    env.ed.copilot.ghosts.retain(|g| Some(&g.s.cut) != cut.as_ref() || g.s.frame != frame);
-    before - env.ed.copilot.ghosts.len()
+    let c = &mut env.ed.copilot;
+    let before = c.ghosts.len();
+    c.ghosts.retain(|g| Some(&g.s.cut) != cut.as_ref() || g.s.frame != frame);
+    let ids: Vec<u32> = c.boxes.iter().filter(|b| Some(&b.cut) == cut.as_ref()).map(|b| b.id).collect();
+    c.dirty.retain(|d| !ids.contains(&d.id));
+    invalidate_all(c);
+    before - c.ghosts.len()
 }
 
-/// Tab aceita tudo, Esc descarta (só com fantasma à vista e sem gesto em andamento). `true` = consumiu a tecla.
+/// Há fantasma à vista neste quadro?
+fn ghosts_here(env: &Env) -> bool {
+    let (frame, cut) = (env.ed.frame, env.ed.cut.clone());
+    env.ed.copilot.ghosts.iter().any(|g| Some(&g.s.cut) == cut.as_ref() && g.s.frame == frame && !(g.vis_improve.is_empty() && g.vis_complete.is_empty()))
+}
+
+/// Esc: com fantasma à vista e nenhum traço em andamento, descarta. Chamado pelos atalhos do editor ANTES do Esc geral
+/// (que cancela ferramentas); campo de texto em uso fica com a tecla (o chamador já confere). `true` = consumiu.
+pub(crate) fn escape(env: &mut Env, ctx: &egui::Context) -> bool {
+    if !ghosts_here(env) || matches!(env.ed.gesture, super::editor::Gesture::Stroke(_)) {
+        return false;
+    }
+    if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        discard(env);
+        return true;
+    }
+    false
+}
+
+/// Tab aceita tudo (Esc também descarta aqui, se ainda chegar). `true` = consumiu a tecla.
 pub(crate) fn keys(env: &mut Env, ui: &egui::Ui) -> bool {
     // havia um campo de texto com o teclado no quadro ANTERIOR? (no quadro do Tab o egui já passou o foco para o
     // próximo campo, inclusive nos painéis desenhados antes do canvas, então o estado de agora não serve)
     let typing = std::mem::replace(&mut env.ed.copilot.typing, ui.ctx().egui_wants_keyboard_input());
-    let frame = env.ed.frame;
-    let cut = env.ed.cut.clone();
-    if !env.ed.copilot.ghosts.iter().any(|g| Some(&g.s.cut) == cut.as_ref() && g.s.frame == frame) {
-        return false;
-    }
-    // digitando num campo (o prompt): Tab e Esc são do campo
-    if typing {
+    if !ghosts_here(env) || typing {
         return false;
     }
     let (tab, esc) = ui.input_mut(|i| (i.consume_key(egui::Modifiers::NONE, egui::Key::Tab), i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)));
@@ -611,6 +916,93 @@ pub(crate) fn keys(env: &mut Env, ui: &egui::Ui) -> bool {
     tab || esc
 }
 
+/// `COPILOT` pela ponte com o app aberto: o pedido do agente entra na MESMA fila e thread do painel (a interface não
+/// congela), aparece no canvas numa caixa "IA" e a resposta sai quando o resultado chega. Aceitar e descartar usam o
+/// mesmo fantasma que o artista vê (o mesmo id); aceitar recusa sugestão velha (o desenho mudou), salvo `force`.
+pub(crate) fn bridge(env: &mut Env, r: HostRequest) {
+    use aiai_bridge::BridgeError;
+    let req: cp::CopilotRequest = match serde_json::from_value(r.params.clone()) {
+        Ok(v) => v,
+        Err(e) => return r.respond(Err(BridgeError::invalid_params(format!("COPILOT: {e}")))),
+    };
+    match req.op.as_str() {
+        "suggest" => {
+            let Some(s) = req.suggest else { return r.respond(Err(BridgeError::invalid_params("suggest pede `suggest`"))) };
+            if !env.ed.copilot.on {
+                set_on(env, true);
+                if !env.ed.copilot.on {
+                    return r.respond(Err(BridgeError::invalid_params(format!("o Copiloto não ligou: {}", cp::service_error()))));
+                }
+            }
+            let prep = match cp::prepare(&env.core.project, &env.core.blobs, &s) {
+                Ok(p) => p,
+                Err(e) => return r.respond(Err(BridgeError::invalid_params(e.to_string()))),
+            };
+            let c = &mut env.ed.copilot;
+            // a caixa do agente: a mesma caixa "IA" do mesmo corte e retângulo, ou uma nova
+            let same = |b: &CBox| b.llm && b.cut == s.cut && b.rect.iter().zip(s.rect.iter()).all(|(a, b)| (a - b).abs() < 0.5);
+            let id = match c.boxes.iter().position(same) {
+                Some(k) => {
+                    let b = &mut c.boxes[k];
+                    b.prompt = s.prompt.clone();
+                    b.layer = Some(s.layer.clone());
+                    b.state = BoxState::On;
+                    b.content += 1;
+                    b.id
+                }
+                None => {
+                    let id = c.next_box;
+                    c.next_box += 1;
+                    c.boxes.push(CBox { id, cut: s.cut.clone(), rect: s.rect, prompt: s.prompt.clone(), state: BoxState::On, seed: s.seed.unwrap_or(1), auto: false, layer: Some(s.layer.clone()), use_global: false, geo: 0, content: 1, llm: true, src: 0 });
+                    id
+                }
+            };
+            c.dirty.retain(|d| d.id != id);
+            let b = c.boxes.iter().find(|b| b.id == id).cloned().unwrap();
+            c.bridge_wait.push((id, b.content, r));
+            send_job(c, &b, prep);
+            c.vis_dirty = true;
+        }
+        "accept" => {
+            let Some(sid) = req.id else { return r.respond(Err(BridgeError::invalid_params("accept pede `id`"))) };
+            let Some(k) = env.ed.copilot.ghosts.iter().position(|g| g.s.id == sid) else {
+                return r.respond(Err(BridgeError::invalid_params(format!("sugestão {sid} não está à vista (já aceita, descartada ou velha)"))));
+            };
+            if !req.force {
+                if let Err(e) = cp::check_fresh(&env.core.project, &env.ed.copilot.ghosts[k].s) {
+                    return r.respond(Err(BridgeError::invalid_params(e.to_string())));
+                }
+            }
+            let mut g = env.ed.copilot.ghosts.remove(k);
+            let res = accept_cmd(env, &g, req.which, req.only.as_deref(), req.target, req.replace).and_then(|cmd| super::commands::run(env.core, cmd).map_err(|e| e.to_string()));
+            match res {
+                Ok(_) => {
+                    let all_gone = req.only.is_some() || strip_accepted(&mut g, req.which);
+                    if !all_gone {
+                        env.ed.copilot.ghosts.push(g);
+                    }
+                    env.ed.copilot.vis_dirty = true;
+                    env.ed.copilot.seen_change = env.core.change_counter;
+                    r.respond(Ok(serde_json::json!({"accepted": sid, "revision": env.core.project.revision})));
+                }
+                Err(e) => {
+                    env.ed.copilot.ghosts.push(g);
+                    r.respond(Err(BridgeError::invalid_params(e)));
+                }
+            }
+        }
+        "discard" => {
+            let Some(sid) = req.id else { return r.respond(Err(BridgeError::invalid_params("discard pede `id`"))) };
+            let before = env.ed.copilot.ghosts.len();
+            env.ed.copilot.ghosts.retain(|g| g.s.id != sid);
+            env.ed.copilot.vis_dirty = true;
+            r.respond(Ok(serde_json::json!({"discarded": before != env.ed.copilot.ghosts.len()})));
+        }
+        "status" => r.respond(Ok(state_json(&env.ed.copilot))),
+        other => r.respond(Err(BridgeError::invalid_params(format!("COPILOT: op desconhecida '{other}' (suggest, accept, discard, status)")))),
+    }
+}
+
 /// Corpo do painel Copiloto (no dock, coluna própria à direita; nunca por cima do desenho): estado, o que sugerir e quanto
 /// mudar, prompt geral, caixas (cada uma com estado, tamanho de geração e prompt), aceitar e, fechados, os ajustes finos.
 pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
@@ -619,6 +1011,7 @@ pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
     use crate::i18n::tr;
     let state = cp::service_state();
     let cur_cut = env.ed.cut.clone();
+    let frame = env.ed.frame;
     let t = env.t;
     // onde cada caixa vai gerar (janela de contexto e tamanho de geração), para mostrar antes de gerar
     let res = env.ed.copilot.res;
@@ -651,13 +1044,14 @@ pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
     {
         let c = &env.ed.copilot;
         let (dot, svc) = match state {
-            "pronto" if c.busy.is_some() => (t.st_progress, tr("copilot.svc.busy").to_string()),
+            "pronto" if !c.inflight.is_empty() => (t.st_progress, tr("copilot.svc.busy").to_string()),
             "pronto" => (t.st_ok, tr("copilot.svc.ready").to_string()),
             "carregando" => (t.st_progress, tr("copilot.svc.loading").to_string()),
             "gerando" => (t.st_progress, tr("copilot.svc.busy").to_string()),
+            "falhou" => (t.danger, tr("copilot.svc.failed").to_string()),
             _ => (t.text_dim, tr("copilot.svc.stopped").to_string()),
         };
-        let busy = c.busy.map(|(id, at)| format!(" · {} {id} · {:.0} s", tr("copilot.generating"), at.elapsed().as_secs_f32())).unwrap_or_default();
+        let busy = c.inflight.first().map(|(id, at)| format!(" · {} {id} · {:.0} s", tr("copilot.generating"), at.elapsed().as_secs_f32())).unwrap_or_default();
         ui.horizontal(|ui| {
             let (r, _) = ui.allocate_exact_size(Vec2::splat(10.0), egui::Sense::hover());
             ui.painter().circle_filled(r.center(), 4.0, dot);
@@ -669,6 +1063,26 @@ pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
         if !c.last.is_empty() {
             ui.label(RichText::new(format!("{}: {}", tr("copilot.last"), c.last)).size(11.0).color(t.text_dim));
         }
+        // avisos da última sugestão (texto em cor de alerta legível nos dois temas)
+        for (on, key) in [(c.last_reduced, "copilot.warn.reduced"), (c.last_throttled, "copilot.warn.throttled"), (c.last_truncated, "copilot.warn.truncated")] {
+            if on {
+                ui.label(RichText::new(tr(key)).size(11.0).color(t.danger));
+            }
+        }
+        if !(c.improve || c.complete) {
+            ui.label(RichText::new(tr("copilot.warn.nothing")).size(11.0).color(t.danger));
+        }
+    }
+    if state == "falhou" {
+        ui.label(RichText::new(cp::service_error()).size(11.0).color(t.danger));
+        ui.horizontal(|ui| {
+            if ui.button(tr("copilot.restart")).on_hover_text(tr("copilot.restart.tip")).clicked() {
+                restart(env);
+            }
+            if ui.small_button(tr("copilot.open_log")).on_hover_text(cp::service_log_path().display().to_string()).clicked() {
+                let _ = std::process::Command::new("notepad").arg(cp::service_log_path()).spawn();
+            }
+        });
     }
 
     // --- o que sugerir e quanto mudar
@@ -694,6 +1108,29 @@ pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
             c.change = v / 100.0;
             again = true;
         }
+    }
+
+    // --- perfil de velocidade (atalho para resolução e passos; mexer neles à mão vira "personalizado")
+    {
+        let c = &mut env.ed.copilot;
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(tr("copilot.profile")).size(12.0).color(t.text_dim)).on_hover_text(tr("copilot.profile.tip"));
+            // na GPU de 4 GB, 640 px com cfg > 1 não cabe e cai para 512: o Qualidade ganha com passos, não com tamanho
+            const PROFILES: [(&str, u32, u32); 3] = [("copilot.profile.fast", 384, 0), ("copilot.profile.balanced", 0, 0), ("copilot.profile.quality", 512, 8)];
+            for (key, res, steps) in PROFILES {
+                let on = c.res == res && c.steps == steps;
+                let r = ui.selectable_label(on, RichText::new(tr(key)).size(12.0)).on_hover_text(tr(&format!("{key}.tip")));
+                notes.push((format!("copilot:profile:{}", key.rsplit('.').next().unwrap_or(key)), r.rect));
+                if r.clicked() && !on {
+                    c.res = res;
+                    c.steps = steps;
+                    again = true;
+                }
+            }
+            if !PROFILES.iter().any(|p| p.1 == c.res && p.2 == c.steps) {
+                ui.label(RichText::new(tr("copilot.profile.custom")).size(11.0).color(t.text_dim));
+            }
+        });
     }
 
     // --- prompt geral: largo, duas linhas; vale ao sair do campo
@@ -733,6 +1170,8 @@ pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
     if plans.is_empty() {
         ui.label(RichText::new(tr("copilot.boxes.empty")).size(11.5).color(t.text_dim));
     }
+    // as caixas e os prompts vivem só nesta sessão (protótipo): dito no painel, não escondido (CP1-17)
+    ui.label(RichText::new(tr("copilot.boxes.temp")).size(10.5).color(t.text_dim));
     let mut remove = None;
     let mut redo_box = Vec::new();
     for (id, auto, rect_b, plan) in &plans {
@@ -761,10 +1200,11 @@ pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
                             BoxState::On => redo_box.push(id),
                             // desligada: sem fantasma e fora da fila
                             BoxState::Off => {
-                                c.ghosts.retain(|g| g.box_id != id);
-                                c.dirty.retain(|d| d.0 != id);
+                                invalidate_box(c, id);
+                                c.dirty.retain(|d| d.id != id);
+                                fail_waiters(c, Some(id), "a caixa foi desligada");
                             }
-                            BoxState::Paused => c.dirty.retain(|d| d.0 != id),
+                            BoxState::Paused => c.dirty.retain(|d| d.id != id),
                         }
                     }
                 }
@@ -792,16 +1232,39 @@ pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
             if let Some((win, gsz)) = plan {
                 let z = cp::gen_zoom(*win, *gsz);
                 let txt = format!("{:.0} × {:.0} px  →  {} {} × {}  ({:.1}×)", rect_b[2], rect_b[3], tr("copilot.box.gen"), gsz[0], gsz[1], z);
+                // fora da faixa boa, o texto fica na cor de alerta (legível nos dois temas) e diz o que acontece
                 let (col, tip) = if z < 0.6 {
-                    (t.st_retake, Some("copilot.zoom.down"))
+                    (t.danger, Some("copilot.zoom.down"))
                 } else if z > 1.6 {
-                    (t.st_review, Some("copilot.zoom.up"))
+                    (t.text, Some("copilot.zoom.up"))
                 } else {
                     (t.text_dim, None)
                 };
                 let r = ui.label(RichText::new(txt).size(11.0).color(col));
                 r.on_hover_text(format!("{}{}", tr("copilot.box.gen.tip"), tip.map(|k| format!("\n\n{}", tr(k))).unwrap_or_default()));
             }
+            // de onde a caixa lê o desenho, e trocar para a camada ativa
+            let src = env.ed.copilot.boxes.iter().find(|b| b.id == id).and_then(|b| b.layer.clone());
+            let active = env.ed.layer.clone();
+            let src_name = src.as_ref().and_then(|l| env.core.project.node(l)).map(|n| n.name.clone()).unwrap_or_else(|| tr("copilot.src.none").to_string());
+            let src_info = src.as_ref().and_then(|l| aiai_tools::context::layer_data(&env.core.project, l).ok()).map(|l| (l.kind, l.visible, l.locked));
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(format!("{} {src_name}", tr("copilot.src"))).size(11.0).color(t.text_dim)).on_hover_text(tr("copilot.src.tip"));
+                if let Some((kind, visible, locked)) = src_info {
+                    if kind != aiai_core::LayerType::Vector {
+                        ui.label(RichText::new(tr("copilot.src.raster")).size(11.0).color(t.text_dim)).on_hover_text(tr("copilot.src.raster.tip"));
+                    }
+                    if !visible || locked {
+                        ui.label(RichText::new(tr(if locked { "copilot.src.locked" } else { "copilot.src.hidden" })).size(11.0).color(t.danger));
+                    }
+                }
+                if active.is_some() && active != src && ui.small_button(tr("copilot.src.use_active")).on_hover_text(tr("copilot.src.use_active.tip")).clicked() {
+                    if let Some(b) = env.ed.copilot.boxes.iter_mut().find(|b| b.id == id) {
+                        b.layer = active.clone();
+                    }
+                    redo_box.push(id);
+                }
+            });
             let c = &mut env.ed.copilot;
             if let Some(b) = c.boxes.iter_mut().find(|b| b.id == id) {
                 let r = ui.add(egui::TextEdit::multiline(&mut b.prompt).desired_rows(2).desired_width(f32::INFINITY).hint_text(tr("copilot.box.hint")));
@@ -818,18 +1281,19 @@ pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
     {
         let c = &mut env.ed.copilot;
         if let Some(id) = remove {
+            invalidate_box(c, id);
             c.boxes.retain(|b| b.id != id);
-            c.ghosts.retain(|g| g.box_id != id);
-            c.dirty.retain(|d| d.0 != id);
+            c.dirty.retain(|d| d.id != id);
+            fail_waiters(c, Some(id), "a caixa foi apagada");
         }
         for id in redo_box {
-            requeue(c, id);
+            requeue(c, id, frame);
         }
     }
 
     // --- aceitar
     section(ui, &t, "copilot.sec.accept");
-    let has = env.ed.copilot.ghosts.iter().any(|g| Some(&g.s.cut) == cur_cut.as_ref());
+    let has = ghosts_here(env);
     ui.horizontal(|ui| {
         for (icon, key, name, w) in [
             (IconId::Check, "copilot.accept_all", "copilot:accept:all", Some(AcceptWhich::All)),
@@ -859,6 +1323,20 @@ pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
         let c = &mut env.ed.copilot;
         ui.add_enabled_ui(c.target == cp::AcceptTarget::Same, |ui| {
             ui.checkbox(&mut c.replace_rough, RichText::new(tr("copilot.replace")).size(12.0)).on_hover_text(tr("copilot.replace.tip"));
+        });
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(tr("copilot.width")).size(12.0).color(t.text_dim)).on_hover_text(tr("copilot.width.tip"));
+            let label = |m: WidthMode| tr(match m {
+                WidthMode::Drawing => "copilot.width.drawing",
+                WidthMode::Pen => "copilot.width.pen",
+                WidthMode::Fixed => "copilot.width.fixed",
+            })
+            .to_string();
+            egui::ComboBox::from_id_salt("copilot_width").width(140.0).selected_text(label(c.width_mode)).show_ui(ui, |ui| {
+                for m in [WidthMode::Drawing, WidthMode::Pen, WidthMode::Fixed] {
+                    ui.selectable_value(&mut c.width_mode, m, label(m));
+                }
+            });
         });
     }
 
@@ -906,7 +1384,7 @@ pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
         });
     });
     if again {
-        requeue_cut(&mut env.ed.copilot, cur_cut.as_ref());
+        requeue_cut(&mut env.ed.copilot, cur_cut.as_ref(), frame);
     }
     for (k, r) in notes {
         env.note(&k, r);
@@ -944,29 +1422,24 @@ fn section_inline(ui: &mut egui::Ui, t: &crate::theme::Tokens, text: &str) {
 
 // ------------------------------------------------------------------------------------------------ ímã
 
-/// Uma linha fantasma que o ímã conhece: de qual sugestão, de qual lista e qual traço, com os pontos densos (canvas).
+/// Uma linha fantasma visível que o ímã conhece, com os pontos densos no canvas.
 struct MLine {
-    box_id: u32,
-    sid: u64,
-    list: u8,
-    idx: usize,
     pts: Vec<Vec2>,
-    radii: Vec<f32>,
-    /// Primeira e última amostra puxadas por este traço.
-    hit: Option<(usize, usize)>,
 }
 
-/// Ímã do traço em andamento: puxa a caneta para o fantasma mais perto e guarda o trecho coberto.
+/// Ímã do traço em andamento: puxa a caneta para o fantasma VISÍVEL mais perto e guarda o caminho puxado.
 pub(crate) struct Magnet {
     lines: Vec<MLine>,
     radius: f32,
     strength: f32,
     pulled: usize,
     total: usize,
+    /// Pontos (canvas) que foram puxados: o trecho do fantasma perto deles sai no fim do traço.
+    path: Vec<Vec2>,
 }
 
 /// Ímã para um traço de caneta que começa agora (só com fantasma à vista e força > 0). `scale` = px de tela por px do
-/// canvas: o raio de 12 px de tela vira canvas.
+/// canvas: o raio de 12 px de tela vira canvas. Usa só o que aparece (o mesmo que a pintura e o aceitar).
 pub(crate) fn magnet_for(env: &Env, scale: f32) -> Option<Magnet> {
     let c = &env.ed.copilot;
     if !c.on || c.magnet <= 0.0 {
@@ -975,24 +1448,30 @@ pub(crate) fn magnet_for(env: &Env, scale: f32) -> Option<Magnet> {
     let (cut, frame) = (env.ed.cut.clone()?, env.ed.frame);
     let mut lines = Vec::new();
     for g in c.ghosts.iter().filter(|g| g.s.cut == cut && g.s.frame == frame) {
-        for (list, v) in [(0u8, &g.s.improve), (1u8, &g.s.complete)] {
-            for (idx, st) in v.iter().enumerate() {
-                let smp = aiai_paint::sample_stroke(st);
-                if smp.len() >= 2 {
-                    lines.push(MLine { box_id: g.box_id, sid: g.s.id, list, idx, pts: smp.iter().map(|q| Vec2::new(q.x, q.y)).collect(), radii: smp.iter().map(|q| q.r).collect(), hit: None });
-                }
+        for st in g.vis_improve.iter().chain(&g.vis_complete) {
+            let smp = aiai_paint::sample_stroke(st);
+            if smp.len() >= 2 {
+                lines.push(MLine {
+                    pts: smp
+                        .iter()
+                        .map(|q| {
+                            let (x, y) = g.s.to_canvas(q.x, q.y);
+                            Vec2::new(x, y)
+                        })
+                        .collect(),
+                });
             }
         }
     }
-    (!lines.is_empty()).then(|| Magnet { lines, radius: 12.0 / scale.max(1e-3), strength: c.magnet, pulled: 0, total: 0 })
+    (!lines.is_empty()).then(|| Magnet { lines, radius: 12.0 / scale.max(1e-3), strength: c.magnet, pulled: 0, total: 0, path: Vec::new() })
 }
 
 impl Magnet {
     /// O ponto (canvas) puxado para a linha fantasma mais perto, com força que cai com a distância.
     pub(crate) fn pull(&mut self, p: Vec2) -> Vec2 {
         self.total += 1;
-        let mut best: Option<(f32, usize, usize, Vec2)> = None;
-        for (li, l) in self.lines.iter().enumerate() {
+        let mut best: Option<(f32, Vec2)> = None;
+        for l in &self.lines {
             for k in 0..l.pts.len() - 1 {
                 let (a, b) = (l.pts[k], l.pts[k + 1]);
                 let ab = b - a;
@@ -1000,74 +1479,83 @@ impl Magnet {
                 let q = a + ab * t;
                 let d = (p - q).length();
                 if d <= self.radius && best.is_none_or(|x| d < x.0) {
-                    best = Some((d, li, k, q));
+                    best = Some((d, q));
                 }
             }
         }
-        let Some((d, li, k, q)) = best else { return p };
-        let l = &mut self.lines[li];
-        l.hit = Some(match l.hit {
-            Some((a, b)) => (a.min(k), b.max(k + 1)),
-            None => (k, k + 1),
-        });
+        let Some((d, q)) = best else { return p };
         self.pulled += 1;
         let u = d / self.radius;
         let w = self.strength * (1.0 - u * u).powi(2);
-        p + (q - p) * w
+        let out = p + (q - p) * w;
+        self.path.push(out);
+        out
     }
 }
 
-/// Fim do traço com ímã: o trecho de fantasma coberto sai (o traço desenhado entrou no lugar dele); o resto fica.
+/// Fim do traço com ímã: o trecho de fantasma coberto pelo caminho puxado sai (o traço desenhado entrou no lugar dele);
+/// o resto fica. O corte é geométrico (perto do caminho), nos dados do fantasma, não só no que aparece.
 /// `true` = o traço seguiu o fantasma quase todo (então não pede sugestão nova).
 pub(crate) fn magnet_done(env: &mut Env, m: Magnet) -> bool {
     let mostly = m.total > 0 && m.pulled * 10 >= m.total * 7;
-    for l in m.lines.iter().filter(|l| l.hit.is_some()) {
-        let (a, b) = l.hit.unwrap();
-        let Some(g) = env.ed.copilot.ghosts.iter_mut().find(|g| g.box_id == l.box_id && g.s.id == l.sid) else { continue };
-        let v = if l.list == 0 { &mut g.s.improve } else { &mut g.s.complete };
-        let Some(old) = v.get(l.idx).cloned() else { continue };
-        // as sobras antes e depois do trecho coberto viram fantasmas menores (com folga de 2 amostras)
-        let mut rest = Vec::new();
-        for (from, to) in [(0usize, a.saturating_sub(2)), ((b + 2).min(l.pts.len()), l.pts.len())] {
-            if to > from + 2 {
-                let mut s = old.clone();
-                let w = s.width.max(0.1);
-                s.points = (from..to)
-                    .step_by(2)
-                    .chain(std::iter::once(to - 1))
-                    .map(|k| aiai_core::StrokePoint { x: l.pts[k].x, y: l.pts[k].y, pressure: 1.0, tilt: None, t: None, corner: false, width: (2.0 * l.radii[k] / w).max(0.05), id: 0, handle: None })
-                    .collect();
-                s.points.dedup_by(|x, y| (x.x - y.x).abs() < 1e-3 && (x.y - y.y).abs() < 1e-3);
-                s.closed = false;
-                if s.points.len() >= 2 {
-                    rest.push(s);
-                }
-            }
-        }
-        // o traço coberto vira as sobras (marcado vazio para sair; as sobras vão para o fim da lista)
-        v[l.idx].points.clear();
-        v.extend(rest);
+    if m.path.is_empty() {
+        return mostly;
     }
-    for g in env.ed.copilot.ghosts.iter_mut() {
-        g.s.improve.retain(|s| !s.points.is_empty());
-        g.s.complete.retain(|s| !s.points.is_empty());
+    let (cut, frame) = (env.ed.cut.clone(), env.ed.frame);
+    let rad = m.radius;
+    let path = &m.path;
+    let near_path = |x: f32, y: f32| {
+        let p = Vec2::new(x, y);
+        path.windows(2).any(|w| {
+            let ab = w[1] - w[0];
+            let t = ((p - w[0]).dot(ab) / ab.length_sq().max(1e-6)).clamp(0.0, 1.0);
+            (p - (w[0] + ab * t)).length() <= rad
+        }) || (path.len() == 1 && (p - path[0]).length() <= rad)
+    };
+    for g in env.ed.copilot.ghosts.iter_mut().filter(|g| Some(&g.s.cut) == cut.as_ref() && g.s.frame == frame) {
+        let s = g.s.clone();
+        let inside = |x: f32, y: f32| {
+            let (cx, cy) = s.to_canvas(x, y);
+            near_path(cx, cy)
+        };
+        let cut_v = |v: &Vec<Stroke>| v.iter().flat_map(|st| cp::split_stroke(st, &inside).1).filter(|st| aiai_paint::sample_stroke(st).len() >= 3).collect::<Vec<_>>();
+        g.s.improve = cut_v(&s.improve);
+        g.s.complete = cut_v(&s.complete);
     }
     env.ed.copilot.ghosts.retain(|g| !g.s.improve.is_empty() || !g.s.complete.is_empty());
+    env.ed.copilot.vis_dirty = true;
+    refresh_visible(&mut env.ed.copilot);
     mostly
 }
 
-/// Estado para a ponte (GET_UI_STATE): caixas, fila e fantasmas (com uma amostra de pontos de cada traço).
+/// Estado para a ponte (GET_UI_STATE e `COPILOT status`): serviço, caixas, fila e fantasmas (o que aparece, no canvas).
 pub(crate) fn state_json(c: &CopilotUi) -> serde_json::Value {
-    let pts = |v: &Vec<Stroke>| v.iter().map(|s| s.points.iter().map(|q| [q.x.round(), q.y.round()]).collect::<Vec<_>>()).collect::<Vec<_>>();
+    let pts = |s: &Suggestion, v: &Vec<Stroke>| {
+        v.iter()
+            .map(|st| {
+                st.points
+                    .iter()
+                    .map(|q| {
+                        let (x, y) = s.to_canvas(q.x, q.y);
+                        [x.round(), y.round()]
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+    };
     serde_json::json!({
         "on": c.on, "improve": c.improve, "complete": c.complete, "magnet": c.magnet, "replace_rough": c.replace_rough,
-        "steps": c.steps, "res": c.res, "change": c.change,
-        "service": cp::service_state(),
-        "busy": c.busy.map(|b| b.0), "queue": c.dirty.iter().map(|d| d.0).collect::<Vec<_>>(),
-        "boxes": c.boxes.iter().map(|b| serde_json::json!({"id": b.id, "rect": b.rect, "state": format!("{:?}", b.state), "prompt": b.prompt, "auto": b.auto, "seed": b.seed, "layer": b.layer, "use_global": b.use_global})).collect::<Vec<_>>(),
-        "ghosts": c.ghosts.iter().map(|g| serde_json::json!({"box": g.box_id, "id": g.s.id, "stale": g.stale, "improve": pts(&g.s.improve), "complete": pts(&g.s.complete),
-            "window": g.s.window, "gen_size": g.s.gen_size, "ms": g.s.ms})).collect::<Vec<_>>(),
+        "steps": c.steps, "res": c.res, "change": c.change, "width_mode": c.width_mode,
+        "service": cp::service_state(), "service_error": cp::service_error(), "service_log": cp::service_log_path(),
+        "busy": c.inflight.first().map(|b| b.0), "inflight": c.inflight.iter().map(|b| b.0).collect::<Vec<_>>(),
+        "queue": c.dirty.iter().map(|d| d.id).collect::<Vec<_>>(),
+        "boxes": c.boxes.iter().map(|b| serde_json::json!({"id": b.id, "cut": b.cut, "rect": b.rect, "state": format!("{:?}", b.state), "prompt": b.prompt, "auto": b.auto,
+            "llm": b.llm, "seed": b.seed, "layer": b.layer, "use_global": b.use_global, "geo": b.geo, "content": b.content})).collect::<Vec<_>>(),
+        "ghosts": c.ghosts.iter().map(|g| serde_json::json!({"box": g.box_id, "id": g.s.id, "cut": g.s.cut, "frame": g.s.frame, "stale": g.stale,
+            "improve": pts(&g.s, &g.vis_improve), "complete": pts(&g.s, &g.vis_complete),
+            "window": g.s.window, "gen_size": g.s.gen_size, "ms": g.s.ms, "reduced": g.s.reduced, "throttled": g.s.throttled,
+            "prompt_tokens": g.s.prompt_tokens, "prompt_truncated": g.s.prompt_truncated})).collect::<Vec<_>>(),
         "target": c.target, "new_box_mode": c.new_box_mode,
-        "last": c.last,
+        "last": c.last, "last_reduced": c.last_reduced, "last_throttled": c.last_throttled, "last_truncated": c.last_truncated,
     })
 }
