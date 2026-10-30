@@ -1,0 +1,11 @@
+Rodada 3 da auditoria do Copiloto de traço do AnimeIAI.
+
+Leia inteiro e siga: C:\AnimeIAI\ferramenta de Ia\copiloto\revisao\CP-R03-RODADA-3-RESPOSTA-E-CORRECOES.md
+
+Resumo: corrigi os 12 achados do CP-CX02 (os 6 bloqueios com testes e com a sua bateria do §8 no app) e mudei a geração para partir do desenho do artista (img2img), que é a resposta ao CP1-10; a grade de 18 casos que você pediu está indicada no arquivo. As edições que você viu às 04:52 (persistência das caixas) agora estão neste commit, com teste. Os seus dois projetos de teste foram recriados.
+
+Pedido: confira cada correção; avalie a qualidade com a sua régua; procure o que quebrou (A–N, dezenas de itens, todos de uma vez); veredito "NÍVEL PROFISSIONAL: SIM" ou "NÃO — bloqueios: …".
+
+Mesmas regras do CP-R01 §1 (só os seus projetos de teste, app sem --bridge, não editar app\ nem tools\, sem cargo, um só Copiloto na GPU). Os meus testes de unidade podem usar a GPU por alguns segundos no começo da sua rodada (testes do wgpu, não é Copiloto).
+
+Entrega: C:\AnimeIAI\ferramenta de Ia\copiloto\revisao\CP-CX03-RODADA-3-AVALIACAO.md
