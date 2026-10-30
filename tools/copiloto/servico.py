@@ -116,25 +116,37 @@ def only_outline(lines, W, H):
     return out
 
 
-def consolidate(lines, W, H):
-    """Linha "tubo" (o modelo pinta o traço com o miolo mais claro, ou deixa duas passadas do rascunho lado a lado):
-    vira uma linha só antes de vetorizar, senão sai como dois contornos paralelos (CP1-10). Um fechamento leve (3 px a
-    512) junta o que está a ~2 px; depois, todo buraco de papel fino (raio inscrito até 2 px a 512) cercado de tinta é
-    preenchido. Buraco de verdade (pupila, boca aberta, brilho do olho) é mais largo e fica."""
+def consolidate(lines, W, H, src=None):
+    """Linha "tubo" (o modelo pinta o traço com o miolo mais claro) vira uma linha só antes de vetorizar, senão sai como
+    dois contornos paralelos (CP1-10). Só onde o DESENHO DE ENTRADA tinha tinta: ali o papel fino é o miolo do tubo; onde
+    a entrada era papel (o vão da boca, o espaço entre duas linhas, o papel aberto na borda) nada é preenchido (CP4-05,
+    CP4-07). Um fechamento leve (3 px a 512) e o preenchimento de buracos de papel finos (raio inscrito até 2 px a 512),
+    os dois limitados à tinta da entrada alargada em ~2 px."""
     import numpy as np
     from PIL import Image, ImageFilter
     from scipy import ndimage as nd
     s = min(W, H) / 512
     k = max(3, int(round(3 * s)) | 1)
-    out = np.asarray(Image.fromarray(lines).filter(ImageFilter.MinFilter(k)).filter(ImageFilter.MaxFilter(k))).copy()
+    if src is None:
+        return lines
+    ink_in = np.asarray(src.convert("L").resize((lines.shape[1], lines.shape[0]), Image.BILINEAR)) < 128
+    grow = max(1, int(round(2 * s)))
+    ink_in = nd.binary_dilation(ink_in, iterations=grow)
+    closed = np.asarray(Image.fromarray(lines).filter(ImageFilter.MinFilter(k)).filter(ImageFilter.MaxFilter(k)))
+    out = np.where(ink_in, closed, lines).copy()
     paper = out >= int(255 * 0.7)
     lab, n = nd.label(paper)
     if n:
         idx = np.arange(1, n + 1)
         mx = nd.maximum(nd.distance_transform_edt(paper), lab, index=idx)
         area = nd.sum(paper, lab, index=idx)
+        on_ink = nd.sum(ink_in & paper, lab, index=idx)
+        # componentes que tocam a borda da imagem são papel aberto, não miolo de tubo
+        edge = np.zeros(n + 1, bool)
+        for b in (lab[0, :], lab[-1, :], lab[:, 0], lab[:, -1]):
+            edge[np.unique(b)] = True
         thin = np.zeros(n + 1, bool)
-        thin[1:] = (mx <= 2.0 * s) & (area <= 4000 * s * s)
+        thin[1:] = (mx <= 2.0 * s) & (area <= 4000 * s * s) & (on_ink >= 0.6 * area) & ~edge[1:]
         fill = thin[lab]
         out[fill] = np.minimum(out[fill], 60)
     return out
@@ -287,7 +299,7 @@ def generate(pipe, a2s, req):
             torch.cuda.synchronize()
             t2 = time.perf_counter()
             lines = (g * 255).round().byte().cpu().numpy()
-            lines = consolidate(lines, W, H)
+            lines = consolidate(lines, W, H, board)
             # só na Intensidade alta (o modelo redesenha e pode encher sombra): embaixo disso a mancha é do artista
             # (cílio, cabelo preto) e fica
             if init >= 0.8:
