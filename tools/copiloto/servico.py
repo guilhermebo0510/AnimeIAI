@@ -100,17 +100,30 @@ _GPU = {"t": 0.0, "info": {}}
 _I2I = {}
 
 
-def only_outline(lines, W, H):
+def only_outline(lines, W, H, src=None):
     """Mancha preta mais grossa que uma linha (sombra, boca ou pescoço pintados, que o modelo às vezes enche na
     Intensidade alta) vira só o contorno dela: o vetorizador não tem o que fazer com um borrão. As linhas (até ~13 px a
-    512: a de um rascunho de três passadas sai grossa) ficam como estão."""
+    512: a de um rascunho de três passadas sai grossa) ficam como estão. Pela distância à borda (formas redondas, que
+    seguem a mancha): os filtros quadrados de antes abriam buracos retangulares no cabelo (I-24). Só a mancha que o
+    modelo inventou: perto da tinta do desenho de entrada (a linha, a mecha grossa, o cílio, o cabelo preto do artista)
+    nada sai."""
     import numpy as np
-    from PIL import Image, ImageFilter
-    k = max(9, int(round(min(W, H) / 512 * 13)) | 1)
-    ink = Image.fromarray(np.where(lines < 128, 255, 0).astype(np.uint8))
-    core = ink.filter(ImageFilter.MinFilter(k))          # só sobra o miolo do que é mais largo que k
-    fill = core.filter(ImageFilter.MaxFilter(k))         # a mancha de volta ao tamanho
-    inner = np.asarray(fill.filter(ImageFilter.MinFilter(5))) > 0  # tudo menos um anel de ~2 px na borda
+    from scipy import ndimage as nd
+    s = min(W, H) / 512
+    half = 6.5 * s                                       # meia largura da linha mais grossa que fica (13 px a 512)
+    ink = lines < 128
+    d = nd.distance_transform_edt(ink)                   # distância de cada pixel de tinta ao papel
+    core = d > half                                      # miolo do que é mais largo que uma linha
+    if not core.any():
+        return lines
+    reach = nd.distance_transform_edt(~core) <= half     # a mancha de volta ao tamanho (círculo, não quadrado)
+    inner = reach & ink & (d > 2.0 * s)                  # tudo menos um anel de ~2 px na borda
+    if src is not None:
+        # só sai o que o modelo pôs longe das linhas do artista: perto delas (3 px a 512) a tinta fica, então a mancha
+        # entre duas linhas do desenho vira as duas linhas, e o cílio ou a mecha grossa do artista continuam cheios
+        from PIL import Image
+        ink_in = np.asarray(src.convert("L").resize((lines.shape[1], lines.shape[0]), Image.BILINEAR)) < 128
+        inner &= nd.distance_transform_edt(~ink_in) > 3.0 * s
     out = lines.copy()
     out[inner] = 255
     return out
@@ -303,7 +316,7 @@ def generate(pipe, a2s, req):
             # só na Intensidade alta (o modelo redesenha e pode encher sombra): embaixo disso a mancha é do artista
             # (cílio, cabelo preto) e fica
             if init >= 0.8:
-                lines = only_outline(lines, W, H)
+                lines = only_outline(lines, W, H, board)
         else:
             # Anime2Sketch: tira preenchimento e sombra, fica a linha (no múltiplo de 256 que a rede pede, perto do gerado)
             aw, ah = max(512, -(-W // 256) * 256), max(512, -(-H // 256) * 256)

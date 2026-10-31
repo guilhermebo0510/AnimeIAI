@@ -1603,7 +1603,7 @@ pub(crate) fn panel(env: &mut Env, ui: &mut egui::Ui) {
         ui.add_space(6.0);
         let c = &mut env.ed.copilot;
         let label = |x: cp::AcceptTarget| tr(if x == cp::AcceptTarget::Clean { "copilot.target.clean" } else { "copilot.target.same" }).to_string();
-        let tr_rect = egui::ComboBox::from_id_salt("copilot_target").width(ui.available_width().max(90.0)).selected_text(label(c.target)).show_ui(ui, |ui| {
+        let tr_rect = egui::ComboBox::from_id_salt("copilot_target").width((ui.available_width() - 12.0).max(60.0)).selected_text(label(c.target)).show_ui(ui, |ui| {
             for x in [cp::AcceptTarget::Same, cp::AcceptTarget::Clean] {
                 let r = ui.selectable_value(&mut c.target, x, label(x));
                 notes.push((format!("copilot:target:{}", if x == cp::AcceptTarget::Clean { "clean" } else { "same" }), r.rect));
